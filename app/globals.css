@@ -333,19 +333,63 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .game-frame.is-paused .sort-flight-cube { animation-play-state: paused; }
 
+/* The end of a level is a moment, so it arrives as one object: a bordered panel
+   that comes out of the depth of the frame, not a flat wash laid over it. The
+   backdrop only darkens and holds it; everything else is the card. `perspective`
+   sits here because the card's pop moves in z, and that needs a 3D context from
+   its parent. */
 .result-overlay {
-  position: absolute; z-index: 40; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 28px; text-align: center; background: rgba(15,21,64,.9); animation: overlay-in .25s ease both;
+  position: absolute; z-index: 40; inset: 0; display: grid; place-items: center;
+  padding: 24px; text-align: center; perspective: 720px;
+  background: radial-gradient(88% 58% at 50% 46%, rgba(28,20,86,.62), rgba(7,10,34,.92));
+  animation: overlay-in .22s ease both;
 }
-.result-overlay h2 { margin: 9px 0 7px; font-size: 25px; letter-spacing: -.04em; }
-.result-overlay p { max-width: 270px; margin: 0 0 20px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
-.result-overlay button {
-  margin-top: 16px; border: 0; border-radius: 14px; padding: 12px 19px; color: #2b1d00; background: #ffd54a;
-  font-size: 11px; font-weight: 900; letter-spacing: .05em; cursor: pointer;
+.result-card {
+  position: relative; z-index: 1; width: min(100%, 300px); padding: 24px 22px 22px;
+  border: 2px solid rgba(255,213,74,.55); border-radius: 26px;
+  background: linear-gradient(180deg, #2c3679, #1a2052);
+  box-shadow:
+    0 26px 58px -22px rgba(4,8,30,.95),
+    0 0 0 7px rgba(255,213,74,.08),
+    inset 0 1px 0 rgba(255,255,255,.16);
+  /* Slightly behind the backdrop's fade, so the panel is seen arriving rather
+     than being there already. */
+  animation: result-pop .44s cubic-bezier(.18,1.04,.32,1.12) .05s both;
 }
-.result-medal { width: 62px; height: 62px; margin-bottom: 16px; display: grid; place-items: center; border-radius: 20px; color: #2b1d00; background: #ffd54a; font-size: 30px; transform: rotate(-6deg); }
-.result-fail .result-medal { color: #fff; background: #ff4d6a; }
+.result-fail .result-card {
+  border-color: rgba(255,77,106,.6);
+  box-shadow:
+    0 26px 58px -22px rgba(4,8,30,.95),
+    0 0 0 7px rgba(255,77,106,.1),
+    inset 0 1px 0 rgba(255,255,255,.14);
+}
+.result-card h2 { margin: 9px 0 7px; font-size: 25px; letter-spacing: -.04em; }
+.result-card p { margin: 0 auto 18px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
+.result-card button {
+  width: 100%; border: 0; border-radius: 14px; padding: 13px 18px; color: #2b1d00; background: #ffd54a;
+  font-size: 12px; font-weight: 900; letter-spacing: .04em; cursor: pointer;
+  transition: transform .18s ease, filter .18s ease;
+}
+.result-card button:hover { transform: translateY(-2px); filter: brightness(1.06); }
+.result-card button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.result-medal {
+  width: 62px; height: 62px; margin: 0 auto; display: grid; place-items: center;
+  border-radius: 20px; color: #2b1d00; background: #ffd54a; font-size: 30px;
+  box-shadow: 0 10px 22px -10px rgba(255,213,74,.9);
+  animation: result-medal-in .5s cubic-bezier(.2,1.2,.3,1.1) .16s both;
+}
+.result-fail .result-medal { color: #fff; background: #ff4d6a; box-shadow: 0 10px 22px -10px rgba(255,77,106,.9); }
 .result-fail button { color: #fff; background: #ff4d6a; }
+
+/* Fireworks: one ring of sparks thrown outward from behind the panel, twice.
+   Each spark carries its own angle, reach and delay, so the burst is one
+   keyframe reused eighteen times rather than eighteen keyframes. */
+.result-fireworks { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.result-fireworks span {
+  position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  border-radius: 3px; background: var(--spark-color);
+  animation: result-spark 1.05s ease-out var(--spark-delay) 2 both;
+}
 
 .modal-overlay {
   position: absolute; z-index: 50; inset: 0; display: grid; place-items: center;
@@ -603,8 +647,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .sheet-file-button:hover { background: rgba(255,255,255,.1); }
 .sheet-file-button input { display: none; }
-.result-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
-.result-overlay .result-next { color: #03301c; background: #24e07f; }
+.result-actions { display: grid; gap: 9px; }
+.result-card .result-next { color: #03301c; background: #24e07f; }
 
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
 @keyframes hud-rise { from { opacity: 0; transform: translateY(26px); } }
@@ -631,6 +675,25 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes batch-in { from { opacity: 0; transform: translateY(-10px) scale(.8); } }
 @keyframes batch-warning { 50% { opacity: .74; transform: scale(.982); } }
 @keyframes overlay-in { from { opacity: 0; } }
+/* Out of the depth of the frame and toward the player, overshooting once before
+   it settles — the cone shape of the move is what makes it read as popping out
+   rather than fading in. */
+@keyframes result-pop {
+  from { opacity: 0; transform: translateZ(-300px) translateY(30px) scale(.82); }
+  58% { opacity: 1; transform: translateZ(34px) translateY(-7px) scale(1.03); }
+  to { opacity: 1; transform: translateZ(0) translateY(0) scale(1); }
+}
+@keyframes result-medal-in {
+  from { opacity: 0; transform: rotate(-24deg) scale(.3); }
+  70% { transform: rotate(4deg) scale(1.12); }
+  to { opacity: 1; transform: rotate(-6deg) scale(1); }
+}
+/* rotate then translate, so one angle per spark aims the whole flight outward. */
+@keyframes result-spark {
+  0% { opacity: 0; transform: rotate(var(--spark-angle)) translateY(-12px) scale(.35); }
+  14% { opacity: 1; transform: rotate(var(--spark-angle)) translateY(calc(var(--spark-distance) * -.35)) scale(1); }
+  100% { opacity: 0; transform: rotate(var(--spark-angle)) translateY(calc(var(--spark-distance) * -1)) scale(.2); }
+}
 @keyframes auto-clear-pulse { to { opacity: .74; transform: translateX(-50%) scale(1.03); } }
 @keyframes crosshair-blocked {
   40% { opacity: .34; transform: translate(-50%,-50%) scale(.68); }

@@ -96,6 +96,37 @@ function CannonMountIcon() {
   );
 }
 
+// The win card's fireworks. DOM sparks rather than the engine's 3D ones: those
+// live behind the HUD, so the panel would cover the celebration it is meant to
+// be having. Fixed angles and delays, computed once — a burst that reshuffles on
+// every re-render would flicker.
+const RESULT_SPARK_COLORS = ["#ffd21f", "#24e07f", "#ff8ad8", "#2f9dff", "#ff8a1f"];
+const RESULT_SPARKS = Array.from({ length: 18 }, (_, index) => ({
+  // Spread evenly, then nudged every other spark so the ring is not a diagram.
+  angle: (index / 18) * 360 + (index % 2) * 10,
+  distance: 124 + (index % 4) * 22,
+  delay: (index % 6) * 0.045,
+  color: RESULT_SPARK_COLORS[index % RESULT_SPARK_COLORS.length],
+}));
+
+function ResultFireworks() {
+  return (
+    <div className="result-fireworks" aria-hidden="true">
+      {RESULT_SPARKS.map((spark, index) => (
+        <span
+          key={index}
+          style={{
+            "--spark-angle": `${spark.angle}deg`,
+            "--spark-distance": `${spark.distance}px`,
+            "--spark-delay": `${spark.delay}s`,
+            "--spark-color": spark.color,
+          } as CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
 function focusableIn(root: HTMLElement) {
   return Array.from(
     root.querySelectorAll<HTMLElement>(
@@ -890,8 +921,18 @@ export default function GamePrototype() {
             </span>
           </div>
 
-          {state.result && !state.postWinClearing && (
-            <div className={`result-overlay result-${state.result.kind.toLowerCase()}`}>
+        </div>
+
+        {/* A sibling of the scene rather than a child of it. `.scene-wrap` is
+            inset below the HUD, so an overlay inside it started 116px down the
+            frame — that was the bright strip left showing along the top — and
+            its `overflow: hidden` clipped the fireworks as well. */}
+        {state.result && !state.postWinClearing && (
+          <div className={`result-overlay result-${state.result.kind.toLowerCase()}`}>
+            {/* Behind the panel, so the sparks read as bursting out from under
+                it rather than streaking across the text. */}
+            {state.result.kind === "WIN" && <ResultFireworks />}
+            <section className="result-card">
               <div className="result-medal">{state.result.kind === "WIN" ? "★" : "!"}</div>
               <h2>{state.result.kind === "WIN" ? "Perfect sorting!" : state.result.reason}</h2>
               <p>
@@ -905,9 +946,9 @@ export default function GamePrototype() {
                   <button type="button" className="result-next" onClick={advanceLevel}>Next level →</button>
                 )}
               </div>
-            </div>
-          )}
-        </div>
+            </section>
+          </div>
+        )}
 
           <div className="sort-flight-layer" aria-hidden="true">
           {sortSprites.map((sprite) => (

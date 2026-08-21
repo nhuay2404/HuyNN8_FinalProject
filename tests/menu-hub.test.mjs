@@ -141,8 +141,11 @@ test("confirm and result actions read left to right as cancel then commit", asyn
   assert.match(restartActions, />No</);
   assert.match(restartActions, />Yes</);
 
+  // The result buttons are stacked now rather than side by side, so this reads
+  // top to bottom — but it is the same rule: the way back comes before the way
+  // on, and document order is what decides both the layout and the tab order.
   const resultActions = ui.slice(ui.indexOf('className="result-actions"'), ui.indexOf("</div>", ui.indexOf('className="result-actions"')));
-  assert.ok(resultActions.indexOf("Replay level") < resultActions.indexOf("Next level"), "Replay sits left of Next level");
+  assert.ok(resultActions.indexOf("Replay level") < resultActions.indexOf("Next level"), "Replay comes before Next level");
 });
 
 test("no Vietnamese text is left in anything the player can read", async () => {

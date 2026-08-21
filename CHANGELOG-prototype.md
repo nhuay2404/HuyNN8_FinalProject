@@ -3,10 +3,10 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 862.542 bytes, 5 màn, một file HTML chạy
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 866.114 bytes, 5 màn, một file HTML chạy
 offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 117/117 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
+**Trạng thái kiểm tra:** 121/121 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
 
 ---
 
@@ -993,7 +993,7 @@ có first-paint để lấy.
 
 ## 6. Test
 
-Từ 10 test lên **117 test**, 16 file:
+Từ 10 test lên **121 test**, 17 file:
 
 | File | Nội dung |
 |---|---|
@@ -1009,6 +1009,7 @@ Từ 10 test lên **117 test**, 16 file:
 | `batch-flight.test.mjs` | Nhịp bay dưới 1 giây ở mọi số lượng, engine tự đi từng bước cascade, mọi thứ khác đứng chờ trong lúc bay, và sprite dựng đúng giữa hai đầu |
 | `menu-hub.test.mjs` | Menu chặn gameplay, model xoay ngoài nhánh paused, menu thu nhỏ model, intro zoom kết thúc đúng transform gốc và chỉ mở input sau đó, đã bỏ nút level, CSV chỉ nhận ở menu, có đường về menu |
 | `impact-feel.test.mjs` | Sóng đẩy đi ra từng vòng (yếu dần, trễ dần, vòng chỉ đánh dấu sau khi thu xong), vòng chưa tới thì khối đứng im, khói tròn trắng solid tan bằng co lại chứ không mờ, mọi nhánh `handleHit` đều bung khói, chạm sàn không giành mất phát trúng khối, đạn rơi thì nhỏ dần theo độ cao và nhả vệt theo thời gian bay (chỉ đổi cỡ vẽ, pool reset scale), nhãn hit feedback đã bị bỏ khỏi UI-engine-CSS |
+| `result-screen.test.mjs` | Kết thúc màn là panel có khung chứ không phải tấm phủ, anim trồi ra bằng translateZ và cần perspective ở cha, card pop trễ sau backdrop, pháo hoa chỉ khi thắng và nằm sau panel, bảng tia tính một lần không random, lớp tia không ăn tap |
 | `loading-screen.test.mjs` | Loader là markup chứ không do JS vẽ và không có asset để tải, một string dùng cho cả bản dev và bản một file, trong template nó đứng trước bundle, bar nhảy theo mốc thật và không đi lùi (không timer, không random), xong thì rời khỏi DOM và tắt pointer-events, CSS không dựa vào token nào của app |
 | `cosmetics.test.mjs` | Hai skin và fallback khi id lạ, hai rig cùng bệ và cùng chiều dài nòng còn hướng thuôn thì ngược nhau (pháo loe, nòng phép thu), đóng màn skin thì hạt của nó bị dọn theo (cả hai chiều) và recoil được reset, không khối nào trên nòng cắt mặt ổ súng trong quãng giật (`RECOIL_TRAVEL` khớp giữa hai file, độ dẹt ổ phải do `housingYScale` giải, không có `breech` trở lại), rig không có tấm phẳng (`BoxGeometry`) và mọi hình tròn đạt sàn segment theo loại, đầu đũa không mảnh dưới ngưỡng, crosshair đũa là vòng phép (toggle một chỗ, dispose trả class, trạng thái "không trúng" đổi màu thay vì xoay 45°), màn skin thay thế menu chứ không đè lên (không còn tên level/Skin/Shop/currency lòi qua) và focus trả về nút Skin sau khi menu mount lại, lưu localStorage đúng khuôn haptics, skin không chạm muzzle/không có hằng số gameplay, swap skin dispose rig cũ, đũa phép thay hẳn khói (bling bay lơ lửng vs pháo hoa rơi), sparkle chạy trong fixed-step, demo shot trong preview không chạm state, thumbnail render bằng đúng renderer và cache một lần, nút Skin mở màn không dùng modal-overlay, thẻ xem trước còn nút mới áp dụng |
 | `link-bridge.test.mjs` | Nẹp ở mọi giao điểm của cặp link và trên mọi mặt ngoài của từng giao điểm (không tính giao điểm trong lòng một cụm), level 5 ra đúng 4 giao điểm / 6 nẹp và sườn nhìn thấy được bắt đủ cả hai giao điểm, giao điểm không có mặt ngoài vẫn được một nẹp, hai cụm rời nhau vẫn có một nẹp chọn theo khoảng cách → mặt dễ thấy → id, đặt lại mỗi frame từ vị trí khối thật, claim thì cả đường ghép rơi đúng một lần |
@@ -1106,3 +1107,67 @@ phép `rotate(38 12.7 8.8)` rồi test từng điểm trên lưới 48×48 và i
 
 Nút **Shop** vẫn chỉ có chữ và vẫn `disabled` — đúng trạng thái thật của nó. Hai nút dùng chung một
 `min-height` (58px) nên dù một cái có icon một cái không thì vẫn bằng nhau trong cột.
+
+---
+
+## 10. Làm lại UI kết thúc màn
+
+Trước đây màn kết thúc là **một tấm phủ toàn khung** với nền `rgba(15,21,64,.9)` và nội dung xếp
+thẳng lên đó — không có khung, không có gì đọc ra là một vật thể, và nó chỉ fade vào nên hiện ra
+"từ đâu không biết".
+
+Giờ nó là **một panel**:
+
+- **Có khung**: `.result-card` rộng 300px, viền 2px vàng (đỏ khi thua), bo 26px, nền gradient, kèm
+  bóng đổ và một vòng sáng mỏng bên ngoài. Backdrop giờ chỉ còn việc **làm tối và giữ panel ở giữa**
+  — toàn bộ nội dung (medal, tiêu đề, mô tả, nút) nằm trong card.
+- **Anim trồi ra theo chiều sâu**: `.result-overlay` đặt `perspective: 720px` (khối z cần một 3D
+  context từ cha, thiếu nó thì cú pop xẹp thành scale phẳng), và card chạy `result-pop`:
+  `translateZ(-300px) translateY(30px) scale(.82)` → vọt qua `translateZ(34px) scale(1.03)` → về
+  `translateZ(0)`. Chính đường đi hình cone đó làm nó đọc ra là **trồi ra khỏi khung** chứ không phải
+  hiện dần. Card pop **trễ 0,05s** sau backdrop, nên người chơi thấy nó *đang tới* thay vì đã ở đó.
+- **Medal cũng có nhịp riêng**: xoay từ −24° và scale 0,3 lên, vọt 1,12 rồi về đúng −6° như cũ.
+- **Pháo hoa** (chỉ khi thắng — thua thì không có gì để ăn mừng): 18 tia DOM bung ra từ **phía sau
+  panel**, mỗi tia mang `--spark-angle`, `--spark-distance`, `--spark-delay`, `--spark-color` riêng
+  nên **một keyframe dùng lại 18 lần** thay vì 18 keyframe. `rotate` trước rồi `translateY` sau, nên
+  một góc lái cả đường bay. Bảng tia tính **một lần ở module scope**, không `Math.random` trong
+  render — burst mà đổi mỗi lần re-render thì sẽ nhấp nháy. Lớp pháo hoa đặt `z-index: 0` và
+  `pointer-events: none`, dưới card (`z-index: 1`), nên nó không bao giờ ăn cú tap dành cho nút.
+- **Nút xếp dọc, full width** thay vì flex-wrap (trong khung 300px thì hai nút luôn bị xuống dòng lệch
+  nhau). Thứ tự DOM giữ nguyên: Replay trước, Next sau — vẫn là "đường về trước, đường đi sau", và
+  đó cũng là thứ tự tab.
+
+Đo hình học của burst: tia bay xa **124–190px** từ tâm card, tức bắt đầu **nằm dưới panel** (bán kính
+card 150px) rồi bay ra ngoài viền. Kiểm cả hai khổ khung — 430×860 và 360×740 — **không tia nào chạy
+quá mép**, nên không bị cắt cụt.
+
+Kiểm thêm bằng script đối chiếu **mọi tên animation trong CSS với `@keyframes` tương ứng**: 23 khối
+keyframes, không có animation nào trỏ vào tên không tồn tại (một tên sai chính tả thì animation im
+lặng không chạy, không báo lỗi gì).
+
+Chưa kiểm được bằng mắt: lần này **không có browser nào khả dụng** (preview pane mất, extension Chrome
+chưa kết nối), nên phần cảm giác của cú pop và mật độ pháo hoa cần bạn xem trên bản build.
+
+### 10b. Màn kết thúc chừa ra một dải ở đỉnh khung
+
+Overlay kết thúc màn đang là **con của `.scene-wrap`**, mà `.scene-wrap` được inset xuống dưới HUD:
+
+```
+inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0
+```
+
+tức **14 + 92 + 10 = 116px** (còn hơn nữa nếu máy có safe area). `inset: 0` của overlay vì thế tính
+từ mốc đã tụt 116px — dải HUD ở đỉnh không bị che, đúng vệt sáng trong ảnh. Kèm theo đó
+`.scene-wrap` có `overflow: hidden`, nên pháo hoa còn bị cắt ở mép trên.
+
+Sửa: đưa overlay ra làm **em của `.scene-wrap`**, ngang hàng với các dialog, để `inset: 0` tính theo
+cả khung. Không cần đổi CSS.
+
+Test cho chuyện này không kiểm được bằng regex đơn thuần (nó là chuyện **lồng nhau**), nên có một
+scanner nhỏ đi qua các token `<div>`/`</div>` để tìm thẻ đóng khớp của `.scene-wrap` rồi khẳng định
+overlay nằm sau đó. Và tôi chạy scanner đó trên **bản trong git** để chắc là test bắt được lỗi thật:
+
+| Bản | Kết quả |
+|---|---|
+| Bản đã commit (trước khi sửa) | overlay **INSIDE** `.scene-wrap` → test đỏ |
+| Bản hiện tại | overlay OUTSIDE → test xanh |
