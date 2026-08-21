@@ -3,7 +3,7 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 861.616 bytes, 5 màn, một file HTML chạy
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 862.542 bytes, 5 màn, một file HTML chạy
 offline bằng `file://`, không cần server và không cần mạng.
 
 **Trạng thái kiểm tra:** 117/117 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
@@ -1077,3 +1077,32 @@ Xoá thêm `.pnpm-store/` (3 file, 40 KB): cache của pnpm còn sót, mà dự 
 | `tsconfig.tsbuildinfo` | Cache incremental; xoá thì `tsc` lần sau chậm lại |
 
 Đã kiểm sau khi xoá: 117/117 test pass, lint sạch, build ra file y hệt (861.616 bytes).
+
+---
+
+## 9. Icon cho nút Skin
+
+Nút **Skin** giờ có hình **ụ súng** thay vì chỉ có chữ: inline SVG 24×24, dựng bằng đúng ba khối mà
+model trong game có — bệ ngang, ổ súng, nòng chếch lên 38° — kèm hai vòng vàng (vòng đế và vòng gần
+miệng nòng) đúng như accent của khẩu pháo thật. Vẽ chứ không nạp ảnh, như mọi hình khác trong build.
+
+Hai chi tiết đáng ghi:
+
+- **`fill="var(--accent)"` không chạy trong presentation attribute của SVG** — `var()` chỉ resolve
+  khi đến từ một khai báo CSS. Nên phần vàng mang class `hub-side-icon-accent` và màu được set trong
+  `globals.css`. Có test cấm `fill="var(` quay lại trong file icon.
+- **Chữ "Skin" vẫn giữ**, và icon là `aria-hidden`: tên đọc được của nút là chữ, không phải hình —
+  một cái icon đứng một mình thì không nói được nó mở màn nào.
+
+Browser tool mất kết nối đúng lúc này nên tôi **raster hoá icon bằng node** để kiểm: dựng lại đúng
+phép `rotate(38 12.7 8.8)` rồi test từng điểm trên lưới 48×48 và in ra ASCII. Kết quả đo:
+
+| | |
+|---|---|
+| Bounding box của mực | x 3,3–20,8 · y 2,8–21,8 (viewBox 0–24) |
+| Bị cắt mép | không |
+| Diện tích phủ | 31% |
+| Tâm mực | 12,0 / 12,3 (tâm hộp 12/12) |
+
+Nút **Shop** vẫn chỉ có chữ và vẫn `disabled` — đúng trạng thái thật của nó. Hai nút dùng chung một
+`min-height` (58px) nên dù một cái có icon một cái không thì vẫn bằng nhau trong cột.

@@ -444,11 +444,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   position: absolute; z-index: 2; left: max(14px, env(safe-area-inset-left)); top: 38%;
   display: flex; flex-direction: column; gap: 10px;
 }
+/* One min-height for both buttons, so the one with a mark and the one that is
+   still only a word stay the same size in the column. */
 .hub-side-button {
-  width: 62px; min-height: 46px; padding: 6px 4px; cursor: default;
+  width: 62px; min-height: 58px; padding: 7px 4px; cursor: default;
+  display: grid; place-items: center; gap: 3px;
   border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
   color: #dfe5ff; font-size: 12px; font-weight: 900;
 }
+.hub-side-icon { display: block; width: 27px; height: 27px; fill: currentColor; }
+.hub-side-icon-accent { fill: var(--accent); }
 /* They are visibly inert rather than hidden: the menu shows where they will go. */
 .hub-side-button[disabled] { opacity: .62; }
 /* Only positioned here: the look and size come from .icon-button, the same rule

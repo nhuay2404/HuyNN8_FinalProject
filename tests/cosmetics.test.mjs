@@ -291,6 +291,16 @@ test("the Skin button opens a picker that leaves the preview visible", async () 
   const ui = await readFile(uiUrl, "utf8");
   const sideButtons = ui.slice(ui.indexOf('className="hub-side-buttons"'), ui.indexOf("</div>", ui.indexOf('className="hub-side-buttons"')));
   assert.match(sideButtons, /onClick=\{openCosmetics\}/, "Skin is live now");
+  // The button carries the rig as its mark, drawn rather than loaded, and the
+  // word stays: an icon on its own would not say which screen it opens.
+  assert.match(sideButtons, /<CannonMountIcon \/>\s*\n\s*Skin/);
+  const icon = ui.slice(ui.indexOf("function CannonMountIcon()"), ui.indexOf("function focusableIn"));
+  assert.match(icon, /viewBox="0 0 24 24"/);
+  assert.match(icon, /aria-hidden="true"/, "the word is the accessible name, not the drawing");
+  assert.match(icon, /rotate\(38 12\.7 8\.8\)/, "the barrel is the tilted mass");
+  assert.doesNotMatch(icon, /<img|url\(|fill="var\(/, "no asset, and no var() in a presentation attribute — it does not resolve there");
+  const css = await readFile(cssUrl, "utf8");
+  assert.match(css, /\.hub-side-icon-accent \{ fill: var\(--accent\)/, "the gold parts are filled from CSS instead");
   assert.match(sideButtons, /<button className="hub-side-button" type="button" disabled>Shop<\/button>/, "Shop is still a placeholder");
 
   // Not a modal: .modal-overlay paints an opaque backdrop, which would cover
@@ -305,7 +315,6 @@ test("the Skin button opens a picker that leaves the preview visible", async () 
   assert.match(ui, /\{screen === "hub" && !cosmeticOpen && \(/, "the menu is unmounted while the picker is up");
   assert.doesNotMatch(ui, /inert=\{cosmeticOpen/, "nothing left behind to make inert");
   assert.doesNotMatch(screen, /cosmetic-currency/, "no placeholder currency on this screen");
-  const css = await readFile(cssUrl, "utf8");
   assert.doesNotMatch(css, /cosmetic-currency/);
   // Focus cannot go back to a button that has not been re-mounted yet.
   assert.match(ui, /cosmeticClosingRef\.current = true/);

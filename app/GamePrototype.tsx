@@ -75,6 +75,27 @@ type SortSprite = {
 const subscribeToNothing = () => () => {};
 const returnFalse = () => false;
 
+// The Skin button's mark: the rig itself, in the same three masses the model is
+// built from — pedestal, cradle, barrel tilted up — so the button reads as "the
+// thing you shoot with" instead of as a generic wardrobe icon. Drawn rather than
+// loaded, like every other picture in this build. The gold parts are filled from
+// CSS, because `var()` does not resolve inside an SVG presentation attribute.
+function CannonMountIcon() {
+  return (
+    <svg className="hub-side-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {/* Barrel first, so the cradle and the pedestal overlap its tail the way
+          the housing swallows it on the real rig. */}
+      <g transform="rotate(38 12.7 8.8)">
+        <rect x="10.4" y="2.4" width="4.6" height="12.6" rx="2.3" />
+        <rect className="hub-side-icon-accent" x="9.5" y="3.5" width="6.4" height="1.7" rx=".85" />
+      </g>
+      <circle cx="9.4" cy="14.6" r="3.6" />
+      <rect x="3" y="17.4" width="18" height="4.4" rx="2.2" />
+      <rect className="hub-side-icon-accent" x="4.8" y="16" width="14.4" height="1.7" rx=".85" />
+    </svg>
+  );
+}
+
 function focusableIn(root: HTMLElement) {
   return Array.from(
     root.querySelectorAll<HTMLElement>(
@@ -691,6 +712,7 @@ export default function GamePrototype() {
                 aria-haspopup="dialog"
                 aria-expanded={cosmeticOpen}
               >
+                <CannonMountIcon />
                 Skin
               </button>
               {/* Still a placeholder on purpose: the menu shows where it goes
