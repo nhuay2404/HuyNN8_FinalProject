@@ -1,0 +1,669 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #f8faff;
+  --muted: #aab5dd;
+  --panel: rgba(29, 37, 82, 0.72);
+  --line: rgba(255, 255, 255, 0.18);
+  --accent: #ffd54a;
+  --hud-inset: 14px;
+  --hud-height: 92px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  background: radial-gradient(circle at 50% -10%, rgba(96, 130, 255, 0.45), transparent 36rem), #142457;
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+  overflow: hidden;
+  /* Phones paint a translucent highlight over the whole box of whatever was
+     tapped. The menu's play button covers the entire frame, so that highlight
+     was a full-screen flash at the exact moment of the transition — invisible
+     on desktop, which is why it only showed up on a real phone. Inherited, so
+     one declaration covers every button and every drag zone. */
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; -webkit-tap-highlight-color: transparent; }
+
+/* ---- Loading screen --------------------------------------------------- */
+/* Painted from markup before the bundle runs, so every rule here has to stand
+   on its own: no custom properties defined elsewhere, nothing that waits on
+   JavaScript. The only thing script does to it is move --loading-progress and,
+   at the end, take it out of the document. */
+.loading-screen {
+  position: fixed; z-index: 100; inset: 0; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  background: #152f7a;
+  transition: opacity .34s ease;
+}
+.loading-screen.is-done { opacity: 0; pointer-events: none; }
+.loading-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.loading-panel {
+  position: relative; z-index: 1;
+  padding: 0 32px max(58px, env(safe-area-inset-bottom));
+  text-align: center;
+}
+.loading-text {
+  margin: 0 0 14px; color: #f8faff;
+  font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 900;
+  letter-spacing: .22em; text-shadow: 0 3px 14px rgba(6,10,32,.8);
+}
+/* Three dots that come and go in sequence, so the line reads as working even
+   while the bar is between checkpoints. */
+.loading-text i {
+  display: inline-block; width: 4px; font-style: normal;
+  animation: loading-dot 1.2s steps(1, end) infinite;
+}
+.loading-text i:nth-of-type(1)::after { content: "."; }
+.loading-text i:nth-of-type(2)::after { content: "."; }
+.loading-text i:nth-of-type(3)::after { content: "."; }
+.loading-text i:nth-of-type(2) { animation-delay: .2s; }
+.loading-text i:nth-of-type(3) { animation-delay: .4s; }
+.loading-track {
+  height: 10px; margin: 0 auto; max-width: 260px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+  background: rgba(9,13,40,.55);
+}
+.loading-fill {
+  display: block; height: 100%; width: var(--loading-progress, 10%);
+  border-radius: 999px; background: linear-gradient(90deg, #ffd21f, #ff8a1f);
+  /* The width is a real checkpoint landing; the transition only keeps the jump
+     from being a snap. */
+  transition: width .32s cubic-bezier(.3,.9,.3,1);
+}
+/* A highlight travelling along the filled part: decoration, and the only thing
+   here that is not tied to a checkpoint. */
+.loading-fill::after {
+  content: ""; display: block; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+  animation: loading-sheen 1.1s linear infinite;
+}
+@keyframes loading-dot { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
+@keyframes loading-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+.page-shell { min-height: 100dvh; display: grid; place-items: center; padding: 18px; }
+.game-frame {
+  position: relative;
+  width: min(100%, 430px);
+  height: min(900px, calc(100dvh - 56px));
+  min-height: 680px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 34px;
+  background:
+    radial-gradient(115% 68% at 80% 6%, rgba(96, 138, 255, 0.55), transparent 62%),
+    radial-gradient(95% 58% at 10% 98%, rgba(38, 214, 205, 0.4), transparent 66%),
+    linear-gradient(180deg, #2b3fa0 0%, #21489c 46%, #16527f 100%);
+  isolation: isolate;
+}
+.game-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 30px 30px;
+  mask-image: linear-gradient(to bottom, #000, transparent 78%);
+}
+.game-content { position: absolute; inset: 0; }
+
+.icon-button {
+  width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(255,255,255,.1); color: #eef2ff; cursor: pointer; transition: background .2s, transform .2s;
+}
+.icon-button:hover { background: rgba(255,255,255,.2); }
+.icon-button:active { transform: scale(.94); }
+.icon-button:focus-visible { outline: 2px solid #ffd54a; outline-offset: 2px; }
+.game-tools {
+  position: absolute; z-index: 12; top: max(var(--hud-inset), env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 8px;
+}
+.game-tools .icon-button { width: 44px; height: 44px; font-size: 18px; line-height: 1; }
+/* Same rise as the HUD, one button after the other, so the whole level frame
+   arrives as one move instead of the tools popping in. */
+.game-tools.is-rising .icon-button { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) both; }
+.game-tools.is-rising .icon-button:nth-child(2) { animation-delay: .07s; }
+
+.hud-top {
+  position: absolute; z-index: 12;
+  top: max(var(--hud-inset), env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  right: 70px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* `hidden` alone loses to the class rule below, so the menu hides the HUD here. */
+.hud-top[hidden] { display: none; }
+/* Entering a level pushes the HUD up out of the surface instead of flying it in
+   from off-screen; the batch row follows a beat later. */
+.hud-top.is-rising .goal-section { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) both; }
+.hud-top.is-rising .batch-section { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) .1s both; }
+.goal-section { display: block; }
+.goal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.goal-card {
+  position: relative; overflow: hidden; height: 52px; padding: 0 12px 8px;
+  display: flex; align-items: center; gap: 10px;
+  border: 2px solid color-mix(in srgb, var(--goal), transparent 38%); border-radius: 18px;
+  background:
+    radial-gradient(125% 150% at 10% 0%, color-mix(in srgb, var(--goal), transparent 58%), transparent 72%),
+    linear-gradient(180deg, rgba(24, 32, 78, .82), rgba(14, 20, 54, .92));
+  box-shadow:
+    0 12px 24px -14px color-mix(in srgb, var(--goal), transparent 30%),
+    0 0 0 4px color-mix(in srgb, var(--goal), transparent 90%),
+    inset 0 1px 0 rgba(255,255,255,.18);
+  animation: goal-in .34s cubic-bezier(.2,.8,.2,1) both;
+}
+.cube-icon {
+  width: 24px; height: 24px; flex: 0 0 auto; border-radius: 7px;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--goal), white 34%) 0%, var(--goal) 52%, color-mix(in srgb, var(--goal), black 26%) 100%);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--goal), black 42%), 0 0 16px color-mix(in srgb, var(--goal), transparent 45%);
+}
+.goal-count { display: flex; align-items: baseline; gap: 1px; line-height: 1; font-variant-numeric: tabular-nums; }
+.goal-count strong { font-size: 24px; letter-spacing: -.03em; text-shadow: 0 2px 6px rgba(6,10,32,.6); animation: count-pop .34s cubic-bezier(.2,.9,.24,1.4) both; }
+.goal-count small { color: #cdd6f7; font-size: 14px; font-weight: 700; }
+.goal-bar { position: absolute; left: 12px; right: 12px; bottom: 7px; height: 5px; border-radius: 999px; background: rgba(6,10,32,.5); overflow: hidden; }
+.goal-bar i { display: block; width: var(--goal-fill, 0%); height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--goal), white 26%), var(--goal)); box-shadow: 0 0 10px color-mix(in srgb, var(--goal), transparent 40%); transition: width .28s cubic-bezier(.2,.8,.2,1); }
+.goal-card.is-full { border-color: color-mix(in srgb, var(--goal), white 18%); animation: goal-in .34s cubic-bezier(.2,.8,.2,1) both, goal-full-glow 1.4s ease-in-out infinite alternate; }
+/* A finished slot renders as an empty grid cell: it holds the column open so the
+   goal still in play keeps its place, and shows nothing at all. */
+.goal-slot-empty { min-height: 0; }
+
+.batch-section { display: flex; align-items: center; gap: 9px; }
+.batch-caption {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; height: 32px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
+  color: #c9d2f4; font-size: 10px; font-weight: 900; letter-spacing: .1em;
+}
+.batch-caption-icon {
+  width: 13px; height: 12px; border: 2px solid currentColor; border-radius: 3px;
+  background: linear-gradient(currentColor 0 0) center / 100% 2px no-repeat;
+}
+.batch-caption em { color: var(--accent); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; }
+.batch-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: 1 1 auto; }
+.batch-slot {
+  position: relative; height: 32px; border: 2px dashed rgba(255,255,255,.24); border-radius: 11px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(11,16,46,.34);
+  color: rgba(255,255,255,.4); font-size: 11px; font-weight: 800;
+}
+.batch-slot.empty span { width: 12px; height: 12px; background: linear-gradient(currentColor 0 0) center / 100% 2px no-repeat, linear-gradient(currentColor 0 0) center / 2px 100% no-repeat; }
+.batch-slot.filled {
+  border: 2px solid color-mix(in srgb, var(--batch), transparent 34%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--batch), transparent 70%), color-mix(in srgb, var(--batch), transparent 86%));
+  box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--batch), transparent 30%), inset 0 1px 0 rgba(255,255,255,.16);
+  color: #fff; animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both;
+}
+.batch-slot.is-receiving { border-style: dashed; border-color: color-mix(in srgb, var(--batch), transparent 20%); }
+.batch-cube {
+  width: 14px; height: 14px; border-radius: 4px;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--batch), white 30%), var(--batch) 58%, color-mix(in srgb, var(--batch), black 24%));
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--batch), black 38%);
+}
+.batch-slot b { position: relative; font-size: 13px; font-variant-numeric: tabular-nums; }
+.batch-section.is-warning .batch-caption { border-color: rgba(255,145,48,.6); color: #ffd0a0; }
+.batch-section.is-warning .batch-caption em { color: #ff9130; }
+.batch-section.is-warning .batch-row { animation: batch-warning 1.2s ease-in-out infinite; }
+
+.scene-wrap { --aim-touch-height: 44%; position: absolute; inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0; overflow: hidden; }
+.scene-host { position: absolute; inset: 0; z-index: 0; }
+.scene-host canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+.model-input-zone { position: absolute; inset: 0 0 var(--aim-touch-height); z-index: 2; cursor: grab; touch-action: none; outline: none; }
+.model-input-zone.is-dragging { cursor: grabbing; }
+.aim-crosshair {
+  position: absolute; z-index: 5; left: 50%; top: 50%; width: 26px; height: 26px;
+  opacity: 0; visibility: hidden; transform: translate(-50%,-50%) scale(.84); pointer-events: none;
+  transition: opacity .1s linear, transform .1s ease-out; will-change: left, top, opacity, transform;
+}
+.aim-crosshair::before, .aim-crosshair::after {
+  content: ""; position: absolute; left: 50%; top: 50%; box-sizing: border-box;
+  border: 2px solid #07080c; border-radius: 2px; background: #fff;
+  transform: translate(-50%,-50%);
+}
+.aim-crosshair::before {
+  width: 26px; height: 6px;
+}
+.aim-crosshair::after {
+  width: 6px; height: 26px;
+}
+.aim-crosshair-core {
+  position: absolute; z-index: 2; left: 50%; top: 50%; width: 8px; height: 8px; display: block;
+  border: 2px solid #07080c; border-radius: 50%; background: #fff; transform: translate(-50%,-50%);
+}
+.aim-crosshair.is-visible { opacity: .28; visibility: visible; transform: translate(-50%,-50%) scale(.86); }
+.aim-crosshair.is-engaged { opacity: .84; transform: translate(-50%,-50%) scale(1); }
+.aim-crosshair.is-aiming:not(.is-target-valid) {
+  opacity: .64; transform: translate(-50%,-50%) rotate(45deg) scale(.9);
+}
+.aim-crosshair.is-target-valid {
+  opacity: 1; transform: translate(-50%,-50%) scale(1.08);
+}
+.aim-crosshair.is-cooling-down { opacity: .24; transform: translate(-50%,-50%) scale(.82); }
+.aim-crosshair.is-blocked { animation: crosshair-blocked .28s ease-out; }
+
+/* The wand's sight: a rune circle instead of iron sights. Same three elements
+   as the cross, redefined — the bars become rings, the core keeps the centre
+   dot, and the tick marks come from a masked conic gradient so the whole thing
+   is still one span with two pseudo elements. Every ring carries a dark edge on
+   both sides, which is what keeps a white sight legible over a pale block and
+   over the dark backdrop alike. */
+.aim-crosshair.is-magic { width: 36px; height: 36px; }
+.aim-crosshair.is-magic::before, .aim-crosshair.is-magic::after {
+  border-radius: 50%; background: none;
+  box-shadow: 0 0 0 1.5px rgba(7,8,12,.85), inset 0 0 0 1.5px rgba(7,8,12,.85);
+}
+.aim-crosshair.is-magic::before {
+  width: 36px; height: 36px; border: 2px solid #fff;
+}
+.aim-crosshair.is-magic::after {
+  width: 23px; height: 23px; border: 2px dashed #fff;
+  animation: rune-spin 6s linear infinite;
+}
+.aim-crosshair.is-magic .aim-crosshair-core { width: 6px; height: 6px; }
+/* Four ticks around the outer ring: a conic gradient masked down to a thin
+   band, turning the other way so the sight never looks like one rigid part. */
+.aim-crosshair.is-magic .aim-crosshair-core::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 46px; height: 46px;
+  transform: translate(-50%,-50%);
+  background: repeating-conic-gradient(from -3deg, #fff 0 6deg, transparent 6deg 90deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent 62%, #000 64%);
+  mask: radial-gradient(farthest-side, transparent 62%, #000 64%);
+  animation: rune-spin 9s linear infinite reverse;
+}
+/* A circle cannot show a 45 degree turn, so "nothing to hit here" is a colour
+   and a squeeze instead of the cross flipping into an x. */
+.aim-crosshair.is-magic.is-aiming:not(.is-target-valid) {
+  transform: translate(-50%,-50%) scale(.88);
+}
+.aim-crosshair.is-magic.is-aiming:not(.is-target-valid)::before,
+.aim-crosshair.is-magic.is-aiming:not(.is-target-valid)::after {
+  border-color: #ff8097;
+}
+.aim-crosshair.is-magic.is-target-valid::before { border-color: #ffe9a8; }
+.aim-crosshair.is-magic.is-target-valid::after { border-color: #fff; }
+.auto-clear-label {
+  position: absolute; z-index: 7; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid rgba(255,213,74,.28);
+  border-radius: 999px; background: rgba(18,25,70,.9); pointer-events: none;
+  animation: auto-clear-pulse .75s ease-in-out infinite alternate;
+}
+.auto-clear-label span { color: #ffd54a; font-size: 9px; font-weight: 900; letter-spacing: .1em; }
+.auto-clear-label b { color: #e7ebff; font-size: 10px; }
+
+.aim-zone {
+  --joystick-x: 50%; --joystick-y: 50%; --joystick-dx: 0px; --joystick-dy: 0px;
+  position: absolute; z-index: 4; inset: auto 0 0; height: var(--aim-touch-height); touch-action: none; cursor: grab;
+}
+.aim-zone.is-aiming { cursor: grabbing; }
+.aim-zone.is-cooling-down:not(.is-aiming) { cursor: progress; }
+.aim-joystick {
+  position: absolute; left: var(--joystick-x); top: var(--joystick-y); width: 128px; height: 128px;
+  border: 1px solid rgba(243,214,107,.34); border-radius: 50%; background: rgba(243,214,107,.045);
+  opacity: 0; visibility: hidden; transform: translate(-50%,-50%); pointer-events: none;
+  transition: opacity .08s linear;
+}
+.aim-joystick::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px;
+  border: 1px dashed rgba(255,255,255,.2); border-radius: 50%; background: rgba(10,12,21,.18);
+  transform: translate(-50%,-50%);
+}
+.aim-joystick-knob {
+  position: absolute; z-index: 1; left: 50%; top: 50%; width: 25px; height: 25px; display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,.46); border-radius: 50%; background: rgba(243,214,107,.5);
+  color: #fff; font-size: 14px; line-height: 1;
+  transform: translate(calc(-50% + var(--joystick-dx)),calc(-50% + var(--joystick-dy)));
+}
+.aim-zone.is-aiming .aim-joystick { opacity: .48; visibility: visible; }
+.aim-zone.is-cancelled .aim-joystick { opacity: .32; }
+.aim-zone.is-cancelled .aim-joystick::after { border-color: rgba(255,255,255,.42); background: rgba(255,255,255,.07); }
+.aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255,255,255,.16); }
+.aim-zone.is-cancelled .aim-joystick-knob::after { content: "×"; }
+
+.sort-flight-layer { position: absolute; z-index: 15; inset: 0; overflow: hidden; pointer-events: none; }
+.sort-flight-cube {
+  position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--sort-color), white 35%); background: var(--sort-color);
+  box-shadow: 2px 2px 0 color-mix(in srgb, var(--sort-color), black 28%);
+  opacity: 0; will-change: transform, opacity;
+  animation: sort-flight var(--sort-flight) cubic-bezier(.2,.72,.24,1) var(--sort-delay) forwards;
+}
+/* Cubes coming out of a batch travel between two pieces of HUD rather than out
+   of the board, so they carry a brighter rim to read against the panels. */
+.sort-flight-cube.is-from-batch {
+  border-color: color-mix(in srgb, var(--sort-color), white 55%);
+  box-shadow: 2px 2px 0 color-mix(in srgb, var(--sort-color), black 28%), 0 0 12px color-mix(in srgb, var(--sort-color), transparent 45%);
+}
+.game-frame.is-paused .sort-flight-cube { animation-play-state: paused; }
+
+.result-overlay {
+  position: absolute; z-index: 40; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 28px; text-align: center; background: rgba(15,21,64,.9); animation: overlay-in .25s ease both;
+}
+.result-overlay h2 { margin: 9px 0 7px; font-size: 25px; letter-spacing: -.04em; }
+.result-overlay p { max-width: 270px; margin: 0 0 20px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
+.result-overlay button {
+  margin-top: 16px; border: 0; border-radius: 14px; padding: 12px 19px; color: #2b1d00; background: #ffd54a;
+  font-size: 11px; font-weight: 900; letter-spacing: .05em; cursor: pointer;
+}
+.result-medal { width: 62px; height: 62px; margin-bottom: 16px; display: grid; place-items: center; border-radius: 20px; color: #2b1d00; background: #ffd54a; font-size: 30px; transform: rotate(-6deg); }
+.result-fail .result-medal { color: #fff; background: #ff4d6a; }
+.result-fail button { color: #fff; background: #ff4d6a; }
+
+.modal-overlay {
+  position: absolute; z-index: 50; inset: 0; display: grid; place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: rgba(11,16,52,.9); animation: overlay-in .2s ease both;
+}
+.modal-card {
+  width: min(100%, 330px); max-height: 100%; overflow-y: auto; padding: 24px;
+  border: 1px solid rgba(255,255,255,.14); border-radius: 24px; background: #212a63;
+  text-align: center;
+}
+.modal-icon {
+  width: 48px; height: 48px; margin: 0 auto 12px; display: grid; place-items: center;
+  border: 1px solid rgba(255,213,74,.25); border-radius: 16px; color: #ffd54a;
+  background: rgba(255,213,74,.09); font-size: 23px;
+}
+.restart-icon { color: #ffce68; }
+.modal-card h2 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
+.modal-description { margin: 8px auto 20px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
+.sensitivity-control { display: block; margin-top: 17px; text-align: left; }
+.sensitivity-control > label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sensitivity-control b { font-size: 12px; }
+.sensitivity-control output { color: #ffd54a; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sensitivity-control input {
+  width: 100%; height: 38px; margin: 4px 0 0; cursor: pointer; accent-color: #ffd54a;
+}
+.sensitivity-control input:focus-visible { outline: 2px solid rgba(255,213,74,.7); outline-offset: 2px; border-radius: 8px; }
+
+.toggle-control {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-top: 19px; padding-top: 17px; border-top: 1px solid var(--line); text-align: left;
+}
+.toggle-control > label { display: flex; flex-direction: column; gap: 3px; }
+.toggle-control b { font-size: 12px; }
+.toggle-control span { color: #b6c0e4; font-size: 11px; line-height: 1.45; }
+/* A native checkbox restyled as a switch: it keeps keyboard, screen reader and
+   label-click behaviour, so only the visuals are custom. */
+.toggle-control input {
+  appearance: none; flex: 0 0 auto; position: relative; width: 50px; height: 30px; margin: 0;
+  border: 1px solid var(--line); border-radius: 999px; background: rgba(11,16,46,.6);
+  cursor: pointer; transition: background .18s, border-color .18s;
+}
+.toggle-control input::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
+  border-radius: 50%; background: #8b95bf; transition: transform .18s, background .18s;
+}
+.toggle-control input:checked { border-color: rgba(255,213,74,.6); background: rgba(255,213,74,.24); }
+.toggle-control input:checked::after { transform: translateX(20px); background: #ffd54a; }
+.toggle-control input:focus-visible { outline: 2px solid rgba(255,213,74,.7); outline-offset: 2px; }
+.toggle-control input:disabled { cursor: not-allowed; opacity: .45; }
+.toggle-control input:disabled + label, .toggle-control:has(input:disabled) span { color: #8b95bf; }
+.modal-done-button, .restart-actions button {
+  min-height: 44px; border: 0; border-radius: 13px; font-size: 12px; font-weight: 900; cursor: pointer;
+}
+.modal-done-button { width: 100%; margin-top: 19px; color: #2b1d00; background: #ffd54a; }
+.restart-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 2px; }
+.restart-actions .confirm-yes { color: #03301c; background: #2fe58f; }
+.restart-actions .confirm-no { color: #fff; background: #ff4d6a; }
+.modal-done-button:focus-visible, .restart-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+.settings-section-label {
+  margin: 20px 0 0; color: var(--muted); font-size: 11px; font-weight: 900; letter-spacing: .1em; text-align: left;
+}
+.hub-return-button { width: 100%; margin-top: 19px; color: #eef2ff; background: rgba(255,255,255,.12); border: 1px solid var(--line); }
+.hub-return-button:hover { background: rgba(255,255,255,.2); }
+
+/* ---- Menu hub ---------------------------------------------------------- */
+/* The 3D scene stays visible underneath: the cluster turning in the middle of
+   the menu is the same model the level starts with, not a picture of it. */
+.hub-screen { position: absolute; inset: 0; z-index: 30; }
+.hub-tap {
+  position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: max(58px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(120% 62% at 50% 42%, transparent 38%, rgba(9, 13, 40, .58) 78%),
+    linear-gradient(180deg, rgba(9,13,40,.62) 0%, transparent 26%, transparent 62%, rgba(9,13,40,.72) 100%);
+  color: var(--ink);
+}
+.hub-play-hint {
+  font-size: 23px; font-weight: 900; letter-spacing: .12em;
+  text-shadow: 0 4px 18px rgba(6,10,32,.85);
+}
+/* The pulse lives on the inner span so the exit animation on the parent cannot
+   cancel it mid-cycle: replacing a running animation snaps the value back to
+   the base style, which read as the text popping brighter right as it left. */
+.hub-play-hint > span { display: block; animation: hub-play-pulse 1.5s ease-in-out infinite alternate; }
+.hub-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: -8px; }
+.hub-level-name {
+  position: absolute; z-index: 1; top: max(74px, calc(env(safe-area-inset-top) + 64px)); left: 0; right: 0;
+  margin: 0; padding: 0 68px; text-align: center; pointer-events: none;
+  font-size: 25px; font-weight: 500; letter-spacing: -.02em;
+  text-shadow: 0 4px 16px rgba(6,10,32,.8);
+}
+.hub-side-buttons {
+  position: absolute; z-index: 2; left: max(14px, env(safe-area-inset-left)); top: 38%;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.hub-side-button {
+  width: 62px; min-height: 46px; padding: 6px 4px; cursor: default;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+  color: #dfe5ff; font-size: 12px; font-weight: 900;
+}
+/* They are visibly inert rather than hidden: the menu shows where they will go. */
+.hub-side-button[disabled] { opacity: .62; }
+/* Only positioned here: the look and size come from .icon-button, the same rule
+   the in-game tools use, so the button does not change shape or jump when the
+   menu hands over to the level. */
+.hub-settings-button {
+  position: absolute; z-index: 2;
+  top: max(var(--hud-inset), env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+  width: 44px; height: 44px; display: grid; place-items: center;
+  font-size: 18px; line-height: 1;
+}
+
+/* Tapping play hands the level over on the same frame, so the overlay stops
+   catching input while its furniture is still sliding away. */
+.hub-screen.is-leaving { pointer-events: none; }
+.hub-screen.is-leaving .hub-tap {
+  animation: hub-backdrop-out .3s ease forwards;
+  /* This button is the size of the screen, so any focus ring on it is a
+     full-screen ring. Some phones treat a tap as focus-visible; once play has
+     started the ring has nothing left to point at. */
+  outline: none;
+}
+.hub-screen.is-leaving .hub-play-hint { animation: hub-exit-down .3s cubic-bezier(.4,0,.9,.4) forwards; }
+.hub-screen.is-leaving .hub-level-name { animation: hub-exit-up .3s cubic-bezier(.4,0,.9,.4) forwards; }
+.hub-screen.is-leaving .hub-side-buttons { animation: hub-exit-left .3s cubic-bezier(.4,0,.9,.4) forwards; }
+
+/* Entry animation is kept off .hub-play-hint so its idle pulse survives; the
+   hint arrives with the backdrop instead. */
+.hub-level-name, .hub-side-buttons { animation: hub-enter .34s cubic-bezier(.2,.8,.2,1) both; }
+.hub-side-buttons { animation-delay: .05s; }
+.hub-side-button:not([disabled]) { cursor: pointer; transition: background .2s, transform .2s; }
+.hub-side-button:not([disabled]):hover { background: rgba(53,66,134,.86); transform: translateX(2px); }
+.hub-side-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Cosmetic picker --------------------------------------------------- */
+/* Sits above the menu and below the dialogs. Its middle is left empty on
+   purpose: the rig being previewed is the engine's own, drawn behind this
+   screen, so anything opaque there would cover the thing being sold. */
+.cosmetic-screen {
+  position: absolute; z-index: 40; inset: 0;
+  display: grid; grid-template-rows: auto 1fr auto auto;
+  padding: max(var(--hud-inset), env(safe-area-inset-top)) 0 max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(9,13,40,.72) 0%, rgba(9,13,40,.12) 24%, rgba(9,13,40,.1) 46%, rgba(9,13,40,.78) 72%, rgba(9,13,40,.94) 100%);
+  animation: overlay-in .2s ease both;
+}
+.cosmetic-bar {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 0 max(14px, env(safe-area-inset-left));
+}
+/* The left margin matches the close button on the right, so the title is
+   centred in the frame rather than in the space left over beside the button. */
+.cosmetic-heading { flex: 1; margin-left: 44px; text-align: center; }
+.cosmetic-heading h2 {
+  margin: 0; font-size: 27px; font-weight: 900; letter-spacing: -.03em; text-transform: uppercase;
+  text-shadow: 0 4px 16px rgba(6,10,32,.8);
+}
+.cosmetic-heading p { margin: 2px 0 0; color: #c3cbf2; font-size: 12px; letter-spacing: .02em; }
+.cosmetic-close {
+  flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.24); border-radius: 14px;
+  background: #ff4d6a; color: #fff; font-size: 17px; font-weight: 900;
+  transition: background .2s, transform .2s;
+}
+.cosmetic-close:hover { background: #ff6580; transform: scale(1.04); }
+.cosmetic-close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* The window onto the 3D preview. Nothing is drawn here and nothing may catch a
+   tap, or the rig would be sitting behind a pane of glass. */
+.cosmetic-stage { pointer-events: none; }
+.cosmetic-equip {
+  justify-self: center; min-width: 168px; margin: 0 0 14px; padding: 13px 30px; cursor: pointer;
+  border: 0; border-radius: 999px; background: #fff; color: #2b3fa0;
+  font-size: 16px; font-weight: 900; letter-spacing: -.01em;
+  box-shadow: 0 10px 26px rgba(6,10,32,.45);
+  transition: transform .2s, background .2s;
+}
+.cosmetic-equip:hover:not([disabled]) { transform: translateY(-2px); }
+.cosmetic-equip[disabled] { color: #4a5aa8; background: rgba(255,255,255,.82); cursor: default; }
+.cosmetic-equip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.cosmetic-tray {
+  padding: 12px max(12px, env(safe-area-inset-left)) 2px;
+  border-top: 1px solid var(--line); border-radius: 22px 22px 0 0;
+  background: rgba(15,22,62,.86);
+}
+.cosmetic-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.cosmetic-card {
+  position: relative; aspect-ratio: 1; display: grid; place-items: center; padding: 4px; cursor: pointer;
+  border: 2px solid transparent; border-radius: 16px;
+  background: linear-gradient(180deg, rgba(120,158,255,.34), rgba(46,66,150,.5));
+  color: #dfe5ff; font-size: 18px;
+  transition: border-color .2s, transform .2s;
+}
+.cosmetic-card img { width: 100%; height: 100%; object-fit: contain; }
+.cosmetic-card:hover:not([disabled]) { transform: translateY(-2px); }
+.cosmetic-card.is-previewing { border-color: #fff; }
+.cosmetic-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cosmetic-card-tick {
+  position: absolute; right: 4px; bottom: 4px; width: 20px; height: 20px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: #24e07f; color: #04321b; font-size: 12px; font-weight: 900;
+}
+.cosmetic-card-blank { color: rgba(223,229,255,.55); font-size: 22px; }
+/* Inert but visible, the same way the menu's Shop button shows where it goes. */
+.cosmetic-card.is-locked { cursor: default; opacity: .42; background: rgba(24,33,84,.75); }
+
+.game-frame.is-sheet-drag { outline: 2px dashed rgba(255,213,74,.7); outline-offset: -6px; }
+.sheet-drop-hint {
+  position: absolute; z-index: 45; inset: 0; display: grid; place-items: center;
+  background: rgba(11,16,52,.72); pointer-events: none;
+}
+.sheet-drop-hint span {
+  padding: 14px 18px; border: 2px dashed rgba(255,213,74,.7); border-radius: 16px;
+  background: rgba(18,25,70,.9); color: var(--accent); font-size: 13px; font-weight: 900;
+}
+.sheet-toast {
+  position: absolute; z-index: 46; left: 16px; right: 16px; bottom: 18px;
+  padding: 11px 14px; border: 1px solid rgba(36,224,127,.5); border-radius: 14px;
+  background: rgba(12,20,52,.94); box-shadow: 0 16px 30px -18px rgba(4,8,30,.9);
+  animation: toast-in .22s ease-out both;
+}
+.sheet-toast.is-warn { border-color: rgba(255,138,31,.6); }
+.sheet-toast p { margin: 0; color: #e7ebff; font-size: 12px; line-height: 1.5; }
+.sheet-toast p + p { margin-top: 4px; color: #b6c0e4; font-size: 11px; }
+
+.levels-card { text-align: left; }
+.levels-card h2, .levels-card .modal-description { text-align: center; }
+.level-list { display: grid; gap: 6px; max-height: 42vh; overflow-y: auto; margin: 4px 0 0; padding: 2px; }
+.level-row {
+  display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px;
+  min-height: 42px; padding: 6px 10px; cursor: pointer; text-align: left;
+  border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.05); color: var(--ink);
+}
+.level-row:hover { background: rgba(255,255,255,.11); }
+.level-row.is-current { border-color: rgba(255,213,74,.65); background: rgba(255,213,74,.14); }
+.level-row b { color: var(--accent); font-size: 14px; font-variant-numeric: tabular-nums; }
+.level-row span { font-size: 13px; }
+.level-row small { color: var(--muted); font-size: 11px; }
+.level-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet-issue-list {
+  margin: 12px 0 0; padding: 10px 12px 10px 26px; list-style: disc;
+  border: 1px solid rgba(255,138,31,.45); border-radius: 12px; background: rgba(255,138,31,.1);
+}
+.sheet-issue-list li { color: #ffd0a0; font-size: 11px; line-height: 1.55; }
+.sheet-file-button {
+  display: block; margin-top: 14px; padding: 11px; cursor: pointer; text-align: center;
+  border: 1px dashed var(--line); border-radius: 13px; background: rgba(255,255,255,.05);
+  font-size: 12px; font-weight: 900;
+}
+.sheet-file-button:hover { background: rgba(255,255,255,.1); }
+.sheet-file-button input { display: none; }
+.result-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.result-overlay .result-next { color: #03301c; background: #24e07f; }
+
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes hud-rise { from { opacity: 0; transform: translateY(26px); } }
+@keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
+@keyframes hub-play-pulse { to { opacity: .58; transform: scale(.975); } }
+@keyframes hub-backdrop-out { to { opacity: 0; } }
+/* Each piece leaves through the edge it sits against, so the menu clears the
+   board instead of dissolving in place. */
+@keyframes hub-exit-up { to { opacity: 0; transform: translateY(-150%); } }
+@keyframes hub-exit-down { to { opacity: 0; transform: translateY(240%); } }
+@keyframes hub-exit-left { to { opacity: 0; transform: translateX(-190%); } }
+
+@keyframes goal-in { from { opacity: 0; transform: translateY(-7px) scale(.98); } }
+@keyframes count-pop { from { opacity: .4; transform: translateY(-4px) scale(.68); } }
+@keyframes goal-full-glow {
+  to {
+    border-color: color-mix(in srgb, var(--goal), white 42%);
+    box-shadow:
+      0 12px 24px -14px color-mix(in srgb, var(--goal), transparent 18%),
+      0 0 0 7px color-mix(in srgb, var(--goal), transparent 80%),
+      inset 0 1px 0 rgba(255,255,255,.24);
+  }
+}
+@keyframes batch-in { from { opacity: 0; transform: translateY(-10px) scale(.8); } }
+@keyframes batch-warning { 50% { opacity: .74; transform: scale(.982); } }
+@keyframes overlay-in { from { opacity: 0; } }
+@keyframes auto-clear-pulse { to { opacity: .74; transform: translateX(-50%) scale(1.03); } }
+@keyframes crosshair-blocked {
+  40% { opacity: .34; transform: translate(-50%,-50%) scale(.68); }
+  72% { transform: translate(-50%,-50%) scale(1.12); }
+}
+/* Centre-anchored, because both rune rings are positioned by the same
+   translate the cross uses. */
+@keyframes rune-spin {
+  from { transform: translate(-50%,-50%) rotate(0deg); }
+  to { transform: translate(-50%,-50%) rotate(360deg); }
+}
+@keyframes sort-flight {
+  0% { opacity: 0; transform: translate3d(var(--sort-sx),var(--sort-sy),0) scale(1) rotate(0deg); }
+  10% { opacity: 1; }
+  58% { opacity: .92; transform: translate3d(var(--sort-mx),var(--sort-my),0) scale(.68) rotate(105deg); }
+  88% { opacity: .72; }
+  100% { opacity: 0; transform: translate3d(var(--sort-tx),var(--sort-ty),0) scale(.03) rotate(190deg); }
+}
+
+@media (max-width: 520px) {
+  .page-shell { padding: 0; }
+  .game-frame { width: 100%; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
+}
+
+/* Narrow phones: keep the batch slots readable by dropping the caption wording. */
+@media (max-width: 360px) {
+  .batch-caption { padding: 0 8px; }
+  .batch-caption-text { display: none; }
+}
+
+@media (max-height: 730px) {
+  :root { --hud-inset: 12px; --hud-height: 82px; }
+  .goal-card { height: 46px; border-radius: 16px; }
+  .goal-count strong { font-size: 21px; }
+  .cube-icon { width: 21px; height: 21px; }
+  .batch-slot, .batch-caption { height: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
