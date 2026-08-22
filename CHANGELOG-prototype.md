@@ -3,10 +3,10 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 866.114 bytes, 5 màn, một file HTML chạy
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 857.889 bytes, 3 màn, một file HTML chạy
 offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 121/121 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
+**Trạng thái kiểm tra:** 119/119 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
 
 ---
 
@@ -361,6 +361,10 @@ hiện data đang đọc từ nguồn nào.
 ---
 
 ## 5. Hai cơ chế mới: Barrel và Link
+
+> **Đã bị bỏ ở mục 13.** Toàn bộ mục này giữ lại làm lịch sử: Barrel và Link không còn
+> trong source, và hai màn test của chúng đã bị xoá. Đọc mục 13 trước khi dựa vào bất kỳ
+> chi tiết nào dưới đây.
 
 Theo `6.barrel-link-block-draft_claude.md` và các quyết định đã chốt.
 
@@ -993,7 +997,7 @@ có first-paint để lấy.
 
 ## 6. Test
 
-Từ 10 test lên **121 test**, 17 file:
+Từ 10 test lên **119 test**, 16 file:
 
 | File | Nội dung |
 |---|---|
@@ -1005,14 +1009,13 @@ Từ 10 test lên **121 test**, 17 file:
 | `multi-touch-regression.test.mjs` | Xoay và ngắm không chặn nhau, nhưng vẫn chặn khi đạn đang bay |
 | `haptics.test.mjs` | Nhịp rung, giảm dần khi nhiều khối rơi, tắt/bật |
 | `level-sheet.test.mjs` | Parser bảng, TSV/CSV/chấm phẩy, mọi lỗi được báo, `.csv` và `.tsv` cho ra màn giống nhau |
-| `barrel-link.test.mjs` | Barrel layers, link expand cả cụm, mọi lỗi link/barrel, và hai màn test đúng thiết kế |
 | `batch-flight.test.mjs` | Nhịp bay dưới 1 giây ở mọi số lượng, engine tự đi từng bước cascade, mọi thứ khác đứng chờ trong lúc bay, và sprite dựng đúng giữa hai đầu |
+| `batch-ui.test.mjs` | Kho dự trữ là **một** khay chứ không phải hàng slot (không còn `data-batch-slot`, không in chữ số nào), caption đếm block so với budget chứ không đếm record so với slot, con số vẫn tới screen reader qua `aria-label`, khay giữ màu neutral vì nó chứa nhiều màu cùng lúc còn pip lấy màu từ record của nó, khay có lip đáy dày hơn vách và giữ đúng 32px, pip lấy cột từ `--pips` với `minmax(0, 1fr)` nên hai hàng pip luôn vừa lòng khay, cụm làm tràn bị từ chối **trước** nhánh shot-limit nên không tốn đạn và được kiểm lại ở lúc va chạm, và bàn chơi không còn nước đi thì kết thúc màn |
 | `menu-hub.test.mjs` | Menu chặn gameplay, model xoay ngoài nhánh paused, menu thu nhỏ model, intro zoom kết thúc đúng transform gốc và chỉ mở input sau đó, đã bỏ nút level, CSV chỉ nhận ở menu, có đường về menu |
 | `impact-feel.test.mjs` | Sóng đẩy đi ra từng vòng (yếu dần, trễ dần, vòng chỉ đánh dấu sau khi thu xong), vòng chưa tới thì khối đứng im, khói tròn trắng solid tan bằng co lại chứ không mờ, mọi nhánh `handleHit` đều bung khói, chạm sàn không giành mất phát trúng khối, đạn rơi thì nhỏ dần theo độ cao và nhả vệt theo thời gian bay (chỉ đổi cỡ vẽ, pool reset scale), nhãn hit feedback đã bị bỏ khỏi UI-engine-CSS |
-| `result-screen.test.mjs` | Kết thúc màn là panel có khung chứ không phải tấm phủ, anim trồi ra bằng translateZ và cần perspective ở cha, card pop trễ sau backdrop, pháo hoa chỉ khi thắng và nằm sau panel, bảng tia tính một lần không random, lớp tia không ăn tap |
+| `result-screen.test.mjs` | Kết thúc màn là panel có khung chứ không phải tấm phủ, anim trồi ra bằng translateZ và cần perspective ở cha, card pop trễ sau backdrop, pháo hoa chỉ khi thắng và nằm sau panel, bảng tia tính một lần không random, lớp tia không ăn tap, và **mọi lý do thua đều có một câu copy riêng** (panel đọc theo `result.reason`, không in cứng câu batch-slot cho cả trường hợp hết đạn) |
 | `loading-screen.test.mjs` | Loader là markup chứ không do JS vẽ và không có asset để tải, một string dùng cho cả bản dev và bản một file, trong template nó đứng trước bundle, bar nhảy theo mốc thật và không đi lùi (không timer, không random), xong thì rời khỏi DOM và tắt pointer-events, CSS không dựa vào token nào của app |
 | `cosmetics.test.mjs` | Hai skin và fallback khi id lạ, hai rig cùng bệ và cùng chiều dài nòng còn hướng thuôn thì ngược nhau (pháo loe, nòng phép thu), đóng màn skin thì hạt của nó bị dọn theo (cả hai chiều) và recoil được reset, không khối nào trên nòng cắt mặt ổ súng trong quãng giật (`RECOIL_TRAVEL` khớp giữa hai file, độ dẹt ổ phải do `housingYScale` giải, không có `breech` trở lại), rig không có tấm phẳng (`BoxGeometry`) và mọi hình tròn đạt sàn segment theo loại, đầu đũa không mảnh dưới ngưỡng, crosshair đũa là vòng phép (toggle một chỗ, dispose trả class, trạng thái "không trúng" đổi màu thay vì xoay 45°), màn skin thay thế menu chứ không đè lên (không còn tên level/Skin/Shop/currency lòi qua) và focus trả về nút Skin sau khi menu mount lại, lưu localStorage đúng khuôn haptics, skin không chạm muzzle/không có hằng số gameplay, swap skin dispose rig cũ, đũa phép thay hẳn khói (bling bay lơ lửng vs pháo hoa rơi), sparkle chạy trong fixed-step, demo shot trong preview không chạm state, thumbnail render bằng đúng renderer và cache một lần, nút Skin mở màn không dùng modal-overlay, thẻ xem trước còn nút mới áp dụng |
-| `link-bridge.test.mjs` | Nẹp ở mọi giao điểm của cặp link và trên mọi mặt ngoài của từng giao điểm (không tính giao điểm trong lòng một cụm), level 5 ra đúng 4 giao điểm / 6 nẹp và sườn nhìn thấy được bắt đủ cả hai giao điểm, giao điểm không có mặt ngoài vẫn được một nẹp, hai cụm rời nhau vẫn có một nẹp chọn theo khoảng cách → mặt dễ thấy → id, đặt lại mỗi frame từ vị trí khối thật, claim thì cả đường ghép rơi đúng một lần |
 | `level-handoff.test.mjs` | Nút Next level vào thẳng màn sau chứ không qua menu, entrance bật trong đúng effect dựng engine và chỉ một lần, màn mới zoom out + xoay nửa vòng trong 0,7 s, nửa vòng chạy bằng góc chứ không slerp, pháo đứng yên khi chuyển màn nhưng vẫn trồi lên khi vào từ menu, không ai giải lại hướng pháo lúc cụm còn đang bay, frame đầu của intro chỉ đặt lại đồng hồ |
 
 Chạy: `npm test` · `npm run lint` · `npx tsc -p tsconfig.json`
@@ -1021,13 +1024,9 @@ Chạy: `npm test` · `npm run lint` · `npx tsc -p tsconfig.json`
 
 ## 7. Còn mở, cần bạn chốt
 
-1. **§2.4.3 chuỗi link** — link chỉ nối hai cụm, hay nối được dây dài? Ví dụ chuỗi: đỏ →
-   tím → cam, bắn đỏ thì tím chết, tím lại kéo cam chết theo; một phát ba cụm và phải tính
-   chỗ chứa cho ba màu cùng lúc. Hiện chặn chuỗi.
-2. **§2.4.2 cách hiểu** — tôi hiểu là **cả cặp bị khoá** (bắn A không phá được gì). Nếu ý
-   bạn là "A vỡ, B ở lại" thì đổi một dòng.
-3. **Barrel lồng nhau** — hiện 3 lớp là 3 lớp của *cùng một* vỏ (đổi màu), không phải ba
-   vỏ lồng vẽ chồng nhau.
+1. ~~**§2.4.3 chuỗi link**~~ — **đóng ở mục 13**, Link đã bị bỏ.
+2. ~~**§2.4.2 cách hiểu**~~ — **đóng ở mục 13**, Link đã bị bỏ.
+3. ~~**Barrel lồng nhau**~~ — **đóng ở mục 13**, Barrel đã bị bỏ.
 4. **Hàng dự trữ ở đoạn auto-clear** — hàng goal đã biến mất nhưng hàng `DỰ TRỮ 0/2` vẫn
    nằm đó (rỗng). Muốn sạch hoàn toàn thì ẩn luôn.
 5. **Repo chưa có git.** Trong phiên này `work/levels.tsv` từng bị mất khỏi ổ đĩa và tôi
@@ -1171,3 +1170,309 @@ overlay nằm sau đó. Và tôi chạy scanner đó trên **bản trong git** �
 |---|---|
 | Bản đã commit (trước khi sửa) | overlay **INSIDE** `.scene-wrap` → test đỏ |
 | Bản hiện tại | overlay OUTSIDE → test xanh |
+
+---
+
+## 11. Màn skin: nút Select nhỏ lại, đáy model không bị tối
+
+**Nút Select/Selected** bị bự: `min-width 168px`, `padding 13px 30px`, `font-size 16px`. Giờ là
+`124px` / `9px 22px` / `13px` — khoảng **74% bề rộng và 74% chiều cao**, tức còn ~55% diện tích.
+"Selected" ở cỡ chữ mới rộng khoảng 104px nên vẫn vừa trong `min-width` 124px.
+
+**Đáy model bị tối** là do scrim của `.cosmetic-screen`, không phải do vật liệu model. Gradient cũ
+ramp lên `.78` ở mốc 72% chiều cao khung, mà rig thì chiếm **26–55%** — nên phần đế nằm đúng chỗ
+gradient bắt đầu tối. Đo alpha của scrim tại từng mốc:
+
+| % chiều cao khung | Trước | Sau | |
+|---|---|---|---|
+| 26% | 0,12 | 0,12 | rig |
+| 35% | 0,11 | 0,10 | rig |
+| 45% | 0,10 | 0,07 | rig |
+| **55%** | **0,34** | **0,07** | **đáy rig — chỗ bị tối** |
+| 60% | 0,47 | 0,12 | nút Select |
+| 68–100% | 0,68–0,94 | 0,18–0,40 | khay thẻ tự vẽ nền của nó |
+
+Chỗ tối nhất trên dải rig: **0,34 → 0,12**, giảm 64%. Phần dưới không cần scrim nặng vì
+`.cosmetic-tray` đã có nền riêng (`rgba(15,22,62,.86)`).
+
+Có test parse **chính chuỗi gradient** trong CSS, nội suy alpha rồi khẳng định scrim ≤ 0,2 trên cả
+dải 26–55%, và vẫn > 0,4 ở đỉnh để tiêu đề còn đọc được. Giá trị cũ 0,34 tại mốc 55% sẽ làm test đỏ,
+nên nó bắt đúng lỗi vừa sửa.
+---
+
+## 12. Làm lại UI batch: từ nhãn đếm thành khay chứa block
+
+Slot batch cũ là một pill cao 32px chứa **một** ô vuông 14px cộng chữ `×N`. Một cube tĩnh không phản
+ánh việc batch dày lên qua từng phát bắn, và số lượng thì phải **đọc** mới biết. Nó là phần nhàm nhất
+của HUD.
+
+Giờ mỗi slot là một **khay chứa**: bao nhiêu block thì bấy nhiêu pip nằm trong khay, **không còn chữ
+số nào trên màn hình**.
+
+| | Trước | Sau |
+|---|---|---|
+| Vật thể | pill bo tròn | khay: vách 2px, **lip đáy 4px** |
+| Nội dung | 1 cube 14px + chữ `×N` | N pip 11px, một pip là một block |
+| Số lượng | đọc từ chữ số | đếm từ số pip |
+| Lòng khay | tint theo màu batch (`transparent 70→86%`) | tối neutral `rgba(6,10,32,.5→.72)` |
+| Màu batch nằm ở | nền + viền | viền + vành `0 0 0 3px` |
+| Slot rỗng | dấu `+` | khay với 3 ổ chờ mờ |
+| Chiều cao | 32px | **32px, không đổi** |
+
+Lòng khay tối neutral là chủ ý, không phải cho đẹp: nền tint màu batch làm pip lẫn vào chính nền của
+nó, mà cả 6 màu block đều phải đọc được ở 11px. Màu dời ra viền và vành sáng.
+
+### 12.1 Pip phải tự co, vì batch có thể chứa nhiều hơn khay
+
+5 màn hiện tại cluster lớn nhất là **6 block** (cụm R màn 1, cụm P màn 3), nhưng `level-format.ts`
+cho phép tới **12** trong khung `4x3x2` — nên không thể chọn cứng một cỡ pip.
+
+Đo trên viewport 375px: slot rộng **81,3px**, trừ vách và padding còn **67,3px** lòng khay. Nên cột
+lấy từ `--pips` (JS set `count <= 6 ? count : ceil(count/2)`) và mỗi cột là `minmax(0, 1fr)` với pip
+`max-width: 11px`. Pip tự nhỏ lại khi chật thay vì tràn ra ngoài:
+
+| Số block | Cột | Hàng | Cỡ pip |
+|---|---|---|---|
+| 1–5 | = số block | 1 | 11px |
+| 6 | 6 | 1 | 9,5px |
+| 7–10 | 4–5 | 2 | 11px |
+| 11–12 | 6 | 2 | 9,5px |
+| 13–14 | 7 | 2 | 7,9px |
+
+Đo cả dải **1 → 14 block**: không trường hợp nào pip vượt khỏi vách khay, theo cả trục ngang và dọc.
+
+Hai breakpoint dễ vỡ cũng đã đo:
+
+- **width 360px**: caption ẩn chữ "BATCH" nên slot *rộng ra* thành 100px — 12 pip vẫn 11px, không tràn.
+- **height ≤ 730px**: slot xuống 28px, lòng khay còn 22px nên pip bị chặn ở 9px — 12 pip xếp 2 hàng vẫn vừa.
+
+Vì chiều cao slot giữ đúng 32px, `--hud-height` (92px) không phải đổi và `.scene-wrap` không mất một
+pixel nào.
+
+### 12.2 Chuyển động và accessibility
+
+Mỗi block mới rơi vào khay bằng `@keyframes pip-drop` riêng. Pip key theo index nên **chỉ viên vừa
+tới** chạy animation, các viên đã nằm trong khay đứng im — trước đây cả slot nháy lại mỗi lần count
+đổi.
+
+Chữ số rời khỏi màn hình thì phải đi vào label, không thì screen reader mất thông tin: slot đầy có
+`aria-label="RED batch, 3 blocks"`, slot rỗng có `aria-label="Empty batch slot"`, các pip là
+`aria-hidden`. Số ít đọc đúng "1 block" chứ không phải "1 blocks".
+
+### 12.3 Đường bay không được đứt
+
+`handleBatchFlight` đo slot qua `[data-batch-id]` và cluster bay vào slot qua `[data-batch-slot]`.
+Đổi ruột slot mà mất một trong hai thì **render vẫn đúng nhưng animation chết im lặng** — nên cả hai
+attribute được giữ nguyên và có test khẳng định chúng còn trong JSX.
+
+Tầng hình của batch trước đây là hệ thống UI duy nhất **không có test nào** (goal, result, cosmetic,
+loading đều có). Thêm `tests/batch-ui.test.mjs`: 4 test chốt lại "không in chữ số", label cho screen
+reader, hai mốc neo đường bay, và việc pip không thể tràn khỏi khay (test tự tính `2 × cỡ pip + gap`
+phải nhỏ hơn lòng khay, nên đổi vách/lip/cỡ pip lệch nhau là đỏ ngay).
+
+---
+
+## 13. Bỏ mechanic Barrel và Link
+
+Hai cơ chế của mục 5 bị bỏ hẳn khỏi source, không phải tắt bằng cờ.
+
+| Việc | Chi tiết |
+|---|---|
+| `app/game/types.ts` | Bỏ `BlockSpec.barrelLayers`, `BlockSpec.linkGroup`, `BlockRuntime.barrelLeft`, `BlockRuntime.barrelShell` |
+| `app/game/level-format.ts` | Bỏ cột `barrel_layers` và `links` cùng parser/validator của chúng, bỏ `MAX_BARREL_LAYERS`. Chữ thường trong `layers` giờ chỉ là block thường (parser đọc không phân biệt hoa thường) |
+| `app/game/CannonSortEngine.ts` | **−25.225 ký tự.** Bỏ vỏ barrel (geometry, 3 material theo độ sâu, `peelShell`, `peelBarrelAround`, `breakBarrelsTouching`), toàn bộ nẹp link (`buildLinkBridges`, chọn mặt gắn, `updateLinkBridges` mỗi frame, `dropLinkBridge`, `claimLinkedClusters`, `coveredLinkPartner`), và điều kiện tách cụm theo biên vỏ trong `findCluster` |
+| Hệ debris | Cũng đi theo: `spawnShellDebris` và `dropLinkBridge` là **hai** người dùng duy nhất của nó, nên vỏ và nẹp biến mất thì `DebrisPiece`, `updateDebris`, `addDebris` và `makePlatingTexture` thành code chết |
+| Màn 4 và 5 | Xoá khỏi sheet. Chúng chỉ tồn tại để test hai cơ chế này ("Barrel test", "Link test"), nên giữ lại là giữ hai bàn chơi không còn ý nghĩa |
+| Test | Xoá `tests/barrel-link.test.mjs` và `tests/link-bridge.test.mjs`, bỏ khỏi script `test` |
+
+**Cái bẫy khi làm việc này**: `app/game/cosmetics.ts` có **46 chỗ** chứa chữ "barrel" nhưng đó là
+**nòng súng** (`barrelPivot`, `barrelVisual`, `barrelBackRadius`), không liên quan gì tới vỏ bọc
+block. Hai thứ trùng tên hoàn toàn. Việc xoá chỉ đi theo đúng danh sách identifier của block, và
+verification có một bước riêng để xác nhận pháo vẫn còn nòng.
+
+Kích thước bản build giảm **869.254 → 857.889 bytes**.
+
+### 13.1 Một bug tự tiêu theo
+
+`createBatchOrFail` đặt `id: `batch-${shotIndex}``, còn `handleHit` từng resolve cụm bị bắn **và**
+cụm link cùng một `shotIndex`. Nếu cả hai bên đều phải park thì hai record mang **cùng một id**, và
+`applyBatchAutoFill` tra record theo id — nó sẽ rót batch **sai màu** vào goal. Màn 5 không chạm tới
+được trạng thái đó nên bug ở dạng tiềm ẩn. Bỏ Link thì một phát bắn chỉ còn đúng một claim, nên id
+lại là duy nhất và không cần sửa gì thêm.
+
+(Tôi gặp đúng lỗi này khi viết script mô phỏng: truyền `shotIndex: 1` cho mọi claim làm 10.776/20.160
+thứ tự bắn của màn 1 "không thắng được". Không phải lỗi sản phẩm, nhưng nó cho thấy hậu quả của id
+trùng là gì.)
+
+---
+
+## 14. Batch: giới hạn đổi từ 2 slot sang budget block
+
+Giới hạn cũ đếm **record**: một batch giữ 1 block hay 12 block đều chiếm đúng một slot
+(`rules.ts`, `state.batches.length >= level.batchCapacity`). Brute-force **toàn bộ** thứ tự bắn của
+các màn qua chính `rules.ts` cho thấy đó là proxy sai — peak slot và peak block lệch nhau tới **4
+lần**: có đường giữ 8 block trong đúng 2 slot, có đường cần 5 slot mà chỉ giữ 14 block. Luật cũ phạt
+*số màu* người chơi hoãn và mù hoàn toàn với *khối lượng* hoãn: park 14 block thì sống, park 3 block
+lại thua.
+
+Thêm nữa, mục 12 đã đổi HUD sang khay đếm bằng pip = block, nên `2/2` và "12 pip" là hai đơn vị
+không liên quan nằm cùng một hàng. Giờ con số và cái hình đo cùng một thứ.
+
+### 14.1 Chọn con số 8
+
+Tỉ lệ thứ tự bắn thắng được, brute-force đầy đủ (20.160 / 2.520 / 90 thứ tự phân biệt):
+
+| Budget | Màn 1 | Màn 2 | Màn 3 |
+|---|---|---|---|
+| 4 | 19,5% | 58,6% | 86,7% |
+| 6 | 41,0% | 83,3% | 100% |
+| **8** | **58,9%** | **100%** | **100%** |
+| 10 | 82,3% | 100% | 100% |
+| 14 | 100% | 100% | 100% |
+| *luật cũ (2 slot)* | *37,2%* | *58,6%* | *100%* |
+
+**8 là giá trị nhỏ nhất không làm bất kỳ đường thắng nào hiện tại trở thành thua** — đã kiểm trực
+tiếp: 0 regression trên cả ba màn. **Sàn cứng là 4**, bằng cụm lớn nhất còn lại (Y×4, B×4, G×4 ở màn
+1): không gì chia một cụm ra nhiều phần trong kho, nên budget dưới cỡ cụm là một nước đi hợp lệ mà
+không cách nào chơi được. Áp lực tự nhiên của ba màn trải 6→14 nên để **theo màn**: cột
+`batch_blocks` với default 8, và validator ở `level-format.ts` chặn giá trị nhỏ hơn cụm lớn nhất —
+cùng tinh thần `checkGoalWindows`.
+
+### 14.2 Gộp phép chia đang bị nhân đôi
+
+`resolveCluster` và `CannonSortEngine.createSortAnimation` tự tính `min(count, goalRemaining)` và
+phần dư **một cách độc lập**, và bản engine lặng lẽ bỏ chặng batch khi hết chỗ nên một phát bắn "chết"
+chỉ animate phần goal. Giờ cả hai — cộng thêm kiểm tra hợp lệ lúc ngắm — đọc **một** hàm
+`planClusterSplit()` trong `rules.ts`, nên animation không thể mô tả một phép chia mà state không
+ghi lại.
+
+### 14.3 Không gộp record cùng màu
+
+Chỉ **đơn vị đo** capacity đổi. Record vẫn tách theo shot, `batchPriority: OLDEST_FIRST_TEMP` vẫn có
+nghĩa, auto-fill từng phần vẫn giữ nguyên. Đảo thêm luật non-merge sẽ là một quyết định thiết kế thứ
+hai, không cần thiết cho thay đổi này.
+
+### 14.4 Điều kiện thua: kho đầy và phát bắn không giải quyết được queue
+
+Kho đầy **không** tự gây thua. Thua khi một phát bắn tạo ra claim mà kho không chứa nổi phần dư của
+nó — nói theo hướng người chơi cảm nhận: **kho đầy mà phát tiếp theo không đưa được gì vào goal đang
+mở**. Cảnh báo là hàng batch pulse ở mức đầy (đúng cái §14.4 của concept đã thiết kế), không phải một
+trạng thái crosshair mới; phát bắn vẫn nổ, và hậu quả là mất màn.
+
+Ba trường hợp, tách rõ:
+
+| Kho | Phát bắn | Kết quả |
+|---|---|---|
+| còn chỗ | bất kỳ | bình thường, phần dư vào kho |
+| đầy | cụm khớp goal đang mở, goal nhận hết | **không thua** — queue tiến, và nếu goal đó hoàn thành thì cascade còn rút kho xuống |
+| đầy | cụm không khớp goal nào | **FAIL** `"Reserve full"` — cả claim phải vào kho, mà không còn chỗ |
+
+Còn một ca thứ tư trên lý thuyết: cụm vừa nạp được một phần vào goal, vừa có phần dư không vừa kho.
+Ca đó **quyết định bởi thứ tự transaction** (`overfillTransaction`, vẫn là câu hỏi treo trong
+`final_concept.md` §20). Đã đo: nó xảy ra **0 lần** trên toàn bộ trạng thái của cả ba màn — vì cụm
+của ba màn chia đúng khớp goal nên phần dư chỉ có thể là *toàn bộ* claim hoặc *không có gì*. Nên
+thứ tự hiện tại (`CREATE_EXCESS_THEN_ADVANCE_TEMP`) giữ nguyên và câu hỏi treo vẫn để treo, thay vì
+chốt một luật mà dữ liệu hiện tại không phân biệt được.
+
+Cùng lượt này bỏ hẳn cơ chế "chặn phát bắn" đã dựng trước đó: crosshair không còn tra kho
+(`aimReserveBlocked`, `claimFitsReserve`), `fire()` không còn cổng chặn, `handleHit` không kiểm lại
+lúc va chạm, và `checkReserveDeadlock` bị xoá — không còn gì bị từ chối thì không còn dead end để
+phát hiện. `jostleCluster` cũng đi theo: hai người gọi nó là nhánh link và nhánh từ chối, cả hai đã
+mất.
+
+Một chi tiết nhỏ nhưng quan trọng: `createSortAnimation` giờ **vẫn vẽ** chặng bay vào kho kể cả khi
+phần dư không vừa. Trước đây nó lặng lẽ bỏ chặng đó, nên phát bắn định mệnh không có animation gì —
+cụm biến mất rồi panel hiện ra. Giờ người chơi thấy đúng những khối đã làm mình mất màn.
+
+### 14.5 HUD: giá đỡ đúng bằng budget, không còn con số nào
+
+Thứ bị giới hạn là một tổng số block, nên có **một** vật chứa — và nó vẽ ra **đúng `batch_blocks` ô**,
+luôn đủ cả ô trống. Ô đã dùng là block màu, ô trống là socket mờ cùng hình dạng. "Còn bao nhiêu chỗ"
+thành thứ để **đếm**, không phải thứ để đọc.
+
+Chip `BATCH 0/8` bị bỏ hoàn toàn: cả glyph, cả chữ, cả chữ số. Con số chỉ còn sống trong
+`aria-label` của giá đỡ (`"Reserve, 3 of 8 blocks used"`), nên screen reader không mất gì.
+
+| | Trước | Sau |
+|---|---|---|
+| Bên trái hàng | chip `BATCH n/8` (~109px) | không còn gì |
+| Vật chứa | khay 170px, chỉ vẽ pip đã có | giá đỡ 289px, vẽ đủ 8 ô |
+| Ô trống | không vẽ | socket mờ, cùng hình, không animation |
+| Cỡ ô | 11px | **22px** — ngang `.cube-icon` của goal (24px) |
+| Số lượng | pip đếm được | ô đếm được, cả đã dùng lẫn còn trống |
+
+Bỏ luôn cơ chế gập hai hàng (`trayColumns`, `TRAY_SINGLE_ROW_MAX`). Hàng giờ rộng cả HUD nên một
+hàng là đủ, và gập hai hàng lại **sai**: cap ô đã lên 22px, hai ô xếp dọc cần 46px trong lòng giá chỉ
+26px — đúng lỗi tôi tạo ra rồi bắt được khi đo. Một cột một ô, `minmax(0, 1fr)` lo phần co.
+
+Lòng giá còn bị kẹp `max-width: calc(var(--pips) * 34px)` và căn giữa: budget 4 mà dàn hết 289px thì
+trông rỗng ngay cả khi đầy, mà hạ `batch_blocks` xuống sát sàn là việc mục 16.1 khuyên làm. Đo từ
+budget 4 tới 30: luôn một hàng, ô giữ 22px cho tới khi hết chỗ rồi co xuống 7,2px ở budget 30, không
+trường hợp nào tràn khỏi vách.
+
+Giá giữ màu neutral thay vì lấy `--batch`: nó chứa nhiều màu cùng lúc nên tint vách sẽ phải chọn một
+màu thắng hoặc nhoè hết — màu thuộc về ô. Mỗi ô đã dùng mang `data-batch-id` của record nó thuộc về,
+nên batch bay vào goal vẫn đo được từ đúng những ô đang rời đi.
+
+Sửa luôn một lỗi copy sẵn có: panel kết thúc màn in cứng câu "That shot needed a new batch slot but
+both were taken" cho **mọi** thất bại, kể cả thua vì hết đạn. Giờ mỗi lý do có một câu riêng.
+
+---
+
+## 15. Sửa crash goal trùng màu (goal_split)
+
+**Nghiêm trọng: đây là crash, không phải thua.** 48/720 thứ tự bắn hợp lệ của màn 3 làm game **throw**
+`Invalid level data: active goals must use different colors`.
+
+Nguyên nhân: `checkGoalWindows` chỉ duyệt các **cửa sổ goal liền kề**, nhưng hai slot goal tiến
+**độc lập**. Với queue `purple3, orange6, red6, purple3` và 2 slot, slot 0 còn giữ goal #1 (purple)
+trong khi slot 1 đi #2 → #3 → #4 (cũng purple). Validator lúc author cho qua một màn mà runtime có thể
+crash.
+
+Sửa ở runtime chứ không loại màn: `nextGoalIntoSlot` thấy goal kế tiếp trùng màu với một goal đang mở
+ở slot khác thì **để slot rỗng và không tiêu index queue**, rồi thử lại mỗi khi có goal hoàn thành
+(`fillWaitingSlots`). `activeGoals[slot] = null` đã là trạng thái được hỗ trợ (nhánh queue cạn) và
+UI đã render `.goal-slot-empty` — không cần dựng gì mới.
+
+Đã kiểm: **90/90** thứ tự phân biệt của màn 3 giờ đều thắng, 0 throw, và test khẳng định nhánh chờ
+thực sự được đi qua (một test không bao giờ chạm nhánh đó thì không chứng minh được gì).
+
+Trên cả ba màn, tổng cộng **22.770 thứ tự bắn** chạy qua `rules.ts`: 0 crash.
+
+---
+
+## 16. Điều còn mở sau thay đổi này
+
+### 16.1 Màn 2 và màn 3 vẫn không thể thua
+
+Đã duyệt **toàn bộ không gian trạng thái** của cả ba màn dưới luật ở mục 14.4, đếm từng nước đi khả dĩ
+ở mỗi trạng thái:
+
+| Màn | Trạng thái | Nước đi | Nước an toàn | **Nước thua** | Trạng thái có nước thua | Trạng thái không còn nước an toàn |
+|---|---|---|---|---|---|---|
+| 1 | 194 | 695 | 627 | **68** | 44 | **0** |
+| 2 | 88 | 228 | 228 | **0** | 0 | 0 |
+| 3 | 31 | 61 | 61 | **0** | 0 | 0 |
+
+Đọc bảng này theo hai chiều:
+
+- **Màn 1 giờ thua được** — 68 nước đi kết thúc màn, rải trên 44 trong 194 trạng thái. Nhưng cột cuối
+  bằng 0 nghĩa là **không trạng thái nào hết nước an toàn**: người chơi luôn có đường đi tiếp, thua là
+  do chọn sai chứ không do bị dồn vào chân tường.
+- **Màn 2 và màn 3 vẫn không thể thua.** Không trạng thái nào của chúng đạt tới "kho đầy mà cụm còn
+  lại không khớp goal nào". Lý do ở 16.2: cụm chia quá khớp goal, nên kho gần như không bao giờ bị dồn.
+  Muốn hai màn này có sức căng thì phải sửa **dữ liệu màn**, không phải sửa luật — bật `shot_limit`,
+  hạ `batch_blocks` về sát sàn 4, hoặc thiết kế cụm lệch goal. Tôi không tự chọn hộ vì ba hướng đổi
+  độ khó khác nhau.
+
+### 16.2 Kho dự trữ hiếm khi bị chạm tới
+
+**Kho dự trữ hiếm khi bị chạm tới ở 3 màn còn lại.** Mọi cụm trong ba màn chia **đúng khớp** goal
+(goal R6 ↔ hai cụm R3+R3, goal Y4 ↔ cụm Y4…), nên `excess` không bao giờ phát sinh: kho chỉ có block
+khi người chơi **chủ động** bắn cụm không khớp goal. Budget 8 vì thế hiếm khi là thứ chặn họ. Muốn
+budget có sức nặng thật thì cụm phải lệch goal — cần thiết kế lại dữ liệu màn, không phải sửa luật.
+
+`outputs/final_concept.md` §10.1 vẫn ghi "Capacity tính theo số record/batch, không theo số block", và
+nó **không** nằm trong danh sách "còn mở" §20 của tài liệu đó. Mục 14 đảo lại một rule đã được ghi là
+chốt, nên đây là một quyết định thiết kế mới. Tài liệu đó đã lệch source từ trước (không biết gì về
+sheet, cosmetic, hay khay pip) nên chỉ được đánh dấu superseded, không viết lại.

@@ -24,7 +24,7 @@ export const level01: LevelConfig = {
   id: 1,
   name: "Prism 4x3x2",
   activeGoalSlots: 2,
-  batchCapacity: 2,
+  reserveBlocks: 8,
   showGoalQueuePreview: false,
   allowSameColorActiveGoals: false,
   shotLimit: null,

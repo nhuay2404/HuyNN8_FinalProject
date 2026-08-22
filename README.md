@@ -9,7 +9,7 @@ Prototype puzzle WebGL 3D với một cụm 24 cube màu tĩnh có thể xoay t�
 - Lực bắn cố định. Crosshair bám theo joystick, không tự snap vào block; dấu `+`/`×` báo quỹ đạo trúng hoặc hụt.
 - Projectile chạm block đầu tiên và claim toàn bộ connected component cùng màu theo FACE_6.
 - Cụm bị bắn bay lên, thu nhỏ; từng cube sprite tiếp tục bay vào đúng Goal hoặc Batch.
-- Có hai active Goal và hai Batch slot. Trạng thái `2/2` vẫn hợp lệ; chỉ thua khi cần tạo Batch thứ ba.
+- Có hai active Goal và một kho Batch giữ tối đa `batch_blocks` block (mặc định 8). Kho đầy vẫn hợp lệ; **thua khi kho đầy mà phát bắn tiếp theo không đưa được gì vào goal đang mở** — cả claim phải vào kho và không còn chỗ. Hàng batch pulse ở mức đầy là cảnh báo.
 - Settings điều chỉnh riêng sensitivity xoay model và ngắm bắn. Restart có modal xác nhận.
 
 Concept đầy đủ nằm trong `outputs/final_concept.md`.
@@ -50,7 +50,7 @@ File chơi canonical là `outputs/3d-cannon-sort.html`; mở trực tiếp bằn
 | `layers` | Một ký tự là một block: `\|` ngăn lớp theo z, `/` ngăn hàng theo y (hàng trên viết trước), `.` là ô trống. Màu: `R G Y B P O` |
 | `goal_order` | Thứ tự mở goal, ví dụ `R,G,Y,B,P,O`. Để trống thì xếp theo số block giảm dần |
 | `goal_split` | Chẻ một màu thành nhiều goal, ví dụ `P:3+3`. Tổng phải bằng số block màu đó |
-| `goal_slots`, `batch_slots`, `shot_limit` | Ghi đè mặc định `2`, `2`, không giới hạn |
+| `goal_slots`, `batch_blocks`, `shot_limit` | Ghi đè mặc định `2`, `8`, không giới hạn. `batch_blocks` đếm **block** đang giữ trong kho, không đếm số batch, và không được nhỏ hơn cụm lớn nhất của màn |
 | `notes` | Ghi chú cho người, game không đọc |
 
 Số lượng goal luôn được suy ra từ số block trong `layers`, nên rule "inventory từng màu bằng đúng tổng goal cùng màu" không thể sai. Dòng nào có lỗi thì màn đó không được nạp, kèm thông báo chỉ rõ số dòng và nguyên nhân.
@@ -69,7 +69,8 @@ Trong file HTML đã build, level data nằm ở khối `<script id="levels" typ
 - Adjacency: FACE_6 (`±X`, `±Y`, `±Z`), không nối diagonal.
 - Inventory từng màu phải bằng chính xác tổng Goal cùng màu.
 - Overfill hợp lệ; phần dư tạo Batch.
-- Batch auto-fill được phép dùng một phần và ưu tiên record cũ nhất trong prototype.
+- Giới hạn Batch đếm **block**, không đếm record: một Batch 6 block tốn 6, không tốn 1.
+- Batch auto-fill được phép dùng một phần và ưu tiên record cũ nhất trong prototype. Batch cùng màu từ hai shot khác nhau vẫn không gộp.
 - Cooldown: 400 ms; shot limit: không giới hạn.
 
 Các policy mang hậu tố `_TEMP` trong source vẫn là quyết định prototype, chưa phải luật production cuối.

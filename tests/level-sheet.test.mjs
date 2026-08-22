@@ -5,7 +5,7 @@ import { parseLevelSheet } from "../app/game/level-format.ts";
 import { level01 } from "../app/game/level-01.ts";
 
 const sheetUrl = new URL("../work/levels.tsv", import.meta.url);
-const HEADER = "level\tname\tdims\tlayers\tgoal_order\tgoal_split\tgoal_slots\tbatch_slots\tshot_limit\tnotes";
+const HEADER = "level\tname\tdims\tlayers\tgoal_order\tgoal_split\tgoal_slots\tbatch_blocks\tshot_limit\tnotes";
 
 function sheet(...rows) {
   return [HEADER, ...rows].join("\n");
@@ -24,10 +24,35 @@ test("row 1 of the shipped sheet rebuilds the hand written prototype level", asy
   assert.deepEqual(sortById(first.blocks), sortById(level01.blocks));
   assert.deepEqual(first.goals, level01.goals);
   assert.equal(first.activeGoalSlots, level01.activeGoalSlots);
-  assert.equal(first.batchCapacity, level01.batchCapacity);
+  assert.equal(first.reserveBlocks, level01.reserveBlocks);
+  assert.equal(first.reserveBlocks, 8, "both sides have to carry a real number, not undefined on each");
   assert.equal(first.shotLimit, level01.shotLimit);
   assert.equal(first.adjacency.z, true);
   assert.equal(first.batchPriority, "OLDEST_FIRST_TEMP");
+});
+
+test("a reserve budget below the biggest cluster is rejected at author time", () => {
+  // The claim would be legal and unplayable: nothing can split a cluster across
+  // the reserve, so a budget under its size is a level nobody can finish.
+  const tooSmall = parseLevelSheet(sheet("1\tTight\t2x1x1\tRR\tR\t\t\t1\t\t"));
+  assert.equal(tooSmall.levels.length, 0, "the row is dropped, not shipped half-broken");
+  assert.match(tooSmall.issues.map((issue) => issue.message).join(" "), /biggest cluster is 2 blocks/);
+
+  const exact = parseLevelSheet(sheet("1\tTight\t2x1x1\tRR\tR\t\t\t2\t\t"));
+  assert.deepEqual(exact.issues, [], "a budget equal to the biggest cluster is enough");
+  assert.equal(exact.levels[0].reserveBlocks, 2);
+});
+
+test("a sheet still carrying a retired column says so instead of changing meaning", () => {
+  // A shipped HTML file keeps its own copy of the sheet, and a cell the parser
+  // no longer reads would otherwise fall back to a default in silence.
+  for (const [column, value] of [["barrel_layers", "0.0.0:2"], ["links", "0.0.0>1.0.0"], ["batch_slots", "2"]]) {
+    const header = `level\tname\tdims\tlayers\tgoal_order\t${column}`;
+    const row = `1\tOld\t2x1x1\tRR\tR\t${value}`;
+    const { levels, issues } = parseLevelSheet([header, row].join("\n"));
+    assert.equal(levels.length, 0, `${column} should stop the row`);
+    assert.match(issues.map((issue) => issue.message).join(" "), new RegExp(`"${column}" column is no longer read`));
+  }
 });
 
 test("every level in the sheet keeps goal totals equal to its block inventory", async () => {

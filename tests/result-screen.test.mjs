@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const uiUrl = new URL("../app/GamePrototype.tsx", import.meta.url);
+const rulesUrl = new URL("../app/game/rules.ts", import.meta.url);
+const engineUrl = new URL("../app/game/CannonSortEngine.ts", import.meta.url);
 const cssUrl = new URL("../app/globals.css", import.meta.url);
 
 // A whole at-rule, not just its first step: the closing brace of a keyframes
@@ -114,4 +116,28 @@ test("winning throws fireworks, from behind the panel, and losing does not", asy
   const layer = css.slice(css.indexOf(".result-fireworks {"), css.indexOf("}", css.indexOf(".result-fireworks {")));
   assert.match(layer, /pointer-events: none/, "it must never eat a tap meant for the buttons");
   assert.match(layer, /z-index: 0/);
+});
+
+test("every reason the game can fail for has a line of copy to show", async () => {
+  const [ui, rules, engine] = await Promise.all([
+    readFile(uiUrl, "utf8"),
+    readFile(rulesUrl, "utf8"),
+    readFile(engineUrl, "utf8"),
+  ]);
+
+  // The panel used to print one hardcoded sentence about batch slots for every
+  // loss, including running out of shots. It reads the reason now, so a new
+  // reason without copy would show the fallback instead of explaining itself.
+  const panel = ui.slice(ui.indexOf("result-medal"), ui.indexOf("result-actions"));
+  assert.match(panel, /FAIL_BODY\[state\.result\.reason \?\? ""\]/);
+  assert.doesNotMatch(panel, /both were taken/, "the hardcoded batch-slot sentence is gone");
+
+  const reasons = [...rules.matchAll(/reason: "([^"]+)"/g), ...engine.matchAll(/reason: "([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.ok(reasons.length >= 2, `expected the fail reasons to be found, got ${reasons.length}`);
+
+  const table = ui.slice(ui.indexOf("const FAIL_BODY"), ui.indexOf("type ModalView"));
+  for (const reason of new Set(reasons)) {
+    assert.ok(table.includes(`"${reason}"`), `FAIL_BODY is missing a line for "${reason}"`);
+  }
 });

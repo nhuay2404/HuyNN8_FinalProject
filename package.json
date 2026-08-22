@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --test tests/game-rules.test.ts tests/aim-source-regression.test.mjs tests/renderer-lifecycle.test.mjs tests/level-sheet.test.mjs tests/aim-target-regression.test.mjs tests/sort-flight.test.mjs tests/multi-touch-regression.test.mjs tests/haptics.test.mjs tests/barrel-link.test.mjs tests/menu-hub.test.mjs tests/batch-flight.test.mjs tests/impact-feel.test.mjs tests/level-handoff.test.mjs tests/link-bridge.test.mjs tests/cosmetics.test.mjs tests/loading-screen.test.mjs tests/result-screen.test.mjs",
+    "test": "node --test tests/game-rules.test.ts tests/aim-source-regression.test.mjs tests/renderer-lifecycle.test.mjs tests/level-sheet.test.mjs tests/aim-target-regression.test.mjs tests/sort-flight.test.mjs tests/multi-touch-regression.test.mjs tests/haptics.test.mjs tests/menu-hub.test.mjs tests/batch-flight.test.mjs tests/batch-ui.test.mjs tests/impact-feel.test.mjs tests/level-handoff.test.mjs tests/cosmetics.test.mjs tests/loading-screen.test.mjs tests/result-screen.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "levels": "node work/sync-levels.mjs",
     "db:generate": "drizzle-kit generate"

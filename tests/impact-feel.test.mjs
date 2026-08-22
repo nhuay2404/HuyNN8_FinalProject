@@ -49,11 +49,11 @@ test("a shot that lands puffs solid white round smoke", async () => {
   assert.match(update, /const collapse = progress < 0\.55/, "the puff leaves by shrinking");
   assert.doesNotMatch(update, /\.opacity/, "touching opacity is what would break the solid white");
 
-  // Every landing shows it: a peeled shell and a refused link land too.
+  // Every landing shows it, including a shot the reserve refuses.
   const handleHit = isolate(source, "private handleHit(block: BlockRuntime, projectile: Projectile) {");
   const effectAt = handleHit.indexOf("this.playImpactEffect(projectile.mesh.position, projectile.shotIndex)");
   assert.ok(effectAt > 0, "handleHit has to play the landing effect");
-  assert.ok(effectAt < handleHit.indexOf("block.barrelLeft > 0"), "it comes before the branches, so no branch can skip it");
+  assert.ok(effectAt < handleHit.indexOf("return"), "it comes before every early return, so no branch can skip it");
   // The router is the only place a skin is asked about, and the cannon still
   // gets the smoke.
   const impact = isolate(source, "private playImpactEffect(point: THREE.Vector3, seed: number) {");

@@ -58,11 +58,12 @@ type SortSprite = {
   targetY: number;
   delayMs: number;
   flightMs: number;
-  destination: "goal" | "batch";
+  destination: "goal" | "reserve";
   // Where the cube started: a cluster breaking apart, or a batch emptying into
   // a goal. The two read differently on screen.
   origin: "cluster" | "batch";
-  slot: number;
+  // Only a goal has a slot to land in; the reserve is one place.
+  slot?: number;
   goalId?: string;
   fromCount: number;
   // Position within its burst, so each landing tick can be a little softer
@@ -152,7 +153,16 @@ function cycleFocus(root: HTMLElement | null, event: KeyboardEvent) {
   }
 }
 
-type IncomingBatch = { color: BlockColor; count: number };
+// Blocks that have visibly landed in the reserve but whose state the engine
+// has not applied yet, so the tray does not go briefly empty mid-flight.
+type IncomingReserve = { color: BlockColor; count: number };
+// One line of plain English per reason the engine can fail on, so the panel
+// stops explaining every loss as a full reserve.
+const FAIL_BODY: Record<string, string> = {
+  "Reserve full": "The reserve was full and that shot had nothing an open goal could take.",
+  "Out of shots": "The level ran out of shots before the last goal was filled.",
+};
+
 type ModalView = "settings" | "restart-confirm" | null;
 type SheetNotice = { kind: "ok" | "warn"; lines: string[]; key: number };
 type Screen = "hub" | "playing";
@@ -210,7 +220,7 @@ export default function GamePrototype() {
   const [sheetDragActive, setSheetDragActive] = useState(false);
   const [sortSprites, setSortSprites] = useState<SortSprite[]>([]);
   const [visualGoalCounts, setVisualGoalCounts] = useState<Record<string, number>>({});
-  const [incomingBatches, setIncomingBatches] = useState<Record<number, IncomingBatch>>({});
+  const [incomingReserve, setIncomingReserve] = useState<IncomingReserve | null>(null);
   const [modal, setModal] = useState<ModalView>(null);
   const [cosmeticOpen, setCosmeticOpen] = useState(false);
   // What is equipped, and what the preview is currently showing. Tapping a card
@@ -250,15 +260,12 @@ export default function GamePrototype() {
         }
         return retained;
       });
-      setIncomingBatches((previous) => {
-        if (next.result) return {};
-        const retained: Record<number, IncomingBatch> = {};
-        for (const [slotText, incoming] of Object.entries(previous)) {
-          const slot = Number(slotText);
-          const batch = next.batches[slot];
-          if (!batch || batch.color !== incoming.color || batch.count < incoming.count) retained[slot] = incoming;
-        }
-        return retained;
+      setIncomingReserve((previous) => {
+        if (!previous || next.result) return null;
+        // Dropped once the real record is at least as big as what was shown,
+        // which is the moment the optimistic pips stop adding anything.
+        const landed = next.batches.some((batch) => batch.color === previous.color && batch.count >= previous.count);
+        return landed ? null : previous;
       });
     };
 
@@ -272,7 +279,7 @@ export default function GamePrototype() {
       for (const transfer of event.transfers) {
         const selector = transfer.kind === "goal"
           ? `[data-goal-slot="${transfer.slot}"]`
-          : `[data-batch-slot="${transfer.slot}"]`;
+          : "[data-reserve-tray]";
         const target = frame.querySelector<HTMLElement>(selector);
         if (!target) {
           sourceIndex += transfer.count;
@@ -310,7 +317,7 @@ export default function GamePrototype() {
             flightMs: event.flightMs,
             order,
             destination: transfer.kind,
-            slot: transfer.slot,
+            slot: transfer.kind === "goal" ? transfer.slot : undefined,
             goalId: transfer.kind === "goal" ? transfer.goalId : undefined,
             fromCount: transfer.kind === "goal" ? transfer.fromCount : 0,
           });
@@ -443,7 +450,7 @@ export default function GamePrototype() {
     setState(createGameState(nextLevel));
     setSortSprites([]);
     setVisualGoalCounts({});
-    setIncomingBatches({});
+    setIncomingReserve(null);
     setHubLeaving(false);
     // The HUD rises with the handoff entrance, so the new level's goals arrive
     // as part of the same move as the cluster.
@@ -681,17 +688,36 @@ export default function GamePrototype() {
         [sprite.goalId!]: Math.max(previous[sprite.goalId!] ?? sprite.fromCount, sprite.fromCount) + 1,
       }));
     } else {
-      setIncomingBatches((previous) => ({
-        ...previous,
-        [sprite.slot]: {
-          color: sprite.color,
-          count: (previous[sprite.slot]?.count ?? 0) + 1,
-        },
+      setIncomingReserve((previous) => ({
+        color: sprite.color,
+        count: (previous?.color === sprite.color ? previous.count : 0) + 1,
       }));
     }
   };
 
-  const batchWarning = state.batches.length === level.batchCapacity;
+  const parkedBlocks = state.batches.reduce((total, batch) => total + batch.count, 0);
+  const batchWarning = parkedBlocks >= level.reserveBlocks;
+  // Exactly one slot per block the level allows, always all of them: the row is
+  // the budget drawn out, so "how much room is left" is something to count
+  // rather than a number to read. Filled slots come first, in record order, and
+  // each carries the id of the record it belongs to so a batch emptying into a
+  // goal can be measured from the exact slots that are leaving.
+  const filledSlots = [
+    ...state.batches.flatMap((batch) => Array.from({ length: batch.count }, (_, block) => ({
+      key: `${batch.id}-${block}`,
+      batchId: batch.id,
+      color: batch.color,
+    }))),
+    ...(incomingReserve ? Array.from({ length: incomingReserve.count }, (_, block) => ({
+      key: `incoming-${block}`,
+      batchId: undefined,
+      color: incomingReserve.color,
+    })) : []),
+  ];
+  // A reserve over budget can only exist for the frame before the level ends,
+  // so the row grows rather than clipping the blocks that caused it.
+  const traySlots = Array.from({ length: Math.max(level.reserveBlocks, filledSlots.length) }, (_, index) =>
+    filledSlots[index] ?? { key: `socket-${index}`, batchId: undefined, color: null });
   return (
     <main className="page-shell">
       <section
@@ -875,26 +901,25 @@ export default function GamePrototype() {
           </section>
           )}
 
-          <section className={`batch-section ${batchWarning ? "is-warning" : ""}`} aria-label="Batch slots">
-            <span className="batch-caption">
-              <span className="batch-caption-icon" aria-hidden="true" />
-              <span className="batch-caption-text">BATCH</span>
-              <em>{state.batches.length}/{level.batchCapacity}</em>
-            </span>
-            <div className="batch-row">
-              {Array.from({ length: level.batchCapacity }, (_, index) => {
-                const batch = state.batches[index];
-                const incoming = incomingBatches[index];
-                if (!batch && !incoming) return <div className="batch-slot empty" data-batch-slot={index} key={`empty-${index}`}><span /></div>;
-                const color = batch?.color ?? incoming.color;
-                const count = batch?.count ?? incoming.count;
-                const meta = COLOR_META[color];
-                return (
-                  <div className={`batch-slot filled ${!batch ? "is-receiving" : ""}`} data-batch-slot={index} data-batch-id={batch?.id} key={batch?.id ?? `incoming-${index}`} style={{ "--batch": meta.hex } as CSSProperties}>
-                    <span className="batch-cube" /><b>×{count}</b>
-                  </div>
-                );
-              })}
+          <section className={`batch-section ${batchWarning ? "is-warning" : ""}`} aria-label="Reserve">
+            {/* The count lives only in the label now: on screen it is the slots
+                themselves, the taken ones and the empty ones together. */}
+            <div
+              className="batch-slot"
+              data-reserve-tray=""
+              style={{ "--pips": traySlots.length } as CSSProperties}
+              aria-label={`Reserve, ${parkedBlocks} of ${level.reserveBlocks} block${level.reserveBlocks === 1 ? "" : "s"} used`}
+            >
+              <span className="batch-tray" aria-hidden="true">
+                {traySlots.map((slot) => (
+                  <i
+                    className={slot.color ? "batch-pip" : "batch-pip is-socket"}
+                    data-batch-id={slot.batchId}
+                    key={slot.key}
+                    style={slot.color ? ({ "--batch": COLOR_META[slot.color].hex } as CSSProperties) : undefined}
+                  />
+                ))}
+              </span>
             </div>
           </section>
         </div>
@@ -938,7 +963,7 @@ export default function GamePrototype() {
               <p>
                 {state.result.kind === "WIN"
                   ? "All clear — the whole model has been cleared."
-                  : "That shot needed a new batch slot but both were taken."}
+                  : FAIL_BODY[state.result.reason ?? ""] ?? "That shot could not be sorted."}
               </p>
               <div className="result-actions">
                 <button type="button" onClick={restart}>↻ Replay level</button>

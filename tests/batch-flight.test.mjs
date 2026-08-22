@@ -63,7 +63,7 @@ test("the flight is drawn between the batch slot and the goal card on screen", a
   assert.match(handler, /\[data-goal-slot="\$\{event\.goalSlot\}"\]/);
   assert.match(handler, /planBatchFlight\(/, "same clamped path as the cluster sprites, so nothing flies off-screen");
   assert.match(handler, /fromCount: event\.goalFromCount/, "the goal count climbs as the cubes land");
-  assert.match(ui, /data-batch-id=\{batch\?\.id\}/);
+  assert.match(ui, /data-batch-id=\{slot\.batchId\}/);
 });
 
 test("a batch of any size becomes that many cubes, staggered and inside the frame", async () => {

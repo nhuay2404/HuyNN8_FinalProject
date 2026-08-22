@@ -6,11 +6,8 @@ import type { BlockColor, BlockSpec, GoalSpec, LevelConfig } from "./types";
 // depth axis, rows inside a layer by `/` from the top row down, and `.` marks an
 // empty cell.
 //
-// An UPPERCASE colour code is a plain block. A lowercase code is the same
-// colour wrapped in a barrel shell, so a shape stays readable as a grid while
-// still saying which cells are covered (draft §1). A wrapped cluster carries
-// one layer unless `barrel_layers` raises it.
-export const MAX_BARREL_LAYERS = 3;
+// A colour code is a plain block; case is ignored, so a sheet written for the
+// retired barrel mechanic still reads as the shape its author drew.
 export const COLOR_CODES: Record<string, BlockColor> = {
   R: "red",
   G: "green",
@@ -34,12 +31,10 @@ export const SHEET_COLUMNS = [
   "name",
   "dims",
   "layers",
-  "barrel_layers",
-  "links",
   "goal_order",
   "goal_split",
   "goal_slots",
-  "batch_slots",
+  "batch_blocks",
   "shot_limit",
   "notes",
 ] as const;
@@ -48,7 +43,10 @@ export const SHEET_COLUMNS = [
 // what makes that level different.
 const LEVEL_DEFAULTS = {
   activeGoalSlots: 2,
-  batchCapacity: 2,
+  // Blocks the player may keep parked at once. 8 is the smallest budget that
+  // leaves every line winnable under the retired two-slot rule; the floor is
+  // the level's biggest cluster, checked in buildLevel.
+  reserveBlocks: 8,
   showGoalQueuePreview: false,
   allowSameColorActiveGoals: false,
   shotLimit: null,
@@ -161,7 +159,7 @@ function parseBlocks(raw: string, dims: { x: number; y: number; z: number }, rep
         if (code === ".") continue;
         const color = COLOR_CODES[code];
         if (!color) {
-          report(`colour code "${raw}" is not valid (use R G Y B P O, lowercase for a barrel, or .)`);
+          report(`colour code "${raw}" is not valid (use R G Y B P O or .)`);
           continue;
         }
         const key = `${x},${y},${z}`;
@@ -170,13 +168,10 @@ function parseBlocks(raw: string, dims: { x: number; y: number; z: number }, rep
           continue;
         }
         seen.add(key);
-        // Lowercase means the same colour with a barrel shell over it.
-        const wrapped = raw !== code;
         blocks.push({
           id: `block-${x}-${y}-${z}`,
           x, y, z, color,
           type: "normal",
-          ...(wrapped ? { barrelLayers: 1 } : {}),
         });
       }
     });
@@ -190,110 +185,32 @@ const FACE_NEIGHBORS = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
 ] as const;
 
-// A link is authored as one cell of each cluster, so the sheet stays short. The
-// blocks are expanded here, at author time, which also means a link that points
-// at the wrong cell is caught by the build instead of at play time.
-function clusterAt(blocks: BlockSpec[], x: number, y: number, z: number) {
+// A single claim is never split across the reserve, so a level whose biggest
+// cluster does not fit the reserve budget carries a legal move that can never
+// be played. Measured here, at author time, next to checkGoalWindows.
+function largestClusterSize(blocks: BlockSpec[]) {
   const at = new Map(blocks.map((block) => [`${block.x},${block.y},${block.z}`, block]));
-  const start = at.get(`${x},${y},${z}`);
-  if (!start) return null;
+  const seen = new Set<string>();
+  let largest = 0;
 
-  const cluster: BlockSpec[] = [];
-  const seen = new Set([start.id]);
-  const queue = [start];
-  while (queue.length) {
-    const block = queue.shift()!;
-    cluster.push(block);
-    for (const [dx, dy, dz] of FACE_NEIGHBORS) {
-      const neighbor = at.get(`${block.x + dx},${block.y + dy},${block.z + dz}`);
-      if (!neighbor || neighbor.color !== start.color || seen.has(neighbor.id)) continue;
-      // A barrel shell separates what is underneath it, so a cluster never
-      // straddles the boundary between covered and uncovered blocks.
-      if (Boolean(neighbor.barrelLayers) !== Boolean(start.barrelLayers)) continue;
-      seen.add(neighbor.id);
-      queue.push(neighbor);
+  for (const start of blocks) {
+    if (seen.has(start.id)) continue;
+    seen.add(start.id);
+    const queue = [start];
+    let size = 0;
+    while (queue.length) {
+      const block = queue.shift()!;
+      size += 1;
+      for (const [dx, dy, dz] of FACE_NEIGHBORS) {
+        const neighbor = at.get(`${block.x + dx},${block.y + dy},${block.z + dz}`);
+        if (!neighbor || neighbor.color !== block.color || seen.has(neighbor.id)) continue;
+        seen.add(neighbor.id);
+        queue.push(neighbor);
+      }
     }
+    largest = Math.max(largest, size);
   }
-  return cluster;
-}
-
-function parseCoordinate(raw: string) {
-  const parts = raw.trim().split(".");
-  if (parts.length !== 3) return null;
-  const [x, y, z] = parts.map((part) => Number(part));
-  if (![x, y, z].every((value) => Number.isInteger(value) && value >= 0)) return null;
-  return { x, y, z };
-}
-
-// `barrel_layers` deepens a wrapped cluster, written as `x.y.z:n` and
-// separated by `;`. One entry sets the whole cluster it points at, so the count
-// can never disagree between blocks under the same shell.
-function applyBarrelLayers(raw: string, blocks: BlockSpec[], report: (message: string) => void) {
-  if (!raw.trim()) return;
-
-  for (const entry of raw.split(";").map((part) => part.trim()).filter(Boolean)) {
-    const [cellText, countText] = entry.split(":");
-    const coordinate = parseCoordinate(cellText ?? "");
-    if (!coordinate) {
-      report(`barrel_layers "${entry}" must look like 0.0.0:3`);
-      continue;
-    }
-    const count = Number((countText ?? "").trim());
-    if (!Number.isInteger(count) || count < 1 || count > MAX_BARREL_LAYERS) {
-      report(`barrel_layers "${entry}" needs a layer count from 1 to ${MAX_BARREL_LAYERS}`);
-      continue;
-    }
-    const cluster = clusterAt(blocks, coordinate.x, coordinate.y, coordinate.z);
-    if (!cluster) {
-      report(`barrel_layers "${entry}" points at an empty cell`);
-      continue;
-    }
-    if (!cluster.every((block) => block.barrelLayers)) {
-      report(`barrel_layers "${entry}" points at a cluster with no barrel; write it lowercase in layers first`);
-      continue;
-    }
-    for (const block of cluster) block.barrelLayers = count;
-  }
-}
-
-// `links` holds one entry per pair, written as `x.y.z>x.y.z` and separated by
-// `;`. Dots and semicolons keep the whole cell comma-free, so a sheet saved as
-// CSV never needs quoting around it.
-function applyLinks(raw: string, blocks: BlockSpec[], report: (message: string) => void) {
-  if (!raw.trim()) return;
-
-  let linkIndex = 0;
-  for (const entry of raw.split(";").map((part) => part.trim()).filter(Boolean)) {
-    const sides = entry.split(">");
-    if (sides.length !== 2) {
-      report(`links "${entry}" must look like 0.0.0>3.2.1`);
-      continue;
-    }
-    const coordinates = sides.map((side) => parseCoordinate(side));
-    if (coordinates.some((coordinate) => !coordinate)) {
-      report(`links "${entry}" has an invalid coordinate; it must be three integers like 0.0.0`);
-      continue;
-    }
-    const clusters = coordinates.map((coordinate) => clusterAt(blocks, coordinate!.x, coordinate!.y, coordinate!.z));
-    const missing = clusters.findIndex((cluster) => !cluster);
-    if (missing >= 0) {
-      report(`links "${entry}" points at the empty cell ${sides[missing].trim()}`);
-      continue;
-    }
-    const [first, second] = clusters as BlockSpec[][];
-    if (first.some((block) => second.some((candidate) => candidate.id === block.id))) {
-      report(`links "${entry}" points at the same cluster twice`);
-      continue;
-    }
-    const alreadyLinked = [...first, ...second].find((block) => block.linkGroup);
-    if (alreadyLinked) {
-      report(`links "${entry}" reuses a cluster that is already linked (block ${alreadyLinked.id}); a cluster can only be in one pair`);
-      continue;
-    }
-    linkIndex += 1;
-    const group = `link-${linkIndex}`;
-    for (const block of [...first, ...second]) block.linkGroup = group;
-  }
+  return largest;
 }
 
 function countColors(blocks: BlockSpec[]) {
@@ -393,6 +310,22 @@ function parsePositiveInteger(raw: string, label: string, report: (message: stri
   return value;
 }
 
+const RETIRED_COLUMNS: Array<[string, string]> = [
+  ["barrel_layers", "the barrel mechanic was removed"],
+  ["links", "the link mechanic was removed"],
+  ["batch_slots", "renamed to batch_blocks, and it now counts blocks rather than slots"],
+];
+
+// An unknown column would otherwise be ignored in silence, and a cell the
+// parser never looks at falls back to a default with no warning at all. A sheet
+// still carrying a retired column is far more likely to be stale than
+// deliberate, so say so instead of quietly changing what it means.
+function reportRetiredColumns(cells: RowCells, report: (message: string) => void) {
+  for (const [name, why] of RETIRED_COLUMNS) {
+    if ((cells[name] ?? "").trim()) report(`the "${name}" column is no longer read: ${why}`);
+  }
+}
+
 function checkGoalWindows(goals: GoalSpec[], slots: number, report: (message: string) => void) {
   // The engine keeps `slots` goals open at once and they always come from a
   // window of consecutive goals, so a repeated color inside one window would
@@ -426,23 +359,27 @@ function buildLevel(cells: RowCells, report: (message: string) => void): LevelCo
     return null;
   }
 
-  applyBarrelLayers(cells.barrel_layers ?? "", blocks, report);
-  applyLinks(cells.links ?? "", blocks, report);
+  reportRetiredColumns(cells, report);
   const counts = countColors(blocks);
   const order = parseColorOrder(cells.goal_order ?? "", counts, report);
   const splits = parseSplits(cells.goal_split ?? "", counts, report);
   const goals = buildGoals(order, counts, splits);
   const activeGoalSlots = parsePositiveInteger(cells.goal_slots ?? "", "goal_slots", report) ?? LEVEL_DEFAULTS.activeGoalSlots;
-  const batchCapacity = parsePositiveInteger(cells.batch_slots ?? "", "batch_slots", report) ?? LEVEL_DEFAULTS.batchCapacity;
+  const reserveBlocks = parsePositiveInteger(cells.batch_blocks ?? "", "batch_blocks", report) ?? LEVEL_DEFAULTS.reserveBlocks;
   const shotLimit = parsePositiveInteger(cells.shot_limit ?? "", "shot_limit", report);
   checkGoalWindows(goals, activeGoalSlots, report);
+
+  const biggestCluster = largestClusterSize(blocks);
+  if (reserveBlocks < biggestCluster) {
+    report(`batch_blocks is ${reserveBlocks} but the biggest cluster is ${biggestCluster} blocks, which could never be parked`);
+  }
 
   return {
     ...LEVEL_DEFAULTS,
     id: levelNumber,
     name: (cells.name ?? "").trim() || `Level ${levelNumber}`,
     activeGoalSlots,
-    batchCapacity,
+    reserveBlocks,
     shotLimit,
     goals,
     blocks,

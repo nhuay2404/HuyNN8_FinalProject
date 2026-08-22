@@ -43,12 +43,68 @@ export function createGameState(level: LevelConfig): GameState {
 
 function nextGoalIntoSlot(level: LevelConfig, state: GameState, slotIndex: number, events: string[]) {
   const next = level.goals[state.nextGoalIndex];
+  // The slots advance on their own, so the queue can reach a second goal of a
+  // colour the other slot is still working on — goal_split authors exactly that
+  // shape. Opening it would break the one-colour-per-slot invariant and throw,
+  // so the slot waits instead: it holds its place empty and takes the goal once
+  // the colour is free.
+  if (next && state.activeGoals.some((goal, index) => index !== slotIndex && goal?.color === next.color)) {
+    state.activeGoals[slotIndex] = null;
+    events.push(`Goal ${next.color} ×${next.target} waits for the other slot`);
+    return;
+  }
+
   state.activeGoals[slotIndex] = next ? { ...next, current: 0 } : null;
   if (next) {
     state.nextGoalIndex += 1;
     assertDifferentActiveGoalColors(state.activeGoals);
     events.push(`Goal opened: ${next.color} ×${next.target}`);
   }
+}
+
+// A slot that waited tries again as soon as a goal finishes, or the queue would
+// stall behind it. One blocked head blocks every empty slot equally, so the
+// first slot that cannot take it ends the sweep.
+function fillWaitingSlots(level: LevelConfig, state: GameState, events: string[]) {
+  for (let slot = 0; slot < state.activeGoals.length; slot += 1) {
+    if (state.activeGoals[slot]) continue;
+    const queueBefore = state.nextGoalIndex;
+    nextGoalIntoSlot(level, state, slot, events);
+    if (state.nextGoalIndex === queueBefore) return;
+  }
+}
+
+// Blocks parked across every batch record. This is the quantity the level
+// budgets: a batch of six costs six, not one, so the price of deferring a claim
+// finally matches how much was deferred.
+export function parkedBlockCount(state: GameState) {
+  return state.batches.reduce((total, batch) => total + batch.count, 0);
+}
+
+// One claim split the way the transaction will split it: what the open goal of
+// that colour can take, and what has to be parked. resolveCluster, the engine's
+// flight planner and the aim-time legality check all read this one function, so
+// the animation can never disagree with the state it is drawn over.
+export type ClusterSplit = {
+  goalSlot: number;
+  toGoal: number;
+  excess: number;
+  parked: number;
+  fits: boolean;
+};
+
+export function planClusterSplit(
+  level: LevelConfig,
+  state: GameState,
+  color: BlockColor,
+  count: number,
+): ClusterSplit {
+  const goalSlot = state.activeGoals.findIndex((goal) => goal?.color === color);
+  const goal = goalSlot >= 0 ? state.activeGoals[goalSlot]! : null;
+  const toGoal = goal ? Math.min(count, goal.target - goal.current) : 0;
+  const excess = count - toGoal;
+  const parked = parkedBlockCount(state);
+  return { goalSlot, toGoal, excess, parked, fits: parked + excess <= level.reserveBlocks };
 }
 
 function createBatchOrFail(
@@ -60,14 +116,15 @@ function createBatchOrFail(
   events: string[],
 ) {
   if (count <= 0) return true;
-  if (state.batches.length >= level.batchCapacity) {
+  const parked = parkedBlockCount(state);
+  if (parked + count > level.reserveBlocks) {
     state.phase = "FAIL";
     state.result = {
       kind: "FAIL",
       allClear: state.remainingBlockCount === 0,
-      reason: "No batch slot left",
+      reason: "Reserve full",
     };
-    events.push("A new batch was needed but both slots are full");
+    events.push(`${count} ${color} needed a place but the reserve holds ${parked}/${level.reserveBlocks}`);
     return false;
   }
 
@@ -87,6 +144,7 @@ function advanceGoal(level: LevelConfig, state: GameState, slot: number, events:
   if (!goal || goal.current !== goal.target) return;
   events.push(`Goal complete: ${goal.color} ×${goal.target}`);
   nextGoalIntoSlot(level, state, slot, events);
+  fillWaitingSlots(level, state, events);
 }
 
 function orderedMatchingBatchIndex(level: LevelConfig, state: GameState, color: BlockColor) {
@@ -214,21 +272,19 @@ export function resolveCluster(
     lastEvents: [],
   };
   const events = state.lastEvents;
-  const slot = state.activeGoals.findIndex((goal) => goal?.color === result.color);
+  const split = planClusterSplit(level, state, result.color, result.count);
 
-  if (slot < 0) {
+  if (split.goalSlot < 0) {
     createBatchOrFail(level, state, result.shotIndex, result.color, result.count, events);
   } else {
-    const goal = state.activeGoals[slot]!;
-    const amount = Math.min(result.count, goal.target - goal.current);
-    const excess = result.count - amount;
-    goal.current += amount;
-    events.push(`${result.color} +${amount} into the goal`);
+    const goal = state.activeGoals[split.goalSlot]!;
+    goal.current += split.toGoal;
+    events.push(`${result.color} +${split.toGoal} into the goal`);
 
     // TODO(design): Temporary order creates/reserves excess before opening the
     // next goal. The official transaction order remains unconfirmed.
-    if (excess > 0 && !createBatchOrFail(level, state, result.shotIndex, result.color, excess, events)) return state;
-    if (goal.current === goal.target) advanceGoal(level, state, slot, events);
+    if (split.excess > 0 && !createBatchOrFail(level, state, result.shotIndex, result.color, split.excess, events)) return state;
+    if (goal.current === goal.target) advanceGoal(level, state, split.goalSlot, events);
     if (autoFill) runBatchAutoFill(level, state, events);
   }
 

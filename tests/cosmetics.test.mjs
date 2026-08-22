@@ -325,6 +325,35 @@ test("the Skin button opens a picker that leaves the preview visible", async () 
   assert.match(stage, /pointer-events: none/, "the window onto the 3D preview cannot catch taps");
 });
 
+test("the picker's scrim stays off the rig it is showing", async () => {
+  const css = await readFile(cssUrl, "utf8");
+  const screen = css.slice(css.indexOf(".cosmetic-screen {"), css.indexOf("}", css.indexOf(".cosmetic-screen {")));
+  const gradient = screen.match(/linear-gradient\(180deg,([^;]+)\)/);
+  assert.ok(gradient, "the screen dims the scene with one vertical gradient");
+  const stops = [...gradient[1].matchAll(/rgba\([^)]*,\s*(\.\d+|[01])\)\s*(\d+)%/g)]
+    .map(([, alpha, percent]) => [Number(percent), Number(alpha)]);
+  assert.ok(stops.length >= 3, "parsed the stops");
+
+  const alphaAt = (pct) => {
+    for (let i = 0; i < stops.length - 1; i += 1) {
+      const [p0, a0] = stops[i];
+      const [p1, a1] = stops[i + 1];
+      if (pct >= p0 && pct <= p1) return a0 + (a1 - a0) * ((pct - p0) / (p1 - p0));
+    }
+    return stops.at(-1)[1];
+  };
+
+  // The rig fills 26-55% of the frame height — measured by projecting its
+  // corners, see SHOWCASE_POSITION. A ramp that reaches the bottom of that band
+  // puts the model's own base in shadow, which is what it used to do (0.34 at
+  // 55%). The tray below paints its own background, so nothing down there needs
+  // the scrim to be heavy either.
+  for (const pct of [26, 35, 45, 55]) {
+    assert.ok(alphaAt(pct) <= 0.2, `scrim is ${alphaAt(pct).toFixed(2)} at ${pct}% of the frame, over the rig`);
+  }
+  assert.ok(alphaAt(0) > 0.4, "the top still has to carry the title");
+});
+
 test("a card previews, the button equips, and closing reverts the preview", async () => {
   const ui = await readFile(uiUrl, "utf8");
   const open = ui.slice(ui.indexOf("const openCosmetics = ()"), ui.indexOf("const closeCosmetics"));

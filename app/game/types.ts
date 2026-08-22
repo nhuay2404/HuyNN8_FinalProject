@@ -11,20 +11,15 @@ export type BlockSpec = {
   z: number;
   color: BlockColor;
   type: "normal";
-  // How many barrel layers wrap this block, 1 to MAX_BARREL_LAYERS. Each
-  // breaking event peels one layer, and the block underneath can only be
-  // claimed once every layer is gone (draft §1.3). Absent means no barrel.
-  barrelLayers?: number;
-  // Blocks sharing a link group belong to clusters that are destroyed together
-  // (draft §2.1). Every block of both linked clusters carries the same group.
-  linkGroup?: string;
 };
 
 export type LevelConfig = {
   id: number;
   name: string;
   activeGoalSlots: number;
-  batchCapacity: number;
+  // How many claimed blocks may sit parked at once, counted in blocks rather
+  // than in batch records: a batch of six costs six, not one.
+  reserveBlocks: number;
   showGoalQueuePreview: false;
   allowSameColorActiveGoals: false;
   shotLimit: number | null;
@@ -97,9 +92,4 @@ export type ClusterResult = {
 export type BlockRuntime = BlockSpec & {
   active: boolean;
   mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial>;
-  // Layers still standing. Zero means the block is exposed and claimable; the
-  // authored count in `barrelLayers` stays untouched so a restart rebuilds it.
-  barrelLeft: number;
-  // The shell drawn around the block, removed when the last layer breaks.
-  barrelShell?: THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial>;
 };

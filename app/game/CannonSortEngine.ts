@@ -9,7 +9,7 @@ import {
 } from "./cosmetics";
 import { haptic } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
-import { applyBatchAutoFill, createGameState, nextBatchAutoFill, resolveCluster } from "./rules";
+import { applyBatchAutoFill, createGameState, nextBatchAutoFill, parkedBlockCount, planClusterSplit, resolveCluster } from "./rules";
 import type {
   BatchTransfer,
   BlockColor,
@@ -99,13 +99,6 @@ function recycleProjectileMesh(mesh: THREE.Mesh) {
   if (projectileMeshPool.length < PROJECTILE_POOL_LIMIT) projectileMeshPool.push(mesh);
 }
 
-// The shell is opaque, so the only thing telling the player how much cover is
-// left is its shade: darkest at full depth, near white on the last layer.
-const BARREL_LAYER_COLORS = [0xd8dae0, 0x74777f, 0x1c1d22];
-const BARREL_DEBRIS_COLORS = [0xb9bcc4, 0x6a6d75, 0x2a2b31];
-const DEBRIS_GRAVITY = -13;
-const DEBRIS_LIFETIME = 0.85;
-
 // A claim does not only nudge the blocks it was touching. The push leaves the
 // hole ring by ring, each ring a little later and a little weaker, so what the
 // player sees is one wave travelling out of the break instead of a single
@@ -165,24 +158,6 @@ const HANDOFF_INTRO_DURATION = 0.7;
 const HANDOFF_MODEL_SCALE = 0.7;
 const HANDOFF_SPIN_TURN = Math.PI;
 
-// Candidate faces for mounting the strap that joins a linked pair, in the
-// order they are preferred, which is how visible each face is: the camera sits
-// at +z and above the model, and the authored orientation yaws the model so
-// its +x side turns toward the lens. The back and the underside are last
-// because nothing there can be seen without the player rotating the cluster.
-const FACE_DIRECTIONS: ReadonlyArray<readonly [number, number, number]> = [
-  [0, 0, 1], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, -1], [0, -1, 0],
-];
-
-// One strap joins one linked pair. Two pads bolted to the outside of the two
-// blocks and a spine across the gap: how far out the pads sit, how much the
-// spine overhangs them, and how far off the link axis a face may point and
-// still count as somewhere the strap can lie flat.
-const LINK_PAD_REACH = BLOCK_SIZE * 0.52;
-const LINK_PAD_REACH_OVER_SHELL = BLOCK_SIZE * 0.58;
-const LINK_SPINE_OVERHANG = BLOCK_SIZE * 0.1;
-const LINK_MOUNT_MAX_AXIS_DOT = 0.35;
-
 const COLOR_HEX: Record<BlockColor, number> = {
   red: 0xff3d4d,
   green: 0x24e07f,
@@ -194,7 +169,7 @@ const COLOR_HEX: Record<BlockColor, number> = {
 
 export type SortTransfer =
   | { kind: "goal"; slot: number; goalId: string; fromCount: number; count: number }
-  | { kind: "batch"; slot: number; count: number };
+  | { kind: "reserve"; count: number };
 
 export type SortAnimationEvent = {
   key: number;
@@ -277,40 +252,6 @@ type NeighborKick = {
 
 type SweepHit = { block: BlockRuntime; t: number; point: THREE.Vector3 };
 
-// A shattered barrel layer, or a link fitting that came off its block. Both
-// just fall away under gravity and fade out.
-type DebrisPiece = {
-  mesh: THREE.Object3D;
-  velocity: THREE.Vector3;
-  spin: THREE.Vector3;
-  age: number;
-};
-
-// The one strap that joins a linked pair. It is not parented to either block:
-// both ends have to be honoured, and each block can be moved on its own by the
-// break wave, so the strap is placed from the two live positions every frame.
-// One candidate way to bolt a strap on: which two blocks it would join, which
-// face it would lie on, and how good that is (see chooseLinkAnchors).
-type LinkAnchors = {
-  from: BlockRuntime;
-  to: BlockRuntime;
-  mount: THREE.Vector3;
-  rank: number;
-  distance: number;
-};
-
-type LinkBridge = {
-  group: string;
-  from: BlockRuntime;
-  to: BlockRuntime;
-  // The face the strap lies on, in model space, picked once at build time.
-  mount: THREE.Vector3;
-  root: THREE.Group;
-  spine: THREE.Mesh;
-  padFrom: THREE.Mesh;
-  padTo: THREE.Mesh;
-};
-
 // One shard of magic light. Unlit, so it reads as light rather than as painted
 // plastic, and it leaves by shrinking like the smoke does.
 type Sparkle = {
@@ -349,43 +290,6 @@ type SmokePuff = {
   // would be, or a falling shot drags a solid white rope behind it.
   life: number;
 };
-
-// Drawn at runtime instead of loaded, because the whole game ships as one HTML
-// file with no external assets. Greyscale only, so the material's colour is
-// what decides the shade and one texture serves every barrel depth.
-function makePlatingTexture() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext("2d")!;
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, size, size);
-
-  // Brushed streaks give the surface a direction without adding colour.
-  context.strokeStyle = "rgba(0,0,0,0.09)";
-  context.lineWidth = 1;
-  for (let y = 2; y < size; y += 4) {
-    context.beginPath();
-    context.moveTo(0, y + 0.5);
-    context.lineTo(size, y + 0.5);
-    context.stroke();
-  }
-  // A rim and corner bolts read as a plate rather than a painted cube.
-  context.strokeStyle = "rgba(0,0,0,0.3)";
-  context.lineWidth = 3;
-  context.strokeRect(1.5, 1.5, size - 3, size - 3);
-  context.fillStyle = "rgba(0,0,0,0.38)";
-  for (const [x, y] of [[9, 9], [size - 9, 9], [9, size - 9], [size - 9, size - 9]]) {
-    context.beginPath();
-    context.arc(x, y, 2.6, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
 
 function gridKey(x: number, y: number, z: number) {
   return `${x},${y},${z}`;
@@ -540,11 +444,6 @@ export class CannonSortEngine {
   // breaks never disposes something another block is still drawing with. All of
   // them are released together in dispose().
   private readonly disposables: Array<{ dispose: () => void }> = [];
-  private barrelShellGeometry: THREE.BoxGeometry | null = null;
-  private barrelShellMaterials: THREE.MeshLambertMaterial[] = [];
-  private debris: DebrisPiece[] = [];
-  private debrisGeometry: THREE.BoxGeometry | null = null;
-  private debrisMaterials: THREE.MeshLambertMaterial[] = [];
   private smoke: SmokePuff[] = [];
   private smokeGeometry: THREE.SphereGeometry | null = null;
   private smokeMaterial: THREE.MeshBasicMaterial | null = null;
@@ -558,7 +457,6 @@ export class CannonSortEngine {
   private showcaseCountdown = 0;
   private showcaseShots: ShowcaseShot[] = [];
   private readonly cannonRestPosition = new THREE.Vector3();
-  private linkBridges: LinkBridge[] = [];
   private linkStrapParts: {
     pad: THREE.BoxGeometry;
     spine: THREE.BoxGeometry;
@@ -651,269 +549,15 @@ export class CannonSortEngine {
       );
       this.modelRoot.add(mesh);
 
-      const block: BlockRuntime = {
-        ...spec,
-        active: true,
-        mesh,
-        barrelLeft: spec.barrelLayers ?? 0,
-      };
-      if (block.barrelLeft > 0) block.barrelShell = this.attachBarrelShell(mesh, block.barrelLeft);
+      const block: BlockRuntime = { ...spec, active: true, mesh };
       this.blocks.push(block);
       this.blockMap.set(gridKey(spec.x, spec.y, spec.z), block);
     }
-
-    // Straps need every block registered first: which two blocks a link joins,
-    // and which face the strap can lie on, are both answered by looking around
-    // the finished cluster.
-    this.buildLinkBridges();
   }
 
   private axisCentre(values: number[]) {
     if (!values.length) return 0;
     return (Math.min(...values) + Math.max(...values)) / 2;
-  }
-
-  // The shell is fully opaque: what colour hides under it is not readable until
-  // it breaks. Only its shade changes with depth, from black at three layers to
-  // near white on the last one, so remaining cover is legible without a HUD.
-  private attachBarrelShell(mesh: THREE.Mesh, layers: number) {
-    if (!this.barrelShellGeometry) {
-      const size = BLOCK_SIZE * 1.1;
-      this.barrelShellGeometry = new THREE.BoxGeometry(size, size, size);
-      this.disposables.push(this.barrelShellGeometry);
-      const plating = makePlatingTexture();
-      this.disposables.push(plating);
-      this.barrelShellMaterials = BARREL_LAYER_COLORS.map((color) => {
-        const material = new THREE.MeshLambertMaterial({ color, map: plating });
-        this.disposables.push(material);
-        return material;
-      });
-    }
-    const shell = new THREE.Mesh(this.barrelShellGeometry, this.shellMaterialFor(layers));
-    mesh.add(shell);
-    return shell;
-  }
-
-  private shellMaterialFor(layers: number) {
-    const index = THREE.MathUtils.clamp(layers - 1, 0, this.barrelShellMaterials.length - 1);
-    return this.barrelShellMaterials[index];
-  }
-
-  // A link is one physical strap: two riveted pads bolted to the outside of
-  // the two joined blocks, and a spine running across the gap between them.
-  // One strap per pair — hardware bolted onto every exposed face read as studs
-  // on every block instead of as a join between two particular ones.
-  private buildLinkBridges() {
-    const groups = new Map<string, BlockRuntime[]>();
-    for (const block of this.blocks) {
-      if (!block.linkGroup) continue;
-      const members = groups.get(block.linkGroup) ?? [];
-      members.push(block);
-      groups.set(block.linkGroup, members);
-    }
-
-    for (const [group, members] of groups) {
-      const ordered = [...members].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      // Split the way gameplay splits it, so the strap joins exactly the two
-      // clusters that go down together.
-      const nearSide = this.findCluster(ordered[0]);
-      const nearIds = new Set(nearSide.map((member) => member.id));
-      const farSide = ordered.filter((member) => !nearIds.has(member.id));
-      if (!nearSide.length || !farSide.length) continue;
-
-      // Every place the two clusters actually touch gets its own strap: the
-      // pair is bolted together along its whole seam, so one strap on one
-      // corner would read as one block being tied rather than the two shapes
-      // being joined.
-      const contacts = this.linkContactPairs(nearSide, farSide);
-      const seams = contacts.length
-        ? contacts
-        // Nothing touches — the two clusters were authored apart, so one strap
-        // spans the gap between the closest pair instead.
-        : [this.chooseLinkAnchors(nearSide, farSide)].filter((anchors) => anchors !== null);
-
-      for (const seam of seams) {
-        this.linkBridges.push(this.buildLinkStrap(group, seam.from, seam.to, seam.mount));
-      }
-    }
-    this.updateLinkBridges();
-  }
-
-  // Face-to-face contacts across the two clusters, in block and face order so
-  // a level always builds the same set. Each contact is found from the near
-  // side only, so a junction is never strapped twice from the same side.
-  //
-  // A junction gets a strap on *every* outside face it has, not just its best
-  // one. One strap per junction scattered them across whichever face each
-  // junction happened to prefer, so any single face of the model showed straps
-  // at some of its junctions and nothing at the others — which reads as a join
-  // that was left half finished.
-  private linkContactPairs(nearSide: BlockRuntime[], farSide: BlockRuntime[]) {
-    const farIds = new Set(farSide.map((member) => member.id));
-    const ordered = [...nearSide].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const contacts: LinkAnchors[] = [];
-    for (const from of ordered) {
-      for (const [dx, dy, dz] of PHYSICAL_FACE_NEIGHBORS) {
-        const to = this.blockMap.get(gridKey(from.x + dx, from.y + dy, from.z + dz));
-        if (!to?.active || !farIds.has(to.id)) continue;
-        const distance = from.mesh.position.distanceTo(to.mesh.position);
-        for (const mount of this.strapMountDirections(from, to)) {
-          contacts.push({ from, to, mount: mount.direction, rank: mount.rank, distance });
-        }
-      }
-    }
-    return contacts;
-  }
-
-  // Which two blocks the strap runs between. Two clusters usually touch along a
-  // whole face, so several pairs are equally close: level 5's pair touches at
-  // four blocks at once. Picking by distance alone would settle those ties on
-  // block order and could bolt the strap to the underside of the cluster while
-  // an equally close pair had the top face free, so the face the pair can offer
-  // is part of the choice.
-  private chooseLinkAnchors(nearSide: BlockRuntime[], farSide: BlockRuntime[]) {
-    let best: LinkAnchors | null = null;
-    for (const from of nearSide) {
-      for (const to of farSide) {
-        const [mount] = this.strapMountDirections(from, to);
-        const candidate: LinkAnchors = {
-          from,
-          to,
-          mount: mount.direction,
-          rank: mount.rank,
-          distance: from.mesh.position.distanceTo(to.mesh.position),
-        };
-        if (!best || this.preferAnchors(candidate, best)) best = candidate;
-      }
-    }
-    return best;
-  }
-
-  // Closest first, because that is where the two shapes meet. Then the most
-  // visible face. Then id, so a level builds the same strap every time.
-  private preferAnchors(candidate: LinkAnchors, best: LinkAnchors) {
-    if (Math.abs(candidate.distance - best.distance) > 1e-6) return candidate.distance < best.distance;
-    if (candidate.rank !== best.rank) return candidate.rank < best.rank;
-    if (candidate.from.id !== best.from.id) return candidate.from.id < best.from.id;
-    return candidate.to.id < best.to.id;
-  }
-
-  // Every face a strap can lie on for this junction, best first: square-on to
-  // the link axis, and open air on both blocks — a face with a block against it
-  // would put the strap inside the cluster, which is exactly what the seam
-  // between the two joined blocks already is. `rank` carries both how visible a
-  // face is and how far down the fallback ladder it was found, so a pair
-  // offering a real face always beats one that does not.
-  private strapMountDirections(from: BlockRuntime, to: BlockRuntime) {
-    const axis = to.mesh.position.clone().sub(from.mesh.position);
-    if (axis.lengthSq() < 1e-8) axis.set(0, 0, 1);
-    axis.normalize();
-
-    const faceCount = FACE_DIRECTIONS.length;
-    const open: Array<{ direction: THREE.Vector3; rank: number }> = [];
-    let halfOpen: { direction: THREE.Vector3; rank: number } | null = null;
-    let anySquareOn: { direction: THREE.Vector3; rank: number } | null = null;
-    for (const [index, [dx, dy, dz]] of FACE_DIRECTIONS.entries()) {
-      const direction = new THREE.Vector3(dx, dy, dz);
-      if (Math.abs(direction.dot(axis)) > LINK_MOUNT_MAX_AXIS_DOT) continue;
-      anySquareOn ??= { direction, rank: faceCount * 2 + index };
-      const fromOpen = !this.blockMap.get(gridKey(from.x + dx, from.y + dy, from.z + dz))?.active;
-      const toOpen = !this.blockMap.get(gridKey(to.x + dx, to.y + dy, to.z + dz))?.active;
-      if (fromOpen && toOpen) {
-        open.push({ direction, rank: index });
-        continue;
-      }
-      if (fromOpen) halfOpen ??= { direction, rank: faceCount + index };
-    }
-    if (open.length) return open;
-    // A junction with no outside at all — buried in the middle of a wide seam —
-    // still gets one strap, so no junction is ever left bare.
-    return [halfOpen ?? anySquareOn ?? { direction: new THREE.Vector3(0, 1, 0), rank: Infinity }];
-  }
-
-  private ensureLinkStrapParts() {
-    if (this.linkStrapParts) return this.linkStrapParts;
-    const metal = new THREE.MeshLambertMaterial({ color: 0xb6b9c2, map: makePlatingTexture() });
-    const rivet = new THREE.MeshLambertMaterial({ color: 0x3a3c44 });
-    const parts = {
-      // Local frame of a strap: z runs along the link, y points out of the
-      // face it is bolted to. The pad is flat in that frame, and the spine is
-      // one unit long on z so spanning a gap is a single scale.
-      pad: new THREE.BoxGeometry(BLOCK_SIZE * 0.46, BLOCK_SIZE * 0.1, BLOCK_SIZE * 0.42),
-      spine: new THREE.BoxGeometry(BLOCK_SIZE * 0.22, BLOCK_SIZE * 0.09, 1),
-      loop: new THREE.TorusGeometry(BLOCK_SIZE * 0.085, BLOCK_SIZE * 0.028, 6, 14),
-      metal,
-      rivet,
-    };
-    this.linkStrapParts = parts;
-    this.disposables.push(parts.pad, parts.spine, parts.loop, metal, rivet, metal.map!);
-    return parts;
-  }
-
-  private buildLinkStrap(group: string, from: BlockRuntime, to: BlockRuntime, mount: THREE.Vector3) {
-    const parts = this.ensureLinkStrapParts();
-    const root = new THREE.Group();
-
-    const spine = new THREE.Mesh(parts.spine, parts.metal);
-    root.add(spine);
-    // A collar at the middle of the spine: the one detail that says the two
-    // ends are one piece rather than a bracket each.
-    const collar = new THREE.Mesh(parts.loop, parts.metal);
-    collar.scale.setScalar(1.7);
-    root.add(collar);
-
-    const pads = [from, to].map(() => {
-      const pad = new THREE.Mesh(parts.pad, parts.metal);
-      for (const side of [-1, 1]) {
-        const head = new THREE.Mesh(parts.loop, parts.rivet);
-        head.scale.setScalar(0.55);
-        // Turned so the ring faces out of the block, reading as a bolt head.
-        head.rotation.x = Math.PI / 2;
-        head.position.set(side * BLOCK_SIZE * 0.15, BLOCK_SIZE * 0.06, 0);
-        pad.add(head);
-      }
-      root.add(pad);
-      return pad;
-    });
-
-    this.modelRoot.add(root);
-    return { group, from, to, mount, root, spine, padFrom: pads[0], padTo: pads[1] };
-  }
-
-  // Placed from the two live block positions every frame. Either end can be
-  // shoved on its own by the break wave, a shell can peel off one of them, and
-  // recentring the pivot moves both, so a strap positioned once at build time
-  // would drift off the blocks it is bolted to.
-  private updateLinkBridges() {
-    for (const bridge of this.linkBridges) {
-      const from = bridge.from.mesh.position;
-      const to = bridge.to.mesh.position;
-      const forward = to.clone().sub(from);
-      const span = forward.length();
-      if (span < 1e-4) continue;
-      forward.divideScalar(span);
-
-      // The mount face squared off against the axis, so the strap lies flat
-      // even when the two clusters sit diagonally from each other.
-      const up = bridge.mount.clone().addScaledVector(forward, -bridge.mount.dot(forward));
-      if (up.lengthSq() < 1e-6) up.copy(this.worldUp);
-      up.normalize();
-      const right = up.clone().cross(forward).normalize();
-
-      const reach = Math.max(this.linkPadReach(bridge.from), this.linkPadReach(bridge.to));
-      bridge.root.position.copy(from).lerp(to, 0.5).addScaledVector(up, reach);
-      bridge.root.quaternion.setFromRotationMatrix(
-        new THREE.Matrix4().makeBasis(right, up, forward),
-      );
-      bridge.spine.scale.z = span + LINK_SPINE_OVERHANG;
-      bridge.padFrom.position.z = -span / 2;
-      bridge.padTo.position.z = span / 2;
-    }
-  }
-
-  // Clear of the shell while cover is up, down on the block once it is gone.
-  private linkPadReach(block: BlockRuntime) {
-    return block.barrelLeft > 0 ? LINK_PAD_REACH_OVER_SHELL : LINK_PAD_REACH;
   }
 
   // Only the frame lives here: where the rig stands, how it yaws and pitches,
@@ -1774,10 +1418,6 @@ export class CannonSortEngine {
       for (const [dx, dy, dz] of neighbors) {
         const neighbor = this.blockMap.get(gridKey(block.x + dx, block.y + dy, block.z + dz));
         if (!neighbor?.active || neighbor.color !== start.color || visited.has(neighbor.id)) continue;
-        // A shell separates what it covers from what it does not, so a cluster
-        // never straddles the boundary. This also makes the wrapped group the
-        // unit a shell covers, matching "one barrel wraps one cluster".
-        if ((neighbor.barrelLeft > 0) !== (start.barrelLeft > 0)) continue;
         visited.add(neighbor.id);
         queue.push(neighbor);
       }
@@ -1938,9 +1578,6 @@ export class CannonSortEngine {
     const modelWorld = this.modelRoot.getWorldPosition(new THREE.Vector3());
     for (const member of cluster) {
       this.clearNeighborKick(member);
-      // The strap is bolted on, not painted on: it comes off in one piece and
-      // falls when the pair it joined is claimed.
-      this.dropLinkBridge(member);
       member.active = false;
       member.mesh.material.emissive.setHex(COLOR_HEX[member.color]);
       member.mesh.material.emissiveIntensity = 0.55;
@@ -1968,38 +1605,12 @@ export class CannonSortEngine {
   }
 
   private handleHit(block: BlockRuntime, projectile: Projectile) {
-    // Fired before the branches below, because a shot that peeled a shell, a
-    // shot that was refused by a link and a shot that claimed a cluster all
-    // landed, and all three should show it.
+    // Fired before the branch below, because a shot refused by a full reserve
+    // and a shot that claimed a cluster both landed, and both should show it.
     this.playImpactEffect(projectile.mesh.position, projectile.shotIndex);
-
-    // A hit on a covered block only peels a layer. The cluster underneath needs
-    // its own shot once fully uncovered, so a barrel always costs extra shots
-    // instead of being a shortcut (draft §1.3).
-    if (block.barrelLeft > 0) {
-      haptic("impact");
-      this.peelBarrelAround(block);
-      this.removeProjectile(projectile);
-      this.aimPreviewDirty = true;
-      this.callbacks.onState(this.cloneState());
-      return;
-    }
 
     const cluster = this.findCluster(block);
     if (!cluster.length) return;
-
-    // A linked partner still under cover holds its whole pair in place: linked
-    // clusters go down together, so while one cannot be claimed neither can the
-    // other (draft §2.4.2). The shot lands and shakes the pair instead.
-    const blockedBy = this.coveredLinkPartner(cluster);
-    if (blockedBy) {
-      haptic("impact");
-      this.jostleCluster(cluster);
-      this.jostleCluster(this.findCluster(blockedBy));
-      this.removeProjectile(projectile);
-      this.aimPreviewDirty = true;
-      return;
-    }
 
     haptic("impact");
     // Claim immediately so another projectile cannot resolve this cluster twice.
@@ -2008,15 +1619,7 @@ export class CannonSortEngine {
     this.removeProjectile(projectile);
     this.aimPreviewDirty = true;
 
-    // Hitting a block next to a shell also opens that shell, in the same shot
-    // as the claim (draft §1.3).
-    const openedShells = this.breakBarrelsTouching(cluster);
-
-    // A linked cluster goes down with the one that was shot. It stays a
-    // separate claim: batches hold one colour each, so two colours can never
-    // merge into one transaction, and each side then follows the ordinary goal
-    // and batch rules including the fail when no batch slot is free.
-    const claimed = [cluster, ...this.claimLinkedClusters(cluster, projectile.shotIndex)];
+    const claimed = [cluster];
     this.state = {
       ...this.state,
       remainingBlockCount: this.blocks.filter((candidate) => candidate.active).length,
@@ -2037,130 +1640,7 @@ export class CannonSortEngine {
         sourceBlocks: [...group],
       });
     }
-    if (openedShells) this.aimPreviewDirty = true;
     this.callbacks.onState(this.cloneState());
-  }
-
-  // Peels one layer off the whole wrapped group, since one barrel covers one
-  // cluster rather than one cell.
-  private peelBarrelAround(block: BlockRuntime) {
-    for (const member of this.findCluster(block)) this.peelShell(member);
-  }
-
-  private breakBarrelsTouching(cluster: BlockRuntime[]) {
-    const offsets = this.level.adjacency.z ? PHYSICAL_FACE_NEIGHBORS : CONFIRMED_NEIGHBORS;
-    const touched: BlockRuntime[] = [];
-    for (const member of cluster) {
-      for (const [dx, dy, dz] of offsets) {
-        const neighbor = this.blockMap.get(gridKey(member.x + dx, member.y + dy, member.z + dz));
-        if (neighbor?.active && neighbor.barrelLeft > 0) touched.push(neighbor);
-      }
-    }
-    // Collected first, then peeled: peeling changes what findCluster walks, so
-    // reading and mutating in one pass would only reach part of a group.
-    const groups = new Set<BlockRuntime>();
-    for (const neighbor of touched) {
-      const group = this.findCluster(neighbor);
-      if (group.length) groups.add(group[0]);
-    }
-    for (const representative of groups) this.peelBarrelAround(representative);
-    return groups.size > 0;
-  }
-
-  // The partner cluster of a link, if it is still under cover.
-  private coveredLinkPartner(cluster: BlockRuntime[]) {
-    const groups = new Set(cluster.flatMap((member) => (member.linkGroup ? [member.linkGroup] : [])));
-    if (!groups.size) return null;
-    const ownIds = new Set(cluster.map((member) => member.id));
-    return this.blocks.find((candidate) =>
-      candidate.active
-      && !ownIds.has(candidate.id)
-      && candidate.linkGroup !== undefined
-      && groups.has(candidate.linkGroup)
-      && candidate.barrelLeft > 0) ?? null;
-  }
-
-  // Feedback for a shot that could not break anything: the cluster jolts in
-  // place, reusing the same kick the neighbours of a claim get.
-  private jostleCluster(cluster: BlockRuntime[]) {
-    for (const member of cluster) {
-      this.clearNeighborKick(member);
-      this.neighborKicks.push({
-        block: member,
-        age: 0,
-        delay: 0,
-        amplitude: 1,
-        duration: 0.22,
-        basePosition: member.mesh.position.clone(),
-        direction: new THREE.Vector3(0, 0.35, 1).normalize(),
-      });
-    }
-  }
-
-  // One breaking event peels exactly one layer, whether it came from a direct
-  // hit or from a claim next door.
-  private peelShell(block: BlockRuntime) {
-    if (block.barrelLeft <= 0) return;
-    this.spawnShellDebris(block, block.barrelLeft);
-    block.barrelLeft -= 1;
-    if (block.barrelLeft > 0) {
-      if (block.barrelShell) block.barrelShell.material = this.shellMaterialFor(block.barrelLeft);
-      return;
-    }
-    if (block.barrelShell) {
-      block.mesh.remove(block.barrelShell);
-      block.barrelShell = undefined;
-    }
-    // Nothing to do for a link here: the strap reads its own clearance from
-    // barrelLeft every frame, so it settles onto the bare block by itself.
-  }
-
-  private ensureDebrisResources() {
-    if (this.debrisGeometry) return;
-    const shard = BLOCK_SIZE * 0.2;
-    this.debrisGeometry = new THREE.BoxGeometry(shard, shard, shard * 0.5);
-    this.disposables.push(this.debrisGeometry);
-    this.debrisMaterials = BARREL_DEBRIS_COLORS.map((color) => {
-      const material = new THREE.MeshLambertMaterial({ color, transparent: true });
-      this.disposables.push(material);
-      return material;
-    });
-  }
-
-  private spawnShellDebris(block: BlockRuntime, layer: number) {
-    this.ensureDebrisResources();
-    const material = this.debrisMaterials[THREE.MathUtils.clamp(layer - 1, 0, this.debrisMaterials.length - 1)];
-    const origin = block.mesh.getWorldPosition(new THREE.Vector3());
-    for (let piece = 0; piece < 7; piece += 1) {
-      const seed = block.x * 31 + block.y * 17 + block.z * 7 + layer * 101 + piece * 13;
-      const mesh = new THREE.Mesh(this.debrisGeometry!, material);
-      mesh.position.copy(origin).add(new THREE.Vector3(
-        (seededUnit(seed) - 0.5) * BLOCK_SIZE,
-        (seededUnit(seed + 1) - 0.5) * BLOCK_SIZE,
-        (seededUnit(seed + 2) - 0.5) * BLOCK_SIZE,
-      ));
-      this.addDebris(mesh, seed);
-    }
-  }
-
-  // Shards and fittings leave the model and fall through world space, so they
-  // are parented to the scene rather than to the block they came from.
-  private addDebris(mesh: THREE.Object3D, seed: number) {
-    this.scene.add(mesh);
-    this.debris.push({
-      mesh,
-      velocity: new THREE.Vector3(
-        (seededUnit(seed + 3) - 0.5) * 2.6,
-        0.9 + seededUnit(seed + 4) * 1.6,
-        (seededUnit(seed + 5) - 0.5) * 2.6,
-      ),
-      spin: new THREE.Vector3(
-        (seededUnit(seed + 6) - 0.5) * 9,
-        (seededUnit(seed + 7) - 0.5) * 9,
-        (seededUnit(seed + 8) - 0.5) * 9,
-      ),
-      age: 0,
-    });
   }
 
   private ensureSmokeResources() {
@@ -2443,69 +1923,6 @@ export class CannonSortEngine {
     this.smoke = survivors;
   }
 
-  // The whole seam comes off at once: every strap of the group is taken out of
-  // the list, so the partner cluster going down in the same shot finds nothing
-  // left to drop and no strap falls twice.
-  private dropLinkBridge(block: BlockRuntime) {
-    if (!block.linkGroup) return;
-    const dropped = this.linkBridges.filter((bridge) => bridge.group === block.linkGroup);
-    if (!dropped.length) return;
-    this.linkBridges = this.linkBridges.filter((bridge) => bridge.group !== block.linkGroup);
-    for (const [index, bridge] of dropped.entries()) {
-      const worldPosition = bridge.root.getWorldPosition(new THREE.Vector3());
-      const worldQuaternion = bridge.root.getWorldQuaternion(new THREE.Quaternion());
-      this.modelRoot.remove(bridge.root);
-      bridge.root.position.copy(worldPosition);
-      bridge.root.quaternion.copy(worldQuaternion);
-      this.addDebris(bridge.root, block.x * 41 + block.y * 23 + block.z * 11 + index * 13);
-    }
-  }
-
-  private updateDebris() {
-    const survivors: DebrisPiece[] = [];
-    for (const piece of this.debris) {
-      piece.age += FIXED_STEP;
-      piece.velocity.y += DEBRIS_GRAVITY * FIXED_STEP;
-      piece.mesh.position.addScaledVector(piece.velocity, FIXED_STEP);
-      piece.mesh.rotation.x += piece.spin.x * FIXED_STEP;
-      piece.mesh.rotation.y += piece.spin.y * FIXED_STEP;
-      piece.mesh.rotation.z += piece.spin.z * FIXED_STEP;
-      const fade = 1 - piece.age / DEBRIS_LIFETIME;
-      piece.mesh.scale.setScalar(Math.max(0.05, fade));
-      if (piece.age < DEBRIS_LIFETIME) {
-        survivors.push(piece);
-        continue;
-      }
-      // Geometry and materials here are shared per engine, so only the node is
-      // detached; dispose() releases the shared resources once.
-      this.scene.remove(piece.mesh);
-    }
-    this.debris = survivors;
-  }
-
-  private claimLinkedClusters(cluster: BlockRuntime[], shotIndex: number) {
-    const groups = new Set(cluster.flatMap((member) => (member.linkGroup ? [member.linkGroup] : [])));
-    if (!groups.size) return [];
-
-    const claimedIds = new Set(cluster.map((member) => member.id));
-    const extra: BlockRuntime[][] = [];
-    for (const partner of this.blocks) {
-      if (!partner.active || claimedIds.has(partner.id)) continue;
-      if (!partner.linkGroup || !groups.has(partner.linkGroup)) continue;
-      // A covered partner is impossible here: handleHit refuses the shot
-      // outright while any linked cluster still has cover left.
-      if (partner.barrelLeft > 0) continue;
-      const partnerCluster = this.findCluster(partner);
-      if (!partnerCluster.length) continue;
-      partnerCluster.forEach((member) => claimedIds.add(member.id));
-      this.sendBreakWave(partnerCluster);
-      this.releaseCluster(partnerCluster, shotIndex);
-      this.breakBarrelsTouching(partnerCluster);
-      extra.push(partnerCluster);
-    }
-    return extra;
-  }
-
   private handleMiss(projectile: Projectile) {
     this.removeProjectile(projectile);
   }
@@ -2553,20 +1970,19 @@ export class CannonSortEngine {
   private createSortAnimation(pending: PendingResolution): SortAnimationEvent | null {
     const { result } = pending;
     const transfers: SortTransfer[] = [];
-    let unassigned = result.count;
-    const goalSlot = this.state.activeGoals.findIndex((goal) => goal?.color === result.color);
+    // The same split resolveCluster will apply, so the flight can never show a
+    // share of the claim the state does not go on to record.
+    const split = planClusterSplit(this.level, this.state, result.color, result.count);
 
-    if (goalSlot >= 0) {
-      const goal = this.state.activeGoals[goalSlot]!;
-      const amount = Math.min(unassigned, goal.target - goal.current);
-      if (amount > 0) {
-        transfers.push({ kind: "goal", slot: goalSlot, goalId: goal.id, fromCount: goal.current, count: amount });
-        unassigned -= amount;
-      }
+    if (split.goalSlot >= 0 && split.toGoal > 0) {
+      const goal = this.state.activeGoals[split.goalSlot]!;
+      transfers.push({ kind: "goal", slot: split.goalSlot, goalId: goal.id, fromCount: goal.current, count: split.toGoal });
     }
-
-    if (unassigned > 0 && this.state.batches.length < this.level.batchCapacity) {
-      transfers.push({ kind: "batch", slot: this.state.batches.length, count: unassigned });
+    // Drawn even when it does not fit: those cubes are what the player is
+    // about to lose the level over, and a silent claim would be the last thing
+    // they see before the panel.
+    if (split.excess > 0) {
+      transfers.push({ kind: "reserve", count: split.excess });
     }
     if (!transfers.length) return null;
 
@@ -2591,8 +2007,12 @@ export class CannonSortEngine {
       return;
     }
 
-    const batchesAdded = after.batches.length > before.batches.length;
-    if (batchesAdded && after.batches.length >= this.level.batchCapacity) {
+    // Counted in blocks, so a claim that only tops the reserve up still buzzes
+    // as "full" once it reaches the budget.
+    const parkedBefore = parkedBlockCount(before);
+    const parkedAfter = parkedBlockCount(after);
+    const batchesAdded = parkedAfter > parkedBefore;
+    if (batchesAdded && parkedAfter >= this.level.reserveBlocks) {
       haptic("batchFull");
       return;
     }
@@ -2824,7 +2244,6 @@ export class CannonSortEngine {
       while (this.accumulator >= FIXED_STEP) {
         this.projectiles.slice().forEach((projectile) => this.updateProjectile(projectile));
         if (this.showcase) this.updateShowcase();
-        if (this.debris.length) this.updateDebris();
         if (this.smoke.length) this.updateSmoke();
         if (this.sparkles.length) this.updateSparkles();
         if (this.releasedBlocks.length) this.updateReleasedBlocks();
@@ -2841,10 +2260,6 @@ export class CannonSortEngine {
       this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
       if (this.aimPreviewDirty) this.updateAimPreview();
     }
-
-    // Last thing before the draw, so a strap is placed against the block
-    // positions this frame actually shows.
-    if (this.linkBridges.length) this.updateLinkBridges();
 
     this.renderer.render(this.scene, this.camera);
   };

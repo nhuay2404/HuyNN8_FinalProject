@@ -168,40 +168,60 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    goal still in play keeps its place, and shows nothing at all. */
 .goal-slot-empty { min-height: 0; }
 
-.batch-section { display: flex; align-items: center; gap: 9px; }
-.batch-caption {
-  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; height: 32px; padding: 0 10px;
-  border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
-  color: #c9d2f4; font-size: 10px; font-weight: 900; letter-spacing: .1em;
-}
-.batch-caption-icon {
-  width: 13px; height: 12px; border: 2px solid currentColor; border-radius: 3px;
-  background: linear-gradient(currentColor 0 0) center / 100% 2px no-repeat;
-}
-.batch-caption em { color: var(--accent); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; }
-.batch-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: 1 1 auto; }
+/* No chip, no counter: the row is the budget drawn out. */
+.batch-section { display: block; }
+/* The rack the blocks sit in. Thin walls with a thicker lip along the bottom is
+   the one asymmetry that keeps it from reading as another rounded pill, and the
+   interior stays neutral because it holds every colour the player has parked at
+   once — tinting the walls would either pick a winner or wash out. */
 .batch-slot {
-  position: relative; height: 32px; border: 2px dashed rgba(255,255,255,.24); border-radius: 11px;
-  display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(11,16,46,.34);
-  color: rgba(255,255,255,.4); font-size: 11px; font-weight: 800;
+  position: relative; height: 32px; padding: 0 6px;
+  border: 2px solid rgba(255,255,255,.3); border-bottom-width: 4px; border-radius: 11px;
+  background: linear-gradient(180deg, rgba(6,10,32,.5), rgba(6,10,32,.72));
+  box-shadow:
+    0 8px 18px -12px rgba(6,10,32,.7),
+    inset 0 1px 0 rgba(255,255,255,.14);
+  animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both;
 }
-.batch-slot.empty span { width: 12px; height: 12px; background: linear-gradient(currentColor 0 0) center / 100% 2px no-repeat, linear-gradient(currentColor 0 0) center / 2px 100% no-repeat; }
-.batch-slot.filled {
-  border: 2px solid color-mix(in srgb, var(--batch), transparent 34%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--batch), transparent 70%), color-mix(in srgb, var(--batch), transparent 86%));
-  box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--batch), transparent 30%), inset 0 1px 0 rgba(255,255,255,.16);
-  color: #fff; animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both;
+/* One column per slot, always a single row: the rack spans the whole HUD width,
+   so even a generous budget fits by narrowing its columns. Folding into two rows
+   is what would break it — the slot cap below is bounded by the rack's height,
+   and two of those stacked do not fit inside it. */
+.batch-tray {
+  display: grid; width: 100%; height: 100%; gap: 2px;
+  /* A small budget would otherwise spread four slots across the whole rack and
+     read as empty even when full. Clamped to what the slots need and centred,
+     so a tight budget looks deliberate; a generous one hits 100% and the
+     columns shrink as before. */
+  max-width: calc(var(--pips, 1) * 34px); margin-inline: auto;
+  grid-template-columns: repeat(var(--pips, 1), minmax(0, 1fr));
+  place-content: center; justify-items: center; align-items: center;
 }
-.batch-slot.is-receiving { border-style: dashed; border-color: color-mix(in srgb, var(--batch), transparent 20%); }
-.batch-cube {
-  width: 14px; height: 14px; border-radius: 4px;
+/* One slot is one block of budget, in the same 150deg three-stop language as
+   .cube-icon so a parked block reads as the same object as a goal block. Its
+   colour comes from the record it belongs to. The cap is what stops a small
+   budget from drawing enormous blocks; below it, minmax(0, 1fr) on the column
+   takes over and a generous budget narrows its slots to fit. */
+.batch-pip {
+  width: 100%; max-width: 22px; max-height: 22px; aspect-ratio: 1; border-radius: 6px;
   background: linear-gradient(150deg, color-mix(in srgb, var(--batch), white 30%), var(--batch) 58%, color-mix(in srgb, var(--batch), black 24%));
   box-shadow: 0 2px 0 color-mix(in srgb, var(--batch), black 38%);
+  animation: pip-drop .3s cubic-bezier(.18,.8,.25,1.25) both;
 }
-.batch-slot b { position: relative; font-size: 13px; font-variant-numeric: tabular-nums; }
-.batch-section.is-warning .batch-caption { border-color: rgba(255,145,48,.6); color: #ffd0a0; }
-.batch-section.is-warning .batch-caption em { color: #ff9130; }
-.batch-section.is-warning .batch-row { animation: batch-warning 1.2s ease-in-out infinite; }
+/* An unused slot is the same shape, empty: room left is something to count, not
+   a number to read. It has always been there, so it never animates in. */
+.batch-pip.is-socket {
+  background: rgba(255,255,255,.06);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.09);
+  animation: none;
+}
+/* Every slot taken: the whole rack pulses, which is the only warning the player
+   gets before a shot the reserve cannot absorb ends the level. Both animations
+   are listed because naming one here would drop the entrance. */
+.batch-section.is-warning .batch-slot {
+  border-color: rgba(255,145,48,.62);
+  animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both, batch-warning 1.2s ease-in-out infinite;
+}
 
 .scene-wrap { --aim-touch-height: 44%; position: absolute; inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0; overflow: hidden; }
 .scene-host { position: absolute; inset: 0; z-index: 0; }
@@ -540,7 +560,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   position: absolute; z-index: 40; inset: 0;
   display: grid; grid-template-rows: auto 1fr auto auto;
   padding: max(var(--hud-inset), env(safe-area-inset-top)) 0 max(14px, env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(9,13,40,.72) 0%, rgba(9,13,40,.12) 24%, rgba(9,13,40,.1) 46%, rgba(9,13,40,.78) 72%, rgba(9,13,40,.94) 100%);
+  /* Dark enough at the top for the title, and then it gets out of the way: the
+     rig fills 26-55% of the frame height, so the old ramp to .78 by 72% was
+     sitting on the pedestal and putting the model's base in shadow. The tray
+     paints its own background, so nothing down there needs the scrim either. */
+  background: linear-gradient(180deg, rgba(9,13,40,.7) 0%, rgba(9,13,40,.13) 22%, rgba(9,13,40,.05) 52%, rgba(9,13,40,.18) 68%, rgba(9,13,40,.4) 100%);
   animation: overlay-in .2s ease both;
 }
 .cosmetic-bar {
@@ -567,10 +591,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    tap, or the rig would be sitting behind a pane of glass. */
 .cosmetic-stage { pointer-events: none; }
 .cosmetic-equip {
-  justify-self: center; min-width: 168px; margin: 0 0 14px; padding: 13px 30px; cursor: pointer;
+  justify-self: center; min-width: 124px; margin: 0 0 12px; padding: 9px 22px; cursor: pointer;
   border: 0; border-radius: 999px; background: #fff; color: #2b3fa0;
-  font-size: 16px; font-weight: 900; letter-spacing: -.01em;
-  box-shadow: 0 10px 26px rgba(6,10,32,.45);
+  font-size: 13px; font-weight: 900; letter-spacing: -.01em;
+  box-shadow: 0 8px 20px rgba(6,10,32,.42);
   transition: transform .2s, background .2s;
 }
 .cosmetic-equip:hover:not([disabled]) { transform: translateY(-2px); }
@@ -673,6 +697,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   }
 }
 @keyframes batch-in { from { opacity: 0; transform: translateY(-10px) scale(.8); } }
+/* Each new block drops into the tray on its own. Pips are keyed by index, so
+   only the one that just arrived plays this; the ones already in the tray sit
+   still instead of the whole row flashing on every hit. */
+@keyframes pip-drop { from { opacity: 0; transform: translateY(-6px) scale(.7); } }
 @keyframes batch-warning { 50% { opacity: .74; transform: scale(.982); } }
 @keyframes overlay-in { from { opacity: 0; } }
 /* Out of the depth of the frame and toward the player, overshooting once before
@@ -718,18 +746,13 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   .game-frame { width: 100%; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
 }
 
-/* Narrow phones: keep the batch slots readable by dropping the caption wording. */
-@media (max-width: 360px) {
-  .batch-caption { padding: 0 8px; }
-  .batch-caption-text { display: none; }
-}
-
 @media (max-height: 730px) {
   :root { --hud-inset: 12px; --hud-height: 82px; }
   .goal-card { height: 46px; border-radius: 16px; }
   .goal-count strong { font-size: 21px; }
   .cube-icon { width: 21px; height: 21px; }
-  .batch-slot, .batch-caption { height: 28px; }
+  .batch-slot { height: 28px; }
+  .batch-pip { max-width: 18px; max-height: 18px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
