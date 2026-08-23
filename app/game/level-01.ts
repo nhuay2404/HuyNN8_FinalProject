@@ -20,23 +20,17 @@ const blocks: BlockSpec[] = rows.flatMap((row) =>
   })),
 );
 
-// One authored, outward-facing point for every same-colour FACE_6 cluster.
+// One point per cluster. The two opening goal colours are immediately readable;
+// every other point is revealed by the preceding goal route, without cycles.
 const weakPoints: WeakPointSpec[] = [
-  { id: "weak-point-block-0-2-0-nz", blockId: "block-0-2-0", x: 0, y: 2, z: 0, face: "NZ" },
-  { id: "weak-point-block-3-2-1-pz", blockId: "block-3-2-1", x: 3, y: 2, z: 1, face: "PZ" },
-  { id: "weak-point-block-0-1-0-nx", blockId: "block-0-1-0", x: 0, y: 1, z: 0, face: "NX" },
-  { id: "weak-point-block-0-0-0-nz", blockId: "block-0-0-0", x: 0, y: 0, z: 0, face: "NZ" },
-  { id: "weak-point-block-0-2-1-pz", blockId: "block-0-2-1", x: 0, y: 2, z: 1, face: "PZ" },
-  { id: "weak-point-block-0-1-1-pz", blockId: "block-0-1-1", x: 0, y: 1, z: 1, face: "PZ" },
-  { id: "weak-point-block-0-0-1-pz", blockId: "block-0-0-1", x: 0, y: 0, z: 1, face: "PZ" },
-  { id: "weak-point-block-3-0-0-px", blockId: "block-3-0-0", x: 3, y: 0, z: 0, face: "PX" },
-  { id: "weak-point-block-1-1-0-pz", blockId: "block-1-1-0", x: 1, y: 1, z: 0, face: "PZ" },
-  { id: "weak-point-block-2-1-1-nz", blockId: "block-2-1-1", x: 2, y: 1, z: 1, face: "NZ" },
+  { id: "weak-point-block-1-2-0-ny", blockId: "block-1-2-0", x: 1, y: 2, z: 0, face: "NY" },
+  { id: "weak-point-block-3-2-1-ny", blockId: "block-3-2-1", x: 3, y: 2, z: 1, face: "NY" },
+  { id: "weak-point-block-1-1-0-ny", blockId: "block-1-1-0", x: 1, y: 1, z: 0, face: "NY" },
   { id: "weak-point-block-1-0-0-pz", blockId: "block-1-0-0", x: 1, y: 0, z: 0, face: "PZ" },
-  { id: "weak-point-block-2-0-1-nz", blockId: "block-2-0-1", x: 2, y: 0, z: 1, face: "NZ" },
-  { id: "weak-point-block-1-2-0-pz", blockId: "block-1-2-0", x: 1, y: 2, z: 0, face: "PZ" },
-  { id: "weak-point-block-1-2-1-nz", blockId: "block-1-2-1", x: 1, y: 2, z: 1, face: "NZ" },
   { id: "weak-point-block-3-0-0-pz", blockId: "block-3-0-0", x: 3, y: 0, z: 0, face: "PZ" },
+  { id: "weak-point-block-0-2-1-pz", blockId: "block-0-2-1", x: 0, y: 2, z: 1, face: "PZ" },
+  { id: "weak-point-block-2-1-1-nz", blockId: "block-2-1-1", x: 2, y: 1, z: 1, face: "NZ" },
+  { id: "weak-point-block-0-0-1-pz", blockId: "block-0-0-1", x: 0, y: 0, z: 1, face: "PZ" },
 ];
 
 export const level01: LevelConfig = {
@@ -50,7 +44,7 @@ export const level01: LevelConfig = {
   missCountsAsShot: true,
   continuousFire: true,
   weakPoints,
-  rainbow: { targetCount: 3, spawnGapSeconds: 12, targetDurationSeconds: 4.5 },
+  rainbow: { targetCount: 3, spawnGapSeconds: 12, targetDurationSeconds: 7 },
 
   // Confirmed by prototype playtesting: direct same-color contact on X/Y/Z
   // belongs to one cluster. Diagonal contact still does not connect blocks.

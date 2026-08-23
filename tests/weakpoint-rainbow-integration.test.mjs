@@ -14,14 +14,48 @@ function isolate(source, signature, stopAt = "\n  private ") {
   return end > start ? source.slice(start, end) : source.slice(start);
 }
 
-test("Weak Points are world-space bullseyes parented to their authored blocks", async () => {
+test("Weak Points use the white target mark while flying Rainbow Targets keep the spectrum", async () => {
   const source = await readFile(engineUrl, "utf8");
   const build = isolate(source, "private buildWeakPoints() {");
-  assert.match(build, /new THREE\.CircleGeometry/);
+  const targetBuild = isolate(source, "private buildRainbowTargets() {");
+  const spectrumLogo = isolate(
+    source,
+    "function createSpectrumRingGeometries",
+    "\n}\n\nfunction createWeakPointTargetGeometries",
+  );
+  const weakPointLogo = isolate(
+    source,
+    "function createWeakPointTargetGeometries",
+    "\n}\n\nfunction gridKey",
+  );
+
+  assert.match(source, /const WEAK_POINT_TARGET_COLOR = 0xffffff;/, "the product target mark is white");
+  assert.match(source, /const WEAK_POINT_TARGET_OUTLINE = 0x10152f;/, "a navy keyline protects it on bright blocks");
+  assert.equal(
+    weakPointLogo.match(/new THREE\.RingGeometry/g)?.length,
+    4,
+    "two white rings and their two wider keylines are shared by every marker",
+  );
+  assert.doesNotMatch(weakPointLogo, /CircleGeometry/, "transparent gaps and centre let the block colour show through");
+  assert.match(weakPointLogo, /radius \* 0\.73, radius \* 1\.05/, "the outside keyline extends past the white ring");
+  assert.match(weakPointLogo, /radius \* 0\.22, radius \* 0\.54/, "the inside keyline protects both edges");
+  assert.match(build, /createWeakPointTargetGeometries\(visualRadius\)/);
+  assert.match(build, /color: WEAK_POINT_TARGET_OUTLINE/);
+  assert.match(build, /color: WEAK_POINT_TARGET_COLOR/);
+  assert.doesNotMatch(build, /RAINBOW_RING_COLORS|createSpectrumRingGeometries/, "a block marker must not look like the Rainbow reward");
+  assert.match(build, /if \(this\.options\.showWeakPoints === false\) return;/, "the controls-only tutorial can hide the mechanic entirely");
+
+  assert.match(spectrumLogo, /RAINBOW_RING_COLORS\.map/, "the flying objective still owns all seven spectrum bands");
+  assert.match(spectrumLogo, /new THREE\.RingGeometry/);
+  assert.match(spectrumLogo, /new THREE\.CircleGeometry/, "the flying bullseye centre stays filled");
+  assert.match(targetBuild, /createSpectrumRingGeometries\(RAINBOW_TARGET_RADIUS\)/);
+  assert.match(targetBuild, /RAINBOW_RING_COLORS\.map/, "target materials stay rainbow as well as their geometry");
+  assert.doesNotMatch(build, /CylinderGeometry|TorusGeometry/, "only the flying target receives physical depth");
+  assert.doesNotMatch(source, /WEAK_POINT_CRACK|createWeakPointCrackGeometry|WEAK_POINT_PULSE|updateWeakPointVisuals/);
   assert.match(build, /block\.mesh\.add\(group\)/, "the marker has to inherit the block/model transform");
   assert.match(build, /weakPointFaceNormal\(spec\.face\)/);
-  // Presentation only now: the decal says which face, and the hit test reads
-  // the face. Nothing may tie the drawn radius back to what counts as a hit.
+  // Presentation only: the bullseye says which face, and the hit test reads the
+  // face. Nothing may tie the drawn size back to what counts as a hit.
   assert.match(build, /WEAK_POINT_VISUAL_RADIUS_RATIO/, "the decal still has an authored size");
   const test = isolate(source, "private projectileHitWeakPoint(block: BlockRuntime, projectile: Projectile) {");
   assert.doesNotMatch(test, /RADIUS|isBullseyeHit/, "the hit test must not consult the drawn radius");
@@ -53,7 +87,12 @@ test("block impact reads the bypass flag at impact and splits claim from ricoche
   // The ball rebounds off a Weak Point too. Deleting it at the moment of the
   // hit read as the block swallowing the shot instead of breaking.
   assert.doesNotMatch(hit, /this\.removeProjectile\(projectile\)/, "the claim path must not delete the ball");
-  assert.equal(hit.match(/this\.startRicochet\(projectile\)/g).length, 2, "both outcomes bounce the ball");
+  assert.match(hit, /this\.options\.canClaimColor/, "a tutorial may temporarily protect colours it has not introduced");
+  assert.equal(
+    hit.match(/this\.startRicochet\(projectile\)/g).length,
+    3,
+    "tutorial refusal, wrong-face refusal and a successful claim all bounce the ball",
+  );
 });
 
 test("a refused block wears a blue guard that fades and never stacks", async () => {
@@ -95,6 +134,9 @@ test("a Rainbow Target arms one bypass and always stops its projectile", async (
   const hit = isolate(source, "private handleRainbowTargetHit(target: RainbowTargetRuntime, projectile: Projectile) {");
   assert.match(hit, /if \(!target\.active \|\| target\.hit\) return/);
   assert.match(hit, /target\.hit = true/, "the latch is what makes the reward single-use");
+  assert.match(hit, /target\.impactStartedAt = this\.roundElapsed/, "the target should stay for its impact response");
+  assert.match(hit, /target\.impactDirection\.copy\(projectile\.velocity\)/, "the recoil follows the incoming ball");
+  assert.match(hit, /target\.group\.visible = true/, "the target cannot disappear before the impact animation");
   assert.match(hit, /this\.armWeakPointBypass\(\)/);
   assert.match(hit, /this\.removeProjectile\(projectile\)/);
 
@@ -138,18 +180,18 @@ test("the round is untimed, and the step that moves targets is the step that mov
   assert.doesNotMatch(source, /considerBoundary|hookStepDelta/, "the phase sub-stepping is gone");
 });
 
-test("a target flies a seeded free-form path, solved in its own frame", async () => {
+test("a target flies one seeded linear path, solved in its own frame", async () => {
   const source = await readFile(engineUrl, "utf8");
   const motions = isolate(source, "private rainbowTargetMotionsForInterval(intervalStart: number, intervalEnd: number) {");
   const update = isolate(source, "private updateRainbowTargets() {");
 
-  assert.match(update, /rainbowWanderAt\(target\.seed, progress\)/);
+  assert.match(update, /rainbowLinearAt\(target\.seed, progress\)/);
   assert.doesNotMatch(source, /evaluateRainbowPath|pathId|RAINBOW_PATHS/, "the authored path table is gone");
 
   // Hitting something that is moving needs the segment it travels during the
   // step, not one sampled point, and the sweep solves relative to the target.
-  assert.match(motions, /rainbowWanderAt\(target\.seed, \(liveStart - target\.spawnTime\)/);
-  assert.match(motions, /rainbowWanderAt\(target\.seed, \(liveEnd - target\.spawnTime\)/);
+  assert.match(motions, /rainbowLinearAt\(target\.seed, \(liveStart - target\.spawnTime\)/);
+  assert.match(motions, /rainbowLinearAt\(target\.seed, \(liveEnd - target\.spawnTime\)/);
   const sweep = isolate(source, "private sweepRainbowTargets(");
   assert.match(sweep, /relativeFrom/);
   assert.match(sweep, /relativeTo/);
@@ -167,6 +209,42 @@ test("the bullseye is a seven-colour spectrum", async () => {
   assert.match(build, /RAINBOW_RING_COLORS\.map/, "geometry and material are shared across every target");
   assert.match(build, /createRainbowSpawnSchedule\(\{/);
   assert.match(build, /levelSeed: this\.level\.id/, "the same level schedules the same round twice");
+});
+
+test("the Rainbow Target is a deep 3D model with a physical impact response", async () => {
+  const source = await readFile(engineUrl, "utf8");
+  const build = isolate(source, "private buildRainbowTargets() {");
+  const impact = isolate(source, "private updateRainbowTargetImpact(target: RainbowTargetRuntime) {");
+
+  assert.match(build, /new THREE\.CylinderGeometry[\s\S]*RAINBOW_TARGET_DEPTH/, "the target body must have authored depth");
+  assert.match(build, /new THREE\.TorusGeometry/, "front and back rims make the depth readable");
+  assert.match(build, /frontRim\.position\.z/);
+  assert.match(build, /backRim\.position\.z/);
+
+  assert.match(impact, /RAINBOW_TARGET_IMPACT_DURATION/);
+  assert.match(impact, /RAINBOW_TARGET_IMPACT_PUSH/);
+  assert.match(impact, /target\.impactDirection/);
+  assert.match(impact, /target\.group\.rotateX\(wobble\)/);
+  assert.match(impact, /target\.group\.scale\.set\(/, "the plate compresses before it leaves");
+  assert.match(impact, /target\.group\.visible = false/, "the impact animation owns the eventual hide");
+});
+
+test("the Rainbow Target hitbox extends beyond the visible plate", async () => {
+  const source = await readFile(engineUrl, "utf8");
+  const colliderRadius = Number(source.match(/const RAINBOW_TARGET_COLLIDER_RADIUS = ([0-9.]+);/)?.[1]);
+  const visibleRadius = Number(source.match(/const RAINBOW_TARGET_RADIUS = ([0-9.]+);/)?.[1]);
+  const projectileRadius = Number(source.match(/const PROJECTILE_RADIUS = ([0-9.]+);/)?.[1]);
+  assert.equal(colliderRadius, 0.8);
+  assert.ok(colliderRadius > visibleRadius, "the collider must be more forgiving than the visible target");
+  assert.equal(Math.round((colliderRadius + projectileRadius) * 100) / 100, 0.95, "the swept hit radius includes the ball");
+  const aimRay = isolate(source, "private raycastRainbowTargetSurfacePoint(");
+  assert.match(aimRay, /RAINBOW_TARGET_COLLIDER_RADIUS/, "crosshair selection uses the same forgiving radius");
+  const sweep = isolate(source, "private sweepRainbowTargets(");
+  assert.equal(
+    sweep.match(/RAINBOW_TARGET_COLLIDER_RADIUS \+ PROJECTILE_RADIUS/g)?.length,
+    2,
+    "both moving and sampled target sweeps include the ball radius",
+  );
 });
 
 test("every result path clears transient gameplay and leaves Climax presentation", async () => {
@@ -201,7 +279,12 @@ test("an armed bypass hides every Weak Point and coats the rig", async () => {
 test("the armed state shows falling fireworks and a moving rainbow band", async () => {
   const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
   assert.match(ui, /function ClimaxFireworks\(\)/);
-  assert.match(ui, /bypassArmed && <ClimaxFireworks/);
+  assert.match(
+    ui,
+    /const showClimaxFeedback = \(screen === "playing" \|\| \(tutorialMode && tutorialProgress\.chapter === 2\)\) && bypassArmed;/,
+    "Climax feedback belongs to campaign play and the final tutorial only",
+  );
+  assert.match(ui, /showClimaxFeedback && !state\.result && <ClimaxFireworks/);
   assert.match(css, /@keyframes climax-fall/);
   assert.match(css, /\.game-frame\.is-paused \.climax-fireworks span/);
 

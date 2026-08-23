@@ -361,6 +361,82 @@ const WEAK_POINT_FACE_STEPS: Record<WeakPointFace, readonly [number, number, num
   NZ: [0, 0, -1],
 };
 
+export type WeakPointRouteAudit = Readonly<{
+  clusterColors: readonly BlockColor[];
+  pointCounts: readonly number[];
+  /** Clusters that become reachable together after the preceding waves leave. */
+  waves: readonly (readonly number[])[];
+  unreachableClusterIndices: readonly number[];
+}>;
+
+// Reachability is a property of the authored faces, not the current camera.
+// A cluster becomes playable when at least one of its Weak Points faces empty
+// space or a cluster that an earlier wave could already remove.
+export function auditWeakPointRoutes(blocks: BlockSpec[], weakPoints: WeakPointSpec[]): WeakPointRouteAudit {
+  const clusters = sameColorClusters(blocks);
+  const clusterIndexByBlock = new Map<string, number>();
+  clusters.forEach((cluster, clusterIndex) => {
+    for (const block of cluster) clusterIndexByBlock.set(block.id, clusterIndex);
+  });
+  const blockAt = new Map(blocks.map((block) => [`${block.x}.${block.y}.${block.z}`, block]));
+  const pointsByCluster = clusters.map(() => [] as WeakPointSpec[]);
+  for (const point of weakPoints) {
+    const clusterIndex = clusterIndexByBlock.get(point.blockId);
+    if (clusterIndex !== undefined) pointsByCluster[clusterIndex].push(point);
+  }
+
+  const cleared = new Set<number>();
+  const waves: number[][] = [];
+  for (;;) {
+    const nextWave: number[] = [];
+    clusters.forEach((_, clusterIndex) => {
+      if (cleared.has(clusterIndex)) return;
+      const reachable = pointsByCluster[clusterIndex].some((point) => {
+        const [dx, dy, dz] = WEAK_POINT_FACE_STEPS[point.face];
+        const coveringBlock = blockAt.get(`${point.x + dx}.${point.y + dy}.${point.z + dz}`);
+        if (!coveringBlock) return true;
+        const coveringCluster = clusterIndexByBlock.get(coveringBlock.id);
+        return coveringCluster !== undefined && cleared.has(coveringCluster);
+      });
+      if (reachable) nextWave.push(clusterIndex);
+    });
+    if (!nextWave.length) break;
+    waves.push(nextWave);
+    nextWave.forEach((clusterIndex) => cleared.add(clusterIndex));
+  }
+
+  return {
+    clusterColors: clusters.map((cluster) => cluster[0].color),
+    pointCounts: pointsByCluster.map((points) => points.length),
+    waves,
+    unreachableClusterIndices: clusters.map((_, index) => index).filter((index) => !cleared.has(index)),
+  };
+}
+
+function checkWeakPointPacing(
+  blocks: BlockSpec[],
+  weakPoints: WeakPointSpec[],
+  goals: GoalSpec[],
+  activeGoalSlots: number,
+  warn: (message: string) => void,
+) {
+  const audit = auditWeakPointRoutes(blocks, weakPoints);
+  const openingClusters = audit.waves[0] ?? [];
+  const openingColors = new Set(openingClusters.map((index) => audit.clusterColors[index]));
+  for (const color of new Set(goals.slice(0, activeGoalSlots).map((goal) => goal.color))) {
+    if (!openingColors.has(color)) {
+      warn(`weak-point pacing: opening goal ${color} has no immediately reachable cluster`);
+    }
+  }
+
+  if (audit.unreachableClusterIndices.length) {
+    const labels = audit.unreachableClusterIndices
+      .map((index) => `${audit.clusterColors[index]} cluster ${index + 1}`)
+      .join(", ");
+    warn(`HIGH-RISK weak-point blocker cycle leaves ${labels} unreachable without a Rainbow bypass`);
+  }
+}
+
 function parseWeakPoints(
   raw: string,
   dims: { x: number; y: number; z: number },
@@ -529,6 +605,7 @@ function buildLevel(
     ?? HOOK_LEVEL_DEFAULTS.rainbowTargetDurationSeconds;
   const rainbow: RainbowConfig = { targetCount, spawnGapSeconds, targetDurationSeconds };
   checkGoalWindows(goals, activeGoalSlots, report);
+  checkWeakPointPacing(blocks, weakPoints, goals, activeGoalSlots, warn);
 
   const biggestCluster = largestClusterSize(blocks);
   if (reserveBlocks < biggestCluster) {

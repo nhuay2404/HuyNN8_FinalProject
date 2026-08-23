@@ -41,8 +41,13 @@ test("the result screen covers the whole frame, not just the scene below the HUD
   assert.ok(sceneAt > 0, "the scene wrapper is still there");
   const sceneClose = closingIndexOfDiv(ui, sceneAt);
   assert.ok(sceneClose > sceneAt, "found where the scene wrapper closes");
-  const overlayAt = ui.indexOf("{state.result && !state.postWinClearing && (");
+  // Campaign-only gating was added when Tutorial became its own screen. Find
+  // the stable result predicate inside that guard instead of requiring the
+  // predicate to be the first expression after `{`.
+  const overlayAt = ui.indexOf("state.result && !state.postWinClearing && (");
   assert.ok(overlayAt > sceneClose, "the result overlay must sit outside .scene-wrap");
+  assert.match(ui.slice(Math.max(0, overlayAt - 40), overlayAt), /screen === "playing" &&\s*$/,
+    "tutorial completion uses its coach card, not the campaign result overlay");
 
   const css = await readFile(cssUrl, "utf8");
   const scene = css.slice(css.indexOf(".scene-wrap {"), css.indexOf("}", css.indexOf(".scene-wrap {")));
@@ -53,7 +58,8 @@ test("the result screen covers the whole frame, not just the scene below the HUD
 
 test("the end of a level is a bordered panel, not a wash over the frame", async () => {
   const ui = await readFile(uiUrl, "utf8");
-  const overlayAt = ui.indexOf("{state.result && !state.postWinClearing && (");
+  const overlayAt = ui.indexOf("state.result && !state.postWinClearing && (");
+  assert.ok(overlayAt >= 0, "found the result predicate inside its screen guard");
   const overlay = ui.slice(overlayAt, ui.indexOf("</section>", overlayAt));
   assert.match(overlay, /<section className="result-card">/, "the content lives in a panel of its own");
   // The medal, the heading, the copy and the buttons all belong to the card, so
@@ -90,7 +96,8 @@ test("the panel comes out of the depth of the frame", async () => {
 
 test("winning throws fireworks, from behind the panel, and losing does not", async () => {
   const ui = await readFile(uiUrl, "utf8");
-  const overlayAt = ui.indexOf("{state.result && !state.postWinClearing && (");
+  const overlayAt = ui.indexOf("state.result && !state.postWinClearing && (");
+  assert.ok(overlayAt >= 0, "found the result predicate inside its screen guard");
   const overlay = ui.slice(overlayAt, ui.indexOf("</section>", overlayAt));
   assert.match(overlay, /kind === "WIN" && <ResultFireworks \/>/, "a loss is not a celebration");
   assert.ok(

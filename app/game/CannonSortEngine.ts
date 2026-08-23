@@ -11,7 +11,7 @@ import { haptic } from "./haptics";
 import {
   createRainbowSpawnSchedule,
   isWeakPointFaceHit,
-  rainbowWanderAt,
+  rainbowLinearAt,
   resolveBlockImpact,
   WEAK_POINT_VISUAL_RADIUS_RATIO,
 } from "./rainbow-hook";
@@ -56,13 +56,24 @@ const MODEL_DEPTH_OFFSET = -3.6;
 // TEMP prototype depth: targets live between the cannon and block model so
 // normal 3D occlusion/first-contact rules decide what a shot reaches first.
 const RAINBOW_TARGET_PLANE_Z = 0.45;
-// Seven rings, outermost first. The spectrum is what tells the player this is
-// the Rainbow Target and not one of the block Weak Point decals.
+// Seven rings, outermost first. This spectrum belongs to the flying Rainbow
+// Objective; block Weak Points use the regular white target logo below.
 const RAINBOW_RING_COLORS = [
   0xff3b45, 0xff8a1f, 0xffdf57, 0x24e07f, 0x2f9dff, 0x4b45d8, 0xb45cff,
 ] as const;
 const RAINBOW_TARGET_RADIUS = 0.46;
-const RAINBOW_TARGET_COLLIDER_RADIUS = 0.5;
+// Forgiving by design: the visible plate is 0.46, while the collider extends
+// past its rim. With the projectile radius included, the effective swept radius
+// is 0.95 instead of the previous 0.80.
+const RAINBOW_TARGET_COLLIDER_RADIUS = 0.8;
+const RAINBOW_TARGET_DEPTH = 0.3;
+const RAINBOW_TARGET_IMPACT_DURATION = 0.46;
+const RAINBOW_TARGET_IMPACT_PUSH = 0.32;
+// Weak Points use the product's regular target mark: white rings that let the
+// block colour show through. A dark keyline keeps the same mark readable on
+// yellow/orange faces. The flying Rainbow Objective keeps the spectrum above.
+const WEAK_POINT_TARGET_COLOR = 0xffffff;
+const WEAK_POINT_TARGET_OUTLINE = 0x10152f;
 const WEAK_POINT_SURFACE_GAP = 0.012;
 const RICOCHET_LIFETIME = 0.34;
 // The guard that flashes over a block a shot could not break. Slightly larger
@@ -242,6 +253,25 @@ export type ControlSensitivity = {
   aimDrag: number;
 };
 
+export type EngineInteractionEvent =
+  | Readonly<{ type: "MODEL_ROTATED"; distance: number }>
+  | Readonly<{ type: "AIM_DRAGGED"; distance: number }>
+  | Readonly<{ type: "SHOT_FIRED" }>
+  | Readonly<{ type: "WEAK_POINT_CLEARED" }>
+  | Readonly<{ type: "RAINBOW_HIT" }>
+  | Readonly<{ type: "BYPASS_USED" }>;
+
+export type CannonSortEngineOptions = Readonly<{
+  /** Tutorial-only rule; campaign play keeps the authored Weak Point face. */
+  allowAnyBlockFace?: boolean;
+  /** Tutorial step gate. Returning false gives normal protected-hit feedback. */
+  canClaimColor?: (color: BlockColor) => boolean;
+  /** Allows the final lesson to reveal its target only after Weak Points. */
+  rainbowTargetsEnabled?: boolean;
+  showWeakPoints?: boolean;
+  onInteraction?: (event: EngineInteractionEvent) => void;
+}>;
+
 type EngineCallbacks = {
   onState: (state: GameState) => void;
   onSort: (event: SortAnimationEvent) => void;
@@ -284,13 +314,18 @@ type WeakPointVisual = {
 type RainbowTargetRuntime = {
   id: string;
   spawnIndex: number;
-  /** Seeds rainbowWanderAt, so this target always flies the same shape. */
+  /** Seeds rainbowLinearAt, so this target always flies the same straight line. */
   seed: number;
   spawnTime: number;
   duration: number;
   hit: boolean;
   active: boolean;
   group: THREE.Group;
+  presentationYaw: number;
+  impactStartedAt: number | null;
+  impactPosition: THREE.Vector3;
+  impactQuaternion: THREE.Quaternion;
+  impactDirection: THREE.Vector3;
 };
 
 type RainbowTargetStepMotion = {
@@ -394,6 +429,32 @@ function makeRainbowTexture() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+// The same flat spectrum logo is reused by block Weak Points and the face of
+// every flying Rainbow Target. Geometry is allocated once per caller and then
+// shared by all of that caller's markers.
+function createSpectrumRingGeometries(radius: number, segments = 32) {
+  return RAINBOW_RING_COLORS.map((_, ring) => {
+    const outer = radius * (1 - ring / RAINBOW_RING_COLORS.length);
+    const inner = radius * (1 - (ring + 1) / RAINBOW_RING_COLORS.length);
+    return ring === RAINBOW_RING_COLORS.length - 1
+      ? new THREE.CircleGeometry(outer, segments)
+      : new THREE.RingGeometry(inner, outer, segments);
+  });
+}
+
+function createWeakPointTargetGeometries(radius: number, segments = 32) {
+  return {
+    outlines: [
+      new THREE.RingGeometry(radius * 0.73, radius * 1.05, segments),
+      new THREE.RingGeometry(radius * 0.22, radius * 0.54, segments),
+    ],
+    marks: [
+      new THREE.RingGeometry(radius * 0.79, radius, segments),
+      new THREE.RingGeometry(radius * 0.29, radius * 0.47, segments),
+    ],
+  };
 }
 
 function gridKey(x: number, y: number, z: number) {
@@ -514,6 +575,7 @@ export class CannonSortEngine {
   private readonly crosshair: HTMLSpanElement;
   private readonly level: LevelConfig;
   private readonly callbacks: EngineCallbacks;
+  private readonly options: CannonSortEngineOptions;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(37, 1, 0.1, 70);
   private readonly renderer: THREE.WebGLRenderer;
@@ -576,6 +638,7 @@ export class CannonSortEngine {
   // has something to fire against; nothing ends a round on time any more.
   private roundElapsed = 0;
   private roundClockActive = false;
+  private rainbowTargetsEnabled = true;
   private weakPointBypassArmed = false;
   private rainbowTargetStepMotions: RainbowTargetStepMotion[] | null = null;
   private hookSnapshotSignature = "";
@@ -621,6 +684,7 @@ export class CannonSortEngine {
     crosshair: HTMLSpanElement,
     level: LevelConfig,
     callbacks: EngineCallbacks,
+    options: CannonSortEngineOptions = {},
   ) {
     this.host = host;
     this.modelZone = modelZone;
@@ -628,6 +692,8 @@ export class CannonSortEngine {
     this.crosshair = crosshair;
     this.level = level;
     this.callbacks = callbacks;
+    this.options = options;
+    this.rainbowTargetsEnabled = options.rainbowTargetsEnabled ?? true;
     this.state = createGameState(level);
     this.crosshair.classList.remove(
       "is-visible",
@@ -708,19 +774,30 @@ export class CannonSortEngine {
   }
 
   private buildWeakPoints() {
-    // Four shared discs make a high-contrast bullseye without one material or
-    // geometry allocation per authored point. Each group is parented to its
-    // block, so it inherits every model rotation and remains truly world-space.
+    if (this.options.showWeakPoints === false) return;
+    // The regular target logo from the product key art: two white rings with
+    // transparent gaps, so the block itself supplies the logo's colour. Dark
+    // rings sit just behind it as a keyline on bright block colours.
     const visualRadius = BLOCK_SIZE * WEAK_POINT_VISUAL_RADIUS_RATIO;
-    const geometries = [1, 0.82, 0.5, 0.2]
-      .map((ratio) => new THREE.CircleGeometry(visualRadius * ratio, 28));
-    const materials = [
-      new THREE.MeshBasicMaterial({ color: 0x10152f, side: THREE.DoubleSide, depthWrite: false }),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthWrite: false }),
-      new THREE.MeshBasicMaterial({ color: 0xff315f, side: THREE.DoubleSide, depthWrite: false }),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthWrite: false }),
-    ];
-    this.disposables.push(...geometries, ...materials);
+    const targetGeometries = createWeakPointTargetGeometries(visualRadius);
+    const outlineMaterial = new THREE.MeshBasicMaterial({
+      color: WEAK_POINT_TARGET_OUTLINE,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const markMaterial = new THREE.MeshBasicMaterial({
+      color: WEAK_POINT_TARGET_COLOR,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.disposables.push(
+      ...targetGeometries.outlines,
+      ...targetGeometries.marks,
+      outlineMaterial,
+      markMaterial,
+    );
 
     for (const spec of this.level.weakPoints) {
       const block = this.blockMap.get(gridKey(spec.x, spec.y, spec.z));
@@ -729,12 +806,17 @@ export class CannonSortEngine {
       const group = new THREE.Group();
       group.position.copy(normal).multiplyScalar(BLOCK_HALF + WEAK_POINT_SURFACE_GAP);
       group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-
-      geometries.forEach((geometry, index) => {
-        const disc = new THREE.Mesh(geometry, materials[index]);
-        disc.position.z = index * 0.0015;
-        disc.renderOrder = 20 + index;
-        group.add(disc);
+      targetGeometries.outlines.forEach((geometry, ring) => {
+        const outline = new THREE.Mesh(geometry, outlineMaterial);
+        outline.position.z = 0.001 + ring * 0.0002;
+        outline.renderOrder = 20 + ring;
+        group.add(outline);
+      });
+      targetGeometries.marks.forEach((geometry, ring) => {
+        const mark = new THREE.Mesh(geometry, markMaterial);
+        mark.position.z = 0.002 + ring * 0.0002;
+        mark.renderOrder = 22 + ring;
+        group.add(mark);
       });
       block.mesh.add(group);
 
@@ -761,27 +843,21 @@ export class CannonSortEngine {
     const bodyGeometry = new THREE.CylinderGeometry(
       RAINBOW_TARGET_RADIUS,
       RAINBOW_TARGET_RADIUS,
-      0.13,
+      RAINBOW_TARGET_DEPTH,
       32,
     );
     bodyGeometry.rotateX(Math.PI / 2);
+    const rimGeometry = new THREE.TorusGeometry(RAINBOW_TARGET_RADIUS * 1.02, 0.055, 10, 32);
 
-    // A seven-ring spectrum bullseye. Concentric rings share one geometry and
-    // one material each across every target, so the ring count costs seven
-    // allocations for the whole round rather than seven per target.
-    const ringGeometries = RAINBOW_RING_COLORS.map((_, ring) => {
-      const outer = RAINBOW_TARGET_RADIUS * (1 - ring / RAINBOW_RING_COLORS.length);
-      const inner = RAINBOW_TARGET_RADIUS * (1 - (ring + 1) / RAINBOW_RING_COLORS.length);
-      // The innermost ring is a filled disc, or the bullseye would have a hole.
-      return ring === RAINBOW_RING_COLORS.length - 1
-        ? new THREE.CircleGeometry(outer, 32)
-        : new THREE.RingGeometry(inner, outer, 32);
-    });
+    // Flying objectives keep their seven-colour spectrum. Weak Points use the
+    // separate white product mark built in buildWeakPoints().
+    const ringGeometries = createSpectrumRingGeometries(RAINBOW_TARGET_RADIUS);
     const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x37206f });
+    const rimMaterial = new THREE.MeshLambertMaterial({ color: 0xf4ecff });
     const ringMaterials = RAINBOW_RING_COLORS.map((color) => (
       new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })
     ));
-    this.disposables.push(bodyGeometry, ...ringGeometries, bodyMaterial, ...ringMaterials);
+    this.disposables.push(bodyGeometry, rimGeometry, ...ringGeometries, bodyMaterial, rimMaterial, ...ringMaterials);
 
     const schedule = createRainbowSpawnSchedule({
       levelSeed: this.level.id,
@@ -792,10 +868,16 @@ export class CannonSortEngine {
     for (const entry of schedule) {
       const group = new THREE.Group();
       group.add(new THREE.Mesh(bodyGeometry, bodyMaterial));
+      const frontRim = new THREE.Mesh(rimGeometry, rimMaterial);
+      frontRim.position.z = RAINBOW_TARGET_DEPTH / 2 + 0.012;
+      group.add(frontRim);
+      const backRim = new THREE.Mesh(rimGeometry, rimMaterial);
+      backRim.position.z = -RAINBOW_TARGET_DEPTH / 2 - 0.012;
+      group.add(backRim);
       ringGeometries.forEach((geometry, ring) => {
         const mesh = new THREE.Mesh(geometry, ringMaterials[ring]);
         // Stacked front-to-back so the outer ring never z-fights the next one in.
-        mesh.position.z = 0.068 + ring * 0.0012;
+        mesh.position.z = RAINBOW_TARGET_DEPTH / 2 + 0.016 + ring * 0.0012;
         mesh.renderOrder = 10 + ring;
         group.add(mesh);
       });
@@ -810,6 +892,11 @@ export class CannonSortEngine {
         hit: false,
         active: false,
         group,
+        presentationYaw: entry.seed % 2 === 0 ? -0.14 : 0.14,
+        impactStartedAt: null,
+        impactPosition: new THREE.Vector3(),
+        impactQuaternion: new THREE.Quaternion(),
+        impactDirection: new THREE.Vector3(),
       });
     }
   }
@@ -1081,7 +1168,9 @@ export class CannonSortEngine {
   private setRainbowTargetsInactive() {
     for (const target of this.rainbowTargets) {
       target.active = false;
+      target.impactStartedAt = null;
       target.group.visible = false;
+      target.group.scale.setScalar(1);
     }
   }
 
@@ -1117,15 +1206,60 @@ export class CannonSortEngine {
 
   private updateRainbowTargets() {
     for (const target of this.rainbowTargets) {
+      if (target.hit) {
+        this.updateRainbowTargetImpact(target);
+        continue;
+      }
       const progress = (this.roundElapsed - target.spawnTime) / target.duration;
-      const active = !target.hit && progress >= 0 && progress < 1;
+      const active = progress >= 0 && progress < 1;
       target.active = active;
       target.group.visible = active;
       if (!active) continue;
-      const point = rainbowWanderAt(target.seed, progress);
+      const point = rainbowLinearAt(target.seed, progress);
       target.group.position.copy(this.targetPlanePointAt(point.u, point.v));
       target.group.lookAt(this.camera.position);
+      target.group.rotateY(target.presentationYaw);
+      target.group.scale.setScalar(1);
     }
+  }
+
+  private updateRainbowTargetImpact(target: RainbowTargetRuntime) {
+    if (target.impactStartedAt === null) {
+      target.group.visible = false;
+      return;
+    }
+    const progress = THREE.MathUtils.clamp(
+      (this.roundElapsed - target.impactStartedAt) / RAINBOW_TARGET_IMPACT_DURATION,
+      0,
+      1,
+    );
+    if (progress >= 1) {
+      target.impactStartedAt = null;
+      target.group.visible = false;
+      target.group.scale.setScalar(1);
+      return;
+    }
+
+    const push = 1 - (1 - progress) ** 3;
+    const strike = Math.sin(Math.min(progress / 0.42, 1) * Math.PI);
+    const exitScale = progress < 0.72
+      ? 1
+      : 1 - THREE.MathUtils.smoothstep(progress, 0.72, 1);
+    const wobble = Math.sin(progress * Math.PI * 2) * (1 - progress) * 0.24;
+
+    target.group.visible = true;
+    target.group.position.copy(target.impactPosition).addScaledVector(
+      target.impactDirection,
+      RAINBOW_TARGET_IMPACT_PUSH * push,
+    );
+    target.group.quaternion.copy(target.impactQuaternion);
+    target.group.rotateX(wobble);
+    target.group.rotateY(wobble * (target.spawnIndex % 2 === 0 ? 0.7 : -0.7));
+    target.group.scale.set(
+      exitScale * (1 + strike * 0.12),
+      exitScale * (1 + strike * 0.12),
+      exitScale * (1 - strike * 0.42),
+    );
   }
 
   // A target moves during the step a projectile is crossing it, so collision has
@@ -1142,8 +1276,8 @@ export class CannonSortEngine {
       const liveStart = Math.max(intervalStart, target.spawnTime);
       const liveEnd = Math.min(intervalEnd, target.spawnTime + target.duration);
       if (liveEnd <= liveStart) continue;
-      const fromPath = rainbowWanderAt(target.seed, (liveStart - target.spawnTime) / target.duration);
-      const toPath = rainbowWanderAt(target.seed, (liveEnd - target.spawnTime) / target.duration);
+      const fromPath = rainbowLinearAt(target.seed, (liveStart - target.spawnTime) / target.duration);
+      const toPath = rainbowLinearAt(target.seed, (liveEnd - target.spawnTime) / target.duration);
       motions.push({
         target,
         fromFraction: THREE.MathUtils.clamp((liveStart - intervalStart) / intervalDuration, 0, 1),
@@ -1178,7 +1312,7 @@ export class CannonSortEngine {
   // with the bypass being a flag read at impact there is no boundary left to
   // split on, so this is a flat step again.
   private updateTimedGameplayStep() {
-    if (this.roundClockActive && !this.state.result) {
+    if (this.roundClockActive && this.rainbowTargetsEnabled && !this.state.result) {
       this.roundElapsed += FIXED_STEP;
       this.rainbowTargetStepMotions = this.rainbowTargetMotionsForInterval(
         this.roundElapsed - FIXED_STEP,
@@ -1194,7 +1328,7 @@ export class CannonSortEngine {
       this.projectiles.slice().forEach((projectile) => this.updateProjectile(projectile));
     }
 
-    if (this.roundClockActive && !this.state.result) {
+    if (this.roundClockActive && this.rainbowTargetsEnabled && !this.state.result) {
       this.updateRainbowTargets();
       if (this.state.phase === "AIMING") {
         this.aimMovingTargetRefreshCountdown -= FIXED_STEP;
@@ -1364,6 +1498,8 @@ export class CannonSortEngine {
     }
     const dx = event.clientX - this.lastModelPointer.x;
     const dy = event.clientY - this.lastModelPointer.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance > 0) this.options.onInteraction?.({ type: "MODEL_ROTATED", distance });
     this.cameraRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
     this.modelYawDelta.setFromAxisAngle(
       this.worldUp,
@@ -1422,6 +1558,7 @@ export class CannonSortEngine {
     const dx = clientX - this.aimStart.x;
     const dy = clientY - this.aimStart.y;
     this.aimDistance = Math.hypot(dx, dy);
+    this.options.onInteraction?.({ type: "AIM_DRAGGED", distance: this.aimDistance });
 
     if (this.aimArmed) {
       if (this.aimDistance <= JOYSTICK_CANCEL_RADIUS) this.aimArmed = false;
@@ -1812,6 +1949,7 @@ export class CannonSortEngine {
       shotIndex,
       trailTicks: 0,
     });
+    this.options.onInteraction?.({ type: "SHOT_FIRED" });
     this.nextShotAt = now + SHOT_COOLDOWN_MS;
     this.aimZone.classList.add("is-cooling-down");
     this.crosshair.classList.add("is-cooling-down");
@@ -2121,12 +2259,19 @@ export class CannonSortEngine {
 
   private handleRainbowTargetHit(target: RainbowTargetRuntime, projectile: Projectile) {
     if (!target.active || target.hit) return;
-    // TEMP prototype policy: a collected target disappears immediately and its
-    // hit latch makes the reward strictly single-use.
+    // The hit latch makes the reward strictly single-use while the target stays
+    // visible just long enough to compress, recoil and tip away from the ball.
     target.hit = true;
     target.active = false;
-    target.group.visible = false;
+    target.impactStartedAt = this.roundElapsed;
+    target.impactPosition.copy(target.group.position);
+    target.impactQuaternion.copy(target.group.quaternion);
+    target.impactDirection.copy(projectile.velocity);
+    if (target.impactDirection.lengthSq() < 1e-8) target.impactDirection.set(0, 0, -1);
+    else target.impactDirection.normalize();
+    target.group.visible = true;
     this.armWeakPointBypass();
+    this.options.onInteraction?.({ type: "RAINBOW_HIT" });
     this.spawnFirework(projectile.mesh.position, projectile.shotIndex * 173 + target.spawnIndex * 31);
     haptic("impact");
     this.removeProjectile(projectile);
@@ -2325,7 +2470,15 @@ export class CannonSortEngine {
     if (!cluster.length) return;
 
     haptic("impact");
-    const faceHit = this.projectileHitWeakPoint(block, projectile);
+    if (this.options.canClaimColor && !this.options.canClaimColor(cluster[0].color)) {
+      this.shakeCluster(cluster, projectile.shotIndex);
+      this.spawnShield(block);
+      this.startRicochet(projectile);
+      this.aimPreviewDirty = true;
+      return;
+    }
+    const authoredFaceHit = this.projectileHitWeakPoint(block, projectile);
+    const faceHit = this.options.allowAnyBlockFace || authoredFaceHit;
     // Read and spend in one place. Continuous fire can land two balls in the
     // same step, and only the first of them may use the bypass.
     const bypassArmed = this.weakPointBypassArmed;
@@ -2344,6 +2497,8 @@ export class CannonSortEngine {
     // Claim immediately so another projectile cannot resolve this cluster twice.
     this.sendBreakWave(cluster);
     this.releaseCluster(cluster, projectile.shotIndex);
+    if (bypassArmed) this.options.onInteraction?.({ type: "BYPASS_USED" });
+    else if (authoredFaceHit) this.options.onInteraction?.({ type: "WEAK_POINT_CLEARED" });
     // The ball bounces off a Weak Point too. It used to blink out at the moment
     // of the hit, which read as the ball being consumed by the block instead of
     // breaking it, so the one shot that works had the weakest feedback.
@@ -3000,6 +3155,21 @@ export class CannonSortEngine {
     if (!this.canRotateModel()) return;
     this.modelRoot.quaternion.copy(this.defaultModelOrientation);
     this.updateAimPreview();
+  }
+
+  setRainbowTargetsEnabled(next: boolean) {
+    if (this.rainbowTargetsEnabled === next) return;
+    this.rainbowTargetsEnabled = next;
+    this.roundElapsed = 0;
+    for (const target of this.rainbowTargets) {
+      target.hit = false;
+      target.active = false;
+      target.impactStartedAt = null;
+      target.group.visible = false;
+      target.group.scale.setScalar(1);
+    }
+    if (next && this.roundClockActive && !this.state.result) this.updateRainbowTargets();
+    this.aimPreviewDirty = true;
   }
 
   setControlSensitivity(next: Partial<ControlSensitivity>) {

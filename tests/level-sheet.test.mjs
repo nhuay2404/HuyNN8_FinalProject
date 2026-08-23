@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { parseLevelSheet } from "../app/game/level-format.ts";
+import { auditWeakPointRoutes, parseLevelSheet } from "../app/game/level-format.ts";
 import { level01 } from "../app/game/level-01.ts";
+import { createGameState, parkedBlockCount, resolveCluster } from "../app/game/rules.ts";
 
 const sheetUrl = new URL("../work/levels.tsv", import.meta.url);
 const HEADER = "level\tname\tdims\tlayers\tgoal_order\tgoal_split\tgoal_slots\tbatch_blocks\tshot_limit\tweak_points\trainbow_target_count\trainbow_spawn_gap\trainbow_target_duration\tnotes";
@@ -21,13 +22,125 @@ function levelRow(baseRow, weakPoints, hook = {}) {
     weakPoints,
     hook.targetCount ?? "3",
     hook.spawnGap ?? "12",
-    hook.duration ?? "4.5",
+    hook.duration ?? "7",
     notes,
   ].join("\t");
 }
 
 function sortById(items) {
   return [...items].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+const FACE_STEPS = {
+  PX: [1, 0, 0], NX: [-1, 0, 0], PY: [0, 1, 0],
+  NY: [0, -1, 0], PZ: [0, 0, 1], NZ: [0, 0, -1],
+};
+
+function blockKey(block) {
+  return `${block.x}.${block.y}.${block.z}`;
+}
+
+function sameColorClusters(level) {
+  const at = new Map(level.blocks.map((block) => [blockKey(block), block]));
+  const seen = new Set();
+  const clusters = [];
+  for (const start of level.blocks) {
+    if (seen.has(start.id)) continue;
+    const queue = [start];
+    const cluster = [];
+    seen.add(start.id);
+    while (queue.length) {
+      const block = queue.shift();
+      cluster.push(block);
+      for (const [dx, dy, dz] of Object.values(FACE_STEPS)) {
+        const neighbor = at.get(`${block.x + dx}.${block.y + dy}.${block.z + dz}`);
+        if (!neighbor || neighbor.color !== block.color || seen.has(neighbor.id)) continue;
+        seen.add(neighbor.id);
+        queue.push(neighbor);
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
+}
+
+function weakPointRouteModel(level) {
+  const clusters = sameColorClusters(level);
+  const clusterIndexByBlock = new Map();
+  clusters.forEach((cluster, clusterIndex) => {
+    cluster.forEach((block) => clusterIndexByBlock.set(block.id, clusterIndex));
+  });
+  const blockAt = new Map(level.blocks.map((block) => [blockKey(block), block]));
+  const blockersByCluster = clusters.map(() => []);
+  for (const point of level.weakPoints) {
+    const clusterIndex = clusterIndexByBlock.get(point.blockId);
+    assert.notEqual(clusterIndex, undefined, `level ${level.id}: marker has no cluster`);
+    const [dx, dy, dz] = FACE_STEPS[point.face];
+    const blocker = blockAt.get(`${point.x + dx}.${point.y + dy}.${point.z + dz}`);
+    blockersByCluster[clusterIndex].push(blocker ? clusterIndexByBlock.get(blocker.id) : null);
+  }
+  return { clusters, clusterIndexByBlock, blockersByCluster };
+}
+
+function reachableClusterIndices(model, clearedMask) {
+  const reachable = [];
+  for (let clusterIndex = 0; clusterIndex < model.clusters.length; clusterIndex += 1) {
+    if (clearedMask & (1 << clusterIndex)) continue;
+    if (model.blockersByCluster[clusterIndex].some(
+      (blockerIndex) => blockerIndex === null || (clearedMask & (1 << blockerIndex)),
+    )) {
+      reachable.push(clusterIndex);
+    }
+  }
+  return reachable;
+}
+
+function gameStateKey(clearedMask, state) {
+  const goals = state.activeGoals
+    .map((goal) => (goal ? `${goal.id}:${goal.current}` : "-"))
+    .join(",");
+  const batches = state.batches.map((batch) => `${batch.color}:${batch.count}`).join(",");
+  return `${clearedMask}|${state.nextGoalIndex}|${goals}|${batches}|${state.result?.kind ?? "-"}`;
+}
+
+// Exhaust every legal reveal order. A cost of one means the player cleared a
+// colour absent from both active goals; minimizing that cost proves a thinking
+// beat is genuinely required instead of merely present in our example route.
+function minimumOffGoalClears(level) {
+  const model = weakPointRouteModel(level);
+  const initialState = createGameState(level);
+  const queue = [{ cost: 0, clearedMask: 0, state: initialState }];
+  const best = new Map([[gameStateKey(0, initialState), 0]]);
+
+  while (queue.length) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const current = queue.shift();
+    const currentKey = gameStateKey(current.clearedMask, current.state);
+    if (best.get(currentKey) !== current.cost) continue;
+    if (current.state.result?.kind === "WIN" && current.state.result.allClear) return current.cost;
+
+    for (const clusterIndex of reachableClusterIndices(model, current.clearedMask)) {
+      const cluster = model.clusters[clusterIndex];
+      const activeGoalColors = new Set(current.state.activeGoals.flatMap((goal) => (goal ? [goal.color] : [])));
+      const offGoalCost = activeGoalColors.has(cluster[0].color) ? 0 : 1;
+      const nextMask = current.clearedMask | (1 << clusterIndex);
+      const nextState = resolveCluster(level, current.state, {
+        color: cluster[0].color,
+        count: cluster.length,
+        shotIndex: current.state.shotIndex + 1,
+        remainingBlockCount: current.state.remainingBlockCount - cluster.length,
+      });
+      if (nextState.result?.kind === "FAIL") continue;
+
+      const nextCost = current.cost + offGoalCost;
+      const nextKey = gameStateKey(nextMask, nextState);
+      if ((best.get(nextKey) ?? Number.POSITIVE_INFINITY) <= nextCost) continue;
+      best.set(nextKey, nextCost);
+      queue.push({ cost: nextCost, clearedMask: nextMask, state: nextState });
+    }
+  }
+
+  return Number.POSITIVE_INFINITY;
 }
 
 test("row 1 of the shipped sheet rebuilds the hand written prototype level", async () => {
@@ -155,7 +268,7 @@ test("unknown color characters and duplicate cells are reported", () => {
   assert.ok(issues.some((issue) => /colour code "Z" is not valid/.test(issue.message)));
 });
 
-test("blank Rainbow cells use the 3/12/4.5 baseline defaults", () => {
+test("blank Rainbow cells use the 3/12/7 baseline defaults", () => {
   const row = levelRow("13\tDefaults\t2x1x1\tRR\tR\t\t\t\t\t", "0.0.0:NX", {
     targetCount: "",
     spawnGap: "",
@@ -166,7 +279,7 @@ test("blank Rainbow cells use the 3/12/4.5 baseline defaults", () => {
   assert.deepEqual(levels[0].rainbow, {
     targetCount: 3,
     spawnGapSeconds: 12,
-    targetDurationSeconds: 4.5,
+    targetDurationSeconds: 7,
   });
   // The round has no length any more, so nothing about it reaches the level.
   assert.equal("roundTimeSeconds" in levels[0], false);
@@ -197,9 +310,12 @@ test("a Weak Point covered by an adjacent block warns without dropping its level
     "0.0.0:PX~1.0.0:PX",
   )));
   assert.equal(levels.length, 1, "reachability is a design warning, not malformed row data");
-  assert.equal(issues.length, 1);
-  assert.equal(issues[0].severity, "warning");
-  assert.match(issues[0].message, /faces occupied cell 1\.0\.0 and may be inaccessible/);
+  assert.ok(issues.every((issue) => issue.severity === "warning"));
+  assert.ok(issues.some((issue) => /faces occupied cell 1\.0\.0 and may be inaccessible/.test(issue.message)));
+  assert.ok(
+    issues.some((issue) => /opening goal red has no immediately reachable cluster/.test(issue.message)),
+    "the author also needs to know the opening goal cannot make immediate progress",
+  );
 });
 
 test("a Weak Point covered by its own cluster gets a high-risk hard-lock warning", () => {
@@ -210,6 +326,16 @@ test("a Weak Point covered by its own cluster gets a high-risk hard-lock warning
   assert.equal(levels.length, 1);
   assert.equal(issues[0]?.severity, "warning");
   assert.match(issues[0]?.message ?? "", /HIGH-RISK.*inside its own FACE_6 cluster.*another reachable Weak Point/);
+  assert.ok(issues.some((issue) => /blocker cycle.*unreachable without a Rainbow bypass/.test(issue.message)));
+});
+
+test("a cross-colour Weak Point blocker cycle is detected", () => {
+  const { levels, issues } = parseLevelSheet(sheet(levelRow(
+    "34\tCycle\t2x1x1\tRG\tR,G\t\t\t\t\t",
+    "0.0.0:PX~1.0.0:NX",
+  )));
+  assert.equal(levels.length, 1, "route risk remains advisory so a designer can inspect the row");
+  assert.ok(issues.some((issue) => /blocker cycle leaves red cluster 1, green cluster 2 unreachable/.test(issue.message)));
 });
 
 test("a comma-separated sheet (Excel Save As CSV) parses the same as tab-separated", () => {
@@ -240,29 +366,123 @@ test("the shipped .csv template parses to the exact same levels as the .tsv", as
   assert.deepEqual(csvResult.issues, tsvResult.issues);
 });
 
-test("the shipped sheet authors Weak Points on covered faces, and says so", async () => {
+test("the shipped sheet alternates immediate goal hits with acyclic blocker reveals", async () => {
   const { levels, issues } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
 
-  // An inner face is one whose neighbour cell is occupied, so the parser flags
-  // it as reachable only once that neighbour goes. That warning is the feature
-  // working, not a defect to silence.
+  // One marker per cluster keeps the board readable. Exactly one cluster for
+  // each opening goal is available immediately; the rest arrive in short,
+  // acyclic reveal waves instead of all being optional fallbacks.
+  for (const level of levels) {
+    const audit = auditWeakPointRoutes(level.blocks, level.weakPoints);
+    assert.equal(level.weakPoints.length, audit.clusterColors.length, `level ${level.id}: one marker per cluster`);
+    assert.ok(audit.pointCounts.every((count) => count === 1), `level ${level.id}: duplicate marker in a cluster`);
+    assert.equal(audit.waves[0]?.length, level.activeGoalSlots, `level ${level.id}: opening choice count`);
+    assert.deepEqual(
+      (audit.waves[0] ?? []).map((index) => audit.clusterColors[index]).sort(),
+      level.goals.slice(0, level.activeGoalSlots).map((goal) => goal.color).sort(),
+      `level ${level.id}: opening markers must match the visible goals`,
+    );
+    assert.ok(audit.waves.length >= 3, `level ${level.id}: needs multiple reveal beats`);
+    assert.deepEqual(audit.unreachableClusterIndices, [], `level ${level.id}: blocker cycle`);
+  }
+
+  // An inner face is one whose neighbour cell is occupied, so these warnings
+  // document intentional reveals rather than malformed data.
   const covered = issues.filter((issue) => /may be inaccessible until that block is removed/.test(issue.message));
-  assert.ok(covered.length >= 4, `expected inner-face Weak Points, found ${covered.length}`);
+  assert.equal(covered.length, 16, `expected one warning for every delayed reveal, found ${covered.length}`);
   assert.deepEqual(
     issues.filter((issue) => /HIGH-RISK/.test(issue.message)),
     [],
-    "none may face its own cluster, which would make it unreachable for good",
+    "the shipped dependency graph must not need a Rainbow bypass",
   );
+});
 
-  // And every cluster still keeps a route that works from turn one.
+test("shipped routes balance continuous progress with one forced off-goal decision", async () => {
+  const { levels } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
+  const routes = new Map([
+    [1, {
+      anchors: ["0.2.1", "0.0.1", "0.0.0", "0.1.0", "0.1.1", "0.2.0", "3.2.0", "3.0.0"],
+      parkedAfter: [0, 0, 0, 0, 0, 0, 0, 0],
+      forcedOffGoalSteps: 0,
+    }],
+    [2, {
+      anchors: ["2.1.1", "0.1.1", "0.1.0", "2.0.1", "2.0.0", "2.1.0", "0.0.1", "0.0.0"],
+      parkedAfter: [0, 0, 0, 0, 2, 0, 0, 0],
+      forcedOffGoalSteps: 1,
+    }],
+    [3, {
+      anchors: ["0.1.1", "0.0.1", "0.1.0", "0.2.1", "0.0.0", "0.2.0"],
+      parkedAfter: [0, 0, 0, 0, 0, 0],
+      forcedOffGoalSteps: 0,
+    }],
+  ]);
+
   for (const level of levels) {
-    const occupied = new Set(level.blocks.map((block) => `${block.x}.${block.y}.${block.z}`));
-    const steps = { PX: [1, 0, 0], NX: [-1, 0, 0], PY: [0, 1, 0], NY: [0, -1, 0], PZ: [0, 0, 1], NZ: [0, 0, -1] };
-    const exposed = level.weakPoints.filter((point) => {
-      const [dx, dy, dz] = steps[point.face];
-      return !occupied.has(`${point.x + dx}.${point.y + dy}.${point.z + dz}`);
-    });
-    assert.ok(exposed.length > 0, `level ${level.id} needs at least one Weak Point open at the start`);
+    const model = weakPointRouteModel(level);
+    const activeCoordinates = new Set(level.blocks.map(blockKey));
+    let state = createGameState(level);
+    let remaining = level.blocks.length;
+    let clearedMask = 0;
+    let forcedOffGoalSteps = 0;
+
+    const route = routes.get(level.id);
+    assert.ok(route, `level ${level.id}: missing canonical route`);
+    for (const [step, anchor] of route.anchors.entries()) {
+      const anchorBlock = level.blocks.find((block) => blockKey(block) === anchor);
+      assert.ok(anchorBlock, `level ${level.id}: route anchor ${anchor}`);
+      const clusterIndex = model.clusterIndexByBlock.get(anchorBlock.id);
+      const cluster = model.clusters[clusterIndex];
+      assert.ok(cluster.some((block) => activeCoordinates.has(blockKey(block))), `level ${level.id}: cluster repeated`);
+      const reachable = reachableClusterIndices(model, clearedMask);
+      assert.ok(reachable.includes(clusterIndex), `level ${level.id}: route chose hidden cluster ${anchor}`);
+      const activeGoalColors = new Set(state.activeGoals.flatMap((goal) => (goal ? [goal.color] : [])));
+      if (!activeGoalColors.has(cluster[0].color)) {
+        const reachableGoalClusters = reachable.filter(
+          (index) => activeGoalColors.has(model.clusters[index][0].color),
+        );
+        assert.deepEqual(
+          reachableGoalClusters,
+          [],
+          `level ${level.id}: off-goal step ${step + 1} was optional rather than a real blocker decision`,
+        );
+        forcedOffGoalSteps += 1;
+      }
+      const clusterIds = new Set(cluster.map((block) => block.id));
+      const points = level.weakPoints.filter((point) => clusterIds.has(point.blockId));
+      assert.equal(points.length, 1, `level ${level.id}: route cluster marker count`);
+      const point = points[0];
+      const [dx, dy, dz] = FACE_STEPS[point.face];
+      assert.equal(
+        activeCoordinates.has(`${point.x + dx}.${point.y + dy}.${point.z + dz}`),
+        false,
+        `level ${level.id}: step ${step + 1} reaches ${anchor} before its blocker leaves`,
+      );
+
+      cluster.forEach((block) => activeCoordinates.delete(blockKey(block)));
+      clearedMask |= 1 << clusterIndex;
+      remaining -= cluster.length;
+      state = resolveCluster(level, state, {
+        color: cluster[0].color,
+        count: cluster.length,
+        shotIndex: step + 1,
+        remainingBlockCount: remaining,
+      });
+      assert.notEqual(state.result?.kind, "FAIL", `level ${level.id}: route failed at ${anchor}`);
+      assert.equal(
+        parkedBlockCount(state),
+        route.parkedAfter[step],
+        `level ${level.id}: unexpected reserve load after ${anchor}`,
+      );
+    }
+
+    assert.equal(forcedOffGoalSteps, route.forcedOffGoalSteps, `level ${level.id}: forced thinking beats`);
+    assert.equal(state.result?.kind, "WIN", `level ${level.id}: route did not win`);
+    assert.equal(state.result?.allClear, true, `level ${level.id}: route left blocks behind`);
+    assert.equal(
+      minimumOffGoalClears(level),
+      level.id === 2 ? 1 : 0,
+      `level ${level.id}: minimum unavoidable off-goal clears`,
+    );
   }
 });

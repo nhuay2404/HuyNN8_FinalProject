@@ -3,10 +3,11 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 891.207 bytes, 3 màn, một file HTML chạy
-offline bằng `file://`, không cần server và không cần mạng.
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 901.431 bytes, 3 màn campaign + 3 bài
+tutorial, một file HTML chạy offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 152/152 test pass · typecheck mục tiêu sạch · lint sạch · build production sạch.
+**Trạng thái kiểm tra:** 160/160 test pass · lint sạch · build production sạch · typecheck
+không phát sinh lỗi gameplay mới (còn 3 lỗi ambient Cloudflare đã biết).
 
 ---
 
@@ -1837,3 +1838,298 @@ không thuộc file nào của lượt này.
   `"weak_points"`, `"rainbow_target_count"`), nên đổi title là một dòng — tôi để nguyên vì bạn chưa yêu cầu.
 - **`outputs/final_concept.md` và `README.md` không hề nhắc Weak Point / Rainbow.** Hai file đó đang lệch
   source từ trước lượt này; tôi không viết lại chúng ở đây.
+
+---
+
+## 20. Rainbow Objective: đường thẳng, bia 3D và thời lượng 6 giây (23/08)
+
+Rainbow Target được chỉnh lại để người chơi đọc chuyển động và phản ứng va chạm rõ hơn. Luật thưởng
+không đổi: bắn trúng vẫn cấp đúng một lần bỏ qua Weak Point cho impact block kế tiếp.
+
+### 20.1 Quỹ đạo tuyến tính
+
+- `rainbowWanderAt(seed, progress)` được thay bằng `rainbowLinearAt(seed, progress)`.
+- Seed chỉ chọn hướng trái/phải và hai đầu mút nằm trong dải cannon bắn tới được.
+- Mọi điểm giữa hai đầu mút dùng nội suy tuyến tính; không còn harmonic, sine, đổi curvature hoặc
+  chuyển động lượn phức tạp.
+- Target vẫn bắt đầu và kết thúc ngoài khung để không pop vào/ra giữa màn hình.
+- Swept collision vẫn dùng segment target đi qua trong từng fixed step, nên đổi visual path không làm
+  giảm độ chính xác của first-contact giữa projectile, target và block.
+
+### 20.2 Bia là model 3D có chiều sâu
+
+- Thân bia dùng `CylinderGeometry` dày `0.30 world unit`, thay cho đĩa mỏng `0.13` trước đó.
+- Thêm vành `TorusGeometry` ở cả mặt trước và mặt sau.
+- Bia nghiêng nhẹ `±0.14 rad` theo seed để cạnh bên và chiều sâu vẫn đọc được khi nó hướng về camera.
+- Bảy vòng màu ở mặt trước được giữ nguyên; collider vẫn là sphere bao phủ toàn bộ silhouette để
+  thao tác bắn không trở nên khó hơn vì phần trang trí mới.
+
+### 20.3 Impact animation
+
+Trước: target đặt `visible=false` ngay trong `handleRainbowTargetHit`, nên quả bóng chạm vào một hình
+biến mất tức thời.
+
+Giờ: target khóa `hit` ngay để không thể nhận thưởng lần hai, nhưng giữ hình trong `0.46 s`:
+
+1. Lưu position, quaternion và hướng velocity của projectile tại impact.
+2. Nén chiều sâu, nở nhẹ hai trục mặt bia.
+3. Đẩy bia `0.32 world unit` theo hướng bay của bóng và thêm wobble giảm dần.
+4. Thu nhỏ bia ở cuối animation rồi mới ẩn.
+
+Projectile vẫn dừng ở Rainbow Target và buff vẫn được arm ngay tại impact; animation chỉ là feedback,
+không trì hoãn gameplay transaction.
+
+### 20.4 Duration 6 giây
+
+- Default `rainbow_target_duration`: `4.5 → 6` giây.
+- Cả ba level bundled và hai sheet authoring `.tsv/.csv` đều ghi `6` rõ ràng.
+- Spawn gap giữ `12` giây và target count giữ `3`; thay đổi này chỉ cho mỗi bia thêm thời gian xuất hiện.
+
+### 20.5 Regression coverage
+
+- Pure test chốt quỹ đạo có second difference bằng `0` trên cả `u` và `v`.
+- Test chốt target luôn nằm trong dải cao có thể bắn tới và vẫn đi từ ngoài cạnh này sang ngoài cạnh kia.
+- Source regression chốt body có depth, hai rim, hit không ẩn tức thì và impact có push/wobble/compression.
+- Sheet regression chốt baseline mới `3 / 12 / 6`.
+
+Kết quả sau khi rebuild:
+
+- `npm test`: **150/150 pass**.
+- `npm run lint`: sạch.
+- `npm run build`: thành công; chỉ còn warning chunk lớn có từ bundle Three/React hiện tại.
+- `outputs/3d-cannon-sort.html`: đã bundle lại từ source mới, `883848 bytes`, chứa ba level duration `6`.
+- `npx tsc --noEmit`: vẫn chỉ có ba lỗi ambient Cloudflare đã tồn tại trước lượt này
+  (`cloudflare:workers`, `Fetcher`, `D1Database`), không phát sinh lỗi gameplay mới.
+
+---
+
+## 21. Rainbow hitbox rộng hơn và Weak Point dùng vết nứt (23/08)
+
+### 21.1 Rainbow Objective dễ bắn trúng hơn
+
+- Bán kính model bia giữ `0.46 world unit`.
+- `RAINBOW_TARGET_COLLIDER_RADIUS`: `0.50 → 0.65`.
+- Swept collision vẫn cộng `PROJECTILE_RADIUS = 0.15`, nên bán kính va chạm hiệu dụng tăng
+  `0.65 → 0.80 world unit` — rộng hơn khoảng `23%` so với trước.
+- Aim prediction và projectile runtime cùng đọc một constant, vì vậy dấu `+` và kết quả bắn thật
+  không bị lệch nhau.
+- First physical contact với block vẫn giữ nguyên; thay đổi chỉ mở rộng vùng bắt target, không thêm
+  target-priority rule.
+
+Mức `0.65` được chọn để có vùng đệm rõ quanh vành bia nhưng không biến target nằm giữa cannon và model
+thành một vật cản chiếm phần lớn màn hình.
+
+### 21.2 Weak Point đổi từ bullseye sang vết nứt
+
+Marker block cũ dùng bốn `CircleGeometry` đồng tâm, dễ làm người chơi hiểu rằng phải bắn trúng đúng
+bán kính của bullseye dù luật hiện tại tính **toàn bộ mặt**.
+
+Marker mới:
+
+- Dùng một `BufferGeometry` bất quy tắc gồm 12 nhánh nứt và một chip nhỏ ở tâm.
+- Hai lớp geometry dùng chung cho mọi Weak Point: outline xanh-trắng rộng phía dưới và lõi xanh đen
+  phía trên, để đọc được trên cả sáu màu block.
+- Không còn `CircleGeometry` hoặc `RingGeometry` trong `buildWeakPoints()`.
+- Footprint presentation tăng từ `0.21 → 0.32` cạnh block để hình vết nứt dễ nhận ra trên mobile.
+- Vẫn parent trực tiếp vào block và xoay theo normal của mặt được author.
+- Hit test không đọc geometry hoặc kích thước decal; `isWeakPointFaceHit` vẫn chỉ so sánh
+  `impactedFace === weakPointFace`.
+
+### 21.3 Regression coverage
+
+- Test chốt collider Rainbow là `0.65`, lớn hơn model `0.46`, và swept collision cộng bán kính bóng.
+- Test chốt Weak Point dựng từ crack mesh, có hai lớp, không còn primitive vòng tròn.
+- Test chốt kích thước decal `0.32` chỉ là presentation và toàn bộ mặt vẫn là vùng hit.
+
+Kết quả sau khi rebuild:
+
+- `npm test`: **151/151 pass**.
+- `npm run lint`: sạch.
+- `npm run build`: thành công; warning chunk lớn không thay đổi.
+- `outputs/3d-cannon-sort.html`: đã bundle lại, `884580 bytes`.
+- `npx tsc --noEmit`: vẫn chỉ có ba lỗi ambient Cloudflare cũ
+  (`cloudflare:workers`, `Fetcher`, `D1Database`).
+
+---
+
+## 22. Rainbow Objective bay chậm hơn: duration 7 giây (23/08)
+
+- Default `rainbow_target_duration`: `6 → 7` giây.
+- Cả ba level bundled và hai sheet authoring `.tsv/.csv` đều đổi sang `7`.
+- Quỹ đạo vẫn là cùng một đoạn thẳng và đi cùng quãng đường, nên tốc độ trung bình giảm khoảng `14.3%`.
+- Target count `3`, spawn gap `12 giây`, hitbox `0.65` và impact animation `0.46 giây` giữ nguyên.
+- Regression test cập nhật baseline thành `3 / 12 / 7` và chốt mỗi spawn window tồn tại đúng `7 giây`.
+
+Kết quả sau khi rebuild:
+
+- `npm test`: **151/151 pass**.
+- `npm run lint`: sạch.
+- `npm run build`: thành công.
+- `outputs/3d-cannon-sort.html`: đã bundle lại, `884580 bytes`, cả ba level dùng duration `7`.
+
+---
+
+## 23. Làm mới vết nứt Weak Point và mở rộng hitbox Rainbow (23/08)
+
+### 23.1 Vết nứt nổi bật và có chiều sâu hơn
+
+- Bỏ bố cục nhánh đều dễ đọc thành biểu tượng; marker mới có một khe nứt chéo chính cùng các nhánh
+  phụ mọc bất đối xứng.
+- Mỗi đoạn được dựng thành trapezoid có độ rộng đầu/cuối riêng, thuôn dần tới `0.002` ở ngọn để
+  không còn đầu nứt vuông, cụt.
+- Thêm hốc vỡ bảy đỉnh và ba mảnh tam giác tách rời để mặt block trông như vật liệu thật sự bị phá.
+- Ba lớp dùng chung cho mọi marker:
+  - glow cam `0xff7a18`, additive và opacity `0.28`;
+  - rãnh tối `0x160906` để giữ tương phản trên block sáng;
+  - lõi vàng nhạt `0xfff0ad` để đọc rõ trên block tối.
+- Tông cam–vàng phân biệt Weak Point với effect khiên xanh của cú bắn sai mặt.
+- Footprint presentation tăng `0.32 → 0.37` cạnh block. Đây vẫn chỉ là hình chỉ dẫn; hit rule vẫn
+  tính toàn bộ mặt được author.
+- Mỗi marker có góc xoay trong khoảng `±0.35 rad`, có thể mirror theo trục X và dùng seed từ tọa độ/
+  face, nên đa dạng nhưng giữ nguyên giữa các lần chơi.
+- Chỉ lớp glow pulse nhẹ theo phase riêng; rãnh và lõi đứng yên để vết nứt vẫn bám chắc vào bề mặt,
+  không tạo cảm giác cả icon đang phồng lên.
+
+### 23.2 Rainbow Objective dễ bắn trúng hơn
+
+- Bán kính model nhìn thấy giữ `0.46 world unit`.
+- `RAINBOW_TARGET_COLLIDER_RADIUS`: `0.65 → 0.80`.
+- Cộng với `PROJECTILE_RADIUS = 0.15`, bán kính swept collision hiệu dụng tăng `0.80 → 0.95 world unit`.
+- Crosshair raycast, aim prediction và collision khi projectile bay đều dùng cùng constant; vùng báo
+  ngắm được và vùng trúng thật không lệch nhau.
+- Quỹ đạo linear, duration `7 giây`, model 3D và impact animation giữ nguyên.
+
+### 23.3 Regression coverage và bundle
+
+- Test chốt geometry có nhánh taper, hốc/mảnh vỡ, ba lớp tương phản, biến thể deterministic và chỉ
+  pulse riêng glow.
+- Test chốt collider `0.80`, effective radius `0.95`, đồng thời kiểm tra cả aim raycast và hai nhánh
+  swept collision đều dùng bán kính mới.
+- `npm test`: **151/151 pass**.
+- ESLint: sạch trên toàn bộ source, test và tooling của project (loại các thư mục artifact/cache).
+- `npm run build`: thành công; chỉ còn warning chunk lớn có từ bundle Three/React hiện tại.
+- `outputs/3d-cannon-sort.html`: đã bundle lại từ source mới, `885901 bytes`.
+- `npx tsc --noEmit`: vẫn chỉ có ba lỗi ambient Cloudflare đã tồn tại trước lượt này
+  (`cloudflare:workers`, `Fetcher`, `D1Database`), không phát sinh lỗi gameplay mới.
+
+---
+
+## 24. Weak Point trở lại bullseye và level có nhịp mở khóa (23/08)
+
+### 24.1 Bullseye dùng chung logo với Rainbow Target
+
+Thiết kế vết nứt ở mục 23 được thay thế hoàn toàn theo feedback mới:
+
+- Weak Point trở lại dạng bullseye phẳng, world-space và vẫn parent vào đúng mặt block.
+- Tách `createSpectrumRingGeometries()` để Weak Point và mặt trước Rainbow Target dùng chính xác cùng
+  bảy vòng màu `RAINBOW_RING_COLORS`.
+- Bullseye block có thêm viền trắng `0xf4ecff`; sáu `RingGeometry` và một `CircleGeometry` tạo tâm kín.
+- Geometry/material được tạo một lần rồi dùng chung cho mọi Weak Point, không cấp phát theo từng block.
+- Bỏ toàn bộ crack mesh, chip, glow, xoay/mirror và pulse animation của mục 23.
+- Footprint presentation giảm `0.37 → 0.32` cạnh block để đĩa tròn có khoảng thở ở bốn cạnh.
+- Hit rule không đổi: bullseye chỉ minh họa mặt cần bắn; impact ở bất kỳ vị trí nào trên đúng mặt đó
+  vẫn phá được cluster.
+
+### 24.2 Từ marker tùy chọn sang reveal route có chủ đích
+
+Trước lượt này, cả ba level đều có một Weak Point lộ sẵn cho **mọi** cluster. Các Weak Point nằm giữa
+hai block chỉ là marker phụ, nên người chơi không thật sự cần phá blocker để mở đường.
+
+Level data mới áp dụng nhịp sau:
+
+- Chính xác **một Weak Point cho mỗi FACE_6 cluster**, giảm nhiễu và làm mỗi vị trí có ý nghĩa.
+- Mỗi level chỉ có **hai cluster reachable lúc bắt đầu**, khớp đúng hai goal đang hiển thị.
+- Những Weak Point còn lại nằm trên mặt trong và được mở theo từng wave ngắn sau khi một cluster liên
+  quan rời đi.
+- Dependency luôn khác màu, không tự che trong cùng cluster và không tạo vòng khóa.
+- Level 1 và 3 giữ route thỏa mãn liên tục, có thể hoàn thành mà không dùng reserve; Level 2 mới đặt
+  đúng một reasoning beat bắt buộc sau bốn cluster thuận goal.
+- Ở beat đó, Weak Point Red phía sau bị Yellow che. Goal đang là Green + Red nhưng không còn cluster
+  cùng màu nào reachable, nên người chơi phải phá Yellow ×2, tạm gửi hai block vào reserve, rồi phá
+  Red vừa lộ. Khi goal Yellow mở, batch đã gửi tự xả và route trở lại nhịp thuận ngay.
+- Không level nào cần Rainbow bypass để giải được.
+
+Reveal waves đã author:
+
+- Level 1: `Red + Green → Red + Orange → Yellow → Purple + Blue → Orange`.
+- Level 2: `Red + Blue → Blue + Yellow + Green → Green + Yellow → Red`.
+- Level 3: `Purple + Orange → Orange + Red + Red → Purple`.
+
+`work/levels.tsv`, `work/levels.csv`, bundled sheet và `level-01.ts` đã được đồng bộ với cùng tọa độ.
+
+### 24.3 Validator và regression coverage
+
+- Thêm `auditWeakPointRoutes()` để tính các reveal wave từ face và block đang che.
+- Parser cảnh báo nếu một màu goal mở đầu không có cluster reachable ngay.
+- Parser phát hiện cả vòng khóa khác màu kiểu A che B/B che A, thay vì chỉ cảnh báo mặt bị che bởi
+  chính cluster của nó.
+- Regression chốt mỗi shipped cluster có đúng một marker, hai lựa chọn đầu khớp active goals, mọi
+  dependency đều reachable và có tối thiểu ba nhịp reveal.
+- Test duyệt toàn bộ state graph và tối thiểu hóa số lượt off-goal: Level 1/3 có minimum `0`, riêng
+  Level 2 có minimum `1`, nên reasoning beat không thể bị né bằng một thứ tự bắn khác.
+- Ba canonical route được chạy qua transaction thật và đều kết thúc `WIN/allClear`: Level 1/3 giữ
+  reserve `0`; Level 2 lên đúng `2/8` ở lượt Yellow bắt buộc rồi tự xả về `0` ngay sau lượt Red.
+- Test visual chốt Weak Point và Rainbow Target gọi cùng helper bullseye, không còn symbol crack/pulse.
+
+Kết quả sau khi rebuild:
+
+- `npm test`: **153/153 pass**.
+- ESLint: sạch trên toàn bộ source, test và tooling của project (loại các thư mục artifact/cache).
+- `npm run build`: thành công; chỉ còn warning chunk lớn có từ bundle Three/React hiện tại.
+- `outputs/3d-cannon-sort.html`: đã bundle lại từ source và sheet mới, `884530 bytes`.
+- `npx tsc --noEmit --incremental false`: vẫn chỉ có ba lỗi ambient Cloudflare đã tồn tại trước lượt này
+  (`cloudflare:workers`, `Fetcher`, `D1Database`), không phát sinh lỗi gameplay mới.
+
+---
+
+## 25. Logo Weak Point đúng key art và tutorial ba concept (23/08)
+
+### 25.1 Weak Point dùng màu logo target của block
+
+- Tách lại hai hệ nhận diện: bia Rainbow bay tiếp tục dùng spectrum bảy màu, còn Weak Point trên
+  block dùng target mark trong key art của game.
+- Marker mới gồm hai vòng trắng `0xffffff`; tâm và khoảng trống trong logo trong suốt để màu block
+  tự trở thành nền.
+- Thêm hai keyline navy `0x10152f` mảnh phía sau để logo vẫn nổi trên block Yellow/Orange mà không
+  biến thành một bullseye cầu vồng khác.
+- Geometry/material vẫn được dùng chung cho mọi marker và parent trực tiếp vào đúng mặt block.
+- Luật hit không đổi: toàn bộ mặt được author là Weak Point; bán kính của logo chỉ có tác dụng minh họa.
+- Bia Rainbow 3D, hitbox mở rộng, đường bay linear, duration 7 giây và impact animation giữ nguyên.
+
+### 25.2 Ba bài tutorial độc lập
+
+Thêm nút **Tutorial** ở hub và ba bài học chạy trực tiếp trên engine thật:
+
+1. **Cannon & 3D model** — chỉ hiện model, cannon, vùng input/crosshair và coach card. Người chơi phải
+   kéo xoay đủ quãng đường, kéo ngắm đủ biên độ rồi thả để bắn. Goal, Reserve, Weak Point, Rainbow,
+   toolbar và result UI đều không được render.
+2. **Sort & reserve** — chỉ mở Goal + Reserve. Route bắt buộc `Red → Blue → Red`: Red đầu tiên tiến
+   Goal, Blue được giữ trong Reserve, Red cuối hoàn tất Goal và kích hoạt Blue auto-fill. Weak Point
+   và Rainbow không được tạo.
+3. **Weak Point & Rainbow Climax** — ẩn Goal + Reserve, mở marker Weak Point. Sau khi phá đúng mặt Red,
+   ba Rainbow Target mới bắt đầu bay; trong bước chờ target mọi block đều được bảo vệ. Hit target sẽ
+   arm Climax, sau đó cú bắn Blue trên bất kỳ mặt nào tiêu một charge và hoàn tất bài.
+
+Mỗi bước được khóa bằng event gameplay thật (`MODEL_ROTATED`, `AIM_DRAGGED`, `SHOT_FIRED`, tiến độ
+sort/batch, Weak Point clear, Rainbow hit và bypass used), nên người chơi không thể bấm Next để bỏ qua
+concept hoặc hoàn tất bước bằng thao tác sai thứ tự. Coach card, step dots, gesture ghost và focus
+animation chỉ hướng dẫn phần đang học; overlay không chặn drag vào engine.
+
+Ba `LevelConfig` tutorial có ID `9001–9003`, nằm riêng trong source và không được chèn vào
+`work/levels.tsv`, vì vậy campaign, sheet import và validator của level designer không bị thay đổi.
+Các engine option dùng cho tutorial đều có default giữ nguyên hành vi campaign.
+
+### 25.3 Regression coverage và bundle
+
+- Thêm test reducer/action order, ma trận UI của ba chapter, color gate, inventory/config và việc các
+  ID tutorial không xuất hiện trong campaign sheet.
+- Chạy transaction thật xác nhận route `Red → Blue vào Reserve → Red → Blue auto-fill` kết thúc
+  `WIN/allClear` và Reserve trở về `0`.
+- Test source chốt UI không liên quan bị loại khỏi DOM, Rainbow chỉ bật sau bước Weak Point, campaign
+  giữ default engine cũ và HTML offline chứa đủ ba tutorial cùng sheet chính xác.
+- `npm test`: **160/160 pass**.
+- ESLint: sạch trên toàn bộ source, test và tooling của project (loại các thư mục artifact/cache).
+- `npm run build`: thành công; chỉ còn warning chunk lớn từ bundle Three/React hiện tại.
+- `outputs/3d-cannon-sort.html`: đã bundle lại, **901.431 bytes**, gồm 3 campaign level và 3 tutorial.
+- `npx tsc --noEmit --incremental false`: vẫn chỉ có ba lỗi ambient Cloudflare đã tồn tại trước lượt này
+  (`cloudflare:workers`, `Fetcher`, `D1Database`), không phát sinh lỗi gameplay mới.

@@ -14,6 +14,7 @@ import {
   createInitialHookSnapshot,
   type BatchFlightEvent,
   type ControlSensitivity,
+  type EngineInteractionEvent,
   type HookSnapshot,
   type SortAnimationEvent,
 } from "./game/CannonSortEngine";
@@ -38,6 +39,18 @@ import {
   setHapticsEnabled,
 } from "./game/haptics";
 import { createGameState } from "./game/rules";
+import { TUTORIAL_CHAPTERS } from "./game/tutorial-levels";
+import {
+  TUTORIAL_COPY,
+  TUTORIAL_STEP_COUNT,
+  createTutorialProgress,
+  nextTutorialChapter,
+  reduceTutorialProgress,
+  tutorialAllowedColor,
+  tutorialPresentation,
+  type TutorialEvent,
+  type TutorialProgress,
+} from "./game/tutorial";
 import type { BlockColor, GameState } from "./game/types";
 
 const COLOR_META: Record<BlockColor, { hex: string; short: string }> = {
@@ -195,7 +208,7 @@ const FAIL_BODY: Record<string, string> = {
 
 type ModalView = "settings" | "restart-confirm" | null;
 type SheetNotice = { kind: "ok" | "warn"; lines: string[]; key: number };
-type Screen = "hub" | "playing";
+type Screen = "hub" | "playing" | "tutorial";
 
 // How long the menu buttons take to clear the screen before the level's own HUD
 // takes over.
@@ -236,6 +249,8 @@ export default function GamePrototype() {
   const handoffIntroRef = useRef(false);
   const dragDepthRef = useRef(0);
   const sensitivityRef = useRef<ControlSensitivity>({ modelRotate: 1, aimDrag: 1 });
+  const tutorialProgressRef = useRef<TutorialProgress>(createTutorialProgress());
+  const tutorialBatchSeenRef = useRef(false);
   const [session, setSession] = useState(0);
   // The game opens on the menu, so the very first thing the player sees is the
   // level they are about to play, turning on its own.
@@ -244,7 +259,12 @@ export default function GamePrototype() {
   const [hudRising, setHudRising] = useState(false);
   const [sheet, setSheet] = useState<LoadedLevelSheet>(() => loadLevelSheet());
   const [levelIndex, setLevelIndex] = useState(0);
-  const level = sheet.levels[levelIndex] ?? sheet.levels[0];
+  const [tutorialProgress, setTutorialProgress] = useState<TutorialProgress>(() => createTutorialProgress());
+  const campaignLevel = sheet.levels[levelIndex] ?? sheet.levels[0];
+  const tutorialChapter = TUTORIAL_CHAPTERS[tutorialProgress.chapter] ?? TUTORIAL_CHAPTERS[0];
+  const tutorialMode = screen === "tutorial";
+  const tutorialView = tutorialMode ? tutorialPresentation(tutorialProgress.chapter) : null;
+  const level = tutorialMode ? tutorialChapter.level : campaignLevel;
   const [state, setState] = useState<GameState>(() => createGameState(sheet.levels[0]));
   const [hookState, setHookState] = useState<HookSnapshot>(() => createInitialHookSnapshot());
   const [sheetNotice, setSheetNotice] = useState<SheetNotice | null>(null);
@@ -269,6 +289,14 @@ export default function GamePrototype() {
   // browser pass in agreement instead of hydrating with a mismatched control.
   const hapticsAvailable = useSyncExternalStore(subscribeToNothing, hapticsSupported, returnFalse);
 
+  const dispatchTutorial = useCallback((event: TutorialEvent) => {
+    const current = tutorialProgressRef.current;
+    const next = reduceTutorialProgress(current, event);
+    if (next === current) return;
+    tutorialProgressRef.current = next;
+    setTutorialProgress(next);
+  }, []);
+
   // React is mounted and the level sheet has been read; the engine below is what
   // is left. Its own effect reports the rest.
   useEffect(() => advanceLoading("mount"), []);
@@ -280,6 +308,11 @@ export default function GamePrototype() {
     const crosshair = crosshairRef.current;
     const frame = gameFrameRef.current;
     if (!host || !modelZone || !aimZone || !crosshair || !frame) return;
+    const tutorialLevelIndex = TUTORIAL_CHAPTERS.findIndex((chapter) => chapter.level === level);
+    const engineTutorialChapter = tutorialLevelIndex >= 0 ? tutorialLevelIndex : null;
+    const engineTutorialView = engineTutorialChapter === null
+      ? null
+      : tutorialPresentation(engineTutorialChapter);
 
     const handleState = (next: GameState) => {
       setState(next);
@@ -298,6 +331,24 @@ export default function GamePrototype() {
         const landed = next.batches.some((batch) => batch.color === previous.color && batch.count >= previous.count);
         return landed ? null : previous;
       });
+
+      if (engineTutorialChapter !== 1 || tutorialProgressRef.current.chapter !== 1) return;
+      const parked = next.batches.reduce((total, batch) => total + batch.count, 0);
+      if (parked > 0) tutorialBatchSeenRef.current = true;
+      const step = tutorialProgressRef.current.step;
+      if (step === 0) {
+        const redGoal = next.activeGoals.find((goal) => goal?.color === "red");
+        if (redGoal && redGoal.current >= 1) dispatchTutorial({ type: "SORT_PROGRESS" });
+      } else if (step === 1 && parked > 0) {
+        dispatchTutorial({ type: "BATCH_STORED" });
+      } else if (
+        step === 2
+        && tutorialBatchSeenRef.current
+        && parked === 0
+        && next.result?.kind === "WIN"
+      ) {
+        dispatchTutorial({ type: "BATCH_AUTOFILLED" });
+      }
     };
 
     const handleSort = (event: SortAnimationEvent) => {
@@ -396,12 +447,34 @@ export default function GamePrototype() {
       if (created.length) setSortSprites((previous) => [...previous, ...created]);
     };
 
-    const engine = new CannonSortEngine(host, modelZone, aimZone, crosshair, level, {
-      onState: handleState,
-      onSort: handleSort,
-      onBatchFlight: handleBatchFlight,
-      onHookState: setHookState,
-    });
+    const handleTutorialInteraction = (event: EngineInteractionEvent) => {
+      if (engineTutorialChapter === null) return;
+      dispatchTutorial(event as TutorialEvent);
+    };
+
+    const engine = new CannonSortEngine(
+      host,
+      modelZone,
+      aimZone,
+      crosshair,
+      level,
+      {
+        onState: handleState,
+        onSort: handleSort,
+        onBatchFlight: handleBatchFlight,
+        onHookState: setHookState,
+      },
+      {
+        allowAnyBlockFace: engineTutorialView?.allowAnyBlockFace,
+        canClaimColor: engineTutorialChapter !== null && engineTutorialChapter > 0
+          ? (color) => tutorialAllowedColor(tutorialProgressRef.current) === color
+          : undefined,
+        rainbowTargetsEnabled: engineTutorialChapter === null
+          || (engineTutorialChapter === 2 && tutorialProgressRef.current.step >= 1),
+        showWeakPoints: engineTutorialView?.showWeakPoints ?? true,
+        onInteraction: handleTutorialInteraction,
+      },
+    );
     engine.setControlSensitivity(sensitivityRef.current);
     engineRef.current = engine;
     // Run before the engine's first frame reaches the screen, in the same
@@ -423,13 +496,20 @@ export default function GamePrototype() {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [level, session]);
+  }, [dispatchTutorial, level, session]);
 
   // Declared after the engine effect so it runs once the engine for this
   // session exists.
   useEffect(() => {
     engineRef.current?.setIdle(screen === "hub");
   }, [screen, session]);
+
+  useEffect(() => {
+    if (screen !== "tutorial") return;
+    engineRef.current?.setRainbowTargetsEnabled(
+      tutorialProgress.chapter === 2 && tutorialProgress.step >= 1,
+    );
+  }, [screen, session, tutorialProgress.chapter, tutorialProgress.step]);
 
   const enterLevel = () => {
     // The cluster snaps back and the level goes live on this frame; only the
@@ -502,6 +582,47 @@ export default function GamePrototype() {
   // Leaving mid-level rewinds it: the menu shows the cluster whole, so tapping
   // play cannot drop you into a half-cleared board.
   const returnToHub = () => startLevel(sheet, levelIndex, "hub");
+
+  const loadTutorialProgress = (next: TutorialProgress) => {
+    const chapter = TUTORIAL_CHAPTERS[next.chapter];
+    if (!chapter) return;
+    tutorialProgressRef.current = next;
+    tutorialBatchSeenRef.current = false;
+    setTutorialProgress(next);
+    setState(createGameState(chapter.level));
+    setHookState(createInitialHookSnapshot());
+    setSortSprites([]);
+    setVisualGoalCounts({});
+    setIncomingReserve(null);
+    modalActiveRef.current = false;
+    resumeAfterModalRef.current = false;
+    setModal(null);
+    setCosmeticOpen(false);
+    cosmeticOpenRef.current = false;
+    setHubLeaving(false);
+    setHudRising(false);
+    setScreen("tutorial");
+    setSession((value) => value + 1);
+  };
+
+  const beginTutorial = () => {
+    haptic("impact");
+    loadTutorialProgress(createTutorialProgress());
+  };
+
+  const leaveTutorial = () => {
+    tutorialProgressRef.current = createTutorialProgress();
+    tutorialBatchSeenRef.current = false;
+    setTutorialProgress(tutorialProgressRef.current);
+    startLevel(sheet, levelIndex, "hub");
+  };
+
+  const continueTutorial = () => {
+    if (tutorialProgress.step < TUTORIAL_STEP_COUNT) return;
+    const next = nextTutorialChapter(tutorialProgress);
+    if (next) loadTutorialProgress(next);
+    else leaveTutorial();
+  };
 
   // Dropping a sheet keeps the level number you were on, so tuning level 31
   // means edit, drop, and you are back on level 31 without replaying anything.
@@ -756,10 +877,19 @@ export default function GamePrototype() {
   const traySlots = Array.from({ length: Math.max(level.reserveBlocks, filledSlots.length) }, (_, index) =>
     filledSlots[index] ?? { key: `socket-${index}`, batchId: undefined, color: null });
   const bypassArmed = hookState.weakPointBypassArmed;
+  const showGoals = screen === "playing" || tutorialView?.showGoals === true;
+  const showReserve = screen === "playing" || tutorialView?.showReserve === true;
+  const showClimaxFeedback = (screen === "playing" || (tutorialMode && tutorialProgress.chapter === 2)) && bypassArmed;
+  const tutorialSteps = TUTORIAL_COPY[tutorialProgress.chapter] ?? TUTORIAL_COPY[0];
+  const tutorialStepCopy = tutorialProgress.step < TUTORIAL_STEP_COUNT
+    ? tutorialSteps[tutorialProgress.step]
+    : null;
+  const tutorialComplete = tutorialProgress.step >= TUTORIAL_STEP_COUNT;
+  const tutorialFocusColor = tutorialMode ? tutorialAllowedColor(tutorialProgress) : null;
   return (
     <main className="page-shell">
       <section
-        className={`game-frame ${bypassArmed ? "is-rainbow-armed" : ""} ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""}`}
+        className={`game-frame ${bypassArmed ? "is-rainbow-armed" : ""} ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""} ${tutorialMode ? `is-tutorial tutorial-${tutorialChapter.id}` : ""} ${tutorialMode && !showGoals && !showReserve ? "is-tutorial-no-hud" : ""}`}
         ref={gameFrameRef}
         aria-label="Prototype game 3D Cannon Sort"
         onDragEnter={handleSheetDragEnter}
@@ -768,11 +898,11 @@ export default function GamePrototype() {
         onDrop={handleSheetDrop}
       >
         <div className="game-content" inert={modal !== null ? true : undefined} aria-hidden={modal !== null}>
-          {screen === "playing" && !state.result && bypassArmed && <ClimaxFireworks />}
+          {showClimaxFeedback && !state.result && <ClimaxFireworks />}
           {/* Absolutely positioned rather than a row in .hud-top: a banner that
               only exists while armed would otherwise change --hud-height every
               time a target is hit, and the 3D scene would jump with it. */}
-          {screen === "playing" && !state.result && bypassArmed && (
+          {showClimaxFeedback && !state.result && (
             <div className="bypass-banner" role="status" aria-live="polite">
               <span className="bypass-banner-wave" aria-hidden="true" />
               <strong>Next shot ignores Weak Points</strong>
@@ -820,9 +950,15 @@ export default function GamePrototype() {
                 <CannonMountIcon />
                 Skin
               </button>
-              {/* Still a placeholder on purpose: the menu shows where it goes
-                  before the screen behind it exists. */}
-              <button className="hub-side-button" type="button" disabled>Shop</button>
+              <button
+                className="hub-side-button hub-tutorial-button"
+                type="button"
+                onClick={beginTutorial}
+                aria-label="Open the three-part tutorial"
+              >
+                <span className="hub-tutorial-icon" aria-hidden="true">?</span>
+                Tutorial
+              </button>
             </div>
 
             <button
@@ -914,8 +1050,65 @@ export default function GamePrototype() {
           </div>
         )}
 
-        <div className={`hud-top ${hudRising ? "is-rising" : ""}`} hidden={screen === "hub"}>
-          {state.activeGoals.some((goal) => goal !== null) && (
+        {tutorialMode && (
+          <div className="tutorial-layer">
+            <header className="tutorial-header">
+              <div>
+                <span>{tutorialChapter.eyebrow}</span>
+                <strong>{tutorialChapter.title}</strong>
+              </div>
+              <button type="button" onClick={leaveTutorial} aria-label="Exit tutorial">✕</button>
+            </header>
+
+            <div className="tutorial-chapter-rail" aria-label={`Tutorial chapter ${tutorialProgress.chapter + 1} of ${TUTORIAL_CHAPTERS.length}`}>
+              {TUTORIAL_CHAPTERS.map((chapter, index) => (
+                <i
+                  key={chapter.id}
+                  className={`${index < tutorialProgress.chapter ? "is-done" : ""} ${index === tutorialProgress.chapter ? "is-current" : ""}`}
+                  aria-hidden="true"
+                />
+              ))}
+            </div>
+
+            <section
+              className={`tutorial-coach ${tutorialComplete ? "is-complete" : ""}`}
+              aria-live="polite"
+              style={tutorialFocusColor
+                ? ({ "--tutorial-focus": COLOR_META[tutorialFocusColor].hex } as CSSProperties)
+                : undefined}
+            >
+              <p className="tutorial-coach-kicker">
+                {tutorialComplete ? "Lesson complete" : `Step ${tutorialProgress.step + 1} of ${TUTORIAL_STEP_COUNT}`}
+              </p>
+              <h2>{tutorialComplete ? "You have got it" : tutorialStepCopy?.title}</h2>
+              <p className="tutorial-coach-body">
+                {tutorialComplete
+                  ? tutorialProgress.chapter === TUTORIAL_CHAPTERS.length - 1
+                    ? "All three concepts are ready. The campaign now combines them without tutorial locks."
+                    : "This concept is complete. The next lesson reveals one more part of the game."
+                  : tutorialStepCopy?.body}
+              </p>
+              {!tutorialComplete && <span className="tutorial-hint">{tutorialStepCopy?.hint}</span>}
+              <div className="tutorial-step-dots" aria-hidden="true">
+                {tutorialSteps.map((step, index) => (
+                  <i
+                    key={step.title}
+                    className={`${index < tutorialProgress.step ? "is-done" : ""} ${index === tutorialProgress.step ? "is-current" : ""}`}
+                  >{index < tutorialProgress.step ? "✓" : index + 1}</i>
+                ))}
+              </div>
+            </section>
+
+            {tutorialComplete && (
+              <button className="tutorial-next" type="button" onClick={continueTutorial}>
+                {tutorialProgress.chapter === TUTORIAL_CHAPTERS.length - 1 ? "Finish tutorial" : "Next lesson"} →
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className={`hud-top ${hudRising ? "is-rising" : ""}`} hidden={!showGoals && !showReserve}>
+          {showGoals && state.activeGoals.some((goal) => goal !== null) && (
           <section className="goal-section" aria-label="Active goals">
             <div className="goal-grid">
               {state.activeGoals.map((goal, index) => {
@@ -927,7 +1120,7 @@ export default function GamePrototype() {
                 const fillRatio = Math.min(1, goal.target === 0 ? 1 : shownCount / goal.target);
                 return (
                   <article
-                    className={`goal-card ${shownCount >= goal.target ? "is-full" : ""}`}
+                    className={`goal-card ${shownCount >= goal.target ? "is-full" : ""} ${tutorialFocusColor === goal.color ? "is-tutorial-focus" : ""}`}
                     data-goal-slot={index}
                     key={goal.id}
                     style={{ "--goal": meta.hex, "--goal-fill": `${fillRatio * 100}%` } as CSSProperties}
@@ -946,7 +1139,7 @@ export default function GamePrototype() {
           </section>
           )}
 
-          <section className={`batch-section ${batchWarning ? "is-warning" : ""}`} aria-label="Reserve">
+          {showReserve && <section className={`batch-section ${batchWarning ? "is-warning" : ""} ${tutorialProgress.chapter === 1 && tutorialProgress.step === 1 ? "is-tutorial-focus" : ""}`} aria-label="Reserve">
             {/* The count lives only in the label now: on screen it is the slots
                 themselves, the taken ones and the empty ones together. */}
             <div
@@ -966,17 +1159,24 @@ export default function GamePrototype() {
                 ))}
               </span>
             </div>
-          </section>
+          </section>}
         </div>
 
         <div className="scene-wrap">
           <div className="scene-host" ref={sceneHostRef} />
           <div ref={modelZoneRef} className="model-input-zone" role="application" aria-label="Drag to rotate the block model 360 degrees" />
+          {tutorialMode && tutorialStepCopy?.gesture && (
+            <div className={`tutorial-gesture tutorial-gesture-${tutorialStepCopy.gesture}`} aria-hidden="true">
+              <span>☝</span>
+              <i />
+              <b>{tutorialStepCopy.gesture === "rotate" ? "DRAG TO ROTATE" : "DRAG & RELEASE"}</b>
+            </div>
+          )}
           <span ref={crosshairRef} className="aim-crosshair" aria-hidden="true">
             <span className="aim-crosshair-core" />
           </span>
 
-          {state.postWinClearing && (
+          {screen === "playing" && state.postWinClearing && (
             <div className="auto-clear-label"><span>COMPLETE</span><b>Auto clear</b></div>
           )}
 
@@ -997,7 +1197,7 @@ export default function GamePrototype() {
             inset below the HUD, so an overlay inside it started 116px down the
             frame — that was the bright strip left showing along the top — and
             its `overflow: hidden` clipped the fireworks as well. */}
-        {state.result && !state.postWinClearing && (
+        {screen === "playing" && state.result && !state.postWinClearing && (
           <div className={`result-overlay result-${state.result.kind.toLowerCase()}`}>
             {/* Behind the panel, so the sparks read as bursting out from under
                 it rather than streaking across the text. */}

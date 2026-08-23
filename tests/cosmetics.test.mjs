@@ -301,7 +301,11 @@ test("the Skin button opens a picker that leaves the preview visible", async () 
   assert.doesNotMatch(icon, /<img|url\(|fill="var\(/, "no asset, and no var() in a presentation attribute — it does not resolve there");
   const css = await readFile(cssUrl, "utf8");
   assert.match(css, /\.hub-side-icon-accent \{ fill: var\(--accent\)/, "the gold parts are filled from CSS instead");
-  assert.match(sideButtons, /<button className="hub-side-button" type="button" disabled>Shop<\/button>/, "Shop is still a placeholder");
+  // Tutorial now owns the second menu slot that used to be the disabled Shop
+  // placeholder. It stays a sibling of Skin, so opening either screen cannot
+  // accidentally turn the other button into part of its overlay.
+  assert.match(sideButtons, /className="hub-side-button hub-tutorial-button"[\s\S]{0,180}onClick=\{beginTutorial\}/);
+  assert.match(sideButtons, /<span className="hub-tutorial-icon"[^>]*>\?<\/span>\s*\n\s*Tutorial/);
 
   // Not a modal: .modal-overlay paints an opaque backdrop, which would cover
   // the rig the picker exists to show.

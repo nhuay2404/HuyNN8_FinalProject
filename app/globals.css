@@ -567,6 +567,12 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .hub-side-icon { display: block; width: 27px; height: 27px; fill: currentColor; }
 .hub-side-icon-accent { fill: var(--accent); }
+.hub-tutorial-icon {
+  display: grid; place-items: center; width: 27px; height: 27px;
+  border: 2px solid currentColor; border-radius: 50%;
+  color: var(--accent); font-size: 17px; font-weight: 900; line-height: 1;
+  box-shadow: inset 0 0 0 3px rgba(255,213,74,.1);
+}
 /* They are visibly inert rather than hidden: the menu shows where they will go. */
 .hub-side-button[disabled] { opacity: .62; }
 /* Only positioned here: the look and size come from .icon-button, the same rule
@@ -600,6 +606,101 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-side-button:not([disabled]) { cursor: pointer; transition: background .2s, transform .2s; }
 .hub-side-button:not([disabled]):hover { background: rgba(53,66,134,.86); transform: translateX(2px); }
 .hub-side-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Guided tutorial -------------------------------------------------- */
+/* The lesson chrome never becomes an invisible pane over the controls. Only
+   its two buttons accept pointer events; drag gestures pass through the cards
+   to the real engine zones underneath. */
+.tutorial-layer { position: absolute; z-index: 18; inset: 0; pointer-events: none; }
+.tutorial-header {
+  position: absolute; top: max(10px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
+  min-height: 48px; padding: 8px 48px 8px 13px;
+  display: flex; align-items: center;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 16px;
+  background: rgba(10,16,52,.84); box-shadow: 0 12px 28px -18px rgba(3,7,28,.95);
+  backdrop-filter: blur(12px);
+}
+.tutorial-header > div { min-width: 0; display: grid; gap: 2px; }
+.tutorial-header span { color: #8ff4dd; font-size: 9px; font-weight: 900; letter-spacing: .13em; text-transform: uppercase; }
+.tutorial-header strong { overflow: hidden; color: #fff; font-size: 14px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.tutorial-header button {
+  pointer-events: auto; position: absolute; top: 7px; right: 7px; width: 34px; height: 34px;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 11px;
+  background: rgba(255,255,255,.1); color: #fff; cursor: pointer; font-size: 13px; font-weight: 900;
+}
+.tutorial-header button:focus-visible, .tutorial-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tutorial-chapter-rail {
+  position: absolute; top: max(64px, calc(env(safe-area-inset-top) + 54px)); left: 50%;
+  display: grid; grid-template-columns: repeat(3, 34px); gap: 5px; transform: translateX(-50%);
+}
+.tutorial-chapter-rail i { height: 4px; border-radius: 999px; background: rgba(255,255,255,.18); }
+.tutorial-chapter-rail i.is-done { background: #45e3b4; }
+.tutorial-chapter-rail i.is-current { background: var(--accent); box-shadow: 0 0 10px rgba(255,213,74,.55); }
+
+.tutorial-coach {
+  --tutorial-focus: #ffd54a;
+  position: absolute; left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom));
+  padding: 13px 14px 12px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 44%); border-radius: 18px;
+  background: linear-gradient(135deg, rgba(10,16,52,.94), rgba(29,39,91,.91));
+  box-shadow: 0 18px 34px -20px rgba(3,7,28,.95), inset 3px 0 0 var(--tutorial-focus);
+  backdrop-filter: blur(13px);
+}
+.tutorial-coach.is-complete { bottom: max(76px, calc(env(safe-area-inset-bottom) + 72px)); border-color: rgba(69,227,180,.62); box-shadow: 0 18px 34px -20px rgba(3,7,28,.95), inset 3px 0 0 #45e3b4; }
+.tutorial-coach-kicker { margin: 0 0 3px; color: var(--tutorial-focus); font-size: 9px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.tutorial-coach.is-complete .tutorial-coach-kicker { color: #69f0c9; }
+.tutorial-coach h2 { margin: 0; color: #fff; font-size: 19px; line-height: 1.16; letter-spacing: -.025em; }
+.tutorial-coach-body { margin: 5px 0 8px; color: #cbd4f6; font-size: 11px; line-height: 1.45; }
+.tutorial-hint {
+  display: inline-flex; min-height: 24px; padding: 5px 9px; align-items: center;
+  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 58%); border-radius: 999px;
+  background: color-mix(in srgb, var(--tutorial-focus), transparent 87%); color: #fff;
+  font-size: 10px; font-weight: 900;
+}
+.tutorial-step-dots { position: absolute; top: 13px; right: 13px; display: flex; gap: 5px; }
+.tutorial-step-dots i {
+  width: 19px; height: 19px; display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,.18); border-radius: 50%;
+  background: rgba(255,255,255,.07); color: #9da8d4; font-size: 8px; font-style: normal; font-weight: 900;
+}
+.tutorial-step-dots i.is-current { border-color: var(--tutorial-focus); color: #101735; background: var(--tutorial-focus); }
+.tutorial-step-dots i.is-done { border-color: #45e3b4; color: #062b21; background: #45e3b4; }
+.tutorial-next {
+  pointer-events: auto; position: absolute; z-index: 1; left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom));
+  min-height: 48px; border: 0; border-radius: 15px;
+  background: linear-gradient(135deg, #45e3b4, #b7ffcf); color: #062c21;
+  box-shadow: 0 12px 24px -14px rgba(3,7,28,.9); cursor: pointer; font-size: 12px; font-weight: 900;
+}
+
+/* The regular HUD moves below the lesson title. Chapters that intentionally
+   hide it let the scene use that space instead of reserving a blank 92px. */
+.game-frame.is-tutorial:not(.is-tutorial-no-hud) .hud-top { top: max(82px, calc(env(safe-area-inset-top) + 72px)); right: max(16px, env(safe-area-inset-right)); }
+.game-frame.is-tutorial:not(.is-tutorial-no-hud) .scene-wrap { inset: calc(max(82px, calc(env(safe-area-inset-top) + 72px)) + var(--hud-height) + 8px) 0 0; }
+.game-frame.is-tutorial-no-hud .scene-wrap { inset: max(72px, calc(env(safe-area-inset-top) + 62px)) 0 0; }
+.goal-card.is-tutorial-focus, .batch-section.is-tutorial-focus .batch-slot {
+  animation: tutorial-focus 1s ease-in-out infinite alternate;
+}
+
+.tutorial-gesture {
+  position: absolute; z-index: 6; left: 50%; width: 170px; height: 70px;
+  transform: translateX(-50%); pointer-events: none; color: #fff; text-align: center;
+  filter: drop-shadow(0 5px 10px rgba(5,9,32,.75));
+}
+.tutorial-gesture span { position: absolute; left: 50%; top: 3px; font-size: 30px; transform: translateX(-50%); }
+.tutorial-gesture i { position: absolute; left: 30px; right: 30px; top: 38px; height: 2px; border-radius: 999px; background: rgba(255,255,255,.76); }
+.tutorial-gesture i::before, .tutorial-gesture i::after { content: ""; position: absolute; top: -4px; width: 8px; height: 8px; border-top: 2px solid #fff; border-right: 2px solid #fff; }
+.tutorial-gesture i::before { left: 0; transform: rotate(-135deg); }
+.tutorial-gesture i::after { right: 0; transform: rotate(45deg); }
+.tutorial-gesture b { position: absolute; top: 50px; left: 0; right: 0; font-size: 8px; letter-spacing: .13em; }
+.tutorial-gesture-rotate { top: 31%; animation: tutorial-hand-horizontal 1.5s ease-in-out infinite; }
+.tutorial-gesture-aim { bottom: 29%; animation: tutorial-hand-aim 1.4s ease-in-out infinite; }
+.tutorial-gesture-aim i { transform: rotate(-18deg); }
+
+@keyframes tutorial-focus {
+  to { transform: translateY(-2px); filter: brightness(1.18); box-shadow: 0 0 0 5px color-mix(in srgb, var(--tutorial-focus, #ffd54a), transparent 76%); }
+}
+@keyframes tutorial-hand-horizontal { 0%,100% { transform: translateX(-57%); opacity: .64; } 50% { transform: translateX(-43%); opacity: 1; } }
+@keyframes tutorial-hand-aim { 0%,100% { transform: translate(-55%,8px); opacity: .62; } 50% { transform: translate(-43%,-9px); opacity: 1; } }
 
 /* ---- Cosmetic picker --------------------------------------------------- */
 /* Sits above the menu and below the dialogs. Its middle is left empty on

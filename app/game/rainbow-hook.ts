@@ -38,46 +38,31 @@ const OFF_SCREEN_MARGIN = 0.18;
  * player can see and can never shoot. The band is the reachable part, not the
  * visible part.
  */
-const WANDER_V_LOW = 0.12;
-const WANDER_V_HIGH = 0.48;
-const WANDER_HARMONICS = 3;
+const LINEAR_V_LOW = 0.16;
+const LINEAR_V_HIGH = 0.42;
 
 /**
- * A target's position in normalized screen space at `progress` 0..1.
+ * A target's position on one straight line in normalized screen space.
  *
- * Free-form rather than authored: three seeded sines of different frequency and
- * phase are summed across the crossing, so no two targets trace the same shape
- * and none of them is a straight line or a single arc. Deterministic, so a level
- * plays the same way twice and a replay of a bug is a replay of the same flight.
- *
- * The sum is tapered by sin(pi * t), which pins the entry and exit heights to
- * the seeded ones — otherwise a target would appear already displaced off its
- * own line, which reads as a glitch rather than as a path.
+ * The seed only chooses its direction and the two endpoints. Everything between
+ * them is a linear interpolation, so the player can read and lead the target
+ * instead of chasing a path that repeatedly changes curvature.
  */
-export function rainbowWanderAt(seed: number, progress: number): NormalizedScreenPoint {
-  if (!Number.isFinite(seed)) throw new TypeError("Rainbow wander seed must be finite");
-  if (!Number.isFinite(progress)) throw new TypeError("Rainbow wander progress must be finite");
+export function rainbowLinearAt(seed: number, progress: number): NormalizedScreenPoint {
+  if (!Number.isFinite(seed)) throw new TypeError("Rainbow line seed must be finite");
+  if (!Number.isFinite(progress)) throw new TypeError("Rainbow line progress must be finite");
 
   const t = clamp01(progress);
   const leftToRight = hash(seed, 0) < 0.5;
-  const entryV = 0.16 + hash(seed, 1) * 0.26;
-  const exitV = 0.16 + hash(seed, 2) * 0.26;
+  const entryV = lerp(LINEAR_V_LOW, LINEAR_V_HIGH, hash(seed, 1));
+  const exitV = lerp(LINEAR_V_LOW, LINEAR_V_HIGH, hash(seed, 2));
 
   const fromU = leftToRight ? -OFF_SCREEN_MARGIN : 1 + OFF_SCREEN_MARGIN;
   const toU = leftToRight ? 1 + OFF_SCREEN_MARGIN : -OFF_SCREEN_MARGIN;
 
-  let wander = 0;
-  for (let harmonic = 0; harmonic < WANDER_HARMONICS; harmonic += 1) {
-    const amplitude = (0.05 + hash(seed, 10 + harmonic) * 0.07) / (harmonic + 1);
-    const frequency = 1 + harmonic + Math.floor(hash(seed, 20 + harmonic) * 3);
-    const phase = hash(seed, 30 + harmonic) * Math.PI * 2;
-    wander += amplitude * Math.sin(t * Math.PI * frequency + phase);
-  }
-
-  const taper = Math.sin(t * Math.PI);
   return {
     u: lerp(fromU, toU, t),
-    v: clamp(lerp(entryV, exitV, t) + wander * taper, WANDER_V_LOW, WANDER_V_HIGH),
+    v: clamp(lerp(entryV, exitV, t), LINEAR_V_LOW, LINEAR_V_HIGH),
   };
 }
 
@@ -85,12 +70,12 @@ export const RAINBOW_TARGET_DEFAULTS = Object.freeze({
   targetCount: 3,
   /** What the seeded jitter is measured against, not a fixed cadence. */
   spawnGapSeconds: 12,
-  targetDurationSeconds: 4.5,
+  targetDurationSeconds: 7,
 });
 
 export type RainbowSpawnWindow = Readonly<{
   index: number;
-  /** Feeds rainbowWanderAt, so a target's flight belongs to its slot. */
+  /** Feeds rainbowLinearAt, so a target's straight crossing belongs to its slot. */
   seed: number;
   spawnAtSeconds: number;
   leaveAtSeconds: number;
@@ -146,12 +131,12 @@ export function createRainbowSpawnSchedule(options: RainbowScheduleOptions): rea
 }
 
 /**
- * Outer radius of the drawn bullseye, as a fraction of one block side.
+ * Outer radius of the drawn bullseye logo, as a fraction of one block side.
  *
  * Presentation only. The hit test below does not read it: a Weak Point is a
- * whole face, and the bullseye is the decal that tells the player which face.
+ * whole face, and the bullseye is the logo that tells the player which face.
  */
-export const WEAK_POINT_VISUAL_RADIUS_RATIO = 0.21;
+export const WEAK_POINT_VISUAL_RADIUS_RATIO = 0.32;
 
 export type WeakPointHitInput = Readonly<{
   /** Face independently identified by collision code. */
@@ -164,7 +149,7 @@ export type WeakPointHitInput = Readonly<{
  * A Weak Point is the whole face, not a disc on it.
  *
  * Aiming a 3D arc at a centred disc on a rotating cube asked for precision the
- * camera cannot even show, and the drawn bullseye was never the same size as
+ * camera cannot even show, and the old drawn bullseye was never the same size as
  * the region that counted. Landing anywhere on the authored face now counts,
  * which is a rule the player can read straight off the model.
  */
