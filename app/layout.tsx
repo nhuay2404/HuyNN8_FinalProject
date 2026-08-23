@@ -1,11 +1,32 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 import { LOADING_SCREEN_MARKUP } from "./loading-screen";
 
-export const metadata: Metadata = {
-  title: "3D Cannon Sort",
-  description: "Aim, shoot and sort colour blocks in 3D space.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const imageUrl = `${protocol}://${host}/og.png`;
+  const title = "3D Cannon Sort — Weak Point & Rainbow Climax";
+  const description = "Rotate, hit cluster Weak Points, catch Rainbow Targets and sort fast during Climax.";
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      images: [{ url: imageUrl, width: 1731, height: 909, alt: "3D Cannon Sort Weak Point and Rainbow Climax" }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [imageUrl],
+    },
+  };
+}
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

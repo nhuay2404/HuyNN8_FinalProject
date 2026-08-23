@@ -11,8 +11,10 @@ import {
 } from "react";
 import {
   CannonSortEngine,
+  createInitialHookSnapshot,
   type BatchFlightEvent,
   type ControlSensitivity,
+  type HookSnapshot,
   type SortAnimationEvent,
 } from "./game/CannonSortEngine";
 import {
@@ -128,6 +130,40 @@ function ResultFireworks() {
   );
 }
 
+const CLIMAX_STREAK_COLORS = ["#ff4d6d", "#ffdf57", "#56f2df", "#6aa7ff", "#d878ff"];
+const CLIMAX_STREAKS = Array.from({ length: 18 }, (_, index) => ({
+  left: (index * 37 + 9) % 100,
+  delay: -((index * 0.31) % 2.4),
+  duration: 1.6 + (index % 5) * 0.22,
+  drift: ((index % 3) - 1) * (18 + (index % 4) * 7),
+  color: CLIMAX_STREAK_COLORS[index % CLIMAX_STREAK_COLORS.length],
+}));
+
+function ClimaxFireworks() {
+  return (
+    <div className="climax-fireworks" aria-hidden="true">
+      {CLIMAX_STREAKS.map((streak, index) => (
+        <span
+          key={index}
+          style={{
+            "--climax-left": `${streak.left}%`,
+            "--climax-delay": `${streak.delay}s`,
+            "--climax-duration": `${streak.duration}s`,
+            "--climax-drift": `${streak.drift}px`,
+            "--climax-color": streak.color,
+          } as CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
+function formatRoundTime(seconds: number) {
+  const whole = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(whole / 60);
+  return `${minutes}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 function focusableIn(root: HTMLElement) {
   return Array.from(
     root.querySelectorAll<HTMLElement>(
@@ -161,6 +197,7 @@ type IncomingReserve = { color: BlockColor; count: number };
 const FAIL_BODY: Record<string, string> = {
   "Reserve full": "The reserve was full and that shot had nothing an open goal could take.",
   "Out of shots": "The level ran out of shots before the last goal was filled.",
+  "Time up": "The round timer reached zero before the last goal was filled.",
 };
 
 type ModalView = "settings" | "restart-confirm" | null;
@@ -216,6 +253,7 @@ export default function GamePrototype() {
   const [levelIndex, setLevelIndex] = useState(0);
   const level = sheet.levels[levelIndex] ?? sheet.levels[0];
   const [state, setState] = useState<GameState>(() => createGameState(sheet.levels[0]));
+  const [hookState, setHookState] = useState<HookSnapshot>(() => createInitialHookSnapshot(sheet.levels[0]));
   const [sheetNotice, setSheetNotice] = useState<SheetNotice | null>(null);
   const [sheetDragActive, setSheetDragActive] = useState(false);
   const [sortSprites, setSortSprites] = useState<SortSprite[]>([]);
@@ -369,6 +407,7 @@ export default function GamePrototype() {
       onState: handleState,
       onSort: handleSort,
       onBatchFlight: handleBatchFlight,
+      onHookState: setHookState,
     });
     engine.setControlSensitivity(sensitivityRef.current);
     engineRef.current = engine;
@@ -448,6 +487,7 @@ export default function GamePrototype() {
     setSheet(nextSheet);
     setLevelIndex(nextIndex);
     setState(createGameState(nextLevel));
+    setHookState(createInitialHookSnapshot(nextLevel));
     setSortSprites([]);
     setVisualGoalCounts({});
     setIncomingReserve(null);
@@ -475,6 +515,7 @@ export default function GamePrototype() {
   const applySheetText = useCallback((text: string) => {
     const dropped = parseDroppedSheet(text);
     const warnings = dropped.issues.map(formatSheetIssue);
+    const errorCount = dropped.issues.filter((issue) => issue.severity === "error").length;
     if (!dropped.levels.length) {
       setSheetNotice({
         kind: "warn",
@@ -486,7 +527,10 @@ export default function GamePrototype() {
     setSheetNotice({
       kind: warnings.length ? "warn" : "ok",
       lines: warnings.length
-        ? [`Loaded ${dropped.levels.length} levels, skipped ${warnings.length} bad rows:`, ...warnings.slice(0, 4)]
+        ? [
+          `Loaded ${dropped.levels.length} levels with ${errorCount} error(s) and ${warnings.length - errorCount} warning(s):`,
+          ...warnings.slice(0, 4),
+        ]
         : [`Loaded ${dropped.levels.length} levels from the sheet`],
       key: Date.now(),
     });
@@ -718,10 +762,25 @@ export default function GamePrototype() {
   // so the row grows rather than clipping the blocks that caused it.
   const traySlots = Array.from({ length: Math.max(level.reserveBlocks, filledSlots.length) }, (_, index) =>
     filledSlots[index] ?? { key: `socket-${index}`, batchId: undefined, color: null });
+  const hookPhaseClass = hookState.phase === "RAINBOW_TARGET_EVENT"
+    ? "is-rainbow-event"
+    : hookState.phase === "RAINBOW_CLIMAX"
+      ? "is-rainbow-climax"
+      : "is-weak-point";
+  const hookPhaseLabel = hookState.phase === "RAINBOW_TARGET_EVENT"
+    ? "RAINBOW TARGETS"
+    : hookState.phase === "RAINBOW_CLIMAX"
+      ? "CLIMAX"
+      : "WEAK POINT";
+  const rainbowReadoutLabel = hookState.phase === "RAINBOW_TARGET_EVENT"
+    ? `${hookState.targetHitCount} of ${hookState.targetCount} Rainbow Targets hit; ${hookState.rainbowBankSeconds} seconds banked`
+    : hookState.phase === "RAINBOW_CLIMAX"
+      ? `${hookState.rainbowTimeRemaining.toFixed(1)} seconds remain in Rainbow Climax`
+      : "Weak Point precision mode";
   return (
     <main className="page-shell">
       <section
-        className={`game-frame ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""}`}
+        className={`game-frame ${hookPhaseClass} ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""}`}
         ref={gameFrameRef}
         aria-label="Prototype game 3D Cannon Sort"
         onDragEnter={handleSheetDragEnter}
@@ -730,6 +789,7 @@ export default function GamePrototype() {
         onDrop={handleSheetDrop}
       >
         <div className="game-content" inert={modal !== null ? true : undefined} aria-hidden={modal !== null}>
+          {screen === "playing" && !state.result && hookState.phase === "RAINBOW_CLIMAX" && <ClimaxFireworks />}
           {screen === "playing" && (
           <div className={`game-tools ${hudRising ? "is-rising" : ""}`} role="toolbar" aria-label="Level tools">
             <button ref={settingsButtonRef} className="icon-button" type="button" onClick={() => openModal("settings")} aria-label="Open settings" aria-haspopup="dialog" aria-expanded={modal === "settings"}>⚙</button>
@@ -867,6 +927,51 @@ export default function GamePrototype() {
         )}
 
         <div className={`hud-top ${hudRising ? "is-rising" : ""}`} hidden={screen === "hub"}>
+          <section className={`hook-status ${hookPhaseClass}`} aria-label={`${hookPhaseLabel} phase`}>
+            <div
+              className={`round-clock ${hookState.mainTimeRemaining <= 10 ? "is-urgent" : ""}`}
+              role="timer"
+              aria-label={`${Math.max(0, Math.ceil(hookState.mainTimeRemaining))} seconds remain in the round`}
+            >
+              <small>TIME</small>
+              <strong>{formatRoundTime(hookState.mainTimeRemaining)}</strong>
+            </div>
+            <div className="hook-phase-name" aria-live="polite">
+              <span>{hookPhaseLabel}</span>
+              <small>
+                {hookState.phase === "RAINBOW_TARGET_EVENT"
+                  ? "Shoot targets or keep sorting"
+                  : hookState.phase === "RAINBOW_CLIMAX"
+                    ? "Any block face can break"
+                    : "Hit a bullseye to break"}
+              </small>
+            </div>
+            <div
+              className="rainbow-readout"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-label={rainbowReadoutLabel}
+            >
+              {hookState.phase === "RAINBOW_TARGET_EVENT" ? (
+                <>
+                  <strong>{hookState.targetHitCount}/{hookState.targetCount}</strong>
+                  <small>BANK +{hookState.rainbowBankSeconds}s</small>
+                </>
+              ) : hookState.phase === "RAINBOW_CLIMAX" ? (
+                <>
+                  <strong>{hookState.rainbowTimeRemaining.toFixed(1)}s</strong>
+                  <small>CLIMAX</small>
+                </>
+              ) : (
+                <>
+                  <strong aria-hidden="true">◎</strong>
+                  <small>PRECISION</small>
+                </>
+              )}
+            </div>
+          </section>
+
           {/* A slot only empties once its goal is filled and the queue has nothing
               left to open, so the whole goal row goes away instead of leaving
               spent cards on screen. */}
@@ -939,7 +1044,7 @@ export default function GamePrototype() {
             ref={aimZoneRef}
             className="aim-zone"
             role="application"
-            aria-label="Drag to move the crosshair; a plus means a target, an X means a miss; drag back to the centre to cancel"
+            aria-label="Drag to aim; a plus only means the shot will hit a block or Rainbow Target, not that it will hit a Weak Point; an X means a miss; drag back to the centre to cancel"
           >
             <span className="aim-joystick" aria-hidden="true">
               <span className="aim-joystick-knob" />

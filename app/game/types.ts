@@ -2,6 +2,27 @@ import type * as THREE from "three";
 
 export type BlockColor = "red" | "green" | "yellow" | "blue" | "purple" | "orange";
 
+export type WeakPointFace = "PX" | "NX" | "PY" | "NY" | "PZ" | "NZ";
+export type RainbowPathId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+
+export type WeakPointSpec = {
+  id: string;
+  blockId: string;
+  x: number;
+  y: number;
+  z: number;
+  face: WeakPointFace;
+};
+
+export type RainbowConfig = {
+  triggerSeconds: number;
+  targetCount: number;
+  spawnGapSeconds: number;
+  targetDurationSeconds: number;
+  rewardSeconds: number;
+  pathIds: RainbowPathId[];
+};
+
 export type GoalSpec = { id: string; color: BlockColor; target: number };
 
 export type BlockSpec = {
@@ -25,6 +46,9 @@ export type LevelConfig = {
   shotLimit: number | null;
   missCountsAsShot: true;
   continuousFire: true;
+  roundTimeSeconds: number;
+  weakPoints: WeakPointSpec[];
+  rainbow: RainbowConfig;
   adjacency: { x: true; y: true; z: boolean; zStatus: "UNCONFIRMED" | "CONFIRMED"; diagonal: false };
   unsupportedBlocksRemainStatic: true;
   hiddenConnectedBlocksAreIncluded: true;
@@ -37,6 +61,9 @@ export type LevelConfig = {
   overfillTransaction: "CREATE_EXCESS_THEN_ADVANCE_TEMP";
   claimedBlockCollision: "PASS_THROUGH_TEMP";
   postWinAutoClearPattern: "STABLE_CLUSTER_CADENCE_TEMP";
+  // TEMP: levels must begin above the Rainbow trigger instead of entering the
+  // event immediately. Revisit only if design defines that start-of-round case.
+  roundTimeTriggerPolicy: "REQUIRE_ROUND_TIME_ABOVE_TRIGGER_TEMP";
   goals: GoalSpec[];
   blocks: BlockSpec[];
 };

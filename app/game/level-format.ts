@@ -1,4 +1,13 @@
-import type { BlockColor, BlockSpec, GoalSpec, LevelConfig } from "./types";
+import type {
+  BlockColor,
+  BlockSpec,
+  GoalSpec,
+  LevelConfig,
+  RainbowConfig,
+  RainbowPathId,
+  WeakPointFace,
+  WeakPointSpec,
+} from "./types";
 
 // One level is one row of a tab separated sheet, so a designer can keep all 50
 // levels in a spreadsheet and change a single line to change a single level.
@@ -36,8 +45,26 @@ export const SHEET_COLUMNS = [
   "goal_slots",
   "batch_blocks",
   "shot_limit",
+  "round_time",
+  "weak_points",
+  "rainbow_trigger",
+  "rainbow_target_count",
+  "rainbow_spawn_gap",
+  "rainbow_target_duration",
+  "rainbow_reward_sec",
+  "rainbow_paths",
   "notes",
 ] as const;
+
+export const HOOK_LEVEL_DEFAULTS = {
+  roundTimeSeconds: 90,
+  rainbowTriggerSeconds: 25,
+  rainbowTargetCount: 3,
+  rainbowSpawnGapSeconds: 2,
+  rainbowTargetDurationSeconds: 4,
+  rainbowRewardSeconds: 5,
+  rainbowPathIds: [1, 8, 11],
+} as const;
 
 // Everything a level does not spell out comes from here, so a row only carries
 // what makes that level different.
@@ -61,9 +88,15 @@ const LEVEL_DEFAULTS = {
   overfillTransaction: "CREATE_EXCESS_THEN_ADVANCE_TEMP",
   claimedBlockCollision: "PASS_THROUGH_TEMP",
   postWinAutoClearPattern: "STABLE_CLUSTER_CADENCE_TEMP",
+  roundTimeTriggerPolicy: "REQUIRE_ROUND_TIME_ABOVE_TRIGGER_TEMP",
 } as const;
 
-export type LevelSheetIssue = { row: number; level: string; message: string };
+export type LevelSheetIssue = {
+  row: number;
+  level: string;
+  severity: "error" | "warning";
+  message: string;
+};
 export type LevelSheetResult = { levels: LevelConfig[]; issues: LevelSheetIssue[] };
 
 type RowCells = Record<string, string>;
@@ -185,22 +218,19 @@ const FACE_NEIGHBORS = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
 ] as const;
 
-// A single claim is never split across the reserve, so a level whose biggest
-// cluster does not fit the reserve budget carries a legal move that can never
-// be played. Measured here, at author time, next to checkGoalWindows.
-function largestClusterSize(blocks: BlockSpec[]) {
+function sameColorClusters(blocks: BlockSpec[]) {
   const at = new Map(blocks.map((block) => [`${block.x},${block.y},${block.z}`, block]));
   const seen = new Set<string>();
-  let largest = 0;
+  const clusters: BlockSpec[][] = [];
 
   for (const start of blocks) {
     if (seen.has(start.id)) continue;
     seen.add(start.id);
     const queue = [start];
-    let size = 0;
+    const cluster: BlockSpec[] = [];
     while (queue.length) {
       const block = queue.shift()!;
-      size += 1;
+      cluster.push(block);
       for (const [dx, dy, dz] of FACE_NEIGHBORS) {
         const neighbor = at.get(`${block.x + dx},${block.y + dy},${block.z + dz}`);
         if (!neighbor || neighbor.color !== block.color || seen.has(neighbor.id)) continue;
@@ -208,9 +238,16 @@ function largestClusterSize(blocks: BlockSpec[]) {
         queue.push(neighbor);
       }
     }
-    largest = Math.max(largest, size);
+    clusters.push(cluster);
   }
-  return largest;
+  return clusters;
+}
+
+// A single claim is never split across the reserve, so a level whose biggest
+// cluster does not fit the reserve budget carries a legal move that can never
+// be played. Measured here, at author time, next to checkGoalWindows.
+function largestClusterSize(blocks: BlockSpec[]) {
+  return Math.max(0, ...sameColorClusters(blocks).map((cluster) => cluster.length));
 }
 
 function countColors(blocks: BlockSpec[]) {
@@ -310,6 +347,137 @@ function parsePositiveInteger(raw: string, label: string, report: (message: stri
   return value;
 }
 
+function parsePositiveNumber(raw: string, label: string, report: (message: string) => void) {
+  if (!raw.trim()) return null;
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value <= 0) {
+    report(`${label} must be a number greater than 0`);
+    return null;
+  }
+  return value;
+}
+
+const WEAK_POINT_FACES = new Set<WeakPointFace>(["PX", "NX", "PY", "NY", "PZ", "NZ"]);
+const WEAK_POINT_FACE_STEPS: Record<WeakPointFace, readonly [number, number, number]> = {
+  PX: [1, 0, 0],
+  NX: [-1, 0, 0],
+  PY: [0, 1, 0],
+  NY: [0, -1, 0],
+  PZ: [0, 0, 1],
+  NZ: [0, 0, -1],
+};
+
+function parseWeakPoints(
+  raw: string,
+  dims: { x: number; y: number; z: number },
+  blocks: BlockSpec[],
+  report: (message: string) => void,
+  warn: (message: string) => void,
+) {
+  const blockAt = new Map(blocks.map((block) => [`${block.x}.${block.y}.${block.z}`, block]));
+  const seen = new Set<string>();
+  const weakPoints: WeakPointSpec[] = [];
+  const entries = raw.trim() ? raw.split("~") : [];
+
+  for (const rawEntry of entries) {
+    const entry = rawEntry.trim();
+    const match = /^(-?\d+)\.(-?\d+)\.(-?\d+):([^:]+)$/.exec(entry);
+    if (!match) {
+      report(`weak_points entry "${entry}" must look like x.y.z:FACE`);
+      continue;
+    }
+
+    const x = Number(match[1]);
+    const y = Number(match[2]);
+    const z = Number(match[3]);
+    const faceText = match[4].trim();
+    const coordinate = `${x}.${y}.${z}`;
+
+    if (x < 0 || x >= dims.x || y < 0 || y >= dims.y || z < 0 || z >= dims.z) {
+      report(`weak_points coordinate ${coordinate} is outside dims ${dims.x}x${dims.y}x${dims.z}`);
+      continue;
+    }
+    if (!WEAK_POINT_FACES.has(faceText as WeakPointFace)) {
+      report(`weak_points face "${faceText}" is not valid (use PX NX PY NY PZ or NZ)`);
+      continue;
+    }
+
+    const face = faceText as WeakPointFace;
+    const key = `${coordinate}:${face}`;
+    if (seen.has(key)) {
+      report(`weak_points declares ${key} more than once`);
+      continue;
+    }
+    seen.add(key);
+
+    const block = blockAt.get(coordinate);
+    if (!block) {
+      report(`weak_points ${key} points to an empty cell, not an active block`);
+      continue;
+    }
+    weakPoints.push({
+      id: `weak-point-${block.id}-${face.toLowerCase()}`,
+      blockId: block.id,
+      x,
+      y,
+      z,
+      face,
+    });
+
+    // A point authored on a face that directly touches another live cube is
+    // physically covered at round start. This can be intentional spatial
+    // routing (the covering block may leave first), so keep the row playable
+    // and surface a warning instead of treating it as malformed data.
+    const [dx, dy, dz] = WEAK_POINT_FACE_STEPS[face];
+    const coveringCoordinate = `${x + dx}.${y + dy}.${z + dz}`;
+    const coveringBlock = blockAt.get(coveringCoordinate);
+    if (coveringBlock?.color === block.color) {
+      warn(
+        `HIGH-RISK weak_points ${key} faces same-color cell ${coveringCoordinate} inside its own FACE_6 cluster; `
+        + "this point is inaccessible, so the cluster needs another reachable Weak Point",
+      );
+    } else if (coveringBlock) {
+      warn(
+        `weak_points ${key} faces occupied cell ${coveringCoordinate} and may be inaccessible until that block is removed`,
+      );
+    }
+  }
+
+  const pointCountByBlock = new Map<string, number>();
+  for (const point of weakPoints) {
+    pointCountByBlock.set(point.blockId, (pointCountByBlock.get(point.blockId) ?? 0) + 1);
+  }
+  for (const cluster of sameColorClusters(blocks)) {
+    const count = cluster.reduce((sum, block) => sum + (pointCountByBlock.get(block.id) ?? 0), 0);
+    if (count >= 1 && count <= 3) continue;
+    const anchor = cluster[0];
+    report(
+      `same-color FACE_6 ${anchor.color} cluster containing ${anchor.x}.${anchor.y}.${anchor.z} has ${count} Weak Points; expected 1 to 3`,
+    );
+  }
+  return weakPoints;
+}
+
+function parseRainbowPaths(raw: string, targetCount: number, report: (message: string) => void) {
+  const source = raw.trim() || HOOK_LEVEL_DEFAULTS.rainbowPathIds.join("|");
+  const pathIds: RainbowPathId[] = [];
+  let invalid = false;
+  for (const rawEntry of source.split("|")) {
+    const entry = rawEntry.trim();
+    const pathId = Number(entry);
+    if (!entry || !Number.isInteger(pathId) || pathId < 1 || pathId > 12) {
+      report(`rainbow_paths entry "${entry}" must be an integer from 1 to 12`);
+      invalid = true;
+      continue;
+    }
+    pathIds.push(pathId as RainbowPathId);
+  }
+  if (!invalid && pathIds.length !== targetCount) {
+    report(`rainbow_paths has ${pathIds.length} paths but rainbow_target_count is ${targetCount}`);
+  }
+  return pathIds;
+}
+
 const RETIRED_COLUMNS: Array<[string, string]> = [
   ["barrel_layers", "the barrel mechanic was removed"],
   ["links", "the link mechanic was removed"],
@@ -322,7 +490,9 @@ const RETIRED_COLUMNS: Array<[string, string]> = [
 // deliberate, so say so instead of quietly changing what it means.
 function reportRetiredColumns(cells: RowCells, report: (message: string) => void) {
   for (const [name, why] of RETIRED_COLUMNS) {
-    if ((cells[name] ?? "").trim()) report(`the "${name}" column is no longer read: ${why}`);
+    if (Object.prototype.hasOwnProperty.call(cells, name)) {
+      report(`the "${name}" column is no longer read: ${why}`);
+    }
   }
 }
 
@@ -340,7 +510,11 @@ function checkGoalWindows(goals: GoalSpec[], slots: number, report: (message: st
   }
 }
 
-function buildLevel(cells: RowCells, report: (message: string) => void): LevelConfig | null {
+function buildLevel(
+  cells: RowCells,
+  report: (message: string) => void,
+  warn: (message: string) => void,
+): LevelConfig | null {
   const levelNumber = parsePositiveInteger(cells.level ?? "", "level", report);
   const dims = parseDims(cells.dims ?? "");
   if (!dims) report(`dims "${cells.dims ?? ""}" must look like 4x3x2`);
@@ -352,6 +526,7 @@ function buildLevel(cells: RowCells, report: (message: string) => void): LevelCo
     report(message);
   };
   const blocks = parseBlocks(cells.layers ?? "", dims, reportShape);
+  if (shapeProblems) return null;
   if (!blocks.length) {
     // A shape error already explains the empty result; saying it twice only
     // makes the list harder to read.
@@ -367,6 +542,36 @@ function buildLevel(cells: RowCells, report: (message: string) => void): LevelCo
   const activeGoalSlots = parsePositiveInteger(cells.goal_slots ?? "", "goal_slots", report) ?? LEVEL_DEFAULTS.activeGoalSlots;
   const reserveBlocks = parsePositiveInteger(cells.batch_blocks ?? "", "batch_blocks", report) ?? LEVEL_DEFAULTS.reserveBlocks;
   const shotLimit = parsePositiveInteger(cells.shot_limit ?? "", "shot_limit", report);
+  const roundTimeSeconds = parsePositiveNumber(cells.round_time ?? "", "round_time", report)
+    ?? HOOK_LEVEL_DEFAULTS.roundTimeSeconds;
+  const weakPoints = parseWeakPoints(cells.weak_points ?? "", dims, blocks, report, warn);
+  const triggerSeconds = parsePositiveNumber(cells.rainbow_trigger ?? "", "rainbow_trigger", report)
+    ?? HOOK_LEVEL_DEFAULTS.rainbowTriggerSeconds;
+  const targetCount = parsePositiveInteger(cells.rainbow_target_count ?? "", "rainbow_target_count", report)
+    ?? HOOK_LEVEL_DEFAULTS.rainbowTargetCount;
+  const spawnGapSeconds = parsePositiveNumber(cells.rainbow_spawn_gap ?? "", "rainbow_spawn_gap", report)
+    ?? HOOK_LEVEL_DEFAULTS.rainbowSpawnGapSeconds;
+  const targetDurationSeconds = parsePositiveNumber(cells.rainbow_target_duration ?? "", "rainbow_target_duration", report)
+    ?? HOOK_LEVEL_DEFAULTS.rainbowTargetDurationSeconds;
+  const rewardSeconds = parsePositiveNumber(cells.rainbow_reward_sec ?? "", "rainbow_reward_sec", report)
+    ?? HOOK_LEVEL_DEFAULTS.rainbowRewardSeconds;
+  const pathIds = parseRainbowPaths(cells.rainbow_paths ?? "", targetCount, report);
+  const rainbow: RainbowConfig = {
+    triggerSeconds,
+    targetCount,
+    spawnGapSeconds,
+    targetDurationSeconds,
+    rewardSeconds,
+    pathIds,
+  };
+  // TEMP policy: an authored level cannot begin at/below the event threshold.
+  // That case needs a separate design decision about whether to trigger at t=0.
+  if (roundTimeSeconds <= triggerSeconds) {
+    report(
+      `round_time (${roundTimeSeconds}) must be greater than rainbow_trigger (${triggerSeconds}); `
+      + "TEMP policy rejects an immediate start-of-round trigger",
+    );
+  }
   checkGoalWindows(goals, activeGoalSlots, report);
 
   const biggestCluster = largestClusterSize(blocks);
@@ -381,6 +586,9 @@ function buildLevel(cells: RowCells, report: (message: string) => void): LevelCo
     activeGoalSlots,
     reserveBlocks,
     shotLimit,
+    roundTimeSeconds,
+    weakPoints,
+    rainbow,
     goals,
     blocks,
   };
@@ -390,15 +598,54 @@ export function parseLevelSheet(text: string): LevelSheetResult {
   const issues: LevelSheetIssue[] = [];
   const entries = splitSheetLines(text);
   if (!entries.length) {
-    issues.push({ row: 0, level: "-", message: "the sheet is empty" });
+    issues.push({ row: 0, level: "-", severity: "error", message: "the sheet is empty" });
     return { levels: [], issues };
   }
 
   const delimiter = detectDelimiter(entries[0].line);
   const header = splitDelimitedLine(entries[0].line, delimiter).map((cell) => cell.trim().toLowerCase());
+  const knownColumns = new Set<string>([
+    ...SHEET_COLUMNS,
+    ...RETIRED_COLUMNS.map(([name]) => name),
+  ]);
+  const seenHeaderColumns = new Set<string>();
+  header.forEach((name, index) => {
+    if (!name) {
+      issues.push({
+        row: entries[0].row,
+        level: "-",
+        severity: "error",
+        message: `header column ${index + 1} is blank`,
+      });
+      return;
+    }
+    if (seenHeaderColumns.has(name)) {
+      issues.push({
+        row: entries[0].row,
+        level: "-",
+        severity: "error",
+        message: `the header declares "${name}" more than once`,
+      });
+      return;
+    }
+    seenHeaderColumns.add(name);
+    if (!knownColumns.has(name)) {
+      issues.push({
+        row: entries[0].row,
+        level: "-",
+        severity: "error",
+        message: `the header column "${name}" is not recognized`,
+      });
+    }
+  });
   for (const required of ["level", "dims", "layers"]) {
     if (!header.includes(required)) {
-      issues.push({ row: entries[0].row, level: "-", message: `the header row is missing the "${required}" column` });
+      issues.push({
+        row: entries[0].row,
+        level: "-",
+        severity: "error",
+        message: `the header row is missing the "${required}" column`,
+      });
     }
   }
   if (issues.length) return { levels: [], issues };
@@ -413,13 +660,15 @@ export function parseLevelSheet(text: string): LevelSheetResult {
       cells[name] = values[index] ?? "";
     });
     const label = (cells.level ?? "").trim() || "?";
-    const report = (message: string) => issues.push({ row: entry.row, level: label, message });
-    const issuesBefore = issues.length;
+    const report = (message: string) => issues.push({ row: entry.row, level: label, severity: "error", message });
+    const warn = (message: string) => issues.push({ row: entry.row, level: label, severity: "warning", message });
+    const errorsBefore = issues.filter((issue) => issue.severity === "error").length;
 
-    const level = buildLevel(cells, report);
-    // A row with any problem is left out entirely: half a level would still load
-    // and play, just not the level the designer wrote.
-    if (!level || issues.length > issuesBefore) continue;
+    const level = buildLevel(cells, report, warn);
+    // A malformed row is left out entirely: half a level would still load and
+    // play, just not the level the designer wrote. Reachability warnings are
+    // advisory, because an occluding cluster can deliberately be cleared first.
+    if (!level || issues.filter((issue) => issue.severity === "error").length > errorsBefore) continue;
 
     const duplicateRow = seenIds.get(level.id);
     if (duplicateRow !== undefined) {
@@ -435,5 +684,5 @@ export function parseLevelSheet(text: string): LevelSheetResult {
 }
 
 export function formatSheetIssue(issue: LevelSheetIssue) {
-  return `row ${issue.row} (level ${issue.level}): ${issue.message}`;
+  return `${issue.severity} — row ${issue.row} (level ${issue.level}): ${issue.message}`;
 }

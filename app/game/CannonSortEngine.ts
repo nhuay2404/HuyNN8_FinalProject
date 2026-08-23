@@ -8,6 +8,18 @@ import {
   type CosmeticId,
 } from "./cosmetics";
 import { haptic } from "./haptics";
+import {
+  advanceHookCountdown,
+  advanceHookElapsed,
+  createRainbowTargetTimeline,
+  didCrossRainbowTrigger,
+  evaluateRainbowPath,
+  getRainbowEventDuration,
+  isBullseyeHit,
+  HOOK_TIME_EPSILON_SECONDS,
+  resolveBlockImpact,
+  WEAK_POINT_VISUAL_RADIUS_RATIO,
+} from "./rainbow-hook";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
 import { applyBatchAutoFill, createGameState, nextBatchAutoFill, parkedBlockCount, planClusterSplit, resolveCluster } from "./rules";
 import type {
@@ -18,6 +30,9 @@ import type {
   GamePhase,
   GameState,
   LevelConfig,
+  RainbowPathId,
+  WeakPointFace,
+  WeakPointSpec,
 } from "./types";
 
 const BLOCK_SIZE = 0.92;
@@ -41,7 +56,18 @@ const CANNON_MAX_YAW = 0.54;
 const CANNON_MIN_ELEVATION = -0.08;
 const CANNON_MAX_ELEVATION = 1.08;
 const MODEL_DEPTH_OFFSET = -3.6;
+// Targets fly on a real world-space plane between the cannon (z=5.25) and the
+// block model (z=-3.6), so they can physically stop a projectile before it
+// reaches the model behind them.
+// TEMP prototype depth: targets live between the cannon and block model so
+// normal 3D occlusion/first-contact rules decide what a shot reaches first.
+const RAINBOW_TARGET_PLANE_Z = 0.45;
+const RAINBOW_TARGET_RADIUS = 0.46;
+const RAINBOW_TARGET_COLLIDER_RADIUS = 0.5;
+const WEAK_POINT_SURFACE_GAP = 0.012;
+const RICOCHET_LIFETIME = 0.34;
 const AIM_PREDICTION_DURATION = 2.2;
+const AIM_MOVING_TARGET_REFRESH_INTERVAL = 1 / 12;
 const AIM_CURSOR_EDGE_MARGIN = 22;
 const AIM_CURSOR_HORIZONTAL_RATIO = 0.39;
 const AIM_CURSOR_UP_RATIO = 0.4;
@@ -167,6 +193,30 @@ const COLOR_HEX: Record<BlockColor, number> = {
   orange: 0xff8a1f,
 };
 
+export type GameplayHookPhase = "NORMAL_WEAK_POINT" | "RAINBOW_TARGET_EVENT" | "RAINBOW_CLIMAX";
+
+export type HookSnapshot = {
+  phase: GameplayHookPhase;
+  mainTimeRemaining: number;
+  rainbowBankSeconds: number;
+  rainbowTimeRemaining: number;
+  targetHitCount: number;
+  targetCount: number;
+  rainbowEventTriggered: boolean;
+};
+
+export function createInitialHookSnapshot(level: LevelConfig): HookSnapshot {
+  return {
+    phase: "NORMAL_WEAK_POINT",
+    mainTimeRemaining: level.roundTimeSeconds,
+    rainbowBankSeconds: 0,
+    rainbowTimeRemaining: 0,
+    targetHitCount: 0,
+    targetCount: level.rainbow.targetCount,
+    rainbowEventTriggered: false,
+  };
+}
+
 export type SortTransfer =
   | { kind: "goal"; slot: number; goalId: string; fromCount: number; count: number }
   | { kind: "reserve"; count: number };
@@ -203,6 +253,7 @@ type EngineCallbacks = {
   onState: (state: GameState) => void;
   onSort: (event: SortAnimationEvent) => void;
   onBatchFlight: (event: BatchFlightEvent) => void;
+  onHookState: (state: HookSnapshot) => void;
 };
 
 type Projectile = {
@@ -215,6 +266,37 @@ type Projectile = {
   // How many trail puffs this shot has dropped, so the trail is spaced by
   // flight time instead of once per frame.
   trailTicks: number;
+};
+
+type Ricochet = {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  age: number;
+};
+
+type WeakPointVisual = {
+  spec: WeakPointSpec;
+  block: BlockRuntime;
+  group: THREE.Group;
+};
+
+type RainbowTargetRuntime = {
+  id: string;
+  spawnIndex: number;
+  pathId: RainbowPathId;
+  spawnTime: number;
+  duration: number;
+  hit: boolean;
+  active: boolean;
+  group: THREE.Group;
+};
+
+type RainbowTargetStepMotion = {
+  target: RainbowTargetRuntime;
+  fromFraction: number;
+  toFraction: number;
+  fromPosition: THREE.Vector3;
+  toPosition: THREE.Vector3;
 };
 
 type BallisticSolution = {
@@ -251,6 +333,7 @@ type NeighborKick = {
 };
 
 type SweepHit = { block: BlockRuntime; t: number; point: THREE.Vector3 };
+type RainbowSweepHit = { target: RainbowTargetRuntime; t: number; point: THREE.Vector3 };
 
 // One shard of magic light. Unlit, so it reads as light rather than as painted
 // plastic, and it leaves by shrinking like the smoke does.
@@ -364,6 +447,44 @@ function rayAabbEntry(origin: THREE.Vector3, direction: THREE.Vector3, min: THRE
   return tmin;
 }
 
+function raySphereEntry(origin: THREE.Vector3, direction: THREE.Vector3, center: THREE.Vector3, radius: number) {
+  const offset = origin.clone().sub(center);
+  const b = offset.dot(direction);
+  const c = offset.lengthSq() - radius * radius;
+  const discriminant = b * b - c;
+  if (discriminant < 0) return null;
+  const root = Math.sqrt(discriminant);
+  const near = -b - root;
+  if (near >= 0) return near;
+  const far = -b + root;
+  return far >= 0 ? far : null;
+}
+
+// Continuous segment-vs-sphere collision for a moving projectile. The target
+// radius is expanded by the projectile radius, which is the sphere equivalent
+// of the block sweep's Minkowski sum and prevents tunnelling at low frame rates.
+function sweptSphereSphereEntry(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  center: THREE.Vector3,
+  combinedRadius: number,
+) {
+  const travel = b.clone().sub(a);
+  const offset = a.clone().sub(center);
+  const aa = travel.lengthSq();
+  const cc = offset.lengthSq() - combinedRadius * combinedRadius;
+  if (cc <= 0) return 0;
+  if (aa < 1e-12) return null;
+  const bb = 2 * offset.dot(travel);
+  const discriminant = bb * bb - 4 * aa * cc;
+  if (discriminant < 0) return null;
+  const root = Math.sqrt(discriminant);
+  const near = (-bb - root) / (2 * aa);
+  if (near >= 0 && near <= 1) return near;
+  const far = (-bb + root) / (2 * aa);
+  return far >= 0 && far <= 1 ? far : null;
+}
+
 export class CannonSortEngine {
   private readonly host: HTMLDivElement;
   private readonly modelZone: HTMLDivElement;
@@ -382,6 +503,9 @@ export class CannonSortEngine {
   private readonly muzzleAnchor = new THREE.Object3D();
   private readonly blocks: BlockRuntime[] = [];
   private readonly blockMap = new Map<string, BlockRuntime>();
+  private readonly weakPointVisuals: WeakPointVisual[] = [];
+  private readonly weakPointsByBlock = new Map<string, WeakPointSpec[]>();
+  private readonly rainbowTargets: RainbowTargetRuntime[] = [];
   private readonly defaultModelOrientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.08, -0.36, 0));
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly cameraRight = new THREE.Vector3();
@@ -390,6 +514,7 @@ export class CannonSortEngine {
   private readonly resizeObserver: ResizeObserver;
   private state: GameState;
   private projectiles: Projectile[] = [];
+  private ricochets: Ricochet[] = [];
   private releasedBlocks: ReleasedBlock[] = [];
   private neighborKicks: NeighborKick[] = [];
   private pendingResolutions: PendingResolution[] = [];
@@ -423,6 +548,21 @@ export class CannonSortEngine {
   private impactSequence = 0;
   private autoClearCountdown = 0;
   private autoClearFinishCountdown = 0;
+  private hookPhase: GameplayHookPhase = "NORMAL_WEAK_POINT";
+  private mainTimeRemaining = 0;
+  private rainbowEventTriggered = false;
+  private rainbowEventElapsed = 0;
+  private rainbowBankSeconds = 0;
+  private rainbowTimeRemaining = 0;
+  private rainbowEventDuration = 0;
+  private roundClockActive = false;
+  private rainbowTriggerPending = false;
+  private rainbowTargetStepMotions: RainbowTargetStepMotion[] | null = null;
+  private hookStepDelta = FIXED_STEP;
+  private hookSnapshotSignature = "";
+  private rainbowVisualTime = 0;
+  private aimMovingTargetRefreshCountdown = 0;
+  private readonly cannonMaterialColors = new Map<THREE.Material & { color: THREE.Color }, THREE.Color>();
   private idle = false;
   private readonly idleSpinDelta = new THREE.Quaternion();
   private introTime = 0;
@@ -440,9 +580,7 @@ export class CannonSortEngine {
   private readonly introFromQuaternion = new THREE.Quaternion();
   private introFromScale = 1;
   private cannonRestY = 0;
-  // Shared across every barrel and link marker in the level, so a shell that
-  // breaks never disposes something another block is still drawing with. All of
-  // them are released together in dispose().
+  // Shared geometry/material resources are released together in dispose().
   private readonly disposables: Array<{ dispose: () => void }> = [];
   private smoke: SmokePuff[] = [];
   private smokeGeometry: THREE.SphereGeometry | null = null;
@@ -457,14 +595,6 @@ export class CannonSortEngine {
   private showcaseCountdown = 0;
   private showcaseShots: ShowcaseShot[] = [];
   private readonly cannonRestPosition = new THREE.Vector3();
-  private linkStrapParts: {
-    pad: THREE.BoxGeometry;
-    spine: THREE.BoxGeometry;
-    loop: THREE.TorusGeometry;
-    metal: THREE.MeshLambertMaterial;
-    rivet: THREE.MeshLambertMaterial;
-  } | null = null;
-
   constructor(
     host: HTMLDivElement,
     modelZone: HTMLDivElement,
@@ -480,6 +610,7 @@ export class CannonSortEngine {
     this.level = level;
     this.callbacks = callbacks;
     this.state = createGameState(level);
+    this.mainTimeRemaining = level.roundTimeSeconds;
     this.crosshair.classList.remove(
       "is-visible",
       "is-engaged",
@@ -497,6 +628,8 @@ export class CannonSortEngine {
     this.buildLighting();
     this.buildWorld();
     this.buildBlocks();
+    this.buildWeakPoints();
+    this.buildRainbowTargets();
     this.buildCannon();
     this.bindInput();
 
@@ -505,6 +638,7 @@ export class CannonSortEngine {
     this.resize();
     this.updateAimPreview();
     this.callbacks.onState(this.cloneState());
+    this.emitHookState(true);
     this.animate();
   }
 
@@ -555,6 +689,104 @@ export class CannonSortEngine {
     }
   }
 
+  private buildWeakPoints() {
+    // Four shared discs make a high-contrast bullseye without one material or
+    // geometry allocation per authored point. Each group is parented to its
+    // block, so it inherits every model rotation and remains truly world-space.
+    const visualRadius = BLOCK_SIZE * WEAK_POINT_VISUAL_RADIUS_RATIO;
+    const geometries = [1, 0.82, 0.5, 0.2]
+      .map((ratio) => new THREE.CircleGeometry(visualRadius * ratio, 28));
+    const materials = [
+      new THREE.MeshBasicMaterial({ color: 0x10152f, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: 0xff315f, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthWrite: false }),
+    ];
+    this.disposables.push(...geometries, ...materials);
+
+    for (const spec of this.level.weakPoints) {
+      const block = this.blockMap.get(gridKey(spec.x, spec.y, spec.z));
+      if (!block) continue; // The level validator rejects this before runtime.
+      const normal = this.weakPointFaceNormal(spec.face);
+      const group = new THREE.Group();
+      group.position.copy(normal).multiplyScalar(BLOCK_HALF + WEAK_POINT_SURFACE_GAP);
+      group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+
+      geometries.forEach((geometry, index) => {
+        const disc = new THREE.Mesh(geometry, materials[index]);
+        disc.position.z = index * 0.0015;
+        disc.renderOrder = 20 + index;
+        group.add(disc);
+      });
+      block.mesh.add(group);
+
+      const visual = { spec, block, group };
+      this.weakPointVisuals.push(visual);
+      const authored = this.weakPointsByBlock.get(block.id) ?? [];
+      authored.push(spec);
+      this.weakPointsByBlock.set(block.id, authored);
+    }
+  }
+
+  private weakPointFaceNormal(face: WeakPointFace) {
+    switch (face) {
+      case "PX": return new THREE.Vector3(1, 0, 0);
+      case "NX": return new THREE.Vector3(-1, 0, 0);
+      case "PY": return new THREE.Vector3(0, 1, 0);
+      case "NY": return new THREE.Vector3(0, -1, 0);
+      case "PZ": return new THREE.Vector3(0, 0, 1);
+      case "NZ": return new THREE.Vector3(0, 0, -1);
+    }
+  }
+
+  private buildRainbowTargets() {
+    const bodyGeometry = new THREE.CylinderGeometry(
+      RAINBOW_TARGET_RADIUS,
+      RAINBOW_TARGET_RADIUS,
+      0.13,
+      32,
+    );
+    bodyGeometry.rotateX(Math.PI / 2);
+    const ringGeometries = [
+      new THREE.RingGeometry(0.3, 0.42, 32),
+      new THREE.RingGeometry(0.16, 0.27, 32),
+      new THREE.CircleGeometry(0.12, 32),
+    ];
+    const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x37206f });
+    const ringMaterials = [
+      new THREE.MeshBasicMaterial({ color: 0xff4d6d, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0x56f2df, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xffdf57, side: THREE.DoubleSide }),
+    ];
+    this.disposables.push(bodyGeometry, ...ringGeometries, bodyMaterial, ...ringMaterials);
+
+    const timeline = createRainbowTargetTimeline(this.level.rainbow);
+    this.rainbowEventDuration = getRainbowEventDuration(timeline);
+    timeline.forEach((entry, index) => {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      group.add(body);
+      ringGeometries.forEach((geometry, ring) => {
+        const mesh = new THREE.Mesh(geometry, ringMaterials[ring]);
+        mesh.position.z = 0.068 + ring * 0.002;
+        mesh.renderOrder = 10 + ring;
+        group.add(mesh);
+      });
+      group.visible = false;
+      this.scene.add(group);
+      this.rainbowTargets.push({
+        id: `rainbow-target-${index + 1}`,
+        spawnIndex: index,
+        pathId: this.level.rainbow.pathIds[index]!,
+        spawnTime: entry.spawnAtSeconds,
+        duration: entry.leaveAtSeconds - entry.spawnAtSeconds,
+        hit: false,
+        active: false,
+        group,
+      });
+    });
+  }
+
   private axisCentre(values: number[]) {
     if (!values.length) return 0;
     return (Math.min(...values) + Math.max(...values)) / 2;
@@ -580,7 +812,49 @@ export class CannonSortEngine {
     this.muzzleAnchor.position.z = -2.18;
     this.barrelPivot.add(this.muzzleAnchor);
     this.buildCosmeticRig();
+    this.captureCannonMaterialColors();
     this.applyCannonTransform();
+  }
+
+  private captureCannonMaterialColors() {
+    this.cannonMaterialColors.clear();
+    this.cannonRoot.traverse((object) => {
+      const renderable = object as THREE.Object3D & { material?: THREE.Material | THREE.Material[] };
+      const materials = renderable.material
+        ? (Array.isArray(renderable.material) ? renderable.material : [renderable.material])
+        : [];
+      for (const material of materials) {
+        const colored = material as THREE.Material & { color?: THREE.Color };
+        if (colored.color && !this.cannonMaterialColors.has(colored as THREE.Material & { color: THREE.Color })) {
+          this.cannonMaterialColors.set(
+            colored as THREE.Material & { color: THREE.Color },
+            colored.color.clone(),
+          );
+        }
+      }
+    });
+  }
+
+  private setRainbowVisualState(active: boolean) {
+    for (const visual of this.weakPointVisuals) {
+      visual.group.visible = !active && visual.block.active;
+    }
+    if (active) {
+      this.rainbowVisualTime = 0;
+      this.updateRainbowCannonColors();
+      return;
+    }
+    for (const [material, color] of this.cannonMaterialColors) material.color.copy(color);
+  }
+
+  private updateRainbowCannonColors() {
+    let index = 0;
+    const count = Math.max(this.cannonMaterialColors.size, 1);
+    for (const material of this.cannonMaterialColors.keys()) {
+      const hue = (this.rainbowVisualTime * 0.28 + index / count) % 1;
+      material.color.setHSL(hue, 0.88, 0.62);
+      index += 1;
+    }
   }
 
   private buildCosmeticRig() {
@@ -604,6 +878,8 @@ export class CannonSortEngine {
     this.cosmeticParts = [];
     this.cosmetic = getCosmetic(id);
     this.buildCosmeticRig();
+    this.captureCannonMaterialColors();
+    if (this.hookPhase === "RAINBOW_CLIMAX") this.updateRainbowCannonColors();
   }
 
   // Rendered with the engine's own renderer, because the page keeps exactly one
@@ -735,13 +1011,310 @@ export class CannonSortEngine {
     this.showcaseShots = [];
   }
 
+  private hookSnapshot(): HookSnapshot {
+    return {
+      phase: this.hookPhase,
+      mainTimeRemaining: this.mainTimeRemaining,
+      rainbowBankSeconds: this.rainbowBankSeconds,
+      rainbowTimeRemaining: this.rainbowTimeRemaining,
+      targetHitCount: this.rainbowTargets.filter((target) => target.hit).length,
+      targetCount: this.rainbowTargets.length,
+      rainbowEventTriggered: this.rainbowEventTriggered,
+    };
+  }
+
+  private emitHookState(force = false) {
+    const snapshot = this.hookSnapshot();
+    // Ten UI updates a second keeps both clocks fluid without asking React to
+    // rebuild the HUD on every 60 Hz physics step. Phase and score are part of
+    // the signature, so transitions still arrive on the exact step they occur.
+    const signature = [
+      snapshot.phase,
+      Math.ceil(snapshot.mainTimeRemaining * 10),
+      Math.ceil(snapshot.rainbowTimeRemaining * 10),
+      snapshot.rainbowBankSeconds,
+      snapshot.targetHitCount,
+      snapshot.rainbowEventTriggered ? 1 : 0,
+    ].join(":");
+    if (!force && signature === this.hookSnapshotSignature) return;
+    this.hookSnapshotSignature = signature;
+    this.callbacks.onHookState(snapshot);
+  }
+
+  private startRoundClock() {
+    if (this.state.result || this.roundClockActive) return;
+    this.roundClockActive = true;
+    this.emitHookState(true);
+  }
+
+  private setRainbowTargetsInactive() {
+    for (const target of this.rainbowTargets) {
+      target.active = false;
+      target.group.visible = false;
+    }
+  }
+
+  private beginRainbowTargetEvent() {
+    this.rainbowEventTriggered = true;
+    this.hookPhase = "RAINBOW_TARGET_EVENT";
+    this.rainbowEventElapsed = 0;
+    this.rainbowBankSeconds = 0;
+    this.rainbowTimeRemaining = 0;
+    this.aimMovingTargetRefreshCountdown = 0;
+    for (const target of this.rainbowTargets) {
+      target.hit = false;
+      target.active = false;
+      target.group.visible = false;
+    }
+    this.updateRainbowTargets();
+    this.aimPreviewDirty = true;
+    this.emitHookState(true);
+  }
+
+  private finishRainbowTargetEvent() {
+    this.setRainbowTargetsInactive();
+    this.rainbowTimeRemaining = this.rainbowBankSeconds;
+    if (this.rainbowTimeRemaining <= 0) {
+      // The state machine conceptually visits a zero-second Climax, but applying
+      // and removing its visuals in one frame looks like a render bug. Resolve
+      // the zero duration atomically and remain in precision mode.
+      this.hookPhase = "NORMAL_WEAK_POINT";
+      this.setRainbowVisualState(false);
+    } else {
+      this.hookPhase = "RAINBOW_CLIMAX";
+      this.setRainbowVisualState(true);
+    }
+    this.aimPreviewDirty = true;
+    this.emitHookState(true);
+  }
+
+  private targetPlanePointAt(u: number, v: number) {
+    const { origin, direction } = this.cameraRayForScreenPoint(
+      u * Math.max(this.host.clientWidth, 1),
+      v * Math.max(this.host.clientHeight, 1),
+    );
+    if (Math.abs(direction.z) < 1e-6) return new THREE.Vector3(0, 0, RAINBOW_TARGET_PLANE_Z);
+    const distance = (RAINBOW_TARGET_PLANE_Z - origin.z) / direction.z;
+    return origin.addScaledVector(direction, distance);
+  }
+
+  private updateRainbowTargets() {
+    if (this.hookPhase !== "RAINBOW_TARGET_EVENT") return;
+    for (const target of this.rainbowTargets) {
+      const progress = (this.rainbowEventElapsed - target.spawnTime) / target.duration;
+      const active = !target.hit && progress >= 0 && progress < 1;
+      target.active = active;
+      target.group.visible = active;
+      if (!active) continue;
+      const point = evaluateRainbowPath(target.pathId, progress);
+      target.group.position.copy(this.targetPlanePointAt(point.u, point.v));
+      target.group.lookAt(this.camera.position);
+    }
+  }
+
+  private rainbowTargetMotionsForInterval(intervalStart: number, intervalEnd: number) {
+    const eventEnd = this.rainbowEventDuration;
+    const clampedStart = THREE.MathUtils.clamp(intervalStart, 0, eventEnd);
+    const clampedEnd = THREE.MathUtils.clamp(intervalEnd, 0, eventEnd);
+    const intervalDuration = intervalEnd - intervalStart;
+    if (clampedEnd <= clampedStart || intervalDuration <= 0) return [];
+
+    const motions: RainbowTargetStepMotion[] = [];
+    for (const target of this.rainbowTargets) {
+      if (target.hit) continue;
+      const liveStart = Math.max(clampedStart, target.spawnTime);
+      const liveEnd = Math.min(clampedEnd, target.spawnTime + target.duration);
+      if (liveEnd <= liveStart) continue;
+      const fromPath = evaluateRainbowPath(target.pathId, (liveStart - target.spawnTime) / target.duration);
+      const toPath = evaluateRainbowPath(target.pathId, (liveEnd - target.spawnTime) / target.duration);
+      motions.push({
+        target,
+        fromFraction: THREE.MathUtils.clamp((liveStart - intervalStart) / intervalDuration, 0, 1),
+        toFraction: THREE.MathUtils.clamp((liveEnd - intervalStart) / intervalDuration, 0, 1),
+        fromPosition: this.targetPlanePointAt(fromPath.u, fromPath.v),
+        toPosition: this.targetPlanePointAt(toPath.u, toPath.v),
+      });
+    }
+    return motions;
+  }
+
+  // The main timer is committed first so the documented TEMP policy still lets
+  // TIME_UP own the step. Phase transitions are deliberately deferred until
+  // finishHookRuntimeStep(): projectiles then collide against the phase and the
+  // moving-target interval in which they actually travelled.
+  private prepareHookRuntimeStep() {
+    this.rainbowTriggerPending = false;
+    this.rainbowTargetStepMotions = null;
+    if (!this.roundClockActive || this.state.result) return;
+    const previousMainTime = this.mainTimeRemaining;
+    this.mainTimeRemaining = advanceHookCountdown(
+      this.mainTimeRemaining,
+      this.hookStepDelta,
+      this.level.rainbow.triggerSeconds,
+    );
+
+    // TEMP timing policy: TIME_UP wins the physics step. The specification says
+    // zero fails immediately but leaves exact same-frame ordering open; keeping
+    // the check first makes that unresolved choice explicit and deterministic.
+    if (this.mainTimeRemaining <= 0) {
+      this.failTimeUp();
+      return;
+    }
+
+    this.rainbowTriggerPending = didCrossRainbowTrigger(
+      previousMainTime,
+      this.mainTimeRemaining,
+      this.level.rainbow.triggerSeconds,
+      this.rainbowEventTriggered,
+    );
+
+    if (this.hookPhase === "RAINBOW_TARGET_EVENT") {
+      this.rainbowTargetStepMotions = this.rainbowTargetMotionsForInterval(
+        this.rainbowEventElapsed,
+        this.rainbowEventElapsed + this.hookStepDelta,
+      );
+      // A target may spawn part-way through this fixed interval. Marking it
+      // active lets an impact after that authored spawn instant collect it; its
+      // visible transform is committed at the end of the step below.
+      for (const motion of this.rainbowTargetStepMotions) motion.target.active = true;
+    }
+  }
+
+  private finishHookRuntimeStep() {
+    if (!this.roundClockActive || this.state.result) {
+      this.rainbowTriggerPending = false;
+      this.rainbowTargetStepMotions = null;
+      return;
+    }
+    if (this.rainbowTriggerPending) {
+      this.beginRainbowTargetEvent();
+    } else if (this.hookPhase === "RAINBOW_TARGET_EVENT") {
+      this.rainbowEventElapsed = advanceHookElapsed(
+        this.rainbowEventElapsed,
+        this.hookStepDelta,
+        this.rainbowEventDuration,
+      );
+      this.updateRainbowTargets();
+      if (this.state.phase === "AIMING") {
+        this.aimMovingTargetRefreshCountdown -= this.hookStepDelta;
+        if (this.aimMovingTargetRefreshCountdown <= 0) {
+          this.aimMovingTargetRefreshCountdown = AIM_MOVING_TARGET_REFRESH_INTERVAL;
+          this.aimPreviewDirty = true;
+        }
+      }
+      if (this.rainbowEventElapsed >= this.rainbowEventDuration) this.finishRainbowTargetEvent();
+    } else if (this.hookPhase === "RAINBOW_CLIMAX") {
+      this.rainbowTimeRemaining = advanceHookCountdown(this.rainbowTimeRemaining, this.hookStepDelta);
+      this.rainbowVisualTime += this.hookStepDelta;
+      this.updateRainbowCannonColors();
+      if (this.rainbowTimeRemaining <= 0) {
+        this.hookPhase = "NORMAL_WEAK_POINT";
+        this.setRainbowVisualState(false);
+        this.aimPreviewDirty = true;
+      }
+    }
+    this.rainbowTriggerPending = false;
+    this.rainbowTargetStepMotions = null;
+    this.emitHookState();
+  }
+
+  private stopHookForResult() {
+    // Every result path comes through this finalizer. Besides stopping the hook,
+    // it releases pointer capture and pooled shots so a result cannot leave a
+    // frozen projectile or a Climax layer retained behind the result panel.
+    // TEMP result policy: ending the level also ends the event/Climax at once.
+    if (this.aimPointer !== null) this.clearAimGesture(true);
+    if (this.modelPointer !== null) this.clearModelGesture();
+    this.pendingResolutions = [];
+    this.batchFlight = null;
+    this.projectiles.slice().forEach((projectile) => this.removeProjectile(projectile));
+    this.rainbowTriggerPending = false;
+    this.rainbowTargetStepMotions = null;
+    this.hookPhase = "NORMAL_WEAK_POINT";
+    this.rainbowTimeRemaining = 0;
+    this.roundClockActive = false;
+    this.setRainbowTargetsInactive();
+    this.setRainbowVisualState(false);
+    for (const visual of this.weakPointVisuals) visual.group.visible = false;
+    this.emitHookState(true);
+  }
+
+  private updateTimedGameplayStep() {
+    // TEMP timing policy: if TIME_UP falls anywhere inside this fixed step, it
+    // wins before projectiles move. Other hook boundaries split the interval so
+    // impacts on either side use the phase that was active at their own time.
+    if (
+      this.roundClockActive
+      && !this.state.result
+      && this.mainTimeRemaining <= FIXED_STEP + HOOK_TIME_EPSILON_SECONDS
+    ) {
+      this.mainTimeRemaining = 0;
+      this.failTimeUp();
+      return;
+    }
+
+    let remaining = FIXED_STEP;
+    let substeps = 0;
+    while (remaining > HOOK_TIME_EPSILON_SECONDS && !this.state.result) {
+      let delta = remaining;
+      const considerBoundary = (secondsUntilBoundary: number) => {
+        if (
+          secondsUntilBoundary > HOOK_TIME_EPSILON_SECONDS
+          && secondsUntilBoundary < delta - HOOK_TIME_EPSILON_SECONDS
+        ) delta = secondsUntilBoundary;
+      };
+
+      if (this.roundClockActive) {
+        if (!this.rainbowEventTriggered) {
+          considerBoundary(this.mainTimeRemaining - this.level.rainbow.triggerSeconds);
+        }
+        if (this.hookPhase === "RAINBOW_TARGET_EVENT") {
+          considerBoundary(this.rainbowEventDuration - this.rainbowEventElapsed);
+        } else if (this.hookPhase === "RAINBOW_CLIMAX") {
+          considerBoundary(this.rainbowTimeRemaining);
+        }
+      }
+
+      this.hookStepDelta = delta;
+      this.prepareHookRuntimeStep();
+      if (!this.state.result) {
+        this.projectiles.slice().forEach((projectile) => this.updateProjectile(projectile));
+      }
+      this.finishHookRuntimeStep();
+      remaining = Math.max(0, remaining - delta);
+      substeps += 1;
+      if (substeps > 8) throw new Error("Hook fixed-step boundary loop did not converge");
+    }
+    this.hookStepDelta = FIXED_STEP;
+  }
+
+  private failTimeUp() {
+    if (this.state.result) return;
+    this.state = {
+      ...this.state,
+      phase: "FAIL",
+      result: { kind: "FAIL", allClear: this.state.remainingBlockCount === 0, reason: "Time up" },
+      lastEvents: ["Time up"],
+    };
+    haptic("lose");
+    this.callbacks.onState(this.cloneState());
+    this.stopHookForResult();
+  }
+
   // Menu mode: the cluster turns on its own and nothing the player does reaches
   // the level. The cannon steps out of frame because the menu only shows the
   // model.
   setIdle(next: boolean) {
-    if (this.idle === next) return;
+    if (this.idle === next) {
+      // Fresh engines begin non-idle. A restart shown directly in gameplay calls
+      // setIdle(false) without an intro, and that call is the signal to start its
+      // timer even though the visual mode did not change.
+      if (!next && !this.introActive) this.startRoundClock();
+      return;
+    }
     this.idle = next;
     if (next) {
+      this.roundClockActive = false;
       if (this.aimPointer !== null) this.clearAimGesture(false);
       if (this.modelPointer !== null) this.clearModelGesture();
       this.introActive = false;
@@ -844,6 +1417,7 @@ export class CannonSortEngine {
     this.resetCannonDirection();
     this.showIdleCrosshair();
     this.aimPreviewDirty = true;
+    this.startRoundClock();
   }
 
   private canStartAim() {
@@ -1143,8 +1717,23 @@ export class CannonSortEngine {
     return localOrigin.clone().addScaledVector(localDirection, best.t).applyMatrix4(this.modelRoot.matrixWorld);
   }
 
+  private raycastRainbowTargetSurfacePoint(screenX: number, screenY: number): THREE.Vector3 | null {
+    if (this.hookPhase !== "RAINBOW_TARGET_EVENT") return null;
+    const { origin, direction } = this.cameraRayForScreenPoint(screenX, screenY);
+    let best: { t: number; point: THREE.Vector3 } | null = null;
+    for (const target of this.rainbowTargets) {
+      if (!target.active) continue;
+      const center = target.group.getWorldPosition(new THREE.Vector3());
+      const t = raySphereEntry(origin, direction, center, RAINBOW_TARGET_COLLIDER_RADIUS);
+      if (t === null || (best && t >= best.t)) continue;
+      best = { t, point: origin.clone().addScaledVector(direction, t) };
+    }
+    return best?.point ?? null;
+  }
+
   private solveAimAtScreenPoint(screenX: number, screenY: number): BallisticSolution | null {
-    const target = this.raycastBlockSurfacePoint(screenX, screenY) ?? this.targetPlanePoint(screenX, screenY);
+    const modelTarget = this.raycastBlockSurfacePoint(screenX, screenY) ?? this.targetPlanePoint(screenX, screenY);
+    const target = this.raycastRainbowTargetSurfacePoint(screenX, screenY) ?? modelTarget;
     for (let iteration = 0; iteration < 4; iteration += 1) {
       const start = this.muzzleAnchor.getWorldPosition(new THREE.Vector3());
       const desiredVelocity = this.fixedSpeedVelocity(start, target);
@@ -1246,8 +1835,15 @@ export class CannonSortEngine {
       const sampleCount = Math.ceil(AIM_PREDICTION_DURATION / FIXED_STEP);
       for (let step = 1; step <= sampleCount; step += 1) {
         const current = this.positionAt(start, velocity, step * FIXED_STEP);
+        const previewEventStart = this.rainbowEventElapsed + (step - 1) * FIXED_STEP;
+        const rainbowHit = this.sweepRainbowTargets(
+          previous,
+          current,
+          previewEventStart,
+          previewEventStart + FIXED_STEP,
+        );
         const hit = this.sweepBlocks(previous, current, inverseModel);
-        if (hit) {
+        if (rainbowHit || hit) {
           candidateTargetValid = true;
           break;
         }
@@ -1282,6 +1878,7 @@ export class CannonSortEngine {
       };
       haptic("lose");
       this.callbacks.onState(this.cloneState());
+      this.stopHookForResult();
       return;
     }
     const mesh = takeProjectileMesh();
@@ -1315,11 +1912,20 @@ export class CannonSortEngine {
   }
 
   private updateProjectile(projectile: Projectile) {
-    projectile.time += FIXED_STEP;
+    projectile.time += this.hookStepDelta;
     const next = this.positionAt(projectile.start, projectile.velocity, projectile.time);
     this.modelRoot.updateMatrixWorld(true);
     const inverseModel = this.modelRoot.matrixWorld.clone().invert();
+    const rainbowHit = this.sweepRainbowTargets(projectile.previous, next);
     const hit = this.sweepBlocks(projectile.previous, next, inverseModel);
+    // TEMP collision policy: resolve the first physical contact. A target only
+    // wins an exact tie, which is deterministic without inventing a nonphysical
+    // target-priority rule the design document explicitly leaves open.
+    if (rainbowHit && (!hit || rainbowHit.t <= hit.t)) {
+      projectile.mesh.position.copy(rainbowHit.point);
+      this.handleRainbowTargetHit(rainbowHit.target, projectile);
+      return;
+    }
     if (hit) {
       projectile.mesh.position.copy(hit.point);
       this.handleHit(hit.block, projectile);
@@ -1376,6 +1982,60 @@ export class CannonSortEngine {
     projectile.mesh.scale.setScalar(THREE.MathUtils.lerp(PROJECTILE_FALL_MIN_SCALE, 1, height));
   }
 
+  private sweepRainbowTargets(
+    worldA: THREE.Vector3,
+    worldB: THREE.Vector3,
+    previewEventStart?: number,
+    previewEventEnd?: number,
+  ): RainbowSweepHit | null {
+    if (this.hookPhase !== "RAINBOW_TARGET_EVENT") return null;
+    let best: { target: RainbowTargetRuntime; t: number } | null = null;
+    const motions = previewEventStart !== undefined && previewEventEnd !== undefined
+      ? this.rainbowTargetMotionsForInterval(previewEventStart, previewEventEnd)
+      : this.rainbowTargetStepMotions;
+
+    if (motions !== null) {
+      for (const motion of motions) {
+        const { target } = motion;
+        if (target.hit) continue;
+        const projectileFrom = worldA.clone().lerp(worldB, motion.fromFraction);
+        const projectileTo = worldA.clone().lerp(worldB, motion.toFraction);
+        const relativeFrom = projectileFrom.sub(motion.fromPosition);
+        const relativeTo = projectileTo.sub(motion.toPosition);
+        const localT = sweptSphereSphereEntry(
+          relativeFrom,
+          relativeTo,
+          new THREE.Vector3(),
+          RAINBOW_TARGET_COLLIDER_RADIUS + PROJECTILE_RADIUS,
+        );
+        if (localT === null) continue;
+        const t = THREE.MathUtils.lerp(motion.fromFraction, motion.toFraction, localT);
+        if (!best || t < best.t - 1e-7 || (Math.abs(t - best.t) < 1e-7 && target.id < best.target.id)) {
+          best = { target, t };
+        }
+      }
+    } else {
+      // Non-physics callers can still query the currently rendered target
+      // positions. Runtime/projectile and prediction paths both use motion data.
+      for (const target of this.rainbowTargets) {
+        if (!target.active || target.hit) continue;
+        const center = target.group.getWorldPosition(new THREE.Vector3());
+        const t = sweptSphereSphereEntry(
+          worldA,
+          worldB,
+          center,
+          RAINBOW_TARGET_COLLIDER_RADIUS + PROJECTILE_RADIUS,
+        );
+        if (t === null) continue;
+        if (!best || t < best.t - 1e-7 || (Math.abs(t - best.t) < 1e-7 && target.id < best.target.id)) {
+          best = { target, t };
+        }
+      }
+    }
+    if (!best) return null;
+    return { target: best.target, t: best.t, point: worldA.clone().lerp(worldB, best.t) };
+  }
+
   private sweepBlocks(worldA: THREE.Vector3, worldB: THREE.Vector3, inverseModel: THREE.Matrix4): SweepHit | null {
     const a = worldA.clone().applyMatrix4(inverseModel);
     const b = worldB.clone().applyMatrix4(inverseModel);
@@ -1423,6 +2083,96 @@ export class CannonSortEngine {
       }
     }
     return result;
+  }
+
+  private impactedFace(localPoint: THREE.Vector3): WeakPointFace {
+    const x = Math.abs(localPoint.x);
+    const y = Math.abs(localPoint.y);
+    const z = Math.abs(localPoint.z);
+    if (x >= y && x >= z) return localPoint.x >= 0 ? "PX" : "NX";
+    if (y >= z) return localPoint.y >= 0 ? "PY" : "NY";
+    return localPoint.z >= 0 ? "PZ" : "NZ";
+  }
+
+  private projectileHitWeakPoint(block: BlockRuntime, projectile: Projectile) {
+    const authored = this.weakPointsByBlock.get(block.id) ?? [];
+    if (!authored.length) return false;
+    this.modelRoot.updateMatrixWorld(true);
+    const localImpact = projectile.mesh.position
+      .clone()
+      .applyMatrix4(this.modelRoot.matrixWorld.clone().invert())
+      .sub(block.mesh.position);
+    const face = this.impactedFace(localImpact);
+    return authored.some((weakPoint) => isBullseyeHit({
+      localPoint: localImpact,
+      impactedFace: face,
+      weakPointFace: weakPoint.face,
+      blockSize: BLOCK_SIZE,
+    }));
+  }
+
+  private shakeCluster(cluster: BlockRuntime[], shotIndex: number) {
+    for (let index = 0; index < cluster.length; index += 1) {
+      const member = cluster[index];
+      this.clearNeighborKick(member);
+      const angle = shotIndex * 1.91 + index * 2.37;
+      const direction = new THREE.Vector3(Math.cos(angle), Math.sin(angle * 1.3) * 0.45, Math.sin(angle)).normalize();
+      this.neighborKicks.push({
+        block: member,
+        age: 0,
+        delay: index * 0.012,
+        amplitude: 0.72,
+        duration: 0.3,
+        basePosition: member.mesh.position.clone(),
+        direction,
+      });
+    }
+  }
+
+  private startRicochet(projectile: Projectile) {
+    // TEMP prototype policy: the rebound is feedback only. It leaves the live
+    // collision list immediately, flies backward briefly, then despawns rather
+    // than creating a second gameplay hit.
+    const index = this.projectiles.indexOf(projectile);
+    if (index >= 0) this.projectiles.splice(index, 1);
+    const velocityAtImpact = projectile.velocity.clone().addScaledVector(GRAVITY, projectile.time);
+    velocityAtImpact.multiplyScalar(-0.28);
+    velocityAtImpact.y = Math.max(velocityAtImpact.y, 1.35);
+    this.ricochets.push({ mesh: projectile.mesh, velocity: velocityAtImpact, age: 0 });
+  }
+
+  private updateRicochets() {
+    const survivors: Ricochet[] = [];
+    for (const ricochet of this.ricochets) {
+      ricochet.age += FIXED_STEP;
+      ricochet.velocity.addScaledVector(GRAVITY, FIXED_STEP * 0.28);
+      ricochet.mesh.position.addScaledVector(ricochet.velocity, FIXED_STEP);
+      const scale = Math.max(0.05, 1 - ricochet.age / RICOCHET_LIFETIME);
+      ricochet.mesh.scale.setScalar(scale);
+      if (ricochet.age < RICOCHET_LIFETIME) {
+        survivors.push(ricochet);
+      } else {
+        this.scene.remove(ricochet.mesh);
+        ricochet.mesh.scale.setScalar(1);
+        recycleProjectileMesh(ricochet.mesh);
+      }
+    }
+    this.ricochets = survivors;
+  }
+
+  private handleRainbowTargetHit(target: RainbowTargetRuntime, projectile: Projectile) {
+    if (!target.active || target.hit) return;
+    // TEMP prototype policy: a collected target disappears immediately and its
+    // hit latch makes the reward strictly single-use.
+    target.hit = true;
+    target.active = false;
+    target.group.visible = false;
+    this.rainbowBankSeconds += this.level.rainbow.rewardSeconds;
+    this.spawnFirework(projectile.mesh.position, projectile.shotIndex * 173 + target.spawnIndex * 31);
+    haptic("impact");
+    this.removeProjectile(projectile);
+    this.aimPreviewDirty = true;
+    this.emitHookState(true);
   }
 
   private clearNeighborKick(block: BlockRuntime) {
@@ -1579,6 +2329,9 @@ export class CannonSortEngine {
     for (const member of cluster) {
       this.clearNeighborKick(member);
       member.active = false;
+      for (const visual of this.weakPointVisuals) {
+        if (visual.block === member) visual.group.visible = false;
+      }
       member.mesh.material.emissive.setHex(COLOR_HEX[member.color]);
       member.mesh.material.emissiveIntensity = 0.55;
       this.scene.attach(member.mesh);
@@ -1613,6 +2366,15 @@ export class CannonSortEngine {
     if (!cluster.length) return;
 
     haptic("impact");
+    const bullseyeHit = this.projectileHitWeakPoint(block, projectile);
+    const impactResolution = resolveBlockImpact(this.hookPhase, bullseyeHit);
+    if (impactResolution === "RICOCHET_SHAKE") {
+      this.shakeCluster(cluster, projectile.shotIndex);
+      this.startRicochet(projectile);
+      this.aimPreviewDirty = true;
+      return;
+    }
+
     // Claim immediately so another projectile cannot resolve this cluster twice.
     this.sendBreakWave(cluster);
     this.releaseCluster(cluster, projectile.shotIndex);
@@ -2064,10 +2826,7 @@ export class CannonSortEngine {
         : resolvedState;
       this.emitResolutionHaptics(stateBeforeResolve, this.state);
       if (this.state.result) {
-        if (this.aimPointer !== null) this.clearAimGesture(true);
-        if (this.modelPointer !== null) this.clearModelGesture();
-        this.pendingResolutions = [];
-        this.projectiles.slice().forEach((projectile) => this.removeProjectile(projectile));
+        this.stopHookForResult();
         if (this.state.result.kind === "WIN" && this.state.postWinClearing) {
           this.autoClearCountdown = 0.12;
           this.autoClearFinishCountdown = 0;
@@ -2094,6 +2853,7 @@ export class CannonSortEngine {
       if (filled === before) return;
       this.state = filled;
       this.emitResolutionHaptics(before, filled);
+      if (this.state.result) this.stopHookForResult();
       if (this.state.result?.kind === "WIN" && this.state.postWinClearing) {
         this.autoClearCountdown = 0.12;
         this.autoClearFinishCountdown = 0;
@@ -2187,6 +2947,7 @@ export class CannonSortEngine {
     this.camera.aspect = width / height;
     this.camera.fov = this.camera.aspect < 0.62 ? 40 : 37;
     this.camera.updateProjectionMatrix();
+    this.updateRainbowTargets();
     if (this.state.phase === "AIMING") {
       this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     } else if (this.introActive) {
@@ -2242,10 +3003,11 @@ export class CannonSortEngine {
     if (!this.paused) {
       this.accumulator += frameDelta;
       while (this.accumulator >= FIXED_STEP) {
-        this.projectiles.slice().forEach((projectile) => this.updateProjectile(projectile));
+        this.updateTimedGameplayStep();
         if (this.showcase) this.updateShowcase();
         if (this.smoke.length) this.updateSmoke();
         if (this.sparkles.length) this.updateSparkles();
+        if (this.ricochets.length) this.updateRicochets();
         if (this.releasedBlocks.length) this.updateReleasedBlocks();
         if (this.neighborKicks.length) this.updateNeighborKicks();
         if (this.pendingResolutions.length) {
@@ -2342,6 +3104,12 @@ export class CannonSortEngine {
       "is-magic",
     );
     this.projectiles.slice().forEach((projectile) => this.removeProjectile(projectile));
+    for (const ricochet of this.ricochets) {
+      this.scene.remove(ricochet.mesh);
+      ricochet.mesh.scale.setScalar(1);
+      recycleProjectileMesh(ricochet.mesh);
+    }
+    this.ricochets = [];
     // Showcase shots come out of the same pool, so they have to leave the scene
     // here too: the sweep below disposes whatever it finds, and the projectile
     // geometry and materials are shared with every other level on the page.
@@ -2362,9 +3130,8 @@ export class CannonSortEngine {
     });
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
-    // Barrel and link visuals are shared between blocks, so they are held here
-    // rather than found by the sweep: a shell already removed from the scene
-    // would otherwise leak.
+    // Shared Weak Point/target/particle resources are held here as well as in
+    // the scene graph, so a marker already detached by a break cannot leak.
     this.disposables.forEach((resource) => resource.dispose());
     // The renderer outlives this engine, so it is handed back rather than
     // disposed. Pooled projectiles already left the scene above, which keeps

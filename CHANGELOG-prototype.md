@@ -3,10 +3,10 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 857.889 bytes, 3 màn, một file HTML chạy
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 889.967 bytes, 3 màn, một file HTML chạy
 offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 119/119 test pass · typecheck sạch phần `app/` và `work/` · lint sạch.
+**Trạng thái kiểm tra:** 151/151 test pass · typecheck mục tiêu sạch · lint sạch · build production sạch.
 
 ---
 
@@ -1476,3 +1476,95 @@ budget có sức nặng thật thì cụm phải lệch goal — cần thiết k
 nó **không** nằm trong danh sách "còn mở" §20 của tài liệu đó. Mục 14 đảo lại một rule đã được ghi là
 chốt, nên đây là một quyết định thiết kế mới. Tài liệu đó đã lệch source từ trước (không biết gì về
 sheet, cosmetic, hay khay pip) nên chỉ được đánh dấu superseded, không viết lại.
+
+---
+
+## 17. Weak Point & Rainbow Climax Hook (22/08)
+
+Thay core claim “bắn trúng mặt nào cũng phá” bằng hook trong
+`weakpoint_rainbow_hook.md`, đồng thời giữ nguyên transaction goal/dự trữ hiện tại. Barrel và Link
+đã được loại ở mục 13 nên không quay lại dưới tên khác.
+
+### 17.1 Weak Point là object world-space, không phải icon HUD
+
+- Mỗi connected cluster FACE_6 cùng màu được author 1–3 điểm theo `x.y.z:FACE`.
+- Bullseye gồm bốn vòng tròn dùng chung geometry/material, là child của đúng block nên xoay cùng
+  model và bị geometry phía trước che thật.
+- Normal và Rainbow Target Event chỉ claim khi impact đúng mặt + đúng vùng bullseye. Dấu `+` vẫn
+  chỉ báo trajectory chạm block/target; HUD giải thích rõ nó không xác nhận Weak Point.
+- Bắn sai mặt không tạo sort transaction: cả cluster rung, đạn bật ngược rồi biến mất. Trong
+  Rainbow Climax, cùng impact đó claim cluster — phase được đọc tại **thời điểm impact**.
+
+Hitbox prototype rộng hơn hình: visual radius bằng 21% cạnh block, hit radius bằng 28%, để thao tác
+mobile bớt gắt. Đây là tuning tạm, không phải rule level-data.
+
+### 17.2 Main timer và state machine
+
+- `round_time` đọc từ sheet; timer chỉ bắt đầu sau intro, dừng khi pause và giảm trong cả ba phase.
+- Về 0 tạo FAIL `Time up` ngay; prototype tạm cho `TIME_UP` ưu tiên cùng physics step với impact.
+- Event chỉ trigger một lần khi countdown đi qua `rainbow_trigger` (baseline 25 giây).
+- Clock helper snap sai số IEEE-754 nên các mốc 25/8/5 giây kết thúc đúng tick 3900/480/300;
+  timing lẻ không chia hết 1/60 được substep ngay tại boundary, giữ phase-at-impact chính xác.
+- Row có `round_time <= rainbow_trigger` bị reject toàn bộ theo policy tạm
+  `REQUIRE_ROUND_TIME_ABOVE_TRIGGER_TEMP`, thay vì tự suy diễn “event ngay lúc vào màn”.
+
+### 17.3 Ba Rainbow Target 3D
+
+- Target dùng mesh trụ mỏng + ba vòng màu trên world-space plane giữa cannon và model.
+- Timeline baseline đúng A 0–4 s, B 2–6 s, C 4–8 s; cả 12 path normalized đã được mã hóa, gồm
+  horizontal, diagonal và quadratic arc.
+- Player vẫn rotate/aim/bắn model trong event. Target và block cạnh tranh bằng first physical hit;
+  target ở trước sẽ giữ viên đạn, không cho xuyên tới model.
+- Collision và crosshair prediction sweep chuyển động tương đối projectile–target theo đúng path;
+  preview target động refresh 12 Hz để giữ phản hồi đúng mà không chạy solver nặng ở 60 Hz.
+- Mỗi target có latch single-use, hit một lần cộng đúng `rainbow_reward_sec` (baseline +5 s) vào
+  bank riêng và không đổi main timer. Policy prototype hiện tại: target trúng biến mất ngay bằng
+  burst; tie collision chính xác ưu tiên target để kết quả deterministic.
+
+### 17.4 Rainbow Climax và HUD
+
+- Khi target cuối rời màn hình, Climax nhận 0/5/10/15 s theo số hit. Bank 0 được resolve atomic để
+  không bật/tắt FX một frame.
+- Weak Point ẩn; mọi mặt active block đều claim cluster; occlusion, first impact, goal, overfill,
+  dự trữ và điều kiện thua giữ nguyên.
+- Main timer và Climax timer giảm song song. Hết Climax thì marker của các block còn active hiện lại.
+- Cannon đổi màu rainbow theo thời gian; background có 18 streak pháo hoa CSS nhẹ, pause cùng game.
+- HUD tách ba khái niệm: main TIME, hit count + BANK ở event, và countdown CLIMAX. Nền phase đổi rõ
+  nhưng particle giữ opacity thấp để không che màu block. Readout BANK/Climax là live region,
+  gradient có backing tối đủ tương phản, và viewport landscape thấp không còn bị `min-height` cắt.
+- Mọi result dùng chung cleanup: nhả pointer capture, trả projectile về pool, bỏ pending flight và
+  tắt Target/Climax FX, tránh đạn hoặc nền rainbow đứng hình dưới result panel.
+
+### 17.5 Level data và validator
+
+Thêm tám cột:
+
+`round_time`, `weak_points`, `rainbow_trigger`, `rainbow_target_count`, `rainbow_spawn_gap`,
+`rainbow_target_duration`, `rainbow_reward_sec`, `rainbow_paths`.
+
+Validator reject nguyên row nếu tọa độ không có block, face sai, trùng `coordinate+face`, cluster có
+0 hoặc >3 Weak Point, path ngoài 1–12, số path lệch target count, header lạ/trùng/cũ, hay timing vi
+phạm policy trên. Weak Point hướng vào ô đang có block phát warning non-fatal; nếu block che cùng
+cluster FACE_6, validator nâng thành `HIGH-RISK` vì point đó không thể tự mở và cluster cần một route
+Weak Point khác có thể tiếp cận.
+Ba level bundled đã có lần lượt 8/8/6 Weak Point hợp lệ và cùng baseline `90/25/3/2/4/5`.
+
+### 17.6 Build, metadata và test
+
+- `outputs/3d-cannon-sort.html` được build lại từ source, chứa code hook và level columns mới; file
+  canonical hiện 889.967 bytes và vẫn chạy offline bằng `file://`.
+- Thêm social card `public/og.png` cùng metadata Open Graph/X dùng host thật của request.
+- Thêm unit test cho 12 path, hit circle theo cả sáu face, phase-at-impact, timeline/bank/trigger;
+  test parser atomic; test tích hợp engine/HUD/CSS; và test chính file HTML có hook/data mới.
+- Kết quả cuối: **151/151 pass**, ESLint sạch, targeted TypeScript sạch và `vinext build` thành công.
+
+### 17.7 Policy prototype còn chờ playtest/sign-off
+
+- Wrong-face ricochet chỉ là feedback rồi despawn; hitbox bullseye rộng hơn visual 28%/21%.
+- Target trúng biến mất ngay; first-contact quyết định target/block và exact tie ưu tiên target.
+- Target plane tạm đặt ở world `z=0.45`; `rainbow_target_count` author được số dương bất kỳ nhưng
+  baseline/UI đang tối ưu cho ba target A/B/C.
+- Result trong Event/Climax kết thúc hook ngay, bỏ target/bank/FX còn lại. `TIME_UP` vẫn ưu tiên cả
+  fixed step chứa mốc 0 theo policy ở trên.
+- HUD hiện tại là bản cụ thể để playtest; hook vẫn dùng haptic chung theo impact/progress/result,
+  chưa chốt bộ audio/haptic riêng cho từng Weak Point, wrong-face, target và chuyển phase.

@@ -26,7 +26,11 @@ function withFallback(result: LevelSheetResult, source: LevelSheetSource): Loade
   }
   return {
     levels: [level01],
-    issues: [...result.issues, ...bundled.issues, { row: 0, level: "-", message: "falling back to the level baked into the source" }],
+    issues: [
+      ...result.issues,
+      ...bundled.issues,
+      { row: 0, level: "-", severity: "error", message: "falling back to the level baked into the source" },
+    ],
     source: "bundled",
   };
 }
