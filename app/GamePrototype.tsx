@@ -158,12 +158,6 @@ function ClimaxFireworks() {
   );
 }
 
-function formatRoundTime(seconds: number) {
-  const whole = Math.max(0, Math.ceil(seconds));
-  const minutes = Math.floor(whole / 60);
-  return `${minutes}:${String(whole % 60).padStart(2, "0")}`;
-}
-
 function focusableIn(root: HTMLElement) {
   return Array.from(
     root.querySelectorAll<HTMLElement>(
@@ -197,7 +191,6 @@ type IncomingReserve = { color: BlockColor; count: number };
 const FAIL_BODY: Record<string, string> = {
   "Reserve full": "The reserve was full and that shot had nothing an open goal could take.",
   "Out of shots": "The level ran out of shots before the last goal was filled.",
-  "Time up": "The round timer reached zero before the last goal was filled.",
 };
 
 type ModalView = "settings" | "restart-confirm" | null;
@@ -253,7 +246,7 @@ export default function GamePrototype() {
   const [levelIndex, setLevelIndex] = useState(0);
   const level = sheet.levels[levelIndex] ?? sheet.levels[0];
   const [state, setState] = useState<GameState>(() => createGameState(sheet.levels[0]));
-  const [hookState, setHookState] = useState<HookSnapshot>(() => createInitialHookSnapshot(sheet.levels[0]));
+  const [hookState, setHookState] = useState<HookSnapshot>(() => createInitialHookSnapshot());
   const [sheetNotice, setSheetNotice] = useState<SheetNotice | null>(null);
   const [sheetDragActive, setSheetDragActive] = useState(false);
   const [sortSprites, setSortSprites] = useState<SortSprite[]>([]);
@@ -487,7 +480,7 @@ export default function GamePrototype() {
     setSheet(nextSheet);
     setLevelIndex(nextIndex);
     setState(createGameState(nextLevel));
-    setHookState(createInitialHookSnapshot(nextLevel));
+    setHookState(createInitialHookSnapshot());
     setSortSprites([]);
     setVisualGoalCounts({});
     setIncomingReserve(null);
@@ -762,25 +755,11 @@ export default function GamePrototype() {
   // so the row grows rather than clipping the blocks that caused it.
   const traySlots = Array.from({ length: Math.max(level.reserveBlocks, filledSlots.length) }, (_, index) =>
     filledSlots[index] ?? { key: `socket-${index}`, batchId: undefined, color: null });
-  const hookPhaseClass = hookState.phase === "RAINBOW_TARGET_EVENT"
-    ? "is-rainbow-event"
-    : hookState.phase === "RAINBOW_CLIMAX"
-      ? "is-rainbow-climax"
-      : "is-weak-point";
-  const hookPhaseLabel = hookState.phase === "RAINBOW_TARGET_EVENT"
-    ? "RAINBOW TARGETS"
-    : hookState.phase === "RAINBOW_CLIMAX"
-      ? "CLIMAX"
-      : "WEAK POINT";
-  const rainbowReadoutLabel = hookState.phase === "RAINBOW_TARGET_EVENT"
-    ? `${hookState.targetHitCount} of ${hookState.targetCount} Rainbow Targets hit; ${hookState.rainbowBankSeconds} seconds banked`
-    : hookState.phase === "RAINBOW_CLIMAX"
-      ? `${hookState.rainbowTimeRemaining.toFixed(1)} seconds remain in Rainbow Climax`
-      : "Weak Point precision mode";
+  const bypassArmed = hookState.weakPointBypassArmed;
   return (
     <main className="page-shell">
       <section
-        className={`game-frame ${hookPhaseClass} ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""}`}
+        className={`game-frame ${bypassArmed ? "is-rainbow-armed" : ""} ${state.phase === "PAUSED" ? "is-paused" : ""} ${sheetDragActive ? "is-sheet-drag" : ""}`}
         ref={gameFrameRef}
         aria-label="Prototype game 3D Cannon Sort"
         onDragEnter={handleSheetDragEnter}
@@ -789,7 +768,16 @@ export default function GamePrototype() {
         onDrop={handleSheetDrop}
       >
         <div className="game-content" inert={modal !== null ? true : undefined} aria-hidden={modal !== null}>
-          {screen === "playing" && !state.result && hookState.phase === "RAINBOW_CLIMAX" && <ClimaxFireworks />}
+          {screen === "playing" && !state.result && bypassArmed && <ClimaxFireworks />}
+          {/* Absolutely positioned rather than a row in .hud-top: a banner that
+              only exists while armed would otherwise change --hud-height every
+              time a target is hit, and the 3D scene would jump with it. */}
+          {screen === "playing" && !state.result && bypassArmed && (
+            <div className="bypass-banner" role="status" aria-live="polite">
+              <span className="bypass-banner-wave" aria-hidden="true" />
+              <strong>Next shot ignores Weak Points</strong>
+            </div>
+          )}
           {screen === "playing" && (
           <div className={`game-tools ${hudRising ? "is-rising" : ""}`} role="toolbar" aria-label="Level tools">
             <button ref={settingsButtonRef} className="icon-button" type="button" onClick={() => openModal("settings")} aria-label="Open settings" aria-haspopup="dialog" aria-expanded={modal === "settings"}>⚙</button>
@@ -927,54 +915,6 @@ export default function GamePrototype() {
         )}
 
         <div className={`hud-top ${hudRising ? "is-rising" : ""}`} hidden={screen === "hub"}>
-          <section className={`hook-status ${hookPhaseClass}`} aria-label={`${hookPhaseLabel} phase`}>
-            <div
-              className={`round-clock ${hookState.mainTimeRemaining <= 10 ? "is-urgent" : ""}`}
-              role="timer"
-              aria-label={`${Math.max(0, Math.ceil(hookState.mainTimeRemaining))} seconds remain in the round`}
-            >
-              <small>TIME</small>
-              <strong>{formatRoundTime(hookState.mainTimeRemaining)}</strong>
-            </div>
-            <div className="hook-phase-name" aria-live="polite">
-              <span>{hookPhaseLabel}</span>
-              <small>
-                {hookState.phase === "RAINBOW_TARGET_EVENT"
-                  ? "Shoot targets or keep sorting"
-                  : hookState.phase === "RAINBOW_CLIMAX"
-                    ? "Any block face can break"
-                    : "Hit a bullseye to break"}
-              </small>
-            </div>
-            <div
-              className="rainbow-readout"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              aria-label={rainbowReadoutLabel}
-            >
-              {hookState.phase === "RAINBOW_TARGET_EVENT" ? (
-                <>
-                  <strong>{hookState.targetHitCount}/{hookState.targetCount}</strong>
-                  <small>BANK +{hookState.rainbowBankSeconds}s</small>
-                </>
-              ) : hookState.phase === "RAINBOW_CLIMAX" ? (
-                <>
-                  <strong>{hookState.rainbowTimeRemaining.toFixed(1)}s</strong>
-                  <small>CLIMAX</small>
-                </>
-              ) : (
-                <>
-                  <strong aria-hidden="true">◎</strong>
-                  <small>PRECISION</small>
-                </>
-              )}
-            </div>
-          </section>
-
-          {/* A slot only empties once its goal is filled and the queue has nothing
-              left to open, so the whole goal row goes away instead of leaving
-              spent cards on screen. */}
           {state.activeGoals.some((goal) => goal !== null) && (
           <section className="goal-section" aria-label="Active goals">
             <div className="goal-grid">

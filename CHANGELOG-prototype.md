@@ -3,10 +3,10 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 889.967 bytes, 3 màn, một file HTML chạy
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 891.207 bytes, 3 màn, một file HTML chạy
 offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 151/151 test pass · typecheck mục tiêu sạch · lint sạch · build production sạch.
+**Trạng thái kiểm tra:** 152/152 test pass · typecheck mục tiêu sạch · lint sạch · build production sạch.
 
 ---
 
@@ -997,7 +997,7 @@ có first-paint để lấy.
 
 ## 6. Test
 
-Từ 10 test lên **119 test**, 16 file:
+Từ 10 test lên **152 test**, 18 file:
 
 | File | Nội dung |
 |---|---|
@@ -1490,13 +1490,13 @@ Thay core claim “bắn trúng mặt nào cũng phá” bằng hook trong
 - Mỗi connected cluster FACE_6 cùng màu được author 1–3 điểm theo `x.y.z:FACE`.
 - Bullseye gồm bốn vòng tròn dùng chung geometry/material, là child của đúng block nên xoay cùng
   model và bị geometry phía trước che thật.
-- Normal và Rainbow Target Event chỉ claim khi impact đúng mặt + đúng vùng bullseye. Dấu `+` vẫn
+- Normal và Rainbow Target Event chỉ claim khi impact đúng mặt (mục 18.1 đã bỏ điều kiện vùng bullseye). Dấu `+` vẫn
   chỉ báo trajectory chạm block/target; HUD giải thích rõ nó không xác nhận Weak Point.
 - Bắn sai mặt không tạo sort transaction: cả cluster rung, đạn bật ngược rồi biến mất. Trong
   Rainbow Climax, cùng impact đó claim cluster — phase được đọc tại **thời điểm impact**.
 
-Hitbox prototype rộng hơn hình: visual radius bằng 21% cạnh block, hit radius bằng 28%, để thao tác
-mobile bớt gắt. Đây là tuning tạm, không phải rule level-data.
+~~Hitbox prototype rộng hơn hình: visual radius bằng 21% cạnh block, hit radius bằng 28%.~~
+**Đã bỏ ở mục 18.1** — điều kiện trúng giờ là *cả mặt*, và bullseye chỉ còn là hình minh hoạ.
 
 ### 17.2 Main timer và state machine
 
@@ -1568,3 +1568,272 @@ Ba level bundled đã có lần lượt 8/8/6 Weak Point hợp lệ và cùng ba
   fixed step chứa mốc 0 theo policy ở trên.
 - HUD hiện tại là bản cụ thể để playtest; hook vẫn dùng haptic chung theo impact/progress/result,
   chưa chốt bộ audio/haptic riêng cho từng Weak Point, wrong-face, target và chuyển phase.
+
+---
+
+## 18. Weak Point: mặt trong, đạn bật ra, và khiên xanh
+
+Bốn thay đổi cho hook ở mục 17, theo yêu cầu.
+
+### 18.1 Điều kiện trúng là cả một mặt, bullseye chỉ còn là hình minh hoạ
+
+Trước: claim khi impact đúng mặt **và** nằm trong bán kính bullseye (visual 21% cạnh block, hit 28%).
+Sau: claim khi impact **đúng mặt**, ở bất kỳ đâu trên mặt đó.
+
+Lý do bỏ bán kính, không phải chỉ vì đơn giản hơn: ngắm một đường bay 3D vào một cái đĩa nhỏ trên
+một khối đang xoay là mức chính xác mà camera **không hiển thị nổi** — và hai con số vốn không bằng
+nhau, nên vòng tròn người chơi thấy chưa bao giờ là vùng thật sự được tính. Giờ luật đọc được thẳng
+từ model: mặt nào có dấu thì bắn vào mặt đó.
+
+| | Trước | Sau |
+|---|---|---|
+| Hàm luật | `isBullseyeHit({ localPoint, impactedFace, weakPointFace, blockSize, hitRadiusRatio })` | `isWeakPointFaceHit({ impactedFace, weakPointFace })` |
+| Hằng số | `WEAK_POINT_VISUAL_RADIUS_RATIO` 0.21 + `WEAK_POINT_HIT_RADIUS_RATIO` 0.28 | chỉ còn visual 0.21, và **không** nằm trong đường tính hit |
+| HUD | "Hit a bullseye to break" | "Hit a marked face to break" |
+
+`WEAK_POINT_HIT_RADIUS_RATIO` và `LocalPoint3` bị xoá vì không còn ai đọc. Có test khẳng định module
+**không** còn export tên nào chứa `HIT_RADIUS`, và `projectileHitWeakPoint` **không** được nhắc tới
+`RADIUS` — nếu bán kính bò lại vào đường tính hit thì đỏ ngay.
+
+### 18.2 Weak Point ở mặt trong
+
+Format vốn đã cho phép: parser chỉ **cảnh báo** khi một điểm nằm trên mặt áp vào block khác, vì đó có
+thể là routing không gian có chủ ý. Nên đây là thay đổi **dữ liệu màn**, không phải code.
+
+Thêm 15 điểm mặt trong (màn 1: 7, màn 2: 4, màn 3: 4). Mỗi cluster **giữ nguyên** điểm mặt ngoài đã
+có và được thêm một điểm mặt trong — chủ ý, vì hai cluster mà điểm duy nhất của chúng lại áp vào nhau
+sẽ **deadlock**: không bên nào phá được bên nào.
+
+Đã đo lại toàn bộ khả năng tiếp cận, mô phỏng đúng cách người chơi phải đi (chỉ cluster có điểm hở
+mới claim được, claim xong mới mở ra điểm bên dưới):
+
+| Màn | Cluster | Weak Point | Hở lúc bắt đầu | Bị che | Cluster bị kẹt |
+|---|---|---|---|---|---|
+| 1 | 8 | 15 | 8 | 7 | **0** |
+| 2 | 8 | 12 | 8 | 4 | **0** |
+| 3 | 6 | 10 | 6 | 4 | **0** |
+
+Mọi cluster đều có ít nhất một đường vào ngay từ đầu, và cả ba màn dọn xong trong **một wave** — điểm
+mặt trong là lối đi *thêm*, không phải cửa ải bắt buộc. Test mới khẳng định cả ba điều: có điểm bị
+che, không điểm nào HIGH-RISK (áp vào cluster của chính nó), và mỗi màn còn ít nhất một điểm hở.
+
+### 18.3 Đạn bật ra khi trúng Weak Point
+
+Trước, phát bắn **thành công** là phát duy nhất đạn biến mất ngay (`removeProjectile`), trong khi phát
+sai mặt lại có `startRicochet` bật ngược. Nghĩa là cú đánh đúng có phản hồi *yếu nhất* trong hai
+loại, và đọc ra như block hút mất viên đạn chứ không phải bị phá.
+
+Giờ cả hai đường đều gọi `startRicochet`. Có test đếm đúng **hai** call site và khẳng định
+`handleHit` **không** còn `removeProjectile` — Rainbow Target thì vẫn giữ `removeProjectile` riêng
+của nó, đó là hành vi khác và không bị đụng.
+
+Kèm theo: `createSortAnimation` vẫn vẽ chặng bay vào kho kể cả khi phần dư không vừa (mục 14.4), nên
+không có xung đột giữa hai thay đổi.
+
+### 18.4 Khiên xanh khi trúng vùng không phải Weak Point
+
+Block bị bắn sai mặt giờ khoác một lớp guard xanh dương (`0x49b8ff`) — cái người chơi game nào cũng
+đọc ra là "chỗ này được bảo vệ".
+
+- Là một `BoxGeometry` cạnh **1.16× block**, nên đọc ra là *lớp bọc quanh* khối chứ không phải đổi màu khối.
+- `MeshBasicMaterial` unlit: key light của scene sẽ biến material có shading thành một tint mặt bình thường.
+- Là **child của block mesh**, nên nó nhún theo đúng cú rung mà chính impact đó tạo ra, không lơ lửng ở chỗ block vừa rời đi.
+- Đắp lên **block bị bắn**, không phải cả cluster: cú rung đã nói "cả nhóm này đứng vững", cái khiên nói "chỗ này".
+- Bắn phát thứ hai vào cùng block thì **restart** cái flash, không xếp thêm một lớp — hai lớp sẽ nhân đôi opacity và đọc ra như một khối đặc.
+- Tắt dần trong 0,44 s theo `(1 - progress) ** 1.6` và phình nhẹ 10%, nên block trông như *bị đẩy lại* chứ không phải chỉ được tô màu.
+- Block bị claim thì bỏ khiên ngay, để nó không bay theo debris.
+
+Mỗi flash có material riêng (opacity phải chạy độc lập khi nhiều block cùng có khiên) và tự
+`dispose()` khi hết — có test khẳng định điểm này, vì thiếu nó là rò material mỗi phát bắn.
+
+### 18.5 Đã kiểm được gì, và chưa kiểm được gì
+
+Đo trong game thật, bằng probe tạm rồi xoá:
+
+- Khiên spawn ở `opacity 0.62`, mờ xuống 0.49, scale bò từ 1 lên 1.014 — đúng đường cong đã viết.
+- Bắn lại cùng block: vẫn **1** khiên. Bắn hai block khác nhau: **2** khiên cùng tồn tại. Đúng luật không-stack theo block.
+- Đạn bật ra ở phát sai mặt: `ricochets` lên 1.
+- 39 phát liên tiếp không claim được gì — không phải màn bị chặn, mà là chuyện **ngắm** (xem dưới).
+
+**Chưa kiểm được trong game:** đạn bật ra ở phát **đúng** mặt. Nó là đúng cùng một lời gọi
+`startRicochet`, và test chốt cả hai call site, nhưng tôi không lái được automation vào một mặt có dấu.
+
+Lý do, và đây là điều đáng chú ý cho thiết kế màn: **envelope của pháo không với tới hàng trên của
+model.** Đo bằng cách giữ joystick và quét: crosshair chỉ với được dải y ≈ 291–457 (và bão hoà ở
+y = 228.8), trong khi bullseye `3.2.1:PZ` nằm ở y ≈ 246 — **ngoài tầm**. Camera lại đứng ở phía
+`+z`, nên bốn điểm hở nhìn thấy được đều là mặt `PZ`; các điểm `NZ` nằm ở mặt sau. Với bán kính
+rộng thì chuyện này còn tha được; với điều kiện trúng-đúng-mặt thì nó thành rào thật, và người chơi
+buộc phải xoay model. Không phải bug của thay đổi này — nhưng nó vừa trở nên quan trọng hơn nhiều, và
+nên được cân nhắc khi author `weak_points` ở hàng trên.
+
+## 19. Rainbow Climax làm lại: buff một phát, đường bay tự do, bỏ timer (23/08)
+
+Mục 17 dựng Rainbow quanh một **đồng hồ round**: countdown 90 s, đi qua mốc 25 s thì mở event, ba
+target bay theo 12 đường author sẵn, mỗi hit cộng +5 s vào một *bank*, rồi vào **phase Climax** dài
+0/5/10/15 s mà trong đó mọi mặt block đều phá được. Về 0 thì FAIL `Time up`.
+
+Toàn bộ mô hình đó bị bỏ. Rainbow mới không phải một phase có thời lượng, mà là một **buff một phát**:
+bắn trúng target thì **phát kế tiếp bỏ qua Weak Point của block**. Đây là thay đổi luật, không phải
+đổi hình — nó xoá một điều kiện thua, xoá cơ chế trigger, và thay phase machine ba trạng thái bằng
+một cờ boolean.
+
+### 19.1 Đã chốt trước khi làm
+
+| Điểm | Chốt |
+|---|---|
+| Timer | **Bỏ hẳn.** Round không giới hạn thời gian, không còn FAIL `Time up` |
+| Spawn target | **Ngẫu nhiên có seed**, rải trong round |
+| Cộng dồn | **Không.** Trúng 2 target vẫn 1 phát. Không hết hạn, giữ tới khi bắn |
+| Tiêu buff | **Chỉ phát va vào block.** Bắn trượt / rơi sàn không mất buff |
+
+Round giờ **không có độ dài**, nên "rải trong round" không còn khoảng nào để rải lên. Thay bằng
+**khoảng cách seeded giữa các target**: target đầu ở giây `gap × (0,5…1,0)`, mỗi target sau cách
+`gap × (0,5…1,5)`, tổng đúng `rainbow_target_count`. Deterministic theo seed của màn và không phụ
+thuộc round dài bao lâu. Màn 1 ra lịch thật: 7,20–11,70 s · 17,59–22,09 s · 27,28–31,78 s.
+
+### 19.2 Đường bay tự do
+
+`RAINBOW_PATHS` (bảng 12 path) và cột `rainbow_paths` bị bỏ. Thay bằng `rainbowWanderAt(seed, progress)`:
+tổng **ba sin** lệch pha/tần số lấy từ seed, nên không target nào trùng hình và không cái nào là một
+đường thẳng hay một cung đơn. Tổng được **taper bằng `sin(pi·t)`**, ghim điểm vào/ra về đúng độ cao
+seeded — thiếu nó thì target hiện ra đã lệch khỏi đường của chính nó, đọc ra như một glitch.
+
+Test chốt điểm này bằng **dấu của curvature ba điểm**: một đường thẳng có sai phân cấp hai luôn bằng 0,
+một cung đơn có sai phân cấp hai không đổi dấu. Đường bay phải đổi dấu cả hai chiều.
+
+**Giữ nguyên** `rainbowTargetMotionsForInterval` + `sweepRainbowTargets` giải trong hệ quy chiếu của
+target (`relativeFrom`/`relativeTo`) — đó là thứ làm cho việc bắn một mục tiêu đang bay là chính xác,
+và nó không liên quan gì tới phase.
+
+### 19.3 Dải bay phải là dải *bắn tới được*, không phải dải *nhìn thấy*
+
+Đây là phát hiện đáng kể nhất của lượt này, và là một lỗi tôi tự tạo rồi tự bắt.
+
+Bản đầu cho target bay ở `v` **0,26–0,72** — nghe hợp lý vì nó nằm gọn trong màn hình. Nhưng đo lại
+envelope của pháo trên máy 375×812 bằng cách giữ joystick và quét: crosshair chỉ với được `y ≈ 186–453`,
+tức `v ≈ 0,10–0,48`. Nghĩa là target như seed 104 (`v` 0,6–0,77) **nằm ngoài tầm bắn hoàn toàn** —
+người chơi thấy nó, ngắm theo nó, và không bao giờ bắn tới được.
+
+Chỉnh lại: entry/exit `0,16 + hash × 0,26`, clamp `WANDER_V_LOW = 0,12` / `WANDER_V_HIGH = 0,48`.
+Test tên `"a flight stays inside the band the cannon can reach"` quét 60 seed × 21 mốc và chốt dải này.
+Đây cũng là mặt khác của rào đã ghi ở mục 18.5: envelope pháo không với tới hàng trên của model.
+
+### 19.4 Bia tròn 7 màu
+
+`buildRainbowTargets()` trước dựng cylinder + 3 ring (hồng/lục lam/vàng). Giờ là **7 ring đồng tâm**
+theo thứ tự quang phổ (`0xff3b45, 0xff8a1f, 0xffdf57, 0x24e07f, 0x2f9dff, 0x4b45d8, 0xb45cff`), ring
+trong cùng là một `CircleGeometry` đặc, dùng chung geometry/material như cũ. Số ring là hằng số một chỗ.
+
+### 19.5 Buff một phát
+
+```ts
+private weakPointBypassArmed = false;   // thay cho hookPhase + rainbowBankSeconds
+```
+
+- `armWeakPointBypass()` **gán `true`**, không tăng số — test chốt hàm này không được chứa `++` hay `+= 1`,
+  vì đó chính là cách "không cộng dồn" bị phá trong một lần sửa sau này.
+- `resolveBlockImpact(bypassArmed, faceHit)` → `CLAIM_CLUSTER` khi `bypassArmed || faceHit`.
+- Đọc-rồi-tiêu nằm **cùng một chỗ** trong `handleHit`. Điều này bắt buộc vì `continuousFire` cho nhiều
+  đạn bay cùng lúc: một viên rời nòng lúc còn buff có thể chạm **sau** khi viên khác đã tiêu nó. Cờ
+  được đọc tại **thời điểm impact**, không phải lúc bắn — nên nếu hai viên cùng chạm trong một bước,
+  chỉ viên đầu dùng được buff.
+- `handleMiss` và nhánh chạm sàn **không** chạm vào cờ — test chốt điểm này.
+
+### 19.6 Visual
+
+| Yêu cầu | Cách làm |
+|---|---|
+| Pháo hoa rơi | Dùng lại `.climax-fireworks` + `@keyframes climax-fall`, đổi điều kiện render sang `bypassArmed` |
+| Wave cầu vồng | Dùng lại `@keyframes rainbow-status` trên `.bypass-banner-wave` |
+| Text | `.bypass-banner` — "Next shot ignores Weak Points", `role="status"` `aria-live="polite"` |
+| Lớp cầu vồng ngoài ụ súng | **Đổi cách làm.** Trước là `updateRainbowCannonColors()` hue-cycle chính material của cannon — đó là *đổi màu súng*, không phải *lớp bọc*. Giờ là một `SphereGeometry(1.16)` translucent unlit, **child của `cannonRoot`** nên nhún theo recoil/aim, `CanvasTexture` cầu vồng vẽ runtime và scroll offset |
+| Weak Point ẩn | `setRainbowVisualState()` đã làm đúng việc này, chỉ đổi thứ điều khiển nó sang `bypassArmed` |
+
+**Băng buff không làm xê dịch layout.** Nó `position: absolute` ở
+`top: calc(… + var(--hud-height) + 4px)`, nên `--hud-height` giữ nguyên bất kể armed hay không — nếu
+nó chiếm chỗ trong `.hud-top` thì scene 3D sẽ giật mỗi lần armed.
+
+### 19.7 Phần bỏ
+
+- **Dải status trên cùng** (`section.hook-status`): `TIME` readout, tên phase + phụ đề, và
+  `rainbow-readout` — chip `PRECISION` **chính là** phần tử này ở nhánh thứ ba, nên bỏ PRECISION và bỏ
+  readout là cùng một việc. Chết theo: `formatRoundTime`, `hookPhaseLabel`, `rainbowReadoutLabel`.
+- `--hud-height` **140 → 92px**, mobile **126 → 86px** (= 40 strip + 8 gap trả lại cho scene 3D), cùng
+  ~22 selector của strip và `@keyframes timer-urgent`.
+- **Đồng hồ round và điều kiện thua theo thời gian**: `failTimeUp`, `mainTimeRemaining`, dòng `"Time up"`
+  trong `FAIL_BODY`.
+- **Phase machine và bank**: `GameplayHookPhase`, `WeakPointHookPhase`, `rainbowBankSeconds`,
+  `beginRainbowTargetEvent`, `finishRainbowTargetEvent`, `prepareHookRuntimeStep`,
+  `finishHookRuntimeStep`, `considerBoundary`/`hookStepDelta`, và trong `rainbow-hook.ts`:
+  `RAINBOW_PATHS`, `RainbowPathId`, `evaluateRainbowPath`, `createRainbowTargetTimeline`,
+  `getRainbowEventDuration`, `getActiveRainbowTargets`, `advanceHookCountdown`, `advanceHookElapsed`,
+  `climaxSecondsForHits`, `didCrossRainbowTrigger`, `HOOK_TIME_EPSILON_SECONDS`, `RAINBOW_BASELINE`.
+  Có một test chốt **mọi tên trên đều `undefined`**, để chúng không lặng lẽ quay lại.
+- **4 cột sheet**: `round_time`, `rainbow_trigger`, `rainbow_reward_sec`, `rainbow_paths` — vào
+  `RETIRED_COLUMNS` (18 → 14 cột) nên sheet cũ **báo lỗi rõ** thay vì âm thầm rơi về default. Quan
+  trọng vì `level-source.ts` ưu tiên đọc sheet nhúng trong file HTML đã ship.
+- `updateRainbowCannonColors`, `cannonMaterialColors`, `captureCannonMaterialColors` — cache màu chỉ
+  tồn tại để hoàn nguyên rig sau hue-cycle; lớp bọc nằm *trên* rig nên không có gì phải hoàn nguyên.
+
+### 19.8 Cái bẫy: vòng lặp physics nằm trong state machine
+
+`updateTimedGameplayStep()` **là nơi duy nhất `updateProjectile` được gọi**. Nó không chỉ đếm đồng hồ —
+nó chia nhỏ fixed step tại các mốc phase rồi tích phân đạn trong từng sub-step, để một cú va chạm luôn
+dùng đúng phase tại thời điểm nó xảy ra. Bỏ state machine mà không để ý là **đạn ngừng bay**.
+
+Cách làm: giữ hàm đó làm nơi tích phân đạn, lột sạch phần đồng hồ, thành một step phẳng — tiến
+`roundElapsed` → dựng motion → `updateProjectile` → `updateRainbowTargets`. **Bỏ luôn sub-step**: nó chỉ
+tồn tại để giữ "phase tại thời điểm impact" chính xác, mà buff giờ là một boolean đọc tại impact, không
+phải một phase có biên. Có test chốt trong engine **chỉ có đúng một** call site `updateProjectile`.
+
+### 19.9 Hai lỗi đã sửa trong lúc làm
+
+- **Tie-break so sánh chuỗi.** Hai target va cùng lúc thì tie-break dùng `target.id < best.target.id`,
+  nên từ 10 target trở lên `"rainbow-target-10"` đứng trước `"rainbow-target-2"`. Đổi sang `spawnIndex`.
+- **`3.0.0:NZ` không phải mặt trong.** Với block ở `z=0`, `NZ` hướng ra *xa* model — nó là mặt ngoài.
+  Đã đổi thành `3.0.0:PZ`.
+
+`emitHookState` trước re-render HUD ~10 lần/giây cho các giá trị UI không còn đọc (signature gồm cả
+`mainTimeRemaining` làm tròn 0,1 s). `HookSnapshot` co lại còn một cờ → HUD chỉ render lại vài lần mỗi
+round. Đây là lợi ích thật, không phải dọn cho đẹp.
+
+### 19.10 Đã kiểm được gì trong game thật
+
+375×812, lái bằng pointer event tổng hợp, closed-loop: tính vị trí target bằng đúng công thức của
+`rainbow-hook.ts` rồi lái crosshair tới đó. Vị trí target trên màn **chính là** `(u·W, v·H)`, vì
+`targetPlanePointAt` đặt target lên plane bằng cách nghịch đảo tia camera qua đúng pixel đó.
+
+- Bia **7 màu**, đường bay không thẳng, và **bắn trúng được** sau khi chỉnh dải ở 19.3.
+- Trúng target → banner "NEXT SHOT IGNORES WEAK POINTS" + wave, **18** hạt pháo hoa rơi, `is-rainbow-armed`
+  trên `.game-frame`, lớp cầu vồng quanh ụ súng, và **không còn bullseye nào trên model** (Weak Point ẩn hết).
+- `--hud-height` giữ **92px** cả khi armed → **không xê dịch layout**.
+- **Phép thử có đối chứng** cho buff, cùng một điểm ngắm `(150, 258)` — một mặt `PZ` không có Weak Point
+  nào author trên đó:
+  - Unarmed, hai phát: `claimed=false` → đạn bật ra. Xác nhận mặt này thật sự không có dấu.
+  - Armed, cùng điểm đó: `claimed=true` (RED 0 → 3) và `armedAfter=false` → buff hoạt động **và** bị tiêu.
+- **Bắn trượt**: một điểm đã chứng minh là không khí (unarmed bắn vào đó không claim gì) → `claimed=false`
+  và **buff còn nguyên** (`armed=true`).
+- **Chơi tới 96 s: `result=null`** — không có FAIL `Time up`. Round thật sự không giới hạn thời gian.
+- Breakpoint 360×780 và 375×700: `--hud-height` chuyển 92 → 86px, banner luôn cách HUD 4px, không tràn
+  ngang lẫn dọc.
+- Console không có lỗi của game. Hai lỗi còn lại đều là artifact của automation: `navigator.vibrate` bị
+  Chrome chặn vì pointer tổng hợp không phải gesture thật, và `setPointerCapture` `NotFoundError` trace
+  về `<anonymous>` — chính script tôi inject, vì pointerId tổng hợp không phải pointer đang hoạt động.
+
+`npm test` **149/149**, `npm run lint` sạch. `npx tsc` còn 3 lỗi **có từ trước** ở `db/index.ts` và
+`worker/index.ts` (thiếu type Cloudflare Workers: `cloudflare:workers`, `Fetcher`, `D1Database`) —
+không thuộc file nào của lượt này.
+
+### 19.11 Rủi ro phải nói rõ
+
+- **Bỏ timer thì màn 2 và 3 không thể thua được nữa.** Đo ở mục 16.1: chúng có **0** nước thua trên
+  toàn bộ không gian trạng thái, nên `Time up` là điều kiện thua duy nhất còn sót của chúng. Màn 1 vẫn
+  thua được (68 nước, qua `Reserve full`). Bạn đã chọn phương án này sau khi tôi nêu, nên tôi làm đúng
+  vậy và ghi lại — muốn hai màn đó thua được thì cần `shot_limit`, hạ `batch_blocks`, hoặc thiết kế lại cụm.
+- **Mất cảnh báo hết giờ.** `.round-clock.is-urgent` là thứ duy nhất báo sắp hết thời gian; bỏ timer thì
+  không còn gì để báo — nhưng cũng không còn gì để thua, nên điều này tự triệt tiêu.
+- **Title trang vẫn là `3D Cannon Sort — Weak Point & Rainbow Climax`.** "Climax" giờ không còn là một
+  phase nào trong luật. Test marker HTML không còn assert title (nó chốt `"Next shot ignores Weak Points"`,
+  `"weak_points"`, `"rainbow_target_count"`), nên đổi title là một dòng — tôi để nguyên vì bạn chưa yêu cầu.
+- **`outputs/final_concept.md` và `README.md` không hề nhắc Weak Point / Rainbow.** Hai file đó đang lệch
+  source từ trước lượt này; tôi không viết lại chúng ở đây.

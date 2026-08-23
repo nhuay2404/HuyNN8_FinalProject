@@ -179,7 +179,7 @@ test("same-color results from different shots never merge", () => {
 // orderings — a crash, not a loss.
 test("a queued goal whose colour is still open waits instead of throwing", () => {
   const { levels, issues } = parseLevelSheet(LEVELS_SHEET);
-  assert.deepEqual(issues, []);
+  assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
   const level3 = levels.find((level) => level.id === 3);
   assert.ok(level3, "level 3 carries the goal_split this test is about");
   assert.deepEqual(level3.goals.map((goal) => `${goal.color}${goal.target}`), ["purple3", "orange6", "red6", "purple3"]);

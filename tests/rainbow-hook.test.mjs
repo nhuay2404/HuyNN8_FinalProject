@@ -1,148 +1,151 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  RAINBOW_BASELINE,
-  RAINBOW_PATHS,
-  WEAK_POINT_HIT_RADIUS_RATIO,
+  RAINBOW_TARGET_DEFAULTS,
   WEAK_POINT_VISUAL_RADIUS_RATIO,
-  advanceHookCountdown,
-  advanceHookElapsed,
-  climaxSecondsForHits,
-  createRainbowTargetTimeline,
-  didCrossRainbowTrigger,
-  evaluateRainbowPath,
-  getActiveRainbowTargets,
-  getRainbowEventDuration,
-  isBullseyeHit,
+  createRainbowSpawnSchedule,
+  isWeakPointFaceHit,
+  rainbowWanderAt,
   resolveBlockImpact,
 } from "../app/game/rainbow-hook.ts";
+import * as hook from "../app/game/rainbow-hook.ts";
 
 const closeTo = (actual, expected, message) => {
   assert.ok(Math.abs(actual - expected) < 1e-12, `${message}: expected ${expected}, got ${actual}`);
 };
 
-test("the hook exposes exactly the twelve authored paths", () => {
-  assert.deepEqual(RAINBOW_PATHS.map((path) => path.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-  assert.ok(RAINBOW_PATHS.slice(0, 10).every((path) => path.kind === "linear"));
-  assert.ok(RAINBOW_PATHS.slice(10).every((path) => path.kind === "quadratic"));
+test("a target enters off one side and leaves off the other", () => {
+  // The margin is what makes a target fly in rather than appear: at both ends it
+  // is outside the 0..1 frame, so the player never sees it materialise.
+  for (const seed of [1, 7, 42, 900]) {
+    const start = rainbowWanderAt(seed, 0);
+    const end = rainbowWanderAt(seed, 1);
+    assert.ok(start.u < 0 || start.u > 1, `seed ${seed} should start off-frame, got u=${start.u}`);
+    assert.ok(end.u < 0 || end.u > 1, `seed ${seed} should end off-frame, got u=${end.u}`);
+    assert.ok(Math.sign(start.u - 0.5) !== Math.sign(end.u - 0.5), `seed ${seed} should cross the frame`);
+  }
 });
 
-test("linear paths evaluate their normalized endpoints and midpoint", () => {
-  assert.deepEqual(evaluateRainbowPath(1, 0), { u: -0.15, v: 0.25 });
-  assert.deepEqual(evaluateRainbowPath(1, 1), { u: 1.15, v: 0.25 });
-  closeTo(evaluateRainbowPath(1, 0.5).u, 0.5, "path 1 midpoint u");
-  closeTo(evaluateRainbowPath(8, 0.5).u, 0.5, "path 8 midpoint u");
-  closeTo(evaluateRainbowPath(8, 0.5).v, 0.5, "path 8 midpoint v");
+test("a flight is never a straight line and never a single arc", () => {
+  // A line has a constant second difference of zero; one arc has a constant
+  // non-zero one. Sampling three-point curvature across the crossing and finding
+  // it changing sign is what separates a wander from either of those.
+  for (const seed of [3, 11, 58, 204]) {
+    const samples = Array.from({ length: 41 }, (_, index) => rainbowWanderAt(seed, index / 40).v);
+    const curvature = [];
+    for (let i = 1; i < samples.length - 1; i += 1) {
+      curvature.push(samples[i + 1] - 2 * samples[i] + samples[i - 1]);
+    }
+    const positive = curvature.some((value) => value > 1e-6);
+    const negative = curvature.some((value) => value < -1e-6);
+    assert.ok(positive && negative, `seed ${seed} should bend both ways, not trace a line or one arc`);
+  }
 });
 
-test("arc paths use their quadratic control point rather than linear interpolation", () => {
-  const leftToRight = evaluateRainbowPath(11, 0.5);
-  const rightToLeft = evaluateRainbowPath(12, 0.5);
-  closeTo(leftToRight.u, 0.5, "path 11 midpoint u");
-  closeTo(rightToLeft.u, 0.5, "path 12 midpoint u");
-  closeTo(leftToRight.v, 0.44, "path 11 quadratic midpoint v");
-  closeTo(rightToLeft.v, 0.44, "path 12 quadratic midpoint v");
-  assert.ok(leftToRight.v < 0.68, "the arc must rise toward the top of normalized screen space");
+test("a flight stays inside the band the cannon can reach", () => {
+  for (let seed = 0; seed < 60; seed += 1) {
+    for (let step = 0; step <= 20; step += 1) {
+      const { v } = rainbowWanderAt(seed, step / 20);
+      // The band is what the cannon can actually reach, not what fits on screen.
+      assert.ok(v >= 0.12 - 1e-9 && v <= 0.48 + 1e-9, `seed ${seed} left the reachable band at v=${v}`);
+    }
+  }
 });
 
-test("path sampling clamps finite progress at authored off-screen endpoints", () => {
-  assert.deepEqual(evaluateRainbowPath(3, -2), evaluateRainbowPath(3, 0));
-  assert.deepEqual(evaluateRainbowPath(3, 4), evaluateRainbowPath(3, 1));
-  assert.throws(() => evaluateRainbowPath(3, Number.NaN), /must be finite/);
-  assert.throws(() => evaluateRainbowPath(99, 0.5), /Unknown rainbow path id/);
+test("the same seed always flies the same path, and different seeds do not", () => {
+  assert.deepEqual(rainbowWanderAt(5, 0.37), rainbowWanderAt(5, 0.37));
+  assert.notDeepEqual(rainbowWanderAt(5, 0.37), rainbowWanderAt(6, 0.37));
+  // Out-of-range progress is clamped, so a late frame cannot fling a target past
+  // its own exit point.
+  assert.deepEqual(rainbowWanderAt(5, -3), rainbowWanderAt(5, 0));
+  assert.deepEqual(rainbowWanderAt(5, 9), rainbowWanderAt(5, 1));
+  assert.throws(() => rainbowWanderAt(5, Number.NaN), /progress must be finite/);
+  assert.throws(() => rainbowWanderAt(Number.NaN, 0.5), /seed must be finite/);
 });
 
-test("the forgiving prototype hit radius is visibly larger than the bullseye", () => {
+test("a round schedules its authored number of targets, scattered but repeatable", () => {
+  assert.deepEqual(
+    { ...RAINBOW_TARGET_DEFAULTS },
+    { targetCount: 3, spawnGapSeconds: 12, targetDurationSeconds: 4.5 },
+  );
+
+  const schedule = createRainbowSpawnSchedule({ levelSeed: 1 });
+  assert.equal(schedule.length, 3, "the authored count is what flies");
+  assert.deepEqual(schedule, createRainbowSpawnSchedule({ levelSeed: 1 }), "same level, same round");
+  assert.notDeepEqual(schedule, createRainbowSpawnSchedule({ levelSeed: 2 }));
+
+  // Each one is on screen for the authored duration, and they arrive in order.
+  for (const [index, window] of schedule.entries()) {
+    assert.equal(window.index, index);
+    closeTo(window.leaveAtSeconds - window.spawnAtSeconds, 4.5, `target ${index} duration`);
+    if (index > 0) assert.ok(window.spawnAtSeconds > schedule[index - 1].spawnAtSeconds);
+  }
+
+  // The first gap is half to one gap, later ones half to one and a half, so the
+  // scatter is bounded rather than arbitrary.
+  assert.ok(schedule[0].spawnAtSeconds >= 6 && schedule[0].spawnAtSeconds <= 12, `first at ${schedule[0].spawnAtSeconds}`);
+  for (let index = 1; index < schedule.length; index += 1) {
+    const gap = schedule[index].spawnAtSeconds - schedule[index - 1].spawnAtSeconds;
+    assert.ok(gap >= 6 && gap <= 18, `gap ${index} was ${gap}`);
+  }
+});
+
+test("a schedule gives every target its own flight seed", () => {
+  const seeds = createRainbowSpawnSchedule({ levelSeed: 4, targetCount: 5 }).map((window) => window.seed);
+  assert.equal(new Set(seeds).size, seeds.length, "two targets must not fly the same path");
+});
+
+test("a schedule refuses nonsense rather than producing a broken round", () => {
+  assert.throws(() => createRainbowSpawnSchedule({ levelSeed: 1, targetCount: -1 }), /non-negative integer/);
+  assert.throws(() => createRainbowSpawnSchedule({ levelSeed: 1, targetCount: 1.5 }), /non-negative integer/);
+  assert.throws(() => createRainbowSpawnSchedule({ levelSeed: Number.NaN }), /levelSeed must be finite/);
+  assert.throws(() => createRainbowSpawnSchedule({ levelSeed: 1, baseGapSeconds: -1 }), /non-negative finite/);
+  assert.deepEqual(createRainbowSpawnSchedule({ levelSeed: 1, targetCount: 0 }), []);
+});
+
+test("the hook no longer carries a clock, a bank or a path table", () => {
+  // The round is untimed and a hit arms one shot instead of banking seconds, so
+  // every helper that existed to serve those is gone rather than left dangling.
+  for (const name of [
+    "RAINBOW_PATHS",
+    "RAINBOW_BASELINE",
+    "evaluateRainbowPath",
+    "createRainbowTargetTimeline",
+    "getRainbowEventDuration",
+    "getActiveRainbowTargets",
+    "advanceHookCountdown",
+    "advanceHookElapsed",
+    "climaxSecondsForHits",
+    "didCrossRainbowTrigger",
+    "HOOK_TIME_EPSILON_SECONDS",
+  ]) {
+    assert.equal(hook[name], undefined, `${name} should be gone`);
+  }
+});
+
+test("the bullseye radius is presentation only and no longer gates a hit", () => {
   assert.equal(WEAK_POINT_VISUAL_RADIUS_RATIO, 0.21);
-  assert.equal(WEAK_POINT_HIT_RADIUS_RATIO, 0.28);
-  assert.ok(WEAK_POINT_HIT_RADIUS_RATIO > WEAK_POINT_VISUAL_RADIUS_RATIO);
+  // A separate, wider hit radius used to exist so that aiming at a disc was
+  // survivable. With the whole face counting there is nothing left to widen.
+  assert.equal(Object.keys(hook).some((name) => /HIT_RADIUS/.test(name)), false);
+  assert.equal(typeof hook.isBullseyeHit, "undefined", "the radius predicate is gone");
 });
 
-test("bullseye hit testing selects the two tangent axes for every face pair", () => {
-  const cases = [
-    ["PX", { x: 40, y: 0.1, z: 0.1 }],
-    ["NX", { x: -40, y: 0.1, z: 0.1 }],
-    ["PY", { x: 0.1, y: 40, z: 0.1 }],
-    ["NY", { x: 0.1, y: -40, z: 0.1 }],
-    ["PZ", { x: 0.1, y: 0.1, z: 40 }],
-    ["NZ", { x: 0.1, y: 0.1, z: -40 }],
-  ];
-
-  for (const [face, localPoint] of cases) {
-    assert.equal(isBullseyeHit({ localPoint, impactedFace: face, weakPointFace: face }), true, face);
+test("a Weak Point is the whole face, anywhere on it", () => {
+  for (const face of ["PX", "NX", "PY", "NY", "PZ", "NZ"]) {
+    assert.equal(isWeakPointFaceHit({ impactedFace: face, weakPointFace: face }), true, face);
   }
 });
 
-test("bullseye hit testing uses a circular boundary scaled to the block", () => {
-  const base = { impactedFace: "PZ", weakPointFace: "PZ", blockSize: 2 };
-  assert.equal(isBullseyeHit({ ...base, localPoint: { x: 0.56, y: 0, z: 99 } }), true, "the radius edge is included");
-  assert.equal(isBullseyeHit({ ...base, localPoint: { x: 0.4, y: 0.4, z: 99 } }), false, "a square corner is outside the circle");
-  assert.equal(isBullseyeHit({ ...base, localPoint: { x: 0.57, y: 0, z: 99 } }), false, "outside the radius misses");
+test("landing on a face the Weak Point was not authored on is not a hit", () => {
+  assert.equal(isWeakPointFaceHit({ impactedFace: "PZ", weakPointFace: "PX" }), false);
+  assert.equal(isWeakPointFaceHit({ impactedFace: "PZ", weakPointFace: "NZ" }), false, "the opposite face is a different face");
 });
 
-test("an otherwise centred impact cannot hit a Weak Point authored on another face", () => {
-  assert.equal(isBullseyeHit({
-    localPoint: { x: 0, y: 0, z: 0.5 },
-    impactedFace: "PZ",
-    weakPointFace: "PX",
-  }), false);
-});
-
-test("block impact is resolved from the phase at impact time", () => {
-  assert.equal(resolveBlockImpact("NORMAL_WEAK_POINT", true), "CLAIM_CLUSTER");
-  assert.equal(resolveBlockImpact("NORMAL_WEAK_POINT", false), "RICOCHET_SHAKE");
-  assert.equal(resolveBlockImpact("RAINBOW_TARGET_EVENT", false), "RICOCHET_SHAKE");
-  assert.equal(resolveBlockImpact("RAINBOW_CLIMAX", false), "CLAIM_CLUSTER");
-});
-
-test("the baseline timeline reproduces A 0–4, B 2–6, C 4–8", () => {
-  const timeline = createRainbowTargetTimeline();
-  assert.deepEqual(timeline, [
-    { index: 0, label: "A", spawnAtSeconds: 0, leaveAtSeconds: 4 },
-    { index: 1, label: "B", spawnAtSeconds: 2, leaveAtSeconds: 6 },
-    { index: 2, label: "C", spawnAtSeconds: 4, leaveAtSeconds: 8 },
-  ]);
-  assert.equal(getRainbowEventDuration(timeline), 8);
-  assert.equal(getRainbowEventDuration(RAINBOW_BASELINE), 8, "level-style config is accepted directly");
-  assert.deepEqual(getActiveRainbowTargets(timeline, 3).map((target) => target.label), ["A", "B"]);
-  assert.deepEqual(getActiveRainbowTargets(timeline, 4).map((target) => target.label), ["B", "C"]);
-  assert.deepEqual(getActiveRainbowTargets(timeline, 8), []);
-});
-
-test("the separate Climax bank grows by five seconds per baseline hit", () => {
-  assert.equal(RAINBOW_BASELINE.rewardSecondsPerHit, 5);
-  assert.deepEqual([0, 1, 2, 3].map((hits) => climaxSecondsForHits(hits)), [0, 5, 10, 15]);
-  assert.throws(() => climaxSecondsForHits(-1), /non-negative integer/);
-});
-
-test("the 25-second trigger fires only on the countdown crossing", () => {
-  assert.equal(didCrossRainbowTrigger(25.1, 25), true);
-  assert.equal(didCrossRainbowTrigger(26, 24.5), true);
-  assert.equal(didCrossRainbowTrigger(25, 24), false, "a previously-triggered range does not retrigger");
-  assert.equal(didCrossRainbowTrigger(20, 19), false, "round_time <= 25 remains an explicit caller policy");
-  assert.equal(didCrossRainbowTrigger(30, 29), false);
-  assert.equal(didCrossRainbowTrigger(26, 24, 25, true), false, "the one-shot latch suppresses retriggering");
-});
-
-test("fixed-step hook clocks land on authored boundaries without an extra frame", () => {
-  const step = 1 / 60;
-  let main = 90;
-  let triggerCount = 0;
-  for (let tick = 0; tick < 65 * 60; tick += 1) {
-    const previous = main;
-    main = advanceHookCountdown(main, step, 25);
-    if (didCrossRainbowTrigger(previous, main, 25, triggerCount > 0)) triggerCount += 1;
-  }
-  assert.equal(main, 25);
-  assert.equal(triggerCount, 1);
-
-  let eventElapsed = 0;
-  for (let tick = 0; tick < 8 * 60; tick += 1) {
-    eventElapsed = advanceHookElapsed(eventElapsed, step, 8);
-  }
-  assert.equal(eventElapsed, 8, "the baseline event ends on tick 480");
-
-  let climax = 5;
-  for (let tick = 0; tick < 5 * 60; tick += 1) climax = advanceHookCountdown(climax, step);
-  assert.equal(climax, 0, "a five-second reward ends on tick 300");
+test("a block impact is resolved from the bypass flag as it stands at impact", () => {
+  // Armed claims whatever it lands on; unarmed still needs the marked face.
+  assert.equal(resolveBlockImpact(true, false), "CLAIM_CLUSTER");
+  assert.equal(resolveBlockImpact(true, true), "CLAIM_CLUSTER");
+  assert.equal(resolveBlockImpact(false, true), "CLAIM_CLUSTER");
+  assert.equal(resolveBlockImpact(false, false), "RICOCHET_SHAKE");
 });

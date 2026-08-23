@@ -1,10 +1,13 @@
+// Extension spelled out because this module is both bundled and imported
+// straight into Node by work/sync-levels.mjs and the tests, and Node will not
+// resolve an extensionless TypeScript specifier.
+import { RAINBOW_TARGET_DEFAULTS } from "./rainbow-hook.ts";
 import type {
   BlockColor,
   BlockSpec,
   GoalSpec,
   LevelConfig,
   RainbowConfig,
-  RainbowPathId,
   WeakPointFace,
   WeakPointSpec,
 } from "./types";
@@ -45,25 +48,17 @@ export const SHEET_COLUMNS = [
   "goal_slots",
   "batch_blocks",
   "shot_limit",
-  "round_time",
   "weak_points",
-  "rainbow_trigger",
   "rainbow_target_count",
   "rainbow_spawn_gap",
   "rainbow_target_duration",
-  "rainbow_reward_sec",
-  "rainbow_paths",
   "notes",
 ] as const;
 
 export const HOOK_LEVEL_DEFAULTS = {
-  roundTimeSeconds: 90,
-  rainbowTriggerSeconds: 25,
-  rainbowTargetCount: 3,
-  rainbowSpawnGapSeconds: 2,
-  rainbowTargetDurationSeconds: 4,
-  rainbowRewardSeconds: 5,
-  rainbowPathIds: [1, 8, 11],
+  rainbowTargetCount: RAINBOW_TARGET_DEFAULTS.targetCount,
+  rainbowSpawnGapSeconds: RAINBOW_TARGET_DEFAULTS.spawnGapSeconds,
+  rainbowTargetDurationSeconds: RAINBOW_TARGET_DEFAULTS.targetDurationSeconds,
 } as const;
 
 // Everything a level does not spell out comes from here, so a row only carries
@@ -88,7 +83,6 @@ const LEVEL_DEFAULTS = {
   overfillTransaction: "CREATE_EXCESS_THEN_ADVANCE_TEMP",
   claimedBlockCollision: "PASS_THROUGH_TEMP",
   postWinAutoClearPattern: "STABLE_CLUSTER_CADENCE_TEMP",
-  roundTimeTriggerPolicy: "REQUIRE_ROUND_TIME_ABOVE_TRIGGER_TEMP",
 } as const;
 
 export type LevelSheetIssue = {
@@ -458,30 +452,14 @@ function parseWeakPoints(
   return weakPoints;
 }
 
-function parseRainbowPaths(raw: string, targetCount: number, report: (message: string) => void) {
-  const source = raw.trim() || HOOK_LEVEL_DEFAULTS.rainbowPathIds.join("|");
-  const pathIds: RainbowPathId[] = [];
-  let invalid = false;
-  for (const rawEntry of source.split("|")) {
-    const entry = rawEntry.trim();
-    const pathId = Number(entry);
-    if (!entry || !Number.isInteger(pathId) || pathId < 1 || pathId > 12) {
-      report(`rainbow_paths entry "${entry}" must be an integer from 1 to 12`);
-      invalid = true;
-      continue;
-    }
-    pathIds.push(pathId as RainbowPathId);
-  }
-  if (!invalid && pathIds.length !== targetCount) {
-    report(`rainbow_paths has ${pathIds.length} paths but rainbow_target_count is ${targetCount}`);
-  }
-  return pathIds;
-}
-
 const RETIRED_COLUMNS: Array<[string, string]> = [
   ["barrel_layers", "the barrel mechanic was removed"],
   ["links", "the link mechanic was removed"],
   ["batch_slots", "renamed to batch_blocks, and it now counts blocks rather than slots"],
+  ["round_time", "the round timer was removed; a round has no time limit"],
+  ["rainbow_trigger", "Rainbow Targets are scheduled from a seed, not from a countdown threshold"],
+  ["rainbow_reward_sec", "a Rainbow Target hit arms one weak-point bypass instead of banking seconds"],
+  ["rainbow_paths", "target flight paths are generated from a seed, not authored"],
 ];
 
 // An unknown column would otherwise be ignored in silence, and a cell the
@@ -542,36 +520,14 @@ function buildLevel(
   const activeGoalSlots = parsePositiveInteger(cells.goal_slots ?? "", "goal_slots", report) ?? LEVEL_DEFAULTS.activeGoalSlots;
   const reserveBlocks = parsePositiveInteger(cells.batch_blocks ?? "", "batch_blocks", report) ?? LEVEL_DEFAULTS.reserveBlocks;
   const shotLimit = parsePositiveInteger(cells.shot_limit ?? "", "shot_limit", report);
-  const roundTimeSeconds = parsePositiveNumber(cells.round_time ?? "", "round_time", report)
-    ?? HOOK_LEVEL_DEFAULTS.roundTimeSeconds;
   const weakPoints = parseWeakPoints(cells.weak_points ?? "", dims, blocks, report, warn);
-  const triggerSeconds = parsePositiveNumber(cells.rainbow_trigger ?? "", "rainbow_trigger", report)
-    ?? HOOK_LEVEL_DEFAULTS.rainbowTriggerSeconds;
   const targetCount = parsePositiveInteger(cells.rainbow_target_count ?? "", "rainbow_target_count", report)
     ?? HOOK_LEVEL_DEFAULTS.rainbowTargetCount;
   const spawnGapSeconds = parsePositiveNumber(cells.rainbow_spawn_gap ?? "", "rainbow_spawn_gap", report)
     ?? HOOK_LEVEL_DEFAULTS.rainbowSpawnGapSeconds;
   const targetDurationSeconds = parsePositiveNumber(cells.rainbow_target_duration ?? "", "rainbow_target_duration", report)
     ?? HOOK_LEVEL_DEFAULTS.rainbowTargetDurationSeconds;
-  const rewardSeconds = parsePositiveNumber(cells.rainbow_reward_sec ?? "", "rainbow_reward_sec", report)
-    ?? HOOK_LEVEL_DEFAULTS.rainbowRewardSeconds;
-  const pathIds = parseRainbowPaths(cells.rainbow_paths ?? "", targetCount, report);
-  const rainbow: RainbowConfig = {
-    triggerSeconds,
-    targetCount,
-    spawnGapSeconds,
-    targetDurationSeconds,
-    rewardSeconds,
-    pathIds,
-  };
-  // TEMP policy: an authored level cannot begin at/below the event threshold.
-  // That case needs a separate design decision about whether to trigger at t=0.
-  if (roundTimeSeconds <= triggerSeconds) {
-    report(
-      `round_time (${roundTimeSeconds}) must be greater than rainbow_trigger (${triggerSeconds}); `
-      + "TEMP policy rejects an immediate start-of-round trigger",
-    );
-  }
+  const rainbow: RainbowConfig = { targetCount, spawnGapSeconds, targetDurationSeconds };
   checkGoalWindows(goals, activeGoalSlots, report);
 
   const biggestCluster = largestClusterSize(blocks);
@@ -586,7 +542,6 @@ function buildLevel(
     activeGoalSlots,
     reserveBlocks,
     shotLimit,
-    roundTimeSeconds,
     weakPoints,
     rainbow,
     goals,
