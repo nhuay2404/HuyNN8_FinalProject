@@ -86,6 +86,15 @@ export type RainbowScheduleOptions = Readonly<{
   targetCount?: number;
   baseGapSeconds?: number;
   durationSeconds?: number;
+  /**
+   * When the first target arrives, instead of a seeded fraction of the gap.
+   *
+   * The tutorial needs one the moment the lesson asks for it: a player told to
+   * hit a Rainbow Target and then left watching an empty sky for six seconds
+   * reads that as the game being broken. Later targets still use the gap, so
+   * retries stay spread out.
+   */
+  firstSpawnSeconds?: number;
 }>;
 
 function requireNonNegativeFinite(value: number, name: string) {
@@ -112,10 +121,23 @@ export function createRainbowSpawnSchedule(options: RainbowScheduleOptions): rea
   if (!Number.isFinite(options.levelSeed)) throw new TypeError("levelSeed must be finite");
   requireNonNegativeFinite(baseGapSeconds, "baseGapSeconds");
   requireNonNegativeFinite(durationSeconds, "durationSeconds");
+  if (options.firstSpawnSeconds !== undefined) {
+    requireNonNegativeFinite(options.firstSpawnSeconds, "firstSpawnSeconds");
+  }
 
   const windows: RainbowSpawnWindow[] = [];
   let spawnAtSeconds = 0;
   for (let index = 0; index < targetCount; index += 1) {
+    if (index === 0 && options.firstSpawnSeconds !== undefined) {
+      spawnAtSeconds = options.firstSpawnSeconds;
+      windows.push(Object.freeze({
+        index,
+        seed: options.levelSeed * 97 + index * 31 + 7,
+        spawnAtSeconds,
+        leaveAtSeconds: spawnAtSeconds + durationSeconds,
+      }));
+      continue;
+    }
     const jitter = index === 0
       ? 0.5 + hash(options.levelSeed, 100) * 0.5
       : 0.5 + hash(options.levelSeed, 100 + index);

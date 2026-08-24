@@ -180,8 +180,11 @@ test("same-color results from different shots never merge", () => {
 test("a queued goal whose colour is still open waits instead of throwing", () => {
   const { levels, issues } = parseLevelSheet(LEVELS_SHEET);
   assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
-  const level3 = levels.find((level) => level.id === 3);
-  assert.ok(level3, "level 3 carries the goal_split this test is about");
+  // The goal_split board is row 8 now: the onboarding ramp took rows 1-5 and
+  // pushed the three original boards down. This test is about the split, so it
+  // follows the split rather than the row number.
+  const level3 = levels.find((level) => level.id === 8);
+  assert.ok(level3, "the goal_split level this test is about is missing");
   assert.deepEqual(level3.goals.map((goal) => `${goal.color}${goal.target}`), ["purple3", "orange6", "red6", "purple3"]);
 
   const claims: Array<[BlockColor, number]> = [

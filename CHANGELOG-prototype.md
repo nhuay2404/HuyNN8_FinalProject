@@ -2133,3 +2133,689 @@ Các engine option dùng cho tutorial đều có default giữ nguyên hành vi 
 - `outputs/3d-cannon-sort.html`: đã bundle lại, **901.431 bytes**, gồm 3 campaign level và 3 tutorial.
 - `npx tsc --noEmit --incremental false`: vẫn chỉ có ba lỗi ambient Cloudflare đã tồn tại trước lượt này
   (`cloudflare:workers`, `Fetcher`, `D1Database`), không phát sinh lỗi gameplay mới.
+
+## 26. Tutorial làm lại: dạy đúng một luật, và không che chỗ chơi (23/08)
+
+Ba vấn đề, và vấn đề đầu là vấn đề thật sự nghiêm trọng — không phải chuyện hình.
+
+### 26.1 Tutorial cũ dạy sai luật rồi tự phủ định
+
+`tutorialPresentation` cũ trả về `allowAnyBlockFace: chapter <= 1` và `showWeakPoints: chapter === 2`.
+Nghĩa là:
+
+| Lesson | Bullseye trên block | Bắn mặt nào cũng phá |
+|---|---|---|
+| 1. Controls | **không** | **có** |
+| 2. Sort & Reserve | **không** | **có** |
+| 3. Weak Point | có | không |
+
+Người chơi bắn hai lesson đầu với luật "chỗ nào cũng được", rồi lesson 3 hiện bullseye ra và đổi luật.
+Đó không phải dạy tuần tự — đó là dạy một luật **không tồn tại trong game**, rồi buộc người chơi phải
+*quên đi*. Campaign chưa bao giờ cho bắn mặt bất kỳ.
+
+Giờ cả ba lesson đều `allowAnyBlockFace: false` và `showWeakPoints: true`. Có test quét cả ba chương
+để chốt điểm này, vì nó là loại thứ dễ bị nới lại cho "dễ vào" rồi tái lập đúng cái bẫy cũ.
+
+Kéo theo là phải author `weak_points` cho hai level tutorial đầu:
+
+- **Lesson 1** (`controls`): cặp vàng và cặp đỏ có mark ở mặt `PZ` — mặt hướng về người chơi, nên phát
+  đầu tiên không cần khéo. Cặp **xanh nằm sau cặp vàng**, nên mark của nó đặt ở `NZ` — mặt sau. Đây là
+  điều làm cho bước "xoay model" **có việc để làm**: xoay để *tìm mark*, thay vì xoay vì được bảo xoay.
+- **Lesson 2** (`sort-batch`): một hàng ba block, cả ba mark đều `PZ`. Lesson này nói về *cụm đi đâu*,
+  không phải về tìm mặt, nên mark không được thêm độ khó nào.
+- **Lesson 3**: đỏ được thêm mark thứ hai (cả hai block đều `PZ`) để bước "Hit the mark" không đòi ngắm
+  chính xác. Xanh **giữ đúng một mark ở `NX`** — mặt bên. Đó chính là lý do bypass đáng giá: nếu xanh
+  cũng có mark ở mặt trước thì bước bypass chỉ là một lối tắt cho cú bắn đã sẵn có.
+
+Thứ tự dạy giờ là: *luật* (mark) → *đích đến* (goal/reserve) → *ngoại lệ* (bypass). Lesson 3 dạy một
+ngoại lệ của luật người chơi đã biết, chứ không phải lật lại luật.
+
+### 26.2 Chrome tutorial không còn che chỗ chơi
+
+Cũ: một `header` cao 48px ở trên, một `tutorial-coach` card ở dưới cao ~120px, và HUD bị đẩy xuống
+`top: 82px` để tránh header. Card dưới **che hẳn ụ súng** — đúng thứ mà lesson 1 đang dạy người chơi dùng.
+
+Mới, theo hướng bạn đề xuất: **màn đen mờ + khoanh vùng + text + mũi tên**.
+
+- **Scrim và vòng khoanh là cùng một element.** `.tutorial-spot` là một hình có
+  `box-shadow: 0 0 0 2000px rgba(4,7,26,.72)` — spread lớn hơn frame, nên nó tự tô tối mọi thứ *bên
+  ngoài* nó. Cái lỗ là lỗ thật, không phải một vùng sáng hơn vẽ đè lên một lớp phủ.
+- **Lỗ mang hình của thứ nó soi.** Vòng tròn cho vùng trong scene; **bo góc** cho phần tử HUD. Bản đầu
+  tôi dùng vòng tròn cho tất cả và thanh reserve (rộng 343, cao 32) cần bán kính 116 để chứa — vòng đó
+  **nuốt luôn hàng goal phía trên**. Đo được, sửa được.
+- **Cue là một pill**: pictogram + 3–4 chữ + 3 dot bước, kèm **mũi tên chỉ ngược về vòng**. Nó tự đặt
+  **phía đối diện** vòng so với giữa frame (`is-below` / `is-above`), nên không bao giờ nằm lên thứ nó
+  đang chỉ.
+- **Tiến độ tổng** là 3 đoạn cao **3px** sát mép trên, kiểu story. **Nút ✕** ngồi đúng ô mà bánh răng
+  settings dùng trong màn thật. Cả hai **không đẩy gì cả** — `.hud-top` giữ nguyên vị trí bình thường,
+  và rule `.game-frame.is-tutorial:not(.is-tutorial-no-hud) .hud-top { top: 82px }` bị xoá.
+- Lesson ẩn HUD thì trả lại luôn dải 92px đó cho scene 3D, thay vì để trống chỗ cho một thanh không có.
+
+### 26.3 Vị trí vòng khoanh phải **đo**, không được đoán
+
+Đây là phần tốn công nhất và đáng ghi lại.
+
+Goal card và thanh reserve có vị trí phụ thuộc `--hud-height` và safe-area, nên chúng được
+`getBoundingClientRect()` thật. Nhưng model nằm trong **canvas** — không có element nào để đo. Bản đầu
+tôi dùng phân số chiều cao scene (`0.20`, rồi `0.24`). Đo lại trong game: tâm cụm ở `y ≈ 272` còn vòng
+ở `y = 206` — **lệch ~70px**, vì camera không đóng khung cụm ở giữa scene.
+
+Nên engine có thêm `modelScreenBounds()`: chiếu **tám góc** của `Box3` bao các block đang active qua
+`camera.project()`. Chính xác ở mọi kích thước màn hình, và **đổi theo model khi nó xoay** — nên vòng
+được cập nhật bằng rAF trong lúc bước "Find the mark" đang chạy, chỉ `setState` khi lệch quá 1px. Đo
+trong game: vòng là 272px ở lesson 1, và co còn **200px** ở bước cuối lesson 3 khi chỉ còn cặp xanh.
+
+Chiếu tám góc, không phải hai, vì điểm rộng nhất trên màn của một cụm đã xoay không nhất thiết là một
+trong hai góc dựng nên cái box.
+
+Riêng `.aim-zone` thì ngược lại: nó **quá lớn** (375×351) — viền theo nó thì chẳng làm tối gì và chẳng
+chỉ vào đâu. Nên giữ **tâm đo được** của nó và vẽ một vòng 224px lên ụ súng.
+
+### 26.4 Bỏ wall of text, dùng pictogram
+
+`TutorialStepCopy` cũ có `title` + `body` + `hint` — ba dòng chữ mỗi bước, ví dụ *"Drag directly across
+the blocks. Turn the puzzle to inspect faces that the camera cannot see yet."* Giờ mỗi bước là:
+
+| | |
+|---|---|
+| `glyph` | Pictogram vẽ bằng **inline SVG** trên lưới 24×24, ăn `currentColor` |
+| `caption` | **3–4 chữ**, là *tên* của pictogram chứ không phải câu |
+| `described` | Câu đầy đủ, **chỉ dành cho screen reader** qua `aria-label` |
+
+Chín pictogram: `rotate` (mũi tên vòng trên một khối), `drag`, `release`, `goal` (khối → khay đích),
+`reserve` (khối → khay chờ), `autosort`, `mark` (khối có bullseye), `rainbow` (bia nhiều vòng),
+`bypass` (bullseye bị gạch). Vẽ bằng path, **không phải emoji** — emoji render khác nhau trên từng nền
+tảng — và **không fetch asset**, vì bản offline không được phép.
+
+Đây là chỗ tôi cố ý không cắt: xoá chữ khỏi màn hình mà xoá luôn khỏi accessibility tree thì screen
+reader chỉ còn nghe "Find the mark" mà không biết phải làm gì. Câu vẫn còn, chỉ là không hiện. Test
+chốt cả hai chiều: caption phải 2–4 chữ và ≤24 ký tự, `described` phải dài hơn caption, và ba field
+`title`/`body`/`hint` phải **không còn tồn tại**.
+
+Chữ trên tay chỉ (`DRAG TO ROTATE` / `DRAG & RELEASE`) cũng bỏ — caption đã nói điều đó rồi, tay chỉ
+lo diễn tả động tác.
+
+### 26.5 Từng bước soi vào đâu
+
+| Lesson | Bước | Vòng khoanh | Caption |
+|---|---|---|---|
+| 1 | 1 | Cụm block (chiếu thật, theo model xoay) | Find the mark |
+| 1 | 2–3 | Ụ súng (tâm `.aim-zone`, vòng 224px) | Drag to aim → Release to fire |
+| 2 | 1 | Hàng goal (bo góc, khít) | Match the goal |
+| 2 | 2 | Thanh reserve (bo góc, khít) | No match waits |
+| 2 | 3 | Hàng goal | Reserve auto-sorts |
+| 3 | 1 | Cụm block | Hit the mark |
+| 3 | 2 | Dải bay của Rainbow Target | Hit the rainbow |
+| 3 | 3 | Cụm block còn lại | Now any face |
+
+Lesson xong thì **scrim tắt hẳn** — hiện một tick và một nút (`Next` / `Finish`), không có đoạn văn nào
+giải thích rằng nó đã xong.
+
+### 26.6 Đã kiểm được gì trong game thật
+
+375×812, lái bằng pointer event tổng hợp, chạy trọn cả ba lesson:
+
+- **Lesson 1**: vòng model `272×272` bo `50%`, cue **below**; xoay quá ngưỡng → `Drag to aim`, vòng
+  chuyển sang ụ súng `224×224`, cue **above**; kéo rồi nhả → `Release to fire` → hoàn thành.
+- **Lesson 2**: `Match the goal` vòng bo góc `311×72` ở `y=4` (hàng goal); bắn đỏ →
+  `No match waits`, vòng `311×52` ở **`y=64`** (thanh reserve — phần tử khác, đo đúng); bắn xanh →
+  `Reserve auto-sorts` về `311×72`; bắn đỏ còn lại → hoàn thành.
+- **Lesson 3**: `Hit the mark` vòng `242×242`; bắn mặt có mark của đỏ → `Hit the rainbow` (nên
+  `WEAK_POINT_CLEARED` chạy đúng với mark mới); trúng Rainbow Target ở `p=0.50` → `Now any face`,
+  **banner armed**; bắn xanh ở mặt **không có dấu** → claim được, **banner tắt** (bypass bị tiêu), nút
+  đổi thành `Finish →`.
+- **Bullseye hiện từ lesson 1**, và ở lesson 3 nhìn thấy rõ **đỏ có mark, xanh không** — đúng cái làm
+  cho bước bypass có nghĩa.
+- Breakpoint **375×700** và **360×780**: cue nằm trọn trong frame, rail không chạm nút ✕, không tràn
+  ngang. Vòng model tự co theo cụm (`239px` ở màn 700, `262px` ở màn 780, `200px` khi chỉ còn cặp xanh).
+- Tab sạch: console **không có lỗi của game**. Còn lại là artifact automation (`navigator.vibrate` bị
+  Chrome chặn vì pointer tổng hợp không phải gesture thật, và `setPointerCapture NotFoundError` trace về
+  `<anonymous>` — script tôi inject).
+
+`npm test` **160/160**, `npm run lint` sạch. `npx tsc` vẫn 3 lỗi **có từ trước** ở `db/index.ts` và
+`worker/index.ts` (thiếu type Cloudflare Workers).
+
+### 26.7 Hai điều đáng nói
+
+- **Bước "Hit the rainbow" chỉ khoanh được *dải bay*, không khoanh được chính target.** Target bay tự do
+  qua cả chiều ngang màn hình; một vòng bám theo nó sẽ là một vòng chạy loạn khắp màn. Vòng hiện tại đặt
+  ở giữa dải bay, tức "để mắt ở đây". Nếu muốn bám sát thì cần một API tương tự `modelScreenBounds()`
+  cho target đang active — làm được, nhưng tôi không tự mở rộng phạm vi.
+- **Lesson 1 vẫn có ba goal và hai reserve slot trong level config** mà chương đó cố tình ẩn HUD, nên
+  người chơi phá cụm mà không thấy nó đi đâu. Đúng ý đồ (chưa dạy tới), nhưng nghĩa là lesson 1 có thể
+  kết thúc với reserve đầy mà không ai biết — không thành vấn đề vì lesson kết thúc ngay sau phát đầu.
+
+## 27. Năm màn đầu theo đường cong onboarding của game puzzle (24/08)
+
+Trước lượt này màn 1 là `Prism 4x3x2`: 24 block, 6 màu, 8 cụm, 5 đợt blocker. Đó là một màn giữa
+game đứng ở vị trí màn đầu. Giờ năm màn đầu đi theo đúng đường cong quen thuộc của game puzzle:
+giới thiệu → biến thể → mở rộng → kết hợp → tốt nghiệp.
+
+### 27.1 Năm màn, mỗi màn một việc
+
+| # | Tên | Hình | Block | Dạy điều gì | Bonus |
+|---|---|---|---|---|---|
+| 1 | First contact | 2x2x1 | 4 | Bắn vào mark → cụm bay vào goal. Hai mark hướng thẳng người chơi, hai goal đều mở, không có gì để cất | 0 |
+| 2 | Turn to look | 2x2x1 | 4 | Đúng hành động đó, nhưng **một mark nằm sau lưng** — phải xoay model mới bắn được | 0 |
+| 3 | Park it | 1x2x2 | 4 | **Reserve**, và bị buộc chứ không phải được mời: bức tường Vàng che mark của cả hai goal đang mở | 0 |
+| 4 | Read the order | 2x2x2 | 8 | Kết hợp: một mark mặt trước, một mark sau lưng, và Đỏ nằm khuất sau Vàng nên **thứ tự mới là bài toán** | 1 |
+| 5 | Full sweep | 3x2x2 | 12 | Tốt nghiệp: goal bị chia (`Y:2+2`), blocker, mark sau lưng, và reserve chật đủ để **thua được** | 3 |
+
+Ba màn đã ship **không bị xoá** — chúng lùi xuống thành 6, 7, 8 (`Prism 4x3x2`, `Interleaved layers`,
+`Split purple goal`). Người dùng chỉ yêu cầu năm màn đầu, nên tôi không tự ý bỏ nội dung đã author.
+
+Màn 3 là màn duy nhất trong ramp có nước đi **bắt buộc lệch goal**: cụm duy nhất với tới được lại
+không có goal nào nhận, nên nó phải vào reserve, và khi goal Đỏ xong thì goal Vàng mở ra và reserve
+**tự rót vào**. Đó là cách duy nhất để dạy reserve mà không cần một dòng chữ nào.
+
+### 27.2 Phát hiện: mặt của mark quyết định có phải xoay hay không
+
+Bản đầu tôi cho màn 2 một mark ở mặt hông (`1.1.0:PX`) với ý "mark có thể nằm ở mặt bên". Bắn thử
+trong game thì phát nào cũng dội. Lý do: **đạn luôn bay tới từ phía camera**. Ụ súng nằm giữa camera
+và model, nên một quả đạn nhắm vào mặt `PX` vẫn chạm mặt `PZ` trước — mặt trước nằm trên đường bay.
+
+Nên mặt của mark không phải chuyện trang trí, nó là **luật chơi**:
+
+- `PZ` (mặt đang hướng về người chơi): bắn được ngay.
+- `PX`, `NX`, `NZ`, `PY`, `NY`: **phải xoay mặt đó ra trước đã**.
+
+Vì thế màn 2 đổi thành `1.1.0:PZ~0.0.0:NZ` — một mark ở nơi người chơi mong đợi, một mark phải xoay.
+Bản `PX~NZ` cũ bắt xoay cho **cả hai** cụm, nặng hơn "một biến thể nhỏ" khá nhiều. Nhịp xoay của ramp
+giờ là: màn 1 không xoay, màn 2 xoay một lần, màn 3 không xoay, màn 4 và 5 mỗi màn một lần.
+
+### 27.3 Phát hiện: slab cao 1 ô thì không đọc được hình
+
+Màn 3 bản đầu là `2x1x2` — hai ô ngang, **một** ô cao, hai ô sâu. Camera nhìn nó gần như từ trên
+xuống, nên các mặt trước bị bóp thành những hình bình hành mỏng và **không thấy bullseye nào**. Một
+màn nhập môn mà không đọc được mark thì vô nghĩa.
+
+Đổi thành `1x2x2`: một ô ngang, hai ô cao, hai ô sâu — một bức tường dựng đứng, mặt trước hướng thẳng
+camera. Cùng một bài toán ("tường Vàng che mark phía sau"), nhưng nhìn là hiểu.
+
+Bài học chung khi author: **chiều cao là chiều đọc được**. Model cao 2 ô trở lên thì mặt trước rõ; cao
+1 ô thì camera biến nó thành cái mặt bàn.
+
+### 27.4 `rainbow_target_count` giờ nhận 0
+
+Cột này dùng `parsePositiveInteger`, nên `0` bị báo lỗi và ô trống thì rơi về mặc định 3. Nghĩa là
+**không thể** author một màn không có Rainbow Target. Ba màn đầu dạy một luật mỗi màn, mà một bia bonus
+bay ngang màn hình trong lúc đó là một thứ thứ hai để nhìn.
+
+Thêm `parseNonNegativeInteger` cho riêng cột này. Ô trống vẫn là mặc định; `0` giờ là một giá trị được
+author thật. Engine và `createRainbowSpawnSchedule` đã hỗ trợ `targetCount: 0` từ trước (ba màn
+tutorial vẫn dùng), chỉ có cái cổng ở sheet là chặn.
+
+Số bonus theo ramp: `0, 0, 0, 1, 3`. Có test chốt đúng dãy này.
+
+### 27.5 Luật pacing trong test phải đổi, không phải đổi màn
+
+`tests/level-sheet.test.mjs` có một test bắt **mọi** màn phải thoả:
+
+```js
+assert.equal(audit.waves[0]?.length, level.activeGoalSlots);   // đúng 2 cụm mở đầu
+assert.ok(audit.waves.length >= 3);                            // ít nhất 3 đợt blocker
+```
+
+Hai điều kiện đó **loại trừ một màn nhập môn về mặt định nghĩa**: màn 1 chỉ có 2 cụm, cả hai đều bắn
+được ngay, nên nó có đúng **1** đợt. Đây là chỗ tôi phải chọn: bóp màn 1 cho vừa test, hay sửa test cho
+đúng ý đồ thiết kế mới. Tôi chọn cái thứ hai — một màn đầu có chuỗi blocker ba lớp thì không còn là màn
+đầu.
+
+Test giờ giữ nguyên phần bất biến cho mọi màn (một mark mỗi cụm; không cụm nào bị vây trong một chu
+trình) và đọc **hình dạng đợt theo từng màn** từ một bảng: `1, 1, 2, 2, 2, 5, 4, 3`. Màn 3 được đánh
+dấu `forcesReserveFirst`, và test chốt rằng **mọi** goal mở đầu của nó đều bị che — thiếu điều đó thì
+màn 3 không còn dạy reserve nữa. Các màn khác bị chốt điều ngược lại: không goal mở đầu nào được thiếu
+cụm để bắn.
+
+Thêm hai chốt cho chính cái ramp: số block và số bonus của màn sau **không được thấp hơn** màn trước,
+để độ khó không lặng lẽ tụt.
+
+Sửa kèm theo:
+
+- **Route chuẩn** cho 8 màn (fixture cũ có 3). Route của màn 3 ghi rõ `parkedAfter: [2, 0, 0]` — reserve
+  nhận 2 block rồi được rót lại về 0 ở nước sau. Test này mô phỏng bằng chính engine luật thật, nên nó
+  là bằng chứng cả 8 màn **giải được và all-clear**.
+- `minimumOffGoalClears` giờ kỳ vọng 1 ở màn 3 và màn 7 (trước là chỉ màn 2 — chính là màn 7 bây giờ).
+- Test `goal_split` trong `game-rules.test.ts` neo vào `level.id === 3`; màn split giờ là **8**, nên nó
+  đi theo cái split chứ không theo số thứ tự.
+- Test "row 1 khớp file viết tay" đổi sang **row 6**: `level01.ts` vẫn phải là bàn `Prism` giàu màu vì
+  nó là fallback offline **và** là fixture của gần như toàn bộ `game-rules.test.ts` (reserve 8, đỏ 6/7,
+  vàng 4/9...). Thu nó thành bàn 4 block sẽ phá khoảng 20 test không liên quan gì tới lượt này.
+- Cảnh báo "mark bị che" 16 → **20** (màn 3 thêm 2, màn 4 và 5 mỗi màn 1).
+
+### 27.6 `levels.csv` giờ được sinh ra, không viết tay
+
+Có một test chốt `work/levels.csv` phải parse ra **đúng** cùng bộ level với `work/levels.tsv`. Giữ hai
+file bằng tay chính là cách chúng lệch — và tôi lệch ngay trong lượt này: bản CSV đầu tôi quote cả dòng
+comment, biến `# Level sheet...` thành một cell có dấu ngoặc kép, nên parser đọc dòng 1 thành header và
+cả file sập.
+
+`work/sync-levels.mjs` giờ tự viết lại `levels.csv` từ `levels.tsv` (chỉ khi nguồn là file .tsv — trỏ
+vào .csv thì nó đang đọc chính cái bản sao đó). Dòng `#` được copy **nguyên văn**: parser bỏ qua mọi
+dòng bắt đầu bằng `#`, nên quote nó vào là phá file.
+
+### 27.7 Đã kiểm được gì trong game thật
+
+375×812, lái bằng pointer event tổng hợp:
+
+- **Màn 1**: thắng bằng **đúng 2 phát** vào hai mark hướng trước, "Perfect sorting! All clear", reserve
+  giữ nguyên 0. Không cần xoay.
+- **Màn 2**: mark của Đỏ ở mặt trước bắn được ngay; cụm Xanh **không** bắn được cho tới khi xoay model
+  đưa mặt `NZ` ra trước, sau đó claim được. Đây cũng là chỗ phát hiện luật ở 27.2.
+- **Màn 3**: thấy đúng bài học — Vàng bị **cất vào reserve** (pip vàng hiện trong khay) và sau đó mark
+  của Đỏ với Xanh **lộ ra**, đúng cái mà bức tường Vàng đang che.
+- **Màn 4**: mark của Vàng ở mặt trước; phá Vàng xong thì **mark của Đỏ hiện ra** — blocker hoạt động
+  đúng. Xanh có mark sau lưng nên phải xoay. Màn thắng với "Perfect sorting".
+- **Màn 5**: vào được và đọc đúng trạng thái mở đầu — `GREEN 0/2` và `YELLOW 0/2` với reserve `0/4`.
+  Hai goal Vàng **2** (không phải một goal 4) là bằng chứng `goal_split Y:2+2` hoạt động.
+- Cả 8 màn: `npm run levels` báo **0 error**, và test route mô phỏng qua engine luật thật cho **cả 8**
+  màn đều WIN + all-clear với số block trong reserve khớp từng nước.
+
+`npm test` **160/160**, `npm run lint` sạch. `npx tsc` vẫn 3 lỗi **có từ trước** ở `db/index.ts` và
+`worker/index.ts`.
+
+### 27.8 Điều phải nói rõ
+
+- **Màn 5 là màn đầu tiên có thể thua.** `batch_blocks 4` bằng đúng cụm lớn nhất, nên cất cụm 4 block
+  là đầy khay; một cú lệch goal nữa là FAIL `Reserve full`. Bốn màn trước **không thể thua** — có ý đồ,
+  nhưng nghĩa là người chơi gặp cái thua đầu tiên ở màn 5.
+- **Màn 5 chưa được chơi hết bằng tay.** Tôi xác nhận nó vào được và trạng thái mở đầu đúng, nhưng
+  không lái tay tới lúc thắng. Tính giải được chốt bằng test route chạy trên engine luật thật. Lý do là
+  automation **mù với bullseye**: nó không đọc được mark nằm ở đâu nên phải quét-và-xoay, tốn rất nhiều
+  lượt mỗi màn. Cùng lý do đó, tôi không khẳng định gì thêm về độ khó thực tế của màn 5.
+- **Hub không có bộ chọn màn.** Muốn tới màn N phải thắng N-1 màn trước, nên không kiểm nhanh được một
+  màn ở giữa.
+- **Đường cong này chỉ là năm màn đầu.** Màn 6 nhảy từ 12 block lên 24 block và từ 2 lên 5 đợt blocker —
+  một bước khá dốc. Nếu muốn mượt thì cần thêm vài màn ở giữa, nhưng đó là ngoài phạm vi yêu cầu.
+
+## 28. Rainbow Climax thành của hiếm, và goal cuối lướt về chỗ (24/08)
+
+### 28.1 Vấn đề: bonus đang là trạng thái bình thường
+
+Trước lượt này màn nào cũng `rainbow_target_count 3` với `rainbow_spawn_gap` mặc định 12. Tính ra lịch
+thật của bàn `Prism`: target đầu ở **6,0s**, rồi cái tiếp cách 6–18s, mỗi cái trên màn 7s. Nghĩa là
+cái này vừa rời màn thì cái sau đã tới — và một thứ xuất hiện liên tục thì không còn là thưởng, nó là
+nền. Cộng lại cả chiến dịch có **13** target.
+
+Tệ nhất là màn tutorial: `spawnGapSeconds: 2` với `targetDurationSeconds: 7`, nên ba target **chồng lên
+nhau** — một bài học về việc bắt *một* cái bia lại thành ba cái chen nhau.
+
+### 28.2 Luật mới, viết thẳng trong sheet
+
+Rule nằm ngay trong phần comment đầu `work/levels.tsv` (và bản `.csv` mirror):
+
+- **Tối đa 1 target mỗi màn.** Không bao giờ 2.
+- **Phần lớn màn để 0.** `target_count` chỉ được bật khi round đủ dài để xứng một phần thưởng.
+- `rainbow_spawn_gap` **kiêm luôn vai "sớm nhất là bao giờ"**: target đầu rơi vào `gap × 0,5…1,0` giây.
+  Nên gap lớn trên màn dài là cách giữ nó ra khỏi phần mở đầu.
+
+Kết quả trên 8 màn:
+
+| Màn | Count | Gap | Target xuất hiện |
+|---|---|---|---|
+| 1–4 (ramp dạy chơi) | **0** | — | không có |
+| 5 Full sweep | 1 | 24 | 15,3–22,3s |
+| 6 Prism 4x3x2 | 1 | 30 | 19,9–26,9s |
+| 7 Interleaved layers | **0** | — | không có |
+| 8 Split purple goal | 1 | 24 | 23,0–30,0s |
+
+**Tổng cả chiến dịch: 3 target** (trước là 13), sớm nhất là giây **15,3** (trước là 6,0).
+
+Tutorial giữ **3** lần thử — một phát trượt không được làm kẹt bài học — nhưng gap 2 → **9**, nên mỗi
+lúc chỉ một cái trên màn.
+
+### 28.3 Chỗ tôi làm khác ví dụ của bạn, và vì sao
+
+Bạn nêu mẫu `0, 0, 1, 0, 1`. Tôi làm `0, 0, 0, 0, 1` cho năm màn đầu — tức **màn 3 không có** thay vì
+có một.
+
+Lý do: hai yêu cầu của bạn ("hiếm" và "đừng quá sớm") xung đột nhau ở đúng màn 3. Màn 3 có **4 block**,
+xong trong khoảng 3 phát. Muốn nó không sớm thì gap phải ≥24, tức target đầu ở 12–24s — round đã kết
+thúc trước đó, nên bonus **không bao giờ xuất hiện**. Còn muốn nó xuất hiện thật thì gap phải ~12, tức
+target ở 6,0s — đúng cái "quá sớm" bạn vừa nói. Tôi đo cả hai phương án rồi mới chọn.
+
+Nên tôi giữ nguyên **tinh thần** (hiếm, có màn bỏ trống, mỗi màn nhiều nhất 1) và bỏ bonus khỏi cả bốn
+màn dạy chơi. Chỗ bỏ trống trong mẫu giờ nằm ở màn 7. Nếu bạn vẫn muốn màn 3 có một cái thì chỉ cần đổi
+`rainbow_target_count` của row 3 thành `1` và `rainbow_spawn_gap` thành `12` — nhưng nó sẽ hiện ở giây 6.
+
+### 28.4 Test chốt luật, không chỉ chốt giá trị
+
+Ba assertion mới trong `tests/level-sheet.test.mjs`, để cái lỗi vừa rồi không lặng lẽ quay lại:
+
+- `targetCount <= 1` cho **mọi** màn, kèm câu giải thích tại sao.
+- Số màn có bonus không được vượt **một nửa** tổng số màn.
+- Màn nào có bonus thì `spawnGapSeconds >= 24`, tức không có gì rơi vào 12 giây đầu.
+- Dãy `[0, 0, 0, 0, 1, 1, 0, 1]` được chốt nguyên văn, nên thêm/bớt một bonus là phải sửa test có ý thức.
+
+Bỏ assertion cũ "số bonus của màn sau không thấp hơn màn trước" — nó vốn dùng để giữ ramp không tụt độ
+khó, nhưng một mẫu hiếm **phải** có chỗ trống, nên hai điều đó không thể cùng đúng. Ramp giờ chỉ còn bị
+chốt bằng số block.
+
+`app/game/level-01.ts` sửa theo row 6 (`1 / 30 / 7`) — có test so từng field giữa hai bản.
+
+### 28.5 Goal cuối cùng lướt về cột đầu
+
+Trước đây ô goal đã xong vẫn giữ chỗ trong grid, có chủ ý: để cái goal còn lại **không** bị xê ngang.
+Nhưng khi chỉ còn *một* goal thì chẳng còn gì phải giữ chỗ cho, và một cái card đứng lẻ ở bên phải đọc
+ra như lỗi layout chứ không phải như tiến độ.
+
+Giờ: còn hai goal thì vẫn giữ ô trống như cũ; còn **một** goal thì ô trống bị bỏ hẳn, card nhận cột đầu,
+và nó **lướt** sang đó.
+
+Chuyển động kiểu cartoon, không phải nội suy thẳng — đo bằng cách lấy mẫu `transform` từng frame trong
+game thật:
+
+```
+x: 149,7 → 70,0 → 9,8 → -9,8 → +2,6 → +2,4 → -1,7 → 0
+```
+
+Nó **chạy quá mốc** tới −9,8px rồi nảy lại hai lần trước khi dừng. Kèm theo:
+
+- **Squash/stretch**: `scaleX` vọt lên 1,05 lúc phanh rồi thụt xuống 0,97 lúc nảy.
+- **Tilt** tối đa 2,5°. Không có cái tilt này thì squash đọc ra như glitch chứ không như quán tính.
+
+Khoảng đường đi được viết bằng **chiều rộng của chính card** (`calc(100% + 10px)` = một cột + gap), nên
+nó đúng ở mọi bề rộng màn hình mà không cần đo. Đo thực tế: bắt đầu ở 149,7px = 140 (cột) + 10 (gap) ✓.
+
+Hai chỗ phải cẩn thận:
+
+- `.goal-card.is-full` cũng khai `animation:`, nên một goal vừa đầy đúng lúc goal bên cạnh xong sẽ bị
+  rule này **ghi đè mất glow**. Có thêm rule `.is-sliding-home.is-full` khai cả hai animation.
+- Hai chỗ bay (`[data-goal-slot]`) đọc rect từ DOM đang hiển thị, nên trong lúc card đang lướt thì block
+  bay tới **đúng chỗ card đang ở**. Bỏ ô trống cũng không làm hỏng chúng: chúng chỉ nhắm vào slot đang
+  có goal thật.
+- Tutorial chương 2 có `activeGoalSlots: 1`, nên goal duy nhất luôn ở index 0 → **không** có animation
+  chạy oan.
+
+### 28.6 Đã kiểm được gì
+
+- Lịch spawn thật của cả 8 màn tính bằng chính `createRainbowSpawnSchedule`: tổng **3** target, sớm nhất
+  **15,3s**, 5 màn không có gì.
+- Animation goal: chơi thật màn 1, bắn Đỏ trước để Xanh còn lại một mình ở cột phải. Trước cú claim có
+  2 card (`left 0` và `left 150`, không có ô trống). Sau đó chỉ còn 1 card, `animationName` là
+  `goal-slide-home`, và nó kết thúc ở **`left: 0`** với **đúng bề rộng 140** — tức lướt sang cột đầu mà
+  không đổi kích thước.
+- Đường cong lấy mẫu 44 frame, có overshoot / squash / tilt như trên.
+- `npm test` **160/160**, `npm run lint` sạch, `npx tsc` vẫn 3 lỗi có từ trước ở `db/` và `worker/`.
+
+Chưa kiểm: một cú claim làm **đầy goal đúng lúc** goal bên cạnh xong (nhánh `.is-sliding-home.is-full`).
+Nó là hai rule CSS cạnh nhau và tôi không lái được automation vào đúng frame đó.
+
+## 29. Block bo góc và sáng hơn (24/08)
+
+### 29.1 Bo góc
+
+Block trước là `BoxGeometry(0.92)` — cạnh cứng. Giờ là `RoundedBoxGeometry` từ
+`three/examples/jsm/geometries/RoundedBoxGeometry.js`, với bán kính **16% cạnh** và **3 segment** mỗi góc.
+
+Lý do dùng addon thay vì tự dựng: `RoundedBoxGeometry` **extends `BoxGeometry`**, nên
+`BlockRuntime.mesh` giữ nguyên kiểu `THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial>` và không
+một dòng nào của phần collision phải đổi. `@types/three` có sẵn `.d.ts` cho nó nên `tsc` không cần
+`any`. Tự viết một rounded box đúng normal/UV là việc thật, mà đây là code đã kiểm nhiều năm.
+
+**Vật lý vẫn là hình hộp, có chủ ý.** `sweepBlocks` và `impactedFace` đều giải theo box, và điều kiện
+trúng Weak Point là "đúng một mặt". Nếu bo góc lan sang cả collision thì luật "trúng mặt" sẽ có một vùng
+mờ ở mỗi cạnh — không đọc được và không dạy được. Bo góc ở đây thuần là thứ người chơi nhìn thấy.
+
+Mặt phẳng còn lại của mỗi mặt vẫn rộng `0.92 - 2×0.147 = 0.626`, còn decal bullseye chỉ `0.21 × 0.92 =
+0.193`, nên dấu vẫn nằm gọn trong phần phẳng, không bị bò lên chỗ cong.
+
+Chọn bán kính, và đây là chỗ tôi đoán sai: tôi thử **0.16**, thấy trong game bo quá nhẹ nên tự đẩy lên
+**0.2**. Bạn xem rồi chọn lại **0.16** — nên đó là giá trị đang chạy. Cái tôi đọc là "gần như không thấy"
+thì ở mắt bạn là đủ, và bo nhẹ hơn thì cụm càng liền khối, điều quan trọng vì cả game dựa trên việc đọc
+được đâu là một cụm. Trần trên vẫn là khoảng hở ở góc (spacing 1.02 so với cạnh 0.92): bo càng sâu thì
+các block càng rời ra thành hạt riêng lẻ.
+
+**Lớp khiên xanh bo theo cùng profile.** Nó là một vỏ `1.16×` bọc quanh block; để vỏ cạnh cứng trên một
+block đã bo thì bốn góc sẽ hở ra bốn cái nêm sáng không có gì phía sau.
+
+### 29.2 Sáng hơn
+
+`MeshLambertMaterial` chỉ có diffuse, nên mặt nào quay khỏi key light thì tối hẳn — đọc ra như bẩn chứ
+không ra khối. Giờ mỗi block lấy **chính màu của nó** làm `emissive` ở `emissiveIntensity 0.2`.
+
+Cách này nhấc các mặt trong tối lên mà không làm bẹt các mặt đang được chiếu sáng. Tôi **không** tăng
+đèn scene: `HemisphereLight 1.75` và `DirectionalLight 2.25` chiếu cả ụ súng, nên tăng lên là sáng lây
+sang thứ không ai yêu cầu.
+
+Cũng **không** đổi `COLOR_HEX`: bảng màu này trùng khớp từng hex với `COLOR_META` mà HUD dùng cho chip
+goal, nên đổi nó là đổi luôn định danh màu trên toàn UI. Emissive chỉ đổi cách render, màu gốc giữ
+nguyên, nên chip goal ↔ block vẫn khớp.
+
+**Một cái bẫy phải sửa kèm.** `emissive` đã được dùng từ trước cho hai việc:
+
+- `releaseCluster` đặt `emissiveIntensity = 0.55` cho block vừa bị claim khi nó bay đi.
+- Break-wave (`clearNeighborKick` và vòng update) đặt `emissiveIntensity = 0` ở **ba** chỗ để trả block
+  về trạng thái nghỉ.
+
+Ba chỗ đó giờ phải trả về `BLOCK_EMISSIVE_INTENSITY`, không phải 0 — nếu không thì **mọi block từng bị
+một đợt sóng phá chạm qua sẽ tối vĩnh viễn** so với block bên cạnh. Đây là loại lỗi chỉ hiện sau vài cú
+bắn nên rất dễ lọt.
+
+Và `0.2` được chọn để nằm rõ dưới `0.55`: cú flash lúc bị claim vẫn phải nổi hơn trạng thái nghỉ, chênh
+2,75× là đủ đọc.
+
+### 29.3 Đã kiểm được gì
+
+- Nhìn trong game ở hai bàn khác nhau: màn 1 (4 block) và tutorial lesson 1 (6 block, 2 lớp). Góc bo
+  đọc rõ, màu sáng hơn hẳn bản trước, và cụm vẫn liền khối.
+- Bullseye vẫn tương phản tốt trên nền màu đã sáng hơn, kể cả trên vàng.
+- Bắn thật một cụm: claim chạy đúng, block bay đi bình thường — tức đổi geometry không ảnh hưởng
+  collision, đúng như dự tính.
+- `npm test` **160/160**, `npm run lint` sạch, `npx tsc` vẫn 3 lỗi có từ trước ở `db/` và `worker/`.
+
+**Chưa kiểm:** đúng frame của cú flash `0.55` lúc claim. Nó chỉ tồn tại vài frame và tôi không chụp
+được; quan hệ `0.2 < 0.55` là đọc từ code chứ không phải đo từ ảnh.
+
+**Chưa xem:** bàn dày nhất (màn 6, 24 block). Rủi ro tôi nêu ở 29.1 — góc bo làm block rời thành hạt —
+sẽ rõ nhất ở đó, mà tới được màn 6 thì phải thắng 5 màn trước. Ở 6 block hai lớp thì nó vẫn liền khối,
+và ở 0.16 thì rủi ro đó còn thấp hơn nữa so với lúc tôi viết đoạn này.
+
+Ảnh in-game ở 29.3 chụp lúc bán kính còn là 0.2; hình dạng hiện tại bo nhẹ hơn thế.
+
+## 30. Tutorial: màn mờ là để đọc, không phải để chơi qua nó (24/08)
+
+Ba yêu cầu hoá ra là ba trường hợp của **cùng một luật**: màn mờ tồn tại để người chơi đọc một điều.
+Ngay khi họ bắt đầu *làm* điều đó thì nó thành thứ chắn đường. Nên thay vì ba chỗ vá riêng, luật này
+được viết một lần trong `tutorial.ts`.
+
+### 30.1 `scrimHidden` sống theo chương, không theo bước
+
+Thêm `scrimHidden` vào `TutorialProgress`, và một hàm `tutorialScrimVisible(progress)` mà UI đọc thay
+vì tự dựng lại điều kiện.
+
+Nó **sticky theo chương** chứ không reset mỗi bước, và đây là điểm quan trọng: "Drag to aim" và
+"Release to fire" là **một cử chỉ liên tục**. Nếu reset theo bước thì màn mờ sẽ quay lại chen vào giữa
+lúc người chơi đang giữ tay kéo — nhá đen ngay trên cú bắn đang thực hiện.
+
+Ba nguồn tắt nó:
+
+| Chương | Tắt khi |
+|---|---|
+| 1. Controls | Ngón tay **vừa chạm** aim zone (bước "Drag to aim") |
+| 2. Sort | Cái tap **rời thẻ cuối** |
+| 3. Weak Point | **Bắt được** Rainbow Target |
+
+Ring và scrim là cùng một element, nên tắt scrim là tắt luôn ring — cố ý: tới lúc đó người chơi đã đọc
+xong, và một cái vòng treo trên bàn đã sáng thì chỉ còn là vật cản.
+
+### 30.2 `AIM_TOUCHED`: phát trên cú chạm, không phải trên khoảng kéo
+
+Engine có event mới `AIM_TOUCHED`, phát trong `onAimPointerDown` **trước** lời gọi `setPointerCapture`.
+Thứ tự đó không phải tuỳ tiện: capture có thể throw trên một pointer mà browser không còn theo dõi, và
+nếu đặt sau thì cú throw sẽ mang theo cả phần còn lại của handler.
+
+Bước "Find the mark" **không** tắt màn mờ khi chạm ụ súng — cờ `dimDropsOnAimTouch` chỉ bật ở hai bước
+ngắm. Vòng khoanh lúc đó vẫn đang giải thích một cử chỉ người chơi chưa làm.
+
+### 30.3 Sort lesson: đọc ba thẻ rồi mới chơi
+
+Trước đây mỗi beat bị chặn sau một phát bắn của chính nó. Nghĩa là **cái thẻ giải thích reserve chỉ
+tới sau khi đã có một cụm nằm trong đó rồi** — giải thích một việc đã xảy ra.
+
+Giờ ba thẻ được đọc trước, mỗi tap một thẻ, và tap rời thẻ cuối tắt màn mờ rồi trao bàn cho người chơi.
+Chương này vì thế có **4 bước** chứ không 3, nên `TUTORIAL_STEP_COUNT` bị thay bằng
+`tutorialStepCount(chapter)` — các chương dài khác nhau là chuyện có thật, hằng số một giá trị chỉ che nó đi.
+
+- Thẻ nào cũng `advance: "tap"`, và trong lúc đó **cả frame hút cú tap** (`.tutorial-tap-catcher`), nên
+  đọc một thẻ không đồng thời là bắn một phát.
+- Bước thứ tư (`focus: null`, `advance: "event"`) kết thúc bằng **LEVEL_WON**. Nếu lesson đóng ngay sau
+  cái tap cuối thì cái bàn sẽ chẳng còn ý nghĩa gì.
+- Một chevron nhấp nháy nói rằng còn tap được nữa — dấu hiệu, không phải thêm chữ.
+
+### 30.4 Bàn sort phải làm ba beat thành **bắt buộc**
+
+Đây là phần "sửa lại cấu trúc puzzle". Bàn cũ là một hàng `Red, Blue, Red` với cả ba mark tự do. Đọc
+xong ba thẻ rồi chơi, người chơi hoàn toàn có thể bắn **Red, Red, Blue** — và như thế chỉ thấy *hai*
+trong ba beat: goal Red xong thì goal Blue mở ra, nên Blue đi thẳng vào goal và **không có gì từng được
+cất vào reserve**. Ba thẻ hứa ba việc mà bàn chỉ giao hai.
+
+Bàn mới là `1x2x2` — một cột dựng đứng, hai lớp sâu:
+
+- Red trước-trên `(0,1,1)`, mark `PZ` — tự do
+- Blue trước-dưới `(0,0,1)`, mark `PZ` — tự do
+- Red sau-dưới `(0,0,0)`, mark `PZ` — **bị Blue che**
+
+Red là **hai cụm một block riêng biệt** (không kề nhau: lệch cả y và z), nên nó không thể xong trong một
+claim; và cụm Red thứ hai nằm sau Blue. Không còn đường nào tới cuối mà không claim Blue **trong lúc
+Red còn thiếu một block** — đúng khoảnh khắc không có goal nào mở cho Blue và nó buộc phải vào reserve.
+
+Bản đầu tôi ép thứ tự bằng cách đặt mark của Red thứ hai ở mặt `NX`. Nó chạy được nhưng bắt **xoay
+model** trong một bài học nói về chỗ cụm đi tới — theo đúng luật ở mục 27.2 thì mark ở mặt hông chỉ bắn
+được sau khi xoay mặt đó ra trước. Cách dùng chiều sâu đạt cùng kết quả với **mọi mark hướng camera**.
+
+Có test riêng chốt tính chất này qua `auditWeakPointRoutes`: 3 cụm, đợt 1 là `[blue, red]`, đợt 2 là
+`[red]`. Nếu ai đó sau này gỡ blocker thì test đỏ, kèm câu giải thích tại sao nó ở đó.
+
+### 30.5 Một lỗi tôi tự tạo trong chính lượt này
+
+Bỏ khoá màu theo bước cho chương sort bằng cách cho `tutorialAllowedColor` trả `null`. Nhưng option vẫn
+được cài:
+
+```ts
+canClaimColor: engineTutorialChapter > 0 ? (color) => tutorialAllowedColor(...) === color : undefined
+```
+
+`null === color` là **luôn false**, nên **không cụm nào trên bàn claim được nữa**. Bàn trông chơi được
+mà không chơi được — tôi chỉ phát hiện khi lái thử trong game thấy bắn 10 phát mà goal không nhích.
+
+Sửa: chỉ chương Weak Point cài predicate. Ở đó `null` vẫn có nghĩa "không cụm nào" — bước Rainbow muốn
+người chơi bắn cái bia, không phải một cụm — nên hành vi cũ giữ nguyên. Test giờ chốt phạm vi
+`engineTutorialChapter === 2` kèm lý do.
+
+### 30.6 Rainbow tới ngay sau cú phá cụm đỏ
+
+`createRainbowSpawnSchedule` có thêm `firstSpawnSeconds`: khi truyền vào thì target đầu tới đúng lúc đó
+thay vì `gap × 0,5…1,0`. Các target sau vẫn dùng gap, nên các lần thử lại còn giãn.
+
+Engine nhận qua option `rainbowFirstSpawnSeconds`, và tutorial truyền **0,35s** cho chương 3. Lesson bật
+target ngay khi bước Weak Point xong; bảo người chơi bắn một cái bia rồi để họ nhìn trời trống sáu giây
+thì đọc ra là game hỏng.
+
+### 30.7 Đã kiểm được gì trong game thật
+
+- **Chạm để tắt màn mờ**: `Find the mark` có scrim → `Drag to aim` vẫn có → **chạm ụ súng** thì
+  `scrim=false` ngay và cue nổi lên trên, bàn hiện rõ hoàn toàn. Sau khi nhả tay nó **không** quay lại.
+- **Ba thẻ sort theo tap**, đo từng bước: thẻ 1 ring ở hàng goal (`311x72`), tap → thẻ 2 ring nhảy xuống
+  **thanh reserve** (`311x52`, một phần tử khác, đo đúng), tap → thẻ 3 về hàng goal, tap → `Now clear it`,
+  **scrim=none**, tap catcher biến mất.
+- **Ba beat xảy ra đúng thứ tự đã kể** khi chơi bàn mới: `RED 1/2` → `Reserve 1/1` → goal rỗng và
+  `Reserve 0/1`, rồi lesson đóng bằng cú thắng (`complete=true`).
+- **Rainbow tới ngay**: ảnh chụp cho thấy bia đã nằm trong vòng khoanh ngay sau cú phá cụm đỏ, và đo
+  được nó bắt được **0,82 s** sau claim (0,35 s spawn + thời gian quét của tôi).
+- `npm test` **162/162**, `npm run lint` sạch, `npx tsc` vẫn 3 lỗi có từ trước ở `db/` và `worker/`.
+
+**Chưa kiểm trong game:** màn mờ tắt *đúng lúc bắt được* Rainbow Target. Cơ chế đã được test ở tầng
+reducer (`RAINBOW_HIT` đặt `scrimHidden`), và đường render là cùng một `tutorialScrimVisible` mà trường
+hợp chạm-ngắm đã chứng minh trên màn hình — nhưng tôi không bắn trúng được cái bia đang bay. Automation
+của tôi mù với vị trí bia: nó lọc theo dải `y` mà dải đó lại trùm cả cụm blue, nên phần lớn phát bắn đi
+vào blue (đang bị khoá màu) và cả ba cửa sổ target trôi qua.
+
+## 31. Giữ để đưa cụm về vị trí ban đầu (24/08)
+
+Xoay model là cách duy nhất để tìm mark ở mặt sau, nhưng xoay rồi thì không có đường về — người chơi
+phải tự xoay ngược lại bằng mắt. Giờ **giữ tay trên cụm** là nó tự quay về đúng pose lúc màn mở ra.
+
+### 31.1 Phân biệt giữ với kéo
+
+Hai cử chỉ dùng chung một vùng chạm, nên chúng phải loại trừ nhau chứ không cùng nổ:
+
+- `MODEL_HOLD_MS = 460` — đủ dài để một cú kéo không bao giờ vấp vào, đủ ngắn để đọc ra là một cái
+  nhấn chứ không phải một cuộc chờ.
+- `MODEL_HOLD_SLOP = 12px` — ngón tay trên kính không bao giờ đứng yên tuyệt đối, mà cử chỉ xoay thì
+  bắt đầu quay model **từ pixel đầu tiên**. Ngưỡng này hấp thụ rung tay mà không nuốt một cú xoay thật.
+  Đi quá ngưỡng là `cancelModelHold()`: từ đó press không còn cửa nào để thành recentre.
+
+Đếm bằng **frame clock**, không bằng `setTimeout`. Không phải vì pause — mà vì không có timer handle nào
+để làm mất qua một lần dispose hay một cú đổi màn. Còn pause thì `pause()` đã gọi `clearModelGesture()`
+nên press đang chờ bị bỏ hẳn; nó không thể nổ muộn lúc resume.
+
+### 31.2 Kết thúc cử chỉ **trước** khi bắt đầu quay về
+
+Khi hold nổ, `clearModelGesture()` chạy trước `recentreModel()`. Nếu để cử chỉ còn sống thì rung tay của
+ngón đang tì trên kính sẽ **huỷ đúng cái animation vừa được yêu cầu**, để cụm đứng lại giữa đường. Sau
+đó ngón tay còn đó cũng không điều khiển gì nữa cho tới khi nhấc lên và nhấn lại.
+
+Ngược lại thì có: chạm lại vào cụm **giành quyền** từ một cú quay về đang chạy (`modelResetFrom = null`
+trong `onModelPointerDown`), nên người chơi không phải đợi animation xong mới xoay tiếp được.
+
+Animation là slerp 0,42s với cùng ease-out cubic mà intro dùng, và kết ở đúng `defaultModelOrientation`
+chứ không phải một giá trị slerp làm tròn.
+
+### 31.3 Event vẫn phát khi cụm đã thẳng
+
+`recentreModel()` phát `MODEL_RESET` **trước** khi kiểm góc lệch, rồi mới bỏ qua phần animation nếu cụm
+đã vuông. Nó báo *việc người chơi làm*, không phải *thứ gì đã dịch chuyển*. Hai lý do:
+
+- Một cú nhấn không cho câu trả lời nào đọc ra là hỏng.
+- Bước tutorial dạy cử chỉ này sẽ **kẹt vĩnh viễn** nếu người chơi thử nó lúc cụm đang thẳng.
+
+### 31.4 Cái vòng đầy dưới ngón tay
+
+Một cú nhấn 460ms mà không có gì hiện lên thì y như không có gì xảy ra. Nên `.model-input-zone` nhận
+class `is-holding` cùng `--hold-x/--hold-y` (điểm chạm) và `--hold-ms`, rồi CSS vẽ một vòng đầy dần
+ngay tại đó.
+
+`--hold-ms` được engine ghi từ **chính hằng số nó đang đếm**, nên thứ người chơi nhìn đầy lên đúng là
+cái hold đang được đo — không phải hai con số cạnh nhau chờ lệch nhau.
+
+### 31.5 Dạy trong tutorial
+
+Chương Controls thêm một bước, đặt **ngay sau bước xoay** — đó là lúc duy nhất cụm đang lệch và người
+chơi có lý do muốn nó thẳng lại:
+
+1. Find the mark (xoay)
+2. **Hold to reset** ← mới
+3. Drag to aim
+4. Release to fire
+
+Chương này giờ **4 bước**; nhờ đã đổi sang `tutorialStepCount(chapter)` ở mục 30 nên không cần sửa gì
+thêm về cấu trúc. Kèm theo:
+
+- Glyph mới `recenter`: một khối vuông với các tia hướng vào trong.
+- Biến thể gesture mới `hold`: giữ bàn tay, thay hai mũi tên quét bằng **một vòng đầy rồi lặp lại** —
+  một cú nhấn không có quãng đường nào để vẽ.
+- Bước này `focus: "model"` và **không** có `dimDropsOnAimTouch`: chạm vào ụ súng ở đây không tắt màn
+  mờ, vì vòng khoanh đang nói về cụm chứ không phải về pháo.
+
+Test chốt cả hai chiều: bước aim **không thể** vượt qua bước recentre, và `AIM_TOUCHED` ở bước recentre
+không làm gì cả.
+
+### 31.6 Đã kiểm được gì trong game thật
+
+Trong màn chơi thường (không phải tutorial), sau khi xoay cụm đi xa:
+
+- **Kéo không kích hoạt**: nhấn, di quá slop, rồi giữ **45 frame (~750ms)** — `holding=false` ngay sau
+  cú di, và cụm không quay về.
+- **Nhấn yên thì kích hoạt**: `holding=true` với `--hold-x: 160px`, `--hold-ms: 460ms`; sau ~750ms cả
+  `is-holding` và `is-dragging` đều đã tắt (cử chỉ kết thúc trước cú quay), và ảnh chụp cho thấy cụm về
+  đúng pose mở đầu.
+- **Trong tutorial**: `Find the mark` (gesture `rotate`) → xoay → `Hold to reset` (gesture **`hold`**)
+  → giữ → `Drag to aim` (gesture `aim`), và dãy dot hiện **4** bước.
+- Tab sạch: console không có lỗi của game, chỉ còn `navigator.vibrate` bị Chrome chặn vì pointer tổng
+  hợp không phải gesture thật.
+
+`npm test` **162/162**, `npm run lint` sạch, `npx tsc` vẫn 3 lỗi có từ trước ở `db/` và `worker/`.
+
+**Chưa kiểm bằng tay:** nhấn giữ rồi mở dialog giữa lúc đang chờ. `pause()` gọi `clearModelGesture()`
+nên press bị bỏ — đọc từ code, không phải đo từ máy.

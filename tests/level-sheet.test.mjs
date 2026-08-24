@@ -143,11 +143,15 @@ function minimumOffGoalClears(level) {
   return Number.POSITIVE_INFINITY;
 }
 
-test("row 1 of the shipped sheet rebuilds the hand written prototype level", async () => {
+test("the Prism row of the shipped sheet rebuilds the hand written prototype level", async () => {
   const { levels, issues } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
-  const first = levels.find((level) => level.id === 1);
-  assert.ok(first, "level 1 is missing from the sheet");
+  // level01 stays the rich Prism board: it is the offline fallback and the
+  // fixture every rules test is built on. The onboarding ramp took rows 1-5, so
+  // that board is row 6 now. What this test pins is that the sheet and the
+  // hand-written copy still describe the same level, not which row it sits on.
+  const first = levels.find((level) => level.id === 6);
+  assert.ok(first, "the Prism level is missing from the sheet");
 
   assert.deepEqual(sortById(first.blocks), sortById(level01.blocks));
   assert.deepEqual(first.goals, level01.goals);
@@ -370,27 +374,93 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
   const { levels, issues } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
 
-  // One marker per cluster keeps the board readable. Exactly one cluster for
-  // each opening goal is available immediately; the rest arrive in short,
-  // acyclic reveal waves instead of all being optional fallbacks.
+  // The reveal shape is authored per level, not held to one universal rule: an
+  // introduction level with a three-deep blocker chain is not an introduction.
+  // The ramp is 1 beat, 1, 2, 2, 2, then the shipped boards at 5, 4 and 3.
+  const pacing = new Map([
+    [1, { waves: 1 }],
+    [2, { waves: 1 }],
+    // The only cluster in reach is off-goal, which is the entire lesson: the
+    // reserve is where a claim goes when no goal will take it.
+    [3, { waves: 2, forcesReserveFirst: true }],
+    [4, { waves: 2 }],
+    [5, { waves: 2 }],
+    [6, { waves: 5 }],
+    [7, { waves: 4 }],
+    [8, { waves: 3 }],
+  ]);
+
   for (const level of levels) {
     const audit = auditWeakPointRoutes(level.blocks, level.weakPoints);
+    const spec = pacing.get(level.id);
+    assert.ok(spec, `level ${level.id}: no authored pacing expectation`);
+
+    // Universal, every level: one marker per cluster keeps the board readable,
+    // and no cluster may be walled off behind a cycle.
     assert.equal(level.weakPoints.length, audit.clusterColors.length, `level ${level.id}: one marker per cluster`);
     assert.ok(audit.pointCounts.every((count) => count === 1), `level ${level.id}: duplicate marker in a cluster`);
-    assert.equal(audit.waves[0]?.length, level.activeGoalSlots, `level ${level.id}: opening choice count`);
-    assert.deepEqual(
-      (audit.waves[0] ?? []).map((index) => audit.clusterColors[index]).sort(),
-      level.goals.slice(0, level.activeGoalSlots).map((goal) => goal.color).sort(),
-      `level ${level.id}: opening markers must match the visible goals`,
-    );
-    assert.ok(audit.waves.length >= 3, `level ${level.id}: needs multiple reveal beats`);
     assert.deepEqual(audit.unreachableClusterIndices, [], `level ${level.id}: blocker cycle`);
+    assert.equal(audit.waves.length, spec.waves, `level ${level.id}: reveal beats`);
+
+    const openingColors = new Set((audit.waves[0] ?? []).map((index) => audit.clusterColors[index]));
+    const openingGoals = level.goals.slice(0, level.activeGoalSlots).map((goal) => goal.color);
+    if (spec.forcesReserveFirst) {
+      assert.deepEqual(
+        openingGoals.filter((color) => openingColors.has(color)),
+        [],
+        `level ${level.id}: this lesson only teaches the reserve if every opening goal is covered`,
+      );
+    } else {
+      assert.deepEqual(
+        openingGoals.filter((color) => !openingColors.has(color)),
+        [],
+        `level ${level.id}: an opening goal has no cluster the player can reach`,
+      );
+    }
+  }
+
+  // The ramp has to actually ramp: never fewer blocks than the level before it,
+  // so difficulty cannot quietly dip. Bonus targets are deliberately NOT on that
+  // curve — see the rarity rule below.
+  const ramp = [1, 2, 3, 4, 5].map((id) => levels.find((level) => level.id === id));
+  assert.ok(ramp.every(Boolean), "levels 1-5 are the authored onboarding ramp");
+  for (let index = 1; index < ramp.length; index += 1) {
+    assert.ok(
+      ramp[index].blocks.length >= ramp[index - 1].blocks.length,
+      `level ${ramp[index].id} is smaller than the level before it`,
+    );
+  }
+
+  // Rainbow Climax is rare on purpose. Two in one round meant the next arrived
+  // before the last had left, which made a bonus read as the normal state, so the
+  // cap is one per level and most levels get none at all.
+  for (const level of levels) {
+    assert.ok(
+      level.rainbow.targetCount <= 1,
+      `level ${level.id} schedules ${level.rainbow.targetCount} Rainbow Targets; the cap is 1`,
+    );
+  }
+  const withBonus = levels.filter((level) => level.rainbow.targetCount > 0);
+  assert.ok(
+    withBonus.length * 2 <= levels.length,
+    `${withBonus.length} of ${levels.length} levels carry a bonus; it stops being rare past half`,
+  );
+  // Skipped levels are the point: the pattern has gaps rather than tapering in.
+  assert.deepEqual(levels.map((level) => level.rainbow.targetCount), [0, 0, 0, 0, 1, 1, 0, 1]);
+  // A bonus in the opening seconds is not a reward for a long round. The first
+  // target lands at gap x 0.5-1.0, so a floor of 24 keeps it out of the first 12
+  // seconds — which is most of a teaching level, hence none of them carry one.
+  for (const level of withBonus) {
+    assert.ok(
+      level.rainbow.spawnGapSeconds >= 24,
+      `level ${level.id} can spawn its bonus after ${level.rainbow.spawnGapSeconds * 0.5}s`,
+    );
   }
 
   // An inner face is one whose neighbour cell is occupied, so these warnings
   // document intentional reveals rather than malformed data.
   const covered = issues.filter((issue) => /may be inaccessible until that block is removed/.test(issue.message));
-  assert.equal(covered.length, 16, `expected one warning for every delayed reveal, found ${covered.length}`);
+  assert.equal(covered.length, 20, `expected one warning for every delayed reveal, found ${covered.length}`);
   assert.deepEqual(
     issues.filter((issue) => /HIGH-RISK/.test(issue.message)),
     [],
@@ -401,17 +471,31 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
 test("shipped routes balance continuous progress with one forced off-goal decision", async () => {
   const { levels } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   const routes = new Map([
-    [1, {
+    // 1-2: two claims, nothing to park. The whole lesson is "hit the mark".
+    [1, { anchors: ["0.1.0", "0.0.0"], parkedAfter: [0, 0], forcedOffGoalSteps: 0 }],
+    [2, { anchors: ["1.1.0", "0.0.0"], parkedAfter: [0, 0], forcedOffGoalSteps: 0 }],
+    // 3: the front pair covers both goal marks, so Yellow is parked before
+    // anything can be sorted, and the auto-fill hands it back on step 2.
+    [3, { anchors: ["0.1.1", "0.1.0", "0.0.0"], parkedAfter: [2, 0, 0], forcedOffGoalSteps: 1 }],
+    // 4: front mark, back mark, then the cluster the first claim uncovered.
+    [4, { anchors: ["0.1.1", "0.0.0", "0.1.0"], parkedAfter: [0, 0, 0], forcedOffGoalSteps: 0 }],
+    // 5: every part at once, still solvable without spending the reserve.
+    [5, {
+      anchors: ["1.1.1", "0.1.1", "0.0.1", "1.1.0", "2.0.0"],
+      parkedAfter: [0, 0, 0, 0, 0],
+      forcedOffGoalSteps: 0,
+    }],
+    [6, {
       anchors: ["0.2.1", "0.0.1", "0.0.0", "0.1.0", "0.1.1", "0.2.0", "3.2.0", "3.0.0"],
       parkedAfter: [0, 0, 0, 0, 0, 0, 0, 0],
       forcedOffGoalSteps: 0,
     }],
-    [2, {
+    [7, {
       anchors: ["2.1.1", "0.1.1", "0.1.0", "2.0.1", "2.0.0", "2.1.0", "0.0.1", "0.0.0"],
       parkedAfter: [0, 0, 0, 0, 2, 0, 0, 0],
       forcedOffGoalSteps: 1,
     }],
-    [3, {
+    [8, {
       anchors: ["0.1.1", "0.0.1", "0.1.0", "0.2.1", "0.0.0", "0.2.0"],
       parkedAfter: [0, 0, 0, 0, 0, 0],
       forcedOffGoalSteps: 0,
@@ -481,7 +565,7 @@ test("shipped routes balance continuous progress with one forced off-goal decisi
     assert.equal(state.result?.allClear, true, `level ${level.id}: route left blocks behind`);
     assert.equal(
       minimumOffGoalClears(level),
-      level.id === 2 ? 1 : 0,
+      level.id === 3 || level.id === 7 ? 1 : 0,
       `level ${level.id}: minimum unavoidable off-goal clears`,
     );
   }

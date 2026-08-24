@@ -1,4 +1,7 @@
 import * as THREE from "three";
+// Extends BoxGeometry, so BlockRuntime's mesh type and every box-based collision
+// path keep working unchanged: the rounding is only what the player sees.
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   disposeCosmeticParts,
   getCosmetic,
@@ -32,6 +35,42 @@ import type {
 const BLOCK_SIZE = 0.92;
 const BLOCK_SPACING = 1.02;
 const BLOCK_HALF = BLOCK_SIZE / 2;
+/**
+ * Corner radius of a block, as a fraction of its side.
+ *
+ * The flat part of each face still spans the full side, so a Weak Point decal
+ * (0.21 of the side) sits well inside it and collision stays a plain box.
+ */
+const BLOCK_CORNER_RATIO = 0.16;
+/** Segments per corner. Three reads round at this size on a 24-block board. */
+const BLOCK_CORNER_SEGMENTS = 3;
+/**
+ * Resting glow on a block.
+ *
+ * Lambert shading alone let the faces turned away from the key light fall very
+ * dark, which read as dirty rather than as shape. A little of the block's own
+ * colour as emissive lifts those faces without flattening the lit ones. Kept far
+ * below the 0.55 a claimed block flashes at, so being claimed still reads.
+ */
+const BLOCK_EMISSIVE_INTENSITY = 0.2;
+/**
+ * How long a finger has to rest on the cluster to recentre it.
+ *
+ * Long enough that a drag never trips it, short enough to feel like a press
+ * rather than a wait. The ring that fills under the finger is what makes the
+ * difference visible while it is happening.
+ */
+const MODEL_HOLD_MS = 460;
+/**
+ * How far the finger may wander and still count as a hold.
+ *
+ * A press on a phone is never perfectly still, and the rotate gesture starts
+ * moving the model on the first pixel — so this has to absorb jitter without
+ * swallowing a deliberate turn.
+ */
+const MODEL_HOLD_SLOP = 12;
+/** Long enough to read as the cluster swinging back, not snapping. */
+const MODEL_RESET_SECONDS = 0.42;
 const PROJECTILE_RADIUS = 0.15;
 const FIXED_STEP = 1 / 60;
 const FIXED_LAUNCH_SPEED = 13.2;
@@ -255,6 +294,10 @@ export type ControlSensitivity = {
 
 export type EngineInteractionEvent =
   | Readonly<{ type: "MODEL_ROTATED"; distance: number }>
+  // Fires on the touch itself, before any drag distance. The tutorial uses it to
+  // drop its dim the instant the player reaches for the cannon.
+  | Readonly<{ type: "AIM_TOUCHED" }>
+  | Readonly<{ type: "MODEL_RESET" }>
   | Readonly<{ type: "AIM_DRAGGED"; distance: number }>
   | Readonly<{ type: "SHOT_FIRED" }>
   | Readonly<{ type: "WEAK_POINT_CLEARED" }>
@@ -268,6 +311,14 @@ export type CannonSortEngineOptions = Readonly<{
   canClaimColor?: (color: BlockColor) => boolean;
   /** Allows the final lesson to reveal its target only after Weak Points. */
   rainbowTargetsEnabled?: boolean;
+  /**
+   * Overrides when the first Rainbow Target arrives.
+   *
+   * The lesson enables targets the moment the Weak Point step is done, and a
+   * player told to hit one should not then wait out a seeded gap staring at an
+   * empty sky. Later targets still use the authored gap so retries stay spread.
+   */
+  rainbowFirstSpawnSeconds?: number;
   showWeakPoints?: boolean;
   onInteraction?: (event: EngineInteractionEvent) => void;
 }>;
@@ -613,6 +664,12 @@ export class CannonSortEngine {
   private modelPointer: number | null = null;
   private aimPointer: number | null = null;
   private lastModelPointer = new THREE.Vector2();
+  private readonly modelHoldStart = new THREE.Vector2();
+  /** When the current press becomes a recentre, or null once it cannot. */
+  private modelHoldDueAt: number | null = null;
+  /** Pose the cluster is swinging back from, or null when it is not. */
+  private modelResetFrom: THREE.Quaternion | null = null;
+  private modelResetTime = 0;
   private aimStart = new THREE.Vector2();
   private aimCurrent = new THREE.Vector2();
   private aimStick = new THREE.Vector2();
@@ -743,7 +800,13 @@ export class CannonSortEngine {
     this.modelRoot.position.set(0, 1.18, MODEL_DEPTH_OFFSET);
     this.modelRoot.quaternion.copy(this.defaultModelOrientation);
     this.scene.add(this.modelRoot);
-    const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+    const geometry = new RoundedBoxGeometry(
+      BLOCK_SIZE,
+      BLOCK_SIZE,
+      BLOCK_SIZE,
+      BLOCK_CORNER_SEGMENTS,
+      BLOCK_SIZE * BLOCK_CORNER_RATIO,
+    );
     this.disposables.push(geometry);
     // Centre whatever shape the sheet authored, instead of assuming the 4x3x2
     // prism the first level happens to use.
@@ -756,8 +819,8 @@ export class CannonSortEngine {
     for (const spec of this.level.blocks) {
       const material = new THREE.MeshLambertMaterial({
         color: COLOR_HEX[spec.color],
-        emissive: 0x000000,
-        emissiveIntensity: 0,
+        emissive: COLOR_HEX[spec.color],
+        emissiveIntensity: BLOCK_EMISSIVE_INTENSITY,
       });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(
@@ -864,6 +927,7 @@ export class CannonSortEngine {
       targetCount: this.level.rainbow.targetCount,
       baseGapSeconds: this.level.rainbow.spawnGapSeconds,
       durationSeconds: this.level.rainbow.targetDurationSeconds,
+      firstSpawnSeconds: this.options.rainbowFirstSpawnSeconds,
     });
     for (const entry of schedule) {
       const group = new THREE.Group();
@@ -1486,6 +1550,19 @@ export class CannonSortEngine {
     if (!this.canRotateModel() || this.modelPointer !== null) return;
     this.modelPointer = event.pointerId;
     this.lastModelPointer.set(event.clientX, event.clientY);
+    // A press that turns into a recentre is armed here and disarmed by the first
+    // real movement, so the two gestures never both fire.
+    this.modelHoldStart.set(event.clientX, event.clientY);
+    this.modelHoldDueAt = performance.now() + MODEL_HOLD_MS;
+    // A press with no visible progress reads as nothing happening, so the ring
+    // fills under the finger for exactly as long as the hold takes.
+    const bounds = this.modelZone.getBoundingClientRect();
+    this.modelZone.style.setProperty("--hold-x", `${event.clientX - bounds.left}px`);
+    this.modelZone.style.setProperty("--hold-y", `${event.clientY - bounds.top}px`);
+    this.modelZone.style.setProperty("--hold-ms", `${MODEL_HOLD_MS}ms`);
+    this.modelZone.classList.add("is-holding");
+    // Reaching for the cluster again takes over from a swing already running.
+    this.modelResetFrom = null;
     this.modelZone.setPointerCapture(event.pointerId);
     this.modelZone.classList.add("is-dragging");
   };
@@ -1495,6 +1572,10 @@ export class CannonSortEngine {
     if (!this.canRotateModel()) {
       this.clearModelGesture();
       return;
+    }
+    if (this.modelHoldDueAt !== null
+      && Math.hypot(event.clientX - this.modelHoldStart.x, event.clientY - this.modelHoldStart.y) > MODEL_HOLD_SLOP) {
+      this.cancelModelHold();
     }
     const dx = event.clientX - this.lastModelPointer.x;
     const dy = event.clientY - this.lastModelPointer.y;
@@ -1517,7 +1598,50 @@ export class CannonSortEngine {
     this.aimPreviewDirty = true;
   };
 
+  private cancelModelHold() {
+    this.modelHoldDueAt = null;
+    this.modelZone.classList.remove("is-holding");
+  }
+
+  /**
+   * Swing the cluster back to the pose the level opened on.
+   *
+   * The event fires even when the cluster is already square, because it reports
+   * what the player did rather than how far anything moved — a press that gives
+   * no answer reads as broken, and the tutorial step would never complete.
+   */
+  private recentreModel() {
+    haptic("impact");
+    this.options.onInteraction?.({ type: "MODEL_RESET" });
+    if (this.modelRoot.quaternion.angleTo(this.defaultModelOrientation) < 1e-3) {
+      this.modelRoot.quaternion.copy(this.defaultModelOrientation);
+      return;
+    }
+    this.modelResetFrom = this.modelRoot.quaternion.clone();
+    this.modelResetTime = 0;
+  }
+
+  private updateModelReset(frameDelta: number) {
+    if (!this.modelResetFrom) return;
+    this.modelResetTime = Math.min(this.modelResetTime + frameDelta, MODEL_RESET_SECONDS);
+    const progress = this.modelResetTime / MODEL_RESET_SECONDS;
+    // Same cubic ease-out the entrance uses, so the two reads as one motion
+    // vocabulary rather than two.
+    this.modelRoot.quaternion.slerpQuaternions(
+      this.modelResetFrom,
+      this.defaultModelOrientation,
+      1 - Math.pow(1 - progress, 3),
+    );
+    this.aimPreviewDirty = true;
+    if (progress < 1) return;
+    // Land on the authored pose exactly, never on a rounded-off slerp.
+    this.modelRoot.quaternion.copy(this.defaultModelOrientation);
+    this.modelRoot.updateMatrixWorld(true);
+    this.modelResetFrom = null;
+  }
+
   private clearModelGesture() {
+    this.cancelModelHold();
     const pointer = this.modelPointer;
     this.modelPointer = null;
     if (pointer !== null && this.modelZone.hasPointerCapture(pointer)) this.modelZone.releasePointerCapture(pointer);
@@ -1535,6 +1659,10 @@ export class CannonSortEngine {
       return;
     }
     this.aimPointer = event.pointerId;
+    // Emitted here rather than after the capture call below: capture can throw on
+    // a pointer the browser no longer tracks, and this has to fire on the touch
+    // regardless of what happens to the gesture afterwards.
+    this.options.onInteraction?.({ type: "AIM_TOUCHED" });
     this.aimStart.set(event.clientX, event.clientY);
     this.aimCurrent.copy(this.aimStart);
     this.aimDistance = 0;
@@ -2183,7 +2311,16 @@ export class CannonSortEngine {
   private spawnShield(block: BlockRuntime) {
     if (!this.shieldGeometry) {
       const side = BLOCK_SIZE * SHIELD_SCALE;
-      this.shieldGeometry = new THREE.BoxGeometry(side, side, side);
+      // Rounded to the same profile as the block it wraps: a hard-cornered shell
+      // over a rounded block shows four bright wedges at the corners where the
+      // shell has nothing behind it.
+      this.shieldGeometry = new RoundedBoxGeometry(
+        side,
+        side,
+        side,
+        BLOCK_CORNER_SEGMENTS,
+        side * BLOCK_CORNER_RATIO,
+      );
       this.disposables.push(this.shieldGeometry);
     }
     // A second shot on the same block restarts its flash instead of stacking a
@@ -2284,7 +2421,10 @@ export class CannonSortEngine {
     if (!kick) return;
     block.mesh.position.copy(kick.basePosition);
     block.mesh.scale.setScalar(1);
-    block.mesh.material.emissiveIntensity = 0;
+    // Back to resting, which now includes the resting glow. Setting this to 0
+    // would leave every block a break wave touched permanently duller than its
+    // neighbours.
+    block.mesh.material.emissiveIntensity = BLOCK_EMISSIVE_INTENSITY;
     this.neighborKicks = this.neighborKicks.filter((candidate) => candidate.block !== block);
   }
 
@@ -2362,7 +2502,7 @@ export class CannonSortEngine {
       if (progress >= 1 || !kick.block.active) {
         kick.block.mesh.position.copy(kick.basePosition);
         kick.block.mesh.scale.setScalar(1);
-        kick.block.mesh.material.emissiveIntensity = 0;
+        kick.block.mesh.material.emissiveIntensity = BLOCK_EMISSIVE_INTENSITY;
         continue;
       }
 
@@ -2375,7 +2515,7 @@ export class CannonSortEngine {
         .copy(kick.basePosition)
         .addScaledVector(kick.direction, amount * WAVE_PUSH * kick.amplitude);
       kick.block.mesh.scale.setScalar(1);
-      kick.block.mesh.material.emissiveIntensity = 0;
+      kick.block.mesh.material.emissiveIntensity = BLOCK_EMISSIVE_INTENSITY;
       survivors.push(kick);
     }
     this.neighborKicks = survivors;
@@ -3124,6 +3264,20 @@ export class CannonSortEngine {
       else this.updateIntro(frameDelta);
     }
 
+    // Checked on the frame rather than from a setTimeout, so there is no timer
+    // handle to lose track of across a dispose or a level swap. Opening a dialog
+    // drops the press outright — pause() clears the model gesture — so a hold
+    // can never fire late on resume.
+    if (!this.paused) {
+      if (this.modelHoldDueAt !== null && performance.now() >= this.modelHoldDueAt) {
+        // The gesture is ended outright: leaving it live would let the jitter of
+        // a finger still resting on the glass cancel the swing it just asked for.
+        this.clearModelGesture();
+        this.recentreModel();
+      }
+      this.updateModelReset(frameDelta);
+    }
+
     if (!this.paused) {
       this.accumulator += frameDelta;
       while (this.accumulator >= FIXED_STEP) {
@@ -3155,6 +3309,51 @@ export class CannonSortEngine {
     if (!this.canRotateModel()) return;
     this.modelRoot.quaternion.copy(this.defaultModelOrientation);
     this.updateAimPreview();
+  }
+
+  /**
+   * Where the cluster actually is on screen, in canvas pixels.
+   *
+   * The tutorial spotlight needs this: the scene is a canvas, so there is no
+   * element to measure, and a fraction of the canvas height was wrong by ~70px
+   * because the camera does not frame the cluster in the middle. Projecting the
+   * live bounding box is exact at any screen size and follows the model as it
+   * turns. Returns null while nothing is left to point at.
+   */
+  modelScreenBounds(): { left: number; top: number; width: number; height: number } | null {
+    const active = this.blocks.filter((block) => block.active);
+    if (!active.length) return null;
+    this.modelRoot.updateMatrixWorld(true);
+
+    const bounds = new THREE.Box3();
+    for (const block of active) bounds.expandByObject(block.mesh);
+    if (bounds.isEmpty()) return null;
+
+    const width = Math.max(this.host.clientWidth, 1);
+    const height = Math.max(this.host.clientHeight, 1);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const corner = new THREE.Vector3();
+    // All eight corners, because a rotated cluster's widest point on screen is
+    // not necessarily one of the two the box was built from.
+    for (let index = 0; index < 8; index += 1) {
+      corner
+        .set(
+          index & 1 ? bounds.max.x : bounds.min.x,
+          index & 2 ? bounds.max.y : bounds.min.y,
+          index & 4 ? bounds.max.z : bounds.min.z,
+        )
+        .project(this.camera);
+      const x = (corner.x * 0.5 + 0.5) * width;
+      const y = (-corner.y * 0.5 + 0.5) * height;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
   }
 
   setRainbowTargetsEnabled(next: boolean) {

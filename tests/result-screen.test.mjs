@@ -37,7 +37,9 @@ test("the result screen covers the whole frame, not just the scene below the HUD
   // it starts ~116px down the frame and leaves the HUD strip showing along the
   // top — and its `overflow: hidden` clips the fireworks too. The overlay has to
   // be a sibling of the scene, like the dialogs are.
-  const sceneAt = ui.indexOf('<div className="scene-wrap">');
+  // Matched without the closing bracket: the element carries a ref now, and the
+  // point of this test is where the overlay sits, not what the scene's props are.
+  const sceneAt = ui.indexOf('<div className="scene-wrap"');
   assert.ok(sceneAt > 0, "the scene wrapper is still there");
   const sceneClose = closingIndexOfDiv(ui, sceneAt);
   assert.ok(sceneClose > sceneAt, "found where the scene wrapper closes");
@@ -47,7 +49,7 @@ test("the result screen covers the whole frame, not just the scene below the HUD
   const overlayAt = ui.indexOf("state.result && !state.postWinClearing && (");
   assert.ok(overlayAt > sceneClose, "the result overlay must sit outside .scene-wrap");
   assert.match(ui.slice(Math.max(0, overlayAt - 40), overlayAt), /screen === "playing" &&\s*$/,
-    "tutorial completion uses its coach card, not the campaign result overlay");
+    "tutorial completion uses its own tick and Next button, not the campaign result overlay");
 
   const css = await readFile(cssUrl, "utf8");
   const scene = css.slice(css.indexOf(".scene-wrap {"), css.indexOf("}", css.indexOf(".scene-wrap {")));

@@ -341,6 +341,16 @@ function parsePositiveInteger(raw: string, label: string, report: (message: stri
   return value;
 }
 
+function parseNonNegativeInteger(raw: string, label: string, report: (message: string) => void) {
+  if (!raw.trim()) return null;
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < 0) {
+    report(`${label} must be an integer of 0 or more`);
+    return null;
+  }
+  return value;
+}
+
 function parsePositiveNumber(raw: string, label: string, report: (message: string) => void) {
   if (!raw.trim()) return null;
   const value = Number(raw.trim());
@@ -597,7 +607,10 @@ function buildLevel(
   const reserveBlocks = parsePositiveInteger(cells.batch_blocks ?? "", "batch_blocks", report) ?? LEVEL_DEFAULTS.reserveBlocks;
   const shotLimit = parsePositiveInteger(cells.shot_limit ?? "", "shot_limit", report);
   const weakPoints = parseWeakPoints(cells.weak_points ?? "", dims, blocks, report, warn);
-  const targetCount = parsePositiveInteger(cells.rainbow_target_count ?? "", "rainbow_target_count", report)
+  // Zero is a real authored value, not a mistake: the opening levels teach one
+  // rule at a time, and a bonus target flying past during the first lesson is a
+  // second thing to look at. Blank still means the default.
+  const targetCount = parseNonNegativeInteger(cells.rainbow_target_count ?? "", "rainbow_target_count", report)
     ?? HOOK_LEVEL_DEFAULTS.rainbowTargetCount;
   const spawnGapSeconds = parsePositiveNumber(cells.rainbow_spawn_gap ?? "", "rainbow_spawn_gap", report)
     ?? HOOK_LEVEL_DEFAULTS.rainbowSpawnGapSeconds;

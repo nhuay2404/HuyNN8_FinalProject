@@ -212,8 +212,22 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .goal-bar i { display: block; width: var(--goal-fill, 0%); height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--goal), white 26%), var(--goal)); box-shadow: 0 0 10px color-mix(in srgb, var(--goal), transparent 40%); transition: width .28s cubic-bezier(.2,.8,.2,1); }
 .goal-card.is-full { border-color: color-mix(in srgb, var(--goal), white 18%); animation: goal-in .34s cubic-bezier(.2,.8,.2,1) both, goal-full-glow 1.4s ease-in-out infinite alternate; }
 /* A finished slot renders as an empty grid cell: it holds the column open so the
-   goal still in play keeps its place, and shows nothing at all. */
+   goal still in play keeps its place, and shows nothing at all. Once only one
+   goal is left the cell is dropped instead, and the survivor slides into it. */
 .goal-slot-empty { min-height: 0; }
+
+/* The last goal standing travels from the second column into the first. It is
+   the same distance every time — one column plus the grid gap — so the trip is
+   authored in the element's own width rather than measured.
+   Cartoon timing, not a lerp: it runs past the mark, squashes as it stops, and
+   rebounds. The tilt is what sells the weight; without it the squash reads as a
+   glitch. */
+.goal-card.is-sliding-home { animation: goal-slide-home .52s cubic-bezier(.3,.85,.35,1) both; }
+/* A goal that fills on the very shot that empties its neighbour would otherwise
+   lose its glow to this rule replacing the animation list. */
+.goal-card.is-sliding-home.is-full {
+  animation: goal-slide-home .52s cubic-bezier(.3,.85,.35,1) both, goal-full-glow 1.4s ease-in-out infinite alternate;
+}
 
 /* No chip, no counter: the row is the budget drawn out. */
 .batch-section { display: block; }
@@ -275,6 +289,20 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .scene-host canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
 .model-input-zone { position: absolute; inset: 0 0 var(--aim-touch-height); z-index: 2; cursor: grab; touch-action: none; outline: none; }
 .model-input-zone.is-dragging { cursor: grabbing; }
+/* Drawn at the touch point and timed off the same constant the engine counts, so
+   what the player watches fill is the hold that is actually being measured. */
+.model-input-zone.is-holding::after {
+  content: ""; position: absolute; z-index: 3; pointer-events: none;
+  left: var(--hold-x); top: var(--hold-y); width: 60px; height: 60px; margin: -30px 0 0 -30px;
+  border-radius: 50%; border: 2px solid rgba(255,255,255,.9);
+  box-shadow: 0 0 14px rgba(140,190,255,.5), inset 0 0 12px rgba(255,255,255,.28);
+  animation: model-hold-fill var(--hold-ms, 460ms) linear both;
+}
+@keyframes model-hold-fill {
+  from { transform: scale(.28); opacity: 0; }
+  35% { opacity: .95; }
+  to { transform: scale(1); opacity: .95; }
+}
 .aim-crosshair {
   position: absolute; z-index: 5; left: 50%; top: 50%; width: 26px; height: 26px;
   opacity: 0; visibility: hidden; transform: translate(-50%,-50%) scale(.84); pointer-events: none;
@@ -608,81 +636,129 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-side-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- Guided tutorial -------------------------------------------------- */
-/* The lesson chrome never becomes an invisible pane over the controls. Only
-   its two buttons accept pointer events; drag gestures pass through the cards
-   to the real engine zones underneath. */
+/* The lesson never becomes a pane over the controls. The layer itself takes no
+   pointer events; only the exit and next buttons do, so every drag reaches the
+   engine zones underneath. */
 .tutorial-layer { position: absolute; z-index: 18; inset: 0; pointer-events: none; }
-.tutorial-header {
-  position: absolute; top: max(10px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
-  min-height: 48px; padding: 8px 48px 8px 13px;
-  display: flex; align-items: center;
-  border: 1px solid rgba(255,255,255,.2); border-radius: 16px;
-  background: rgba(10,16,52,.84); box-shadow: 0 12px 28px -18px rgba(3,7,28,.95);
+
+/* Overall progress as segments along the very top edge. 3px tall, so it costs
+   the scene nothing. */
+.tutorial-chapter-rail {
+  position: absolute; z-index: 2; top: max(4px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); right: max(56px, calc(env(safe-area-inset-right) + 52px));
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px;
+}
+.tutorial-chapter-rail i { height: 3px; border-radius: 999px; background: rgba(255,255,255,.22); }
+.tutorial-chapter-rail i.is-done { background: #45e3b4; }
+.tutorial-chapter-rail i.is-current { background: var(--accent); box-shadow: 0 0 8px rgba(255,213,74,.6); }
+
+/* Sits in the slot the settings gear uses during a real level, so it displaces
+   nothing. */
+.tutorial-exit {
+  pointer-events: auto; position: absolute; z-index: 3;
+  top: max(14px, calc(env(safe-area-inset-top) + 10px)); right: max(16px, env(safe-area-inset-right));
+  width: 34px; height: 34px;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 11px;
+  background: rgba(10,16,52,.82); color: #fff; cursor: pointer; font-size: 13px; font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+.tutorial-exit:focus-visible, .tutorial-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The dim pass and the ring in one element. A spread shadow larger than the
+   frame paints everything outside the circle, so the circle is a real hole and
+   not a lighter patch over a cover. */
+.tutorial-spot {
+  position: absolute; z-index: 1;
+  left: var(--spot-x); top: var(--spot-y);
+  width: var(--spot-w); height: var(--spot-h);
+  margin: calc(var(--spot-h) / -2) 0 0 calc(var(--spot-w) / -2);
+  border-radius: var(--spot-round);
+  border: 2px solid rgba(255,255,255,.82);
+  box-shadow: 0 0 0 2000px rgba(4,7,26,.72), inset 0 0 26px rgba(255,255,255,.14);
+  animation: tutorial-spot-pulse 1.7s ease-in-out infinite;
+}
+
+/* Icon, three words, step dots. Placed on the far side of the ring from the
+   middle of the frame, so it never covers what it points at. */
+.tutorial-cue {
+  --tutorial-focus: #ffd54a;
+  position: absolute; z-index: 4; left: 50%;
+  max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%); border-radius: 999px;
+  background: rgba(8,13,44,.93); color: #fff;
+  box-shadow: 0 14px 28px -18px rgba(3,7,28,.95);
   backdrop-filter: blur(12px);
 }
-.tutorial-header > div { min-width: 0; display: grid; gap: 2px; }
-.tutorial-header span { color: #8ff4dd; font-size: 9px; font-weight: 900; letter-spacing: .13em; text-transform: uppercase; }
-.tutorial-header strong { overflow: hidden; color: #fff; font-size: 14px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
-.tutorial-header button {
-  pointer-events: auto; position: absolute; top: 7px; right: 7px; width: 34px; height: 34px;
-  border: 1px solid rgba(255,255,255,.2); border-radius: 11px;
-  background: rgba(255,255,255,.1); color: #fff; cursor: pointer; font-size: 13px; font-weight: 900;
+.tutorial-cue.is-below { top: calc(var(--spot-y) + var(--spot-h) / 2 + 16px); transform: translateX(-50%); }
+.tutorial-cue.is-above { top: calc(var(--spot-y) - var(--spot-h) / 2 - 16px); transform: translate(-50%, -100%); }
+/* A step with nothing to ring still has something to say. Parked high, clear of
+   both the cluster and the rig, since with no scrim the whole board is in play. */
+.tutorial-cue.is-floating {
+  top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 16px);
+  transform: translateX(-50%);
 }
-.tutorial-header button:focus-visible, .tutorial-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tutorial-chapter-rail {
-  position: absolute; top: max(64px, calc(env(safe-area-inset-top) + 54px)); left: 50%;
-  display: grid; grid-template-columns: repeat(3, 34px); gap: 5px; transform: translateX(-50%);
-}
-.tutorial-chapter-rail i { height: 4px; border-radius: 999px; background: rgba(255,255,255,.18); }
-.tutorial-chapter-rail i.is-done { background: #45e3b4; }
-.tutorial-chapter-rail i.is-current { background: var(--accent); box-shadow: 0 0 10px rgba(255,213,74,.55); }
+.tutorial-cue.is-floating .tutorial-cue-arrow { display: none; }
+.tutorial-glyph { flex: 0 0 auto; width: 26px; height: 26px; color: var(--tutorial-focus); }
+.tutorial-cue b { font-size: 13px; font-weight: 900; letter-spacing: -.01em; white-space: nowrap; }
+.tutorial-cue-dots { flex: 0 0 auto; display: flex; gap: 4px; margin-left: 2px; }
+.tutorial-cue-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.24); }
+.tutorial-cue-dots i.is-current { background: var(--tutorial-focus); }
+.tutorial-cue-dots i.is-done { background: #45e3b4; }
 
-.tutorial-coach {
-  --tutorial-focus: #ffd54a;
-  position: absolute; left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom));
-  padding: 13px 14px 12px; overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 44%); border-radius: 18px;
-  background: linear-gradient(135deg, rgba(10,16,52,.94), rgba(29,39,91,.91));
-  box-shadow: 0 18px 34px -20px rgba(3,7,28,.95), inset 3px 0 0 var(--tutorial-focus);
-  backdrop-filter: blur(13px);
+/* Cards that are read, not played: the whole frame takes the tap so reading one
+   cannot double as a shot, and a nudging chevron says another tap moves on. */
+.tutorial-tap-catcher { pointer-events: auto; position: absolute; z-index: 2; inset: 0; }
+.tutorial-cue-next {
+  flex: 0 0 auto; margin-left: -2px;
+  color: var(--tutorial-focus); font-size: 19px; font-weight: 900; line-height: 1;
+  animation: tutorial-cue-nudge 1.1s ease-in-out infinite;
 }
-.tutorial-coach.is-complete { bottom: max(76px, calc(env(safe-area-inset-bottom) + 72px)); border-color: rgba(69,227,180,.62); box-shadow: 0 18px 34px -20px rgba(3,7,28,.95), inset 3px 0 0 #45e3b4; }
-.tutorial-coach-kicker { margin: 0 0 3px; color: var(--tutorial-focus); font-size: 9px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
-.tutorial-coach.is-complete .tutorial-coach-kicker { color: #69f0c9; }
-.tutorial-coach h2 { margin: 0; color: #fff; font-size: 19px; line-height: 1.16; letter-spacing: -.025em; }
-.tutorial-coach-body { margin: 5px 0 8px; color: #cbd4f6; font-size: 11px; line-height: 1.45; }
-.tutorial-hint {
-  display: inline-flex; min-height: 24px; padding: 5px 9px; align-items: center;
-  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 58%); border-radius: 999px;
-  background: color-mix(in srgb, var(--tutorial-focus), transparent 87%); color: #fff;
-  font-size: 10px; font-weight: 900;
+@keyframes tutorial-cue-nudge {
+  0%, 100% { transform: translateX(0); opacity: .55; }
+  50% { transform: translateX(3px); opacity: 1; }
 }
-.tutorial-step-dots { position: absolute; top: 13px; right: 13px; display: flex; gap: 5px; }
-.tutorial-step-dots i {
-  width: 19px; height: 19px; display: grid; place-items: center;
-  border: 1px solid rgba(255,255,255,.18); border-radius: 50%;
-  background: rgba(255,255,255,.07); color: #9da8d4; font-size: 8px; font-style: normal; font-weight: 900;
+
+/* The arrow points out of the card, back at the ring. */
+.tutorial-cue-arrow {
+  position: absolute; left: 50%; width: 12px; height: 12px;
+  background: rgba(8,13,44,.93);
+  border-right: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%);
+  border-bottom: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%);
 }
-.tutorial-step-dots i.is-current { border-color: var(--tutorial-focus); color: #101735; background: var(--tutorial-focus); }
-.tutorial-step-dots i.is-done { border-color: #45e3b4; color: #062b21; background: #45e3b4; }
+.tutorial-cue.is-below .tutorial-cue-arrow { top: -7px; transform: translateX(-50%) rotate(-135deg); }
+.tutorial-cue.is-above .tutorial-cue-arrow { bottom: -7px; transform: translateX(-50%) rotate(45deg); }
+
+/* Lesson finished: a tick and one button, no paragraph explaining that it is
+   finished. */
+.tutorial-done {
+  position: absolute; z-index: 4; left: 50%; bottom: max(20px, calc(env(safe-area-inset-bottom) + 16px));
+  display: grid; justify-items: center; gap: 12px; transform: translateX(-50%);
+}
+.tutorial-done-tick {
+  width: 54px; height: 54px; display: grid; place-items: center;
+  border-radius: 50%; background: rgba(69,227,180,.16); border: 2px solid #45e3b4; color: #7cf0cd;
+  animation: tutorial-tick-in .32s ease-out both;
+}
+.tutorial-done-tick svg { width: 30px; height: 30px; }
 .tutorial-next {
-  pointer-events: auto; position: absolute; z-index: 1; left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom));
-  min-height: 48px; border: 0; border-radius: 15px;
+  pointer-events: auto; min-width: 154px; min-height: 48px; padding: 0 22px;
+  border: 0; border-radius: 15px;
   background: linear-gradient(135deg, #45e3b4, #b7ffcf); color: #062c21;
-  box-shadow: 0 12px 24px -14px rgba(3,7,28,.9); cursor: pointer; font-size: 12px; font-weight: 900;
+  box-shadow: 0 12px 24px -14px rgba(3,7,28,.9); cursor: pointer; font-size: 13px; font-weight: 900;
 }
 
-/* The regular HUD moves below the lesson title. Chapters that intentionally
-   hide it let the scene use that space instead of reserving a blank 92px. */
-.game-frame.is-tutorial:not(.is-tutorial-no-hud) .hud-top { top: max(82px, calc(env(safe-area-inset-top) + 72px)); right: max(16px, env(safe-area-inset-right)); }
-.game-frame.is-tutorial:not(.is-tutorial-no-hud) .scene-wrap { inset: calc(max(82px, calc(env(safe-area-inset-top) + 72px)) + var(--hud-height) + 8px) 0 0; }
-.game-frame.is-tutorial-no-hud .scene-wrap { inset: max(72px, calc(env(safe-area-inset-top) + 62px)) 0 0; }
+/* The HUD keeps its normal position: the lesson chrome is a top edge rail and a
+   corner button now, so there is nothing for it to clear. A lesson that hides
+   the HUD outright still hands that band back to the scene rather than leaving
+   a blank 92px reserved for a bar that is not there. */
+.game-frame.is-tutorial-no-hud .scene-wrap { inset: max(var(--hud-inset), env(safe-area-inset-top)) 0 0; }
 .goal-card.is-tutorial-focus, .batch-section.is-tutorial-focus .batch-slot {
   animation: tutorial-focus 1s ease-in-out infinite alternate;
 }
 
 .tutorial-gesture {
-  position: absolute; z-index: 6; left: 50%; width: 170px; height: 70px;
+  position: absolute; z-index: 6; left: 50%; width: 170px; height: 52px;
   transform: translateX(-50%); pointer-events: none; color: #fff; text-align: center;
   filter: drop-shadow(0 5px 10px rgba(5,9,32,.75));
 }
@@ -691,14 +767,28 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .tutorial-gesture i::before, .tutorial-gesture i::after { content: ""; position: absolute; top: -4px; width: 8px; height: 8px; border-top: 2px solid #fff; border-right: 2px solid #fff; }
 .tutorial-gesture i::before { left: 0; transform: rotate(-135deg); }
 .tutorial-gesture i::after { right: 0; transform: rotate(45deg); }
-.tutorial-gesture b { position: absolute; top: 50px; left: 0; right: 0; font-size: 8px; letter-spacing: .13em; }
-.tutorial-gesture-rotate { top: 31%; animation: tutorial-hand-horizontal 1.5s ease-in-out infinite; }
-.tutorial-gesture-aim { bottom: 29%; animation: tutorial-hand-aim 1.4s ease-in-out infinite; }
+.tutorial-gesture-rotate { top: 22%; animation: tutorial-hand-horizontal 1.5s ease-in-out infinite; }
+/* A press has no travel to draw, so the ring is the whole story: it fills, holds
+   and starts over, which is the shape of the gesture being asked for. */
+.tutorial-gesture-hold { top: 22%; }
+.tutorial-gesture-hold i { left: 50%; right: auto; top: 8px; width: 46px; height: 46px; margin-left: -23px; border: 2px solid rgba(255,255,255,.42); border-radius: 50%; background: none; animation: tutorial-hand-hold 1.5s ease-in-out infinite; }
+.tutorial-gesture-hold i::before, .tutorial-gesture-hold i::after { display: none; }
+@keyframes tutorial-hand-hold {
+  0% { transform: scale(.62); border-color: rgba(255,255,255,.28); }
+  62% { transform: scale(1); border-color: rgba(255,255,255,.95); }
+  100% { transform: scale(1); border-color: rgba(255,255,255,0); }
+}
+.tutorial-gesture-aim { bottom: 22%; animation: tutorial-hand-aim 1.4s ease-in-out infinite; }
 .tutorial-gesture-aim i { transform: rotate(-18deg); }
 
 @keyframes tutorial-focus {
   to { transform: translateY(-2px); filter: brightness(1.18); box-shadow: 0 0 0 5px color-mix(in srgb, var(--tutorial-focus, #ffd54a), transparent 76%); }
 }
+@keyframes tutorial-spot-pulse {
+  0%, 100% { border-color: rgba(255,255,255,.6); }
+  50% { border-color: rgba(255,255,255,.98); }
+}
+@keyframes tutorial-tick-in { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes tutorial-hand-horizontal { 0%,100% { transform: translateX(-57%); opacity: .64; } 50% { transform: translateX(-43%); opacity: 1; } }
 @keyframes tutorial-hand-aim { 0%,100% { transform: translate(-55%,8px); opacity: .62; } 50% { transform: translate(-43%,-9px); opacity: 1; } }
 
@@ -841,6 +931,14 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes hub-exit-left { to { opacity: 0; transform: translateX(-190%); } }
 
 @keyframes goal-in { from { opacity: 0; transform: translateY(-7px) scale(.98); } }
+/* One column plus the 10px grid gap, in the card's own width. */
+@keyframes goal-slide-home {
+  0% { transform: translateX(calc(100% + 10px)) rotate(0deg) scale(1, 1); }
+  52% { transform: translateX(-7%) rotate(-2.5deg) scale(1.05, .93); }
+  72% { transform: translateX(3%) rotate(1.4deg) scale(.97, 1.04); }
+  88% { transform: translateX(-1.2%) rotate(-.5deg) scale(1.01, .99); }
+  100% { transform: translateX(0) rotate(0deg) scale(1, 1); }
+}
 @keyframes count-pop { from { opacity: .4; transform: translateY(-4px) scale(.68); } }
 @keyframes goal-full-glow {
   to {

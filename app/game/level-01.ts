@@ -44,7 +44,10 @@ export const level01: LevelConfig = {
   missCountsAsShot: true,
   continuousFire: true,
   weakPoints,
-  rainbow: { targetCount: 3, spawnGapSeconds: 12, targetDurationSeconds: 7 },
+  // One bonus target for the whole round, and not in the opening: the first one
+  // lands at gap x 0.5-1.0 seconds. Three of them meant the next arrived before
+  // the last had left, which made the bonus read as the normal state.
+  rainbow: { targetCount: 1, spawnGapSeconds: 30, targetDurationSeconds: 7 },
 
   // Confirmed by prototype playtesting: direct same-color contact on X/Y/Z
   // belongs to one cluster. Diagonal contact still does not connect blocks.

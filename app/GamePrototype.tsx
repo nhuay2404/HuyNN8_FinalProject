@@ -42,13 +42,15 @@ import { createGameState } from "./game/rules";
 import { TUTORIAL_CHAPTERS } from "./game/tutorial-levels";
 import {
   TUTORIAL_COPY,
-  TUTORIAL_STEP_COUNT,
+  tutorialScrimVisible,
+  tutorialStepCount,
   createTutorialProgress,
   nextTutorialChapter,
   reduceTutorialProgress,
   tutorialAllowedColor,
   tutorialPresentation,
   type TutorialEvent,
+  type TutorialGlyphName,
   type TutorialProgress,
 } from "./game/tutorial";
 import type { BlockColor, GameState } from "./game/types";
@@ -223,9 +225,135 @@ const SHEET_SOURCE_LABEL: Record<LoadedLevelSheet["source"], string> = {
   dropped: "the sheet you just dropped in",
 };
 
+/**
+ * Where in the 3D scene each focus sits, as a fraction of the scene box.
+ *
+ * The scene is a canvas, so there is no element to measure. The 3D camera is
+ * fixed relative to that canvas, so a fraction of its height lands on the same
+ * thing at every screen size.
+ */
+const TUTORIAL_SCENE_FOCUS: Record<"sky", { v: number; r: number }> = {
+  // The band a Rainbow Target flies in, which is the middle of the reachable
+  // band rather than the top of the screen.
+  sky: { v: 0.28, r: 132 },
+};
+
+/** Focuses that are a real element, so they are measured instead of guessed. */
+const TUTORIAL_ELEMENT_FOCUS: Record<"goals" | "reserve" | "cannon", string> = {
+  goals: ".goal-section",
+  reserve: ".batch-section",
+  // The zone the player actually drags in, so the ring is the control itself.
+  cannon: ".aim-zone",
+};
+
+/**
+ * Where the spotlight is measured to sit, in frame coordinates.
+ *
+ * Width and height rather than one radius: the reserve tray is a wide, shallow
+ * bar, and a circle big enough to contain it swallowed the goal cards above it.
+ * `round` is the border radius, so a scene focus is still a circle.
+ */
+type TutorialSpot = { x: number; y: number; w: number; h: number; round: string; below: boolean };
+
+/**
+ * The instruction, as a picture.
+ *
+ * Inline paths rather than glyphs or images: emoji render differently on every
+ * platform, and the offline build must not fetch an asset. Each icon is drawn on
+ * a 24x24 grid and inherits `currentColor`.
+ */
+function TutorialGlyph({ name }: { name: TutorialGlyphName }) {
+  const stroke = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.9,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  return (
+    <svg className="tutorial-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      {name === "rotate" && (
+        <g {...stroke}>
+          <path d="M5 10a7 7 0 0 1 14 0" />
+          <path d="M3.6 12.2 5 9.6l2.7 1.2" />
+          <path d="M20.4 12.2 19 9.6l-2.7 1.2" />
+          <rect x="8.4" y="14" width="7.2" height="6" rx="1.2" />
+        </g>
+      )}
+      {name === "recenter" && (
+        <g {...stroke}>
+          <rect x="8.4" y="8.4" width="7.2" height="7.2" rx="1.4" />
+          <path d="M12 3.4v2.6M12 18v2.6M3.4 12h2.6M18 12h2.6" />
+          <path d="M5.6 5.6 7.5 7.5M18.4 5.6 16.5 7.5M5.6 18.4 7.5 16.5M18.4 18.4 16.5 16.5" />
+        </g>
+      )}
+      {name === "drag" && (
+        <g {...stroke}>
+          <circle cx="8" cy="16.4" r="2.4" />
+          <path d="M10.2 14.2 17 7.6" />
+          <path d="M12.6 7.2h4.8v4.8" />
+        </g>
+      )}
+      {name === "release" && (
+        <g {...stroke}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 4.4v2.6M12 17v2.6M4.4 12H7M17 12h2.6" />
+          <path d="M6.2 6.2l1.9 1.9M17.8 6.2l-1.9 1.9M6.2 17.8l1.9-1.9M17.8 17.8l-1.9-1.9" />
+        </g>
+      )}
+      {name === "goal" && (
+        <g {...stroke}>
+          <rect x="3.4" y="4.2" width="6.4" height="6.4" rx="1.2" />
+          <path d="M10.6 7.4h7.2M15.4 4.8l2.8 2.6-2.8 2.6" />
+          <path d="M5 14.6h14v5H5z" />
+        </g>
+      )}
+      {name === "reserve" && (
+        <g {...stroke}>
+          <rect x="8.8" y="3.4" width="6.4" height="6.4" rx="1.2" />
+          <path d="M12 11.2v3.4M9.4 12.6 12 15.2l2.6-2.6" />
+          <path d="M4.4 17.2v2.4h15.2v-2.4" />
+        </g>
+      )}
+      {name === "autosort" && (
+        <g {...stroke}>
+          <path d="M4.4 6.2v2.4h15.2V6.2" />
+          <rect x="8.8" y="14.2" width="6.4" height="6.4" rx="1.2" />
+          <path d="M12 12.8V9.4M9.4 11.4 12 8.8l2.6 2.6" />
+        </g>
+      )}
+      {name === "mark" && (
+        <g {...stroke}>
+          <rect x="3.6" y="3.6" width="16.8" height="16.8" rx="2.2" />
+          <circle cx="12" cy="12" r="5" />
+          <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
+        </g>
+      )}
+      {name === "rainbow" && (
+        <g {...stroke}>
+          <circle cx="12" cy="12" r="8.4" />
+          <circle cx="12" cy="12" r="5.4" />
+          <circle cx="12" cy="12" r="2.4" />
+          <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
+        </g>
+      )}
+      {name === "bypass" && (
+        <g {...stroke}>
+          <rect x="3.6" y="3.6" width="16.8" height="16.8" rx="2.2" />
+          <circle cx="12" cy="12" r="5" />
+          <path d="M5.6 18.4 18.4 5.6" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
 export default function GamePrototype() {
   const gameFrameRef = useRef<HTMLElement>(null);
   const sceneHostRef = useRef<HTMLDivElement>(null);
+  // Measured, not assumed: the tutorial spotlight is placed against the live
+  // scene box, which moves with the HUD height and the safe area.
+  const sceneWrapRef = useRef<HTMLDivElement>(null);
   const modelZoneRef = useRef<HTMLDivElement>(null);
   const aimZoneRef = useRef<HTMLDivElement>(null);
   const crosshairRef = useRef<HTMLSpanElement>(null);
@@ -260,6 +388,7 @@ export default function GamePrototype() {
   const [sheet, setSheet] = useState<LoadedLevelSheet>(() => loadLevelSheet());
   const [levelIndex, setLevelIndex] = useState(0);
   const [tutorialProgress, setTutorialProgress] = useState<TutorialProgress>(() => createTutorialProgress());
+  const [tutorialSpot, setTutorialSpot] = useState<TutorialSpot | null>(null);
   const campaignLevel = sheet.levels[levelIndex] ?? sheet.levels[0];
   const tutorialChapter = TUTORIAL_CHAPTERS[tutorialProgress.chapter] ?? TUTORIAL_CHAPTERS[0];
   const tutorialMode = screen === "tutorial";
@@ -466,11 +595,17 @@ export default function GamePrototype() {
       },
       {
         allowAnyBlockFace: engineTutorialView?.allowAnyBlockFace,
-        canClaimColor: engineTutorialChapter !== null && engineTutorialChapter > 0
+        // Only the Weak Point lesson locks a colour per step, and there a null
+        // means "no block at all" — the Rainbow step wants the target hit, not a
+        // cluster. The sort lesson locks nothing: its board forces the order, so
+        // installing this predicate there would compare every colour against
+        // null and refuse every claim on the board.
+        canClaimColor: engineTutorialChapter === 2
           ? (color) => tutorialAllowedColor(tutorialProgressRef.current) === color
           : undefined,
         rainbowTargetsEnabled: engineTutorialChapter === null
           || (engineTutorialChapter === 2 && tutorialProgressRef.current.step >= 1),
+        rainbowFirstSpawnSeconds: engineTutorialChapter === 2 ? 0.35 : undefined,
         showWeakPoints: engineTutorialView?.showWeakPoints ?? true,
         onInteraction: handleTutorialInteraction,
       },
@@ -618,7 +753,7 @@ export default function GamePrototype() {
   };
 
   const continueTutorial = () => {
-    if (tutorialProgress.step < TUTORIAL_STEP_COUNT) return;
+    if (tutorialProgress.step < tutorialStepCount(tutorialProgress.chapter)) return;
     const next = nextTutorialChapter(tutorialProgress);
     if (next) loadTutorialProgress(next);
     else leaveTutorial();
@@ -881,11 +1016,120 @@ export default function GamePrototype() {
   const showReserve = screen === "playing" || tutorialView?.showReserve === true;
   const showClimaxFeedback = (screen === "playing" || (tutorialMode && tutorialProgress.chapter === 2)) && bypassArmed;
   const tutorialSteps = TUTORIAL_COPY[tutorialProgress.chapter] ?? TUTORIAL_COPY[0];
-  const tutorialStepCopy = tutorialProgress.step < TUTORIAL_STEP_COUNT
+  const tutorialStepTotal = tutorialStepCount(tutorialProgress.chapter);
+  const tutorialStepCopy = tutorialProgress.step < tutorialStepTotal
     ? tutorialSteps[tutorialProgress.step]
     : null;
-  const tutorialComplete = tutorialProgress.step >= TUTORIAL_STEP_COUNT;
+  const tutorialComplete = tutorialProgress.step >= tutorialStepTotal;
   const tutorialFocusColor = tutorialMode ? tutorialAllowedColor(tutorialProgress) : null;
+  // A step keeps its focus for measuring even once the dim is off, so the ring
+  // and the scrim go together rather than the ring hanging over a lit board.
+  const tutorialShowsScrim = tutorialMode && tutorialScrimVisible(tutorialProgress);
+  const tutorialFocus = tutorialShowsScrim ? tutorialStepCopy?.focus ?? null : null;
+  const tutorialAwaitsTap = tutorialMode && tutorialStepCopy?.advance === "tap";
+  // Which slot the last goal standing sits in, or -1 while two are still open.
+  // A goal left alone on the right read as a layout bug rather than as progress.
+  const soleGoalIndex = state.activeGoals.reduce((count, goal) => count + (goal ? 1 : 0), 0) === 1
+    ? state.activeGoals.findIndex((goal) => goal !== null)
+    : -1;
+
+  // The spotlight is measured rather than authored in CSS: the goal card and the
+  // reserve tray move with the HUD height and the safe area, and the scene box
+  // moves with them, so a hard-coded position would drift on any other screen.
+  useEffect(() => {
+    // No clearing branch here: a stale measurement is never rendered, because
+    // the spot is gated below on the lesson still asking for one.
+    if (!tutorialMode || tutorialFocus === null) return;
+    const measure = () => {
+      const frame = gameFrameRef.current;
+      if (!frame) return;
+      const frameBox = frame.getBoundingClientRect();
+      let box: DOMRect | null = null;
+      let size: { w: number; h: number; round: string } | null = null;
+
+      if (tutorialFocus === "goals" || tutorialFocus === "reserve" || tutorialFocus === "cannon") {
+        const element = frame.querySelector(TUTORIAL_ELEMENT_FOCUS[tutorialFocus]);
+        if (!element) return;
+        box = element.getBoundingClientRect();
+        size = tutorialFocus === "cannon"
+          // The aim zone is nearly half the screen, so tracing it would dim
+          // nothing and point at nothing. Its centre is still the right place
+          // to look, so that is kept and drawn as a ring over the rig.
+          ? { w: 224, h: 224, round: "50%" }
+          // Everything else takes the shape of the thing it reveals, so a wide
+          // bar is outlined rather than circled by something four times as tall.
+          : { w: box.width + 22, h: box.height + 20, round: "24px" };
+      } else {
+        const scene = sceneWrapRef.current;
+        if (!scene) return;
+        const sceneBox = scene.getBoundingClientRect();
+        if (tutorialFocus === "model") {
+          // The cluster's real projected box. A fraction of the canvas was off
+          // by ~70px here, because the camera does not frame it in the middle.
+          const model = engineRef.current?.modelScreenBounds();
+          if (!model) return;
+          box = new DOMRect(sceneBox.left + model.left, sceneBox.top + model.top, model.width, model.height);
+          const radius = Math.min(Math.hypot(model.width, model.height) / 2 + 16, 150);
+          size = { w: radius * 2, h: radius * 2, round: "50%" };
+        } else {
+          const spec = TUTORIAL_SCENE_FOCUS[tutorialFocus];
+          box = new DOMRect(sceneBox.left, sceneBox.top + sceneBox.height * spec.v, sceneBox.width, 0);
+          size = { w: spec.r * 2, h: spec.r * 2, round: "50%" };
+        }
+      }
+
+      const x = box.left + box.width / 2 - frameBox.left;
+      const y = box.top + box.height / 2 - frameBox.top;
+      // The caption sits on the far side of the ring from the frame's middle, so
+      // it never lands on the thing it is pointing at.
+      const next = { x, y, w: size.w, h: size.h, round: size.round, below: y < frameBox.height * 0.5 };
+      setTutorialSpot((current) => (
+        current
+          && Math.abs(current.x - next.x) < 1
+          && Math.abs(current.y - next.y) < 1
+          && Math.abs(current.w - next.w) < 1
+          && Math.abs(current.h - next.h) < 1
+          && current.round === next.round
+          && current.below === next.below
+          ? current
+          : next
+      ));
+    };
+
+    measure();
+    window.addEventListener("resize", measure);
+
+    // The cluster zooms in during the intro and turns while the player drags, so
+    // its ring is tracked rather than sampled once. Everything else is static
+    // layout, and only needs a second pass once the HUD it points at has been
+    // laid out.
+    let raf = 0;
+    if (tutorialFocus === "model") {
+      const follow = () => {
+        measure();
+        raf = requestAnimationFrame(follow);
+      };
+      raf = requestAnimationFrame(follow);
+    } else {
+      raf = requestAnimationFrame(measure);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", measure);
+    };
+  }, [tutorialMode, tutorialFocus, showGoals, showReserve, session]);
+
+  // The sort lesson reads its cards first and then hands the board over, so what
+  // finishes it is the board being clear rather than another card.
+  useEffect(() => {
+    if (!tutorialMode || state.result?.kind !== "WIN") return;
+    dispatchTutorial({ type: "LEVEL_WON" });
+  }, [tutorialMode, state.result?.kind, dispatchTutorial]);
+
+  // A measurement only counts while the lesson it was taken for is on screen.
+  const activeSpot = tutorialMode && tutorialFocus !== null ? tutorialSpot : null;
+
   return (
     <main className="page-shell">
       <section
@@ -1052,15 +1296,12 @@ export default function GamePrototype() {
 
         {tutorialMode && (
           <div className="tutorial-layer">
-            <header className="tutorial-header">
-              <div>
-                <span>{tutorialChapter.eyebrow}</span>
-                <strong>{tutorialChapter.title}</strong>
-              </div>
-              <button type="button" onClick={leaveTutorial} aria-label="Exit tutorial">✕</button>
-            </header>
-
-            <div className="tutorial-chapter-rail" aria-label={`Tutorial chapter ${tutorialProgress.chapter + 1} of ${TUTORIAL_CHAPTERS.length}`}>
+            {/* Story-style segments at the very top edge: overall progress that
+                costs no room the player was using to play. */}
+            <div
+              className="tutorial-chapter-rail"
+              aria-label={`Tutorial lesson ${tutorialProgress.chapter + 1} of ${TUTORIAL_CHAPTERS.length}`}
+            >
               {TUTORIAL_CHAPTERS.map((chapter, index) => (
                 <i
                   key={chapter.id}
@@ -1070,39 +1311,73 @@ export default function GamePrototype() {
               ))}
             </div>
 
-            <section
-              className={`tutorial-coach ${tutorialComplete ? "is-complete" : ""}`}
-              aria-live="polite"
-              style={tutorialFocusColor
-                ? ({ "--tutorial-focus": COLOR_META[tutorialFocusColor].hex } as CSSProperties)
-                : undefined}
-            >
-              <p className="tutorial-coach-kicker">
-                {tutorialComplete ? "Lesson complete" : `Step ${tutorialProgress.step + 1} of ${TUTORIAL_STEP_COUNT}`}
-              </p>
-              <h2>{tutorialComplete ? "You have got it" : tutorialStepCopy?.title}</h2>
-              <p className="tutorial-coach-body">
-                {tutorialComplete
-                  ? tutorialProgress.chapter === TUTORIAL_CHAPTERS.length - 1
-                    ? "All three concepts are ready. The campaign now combines them without tutorial locks."
-                    : "This concept is complete. The next lesson reveals one more part of the game."
-                  : tutorialStepCopy?.body}
-              </p>
-              {!tutorialComplete && <span className="tutorial-hint">{tutorialStepCopy?.hint}</span>}
-              <div className="tutorial-step-dots" aria-hidden="true">
-                {tutorialSteps.map((step, index) => (
-                  <i
-                    key={step.title}
-                    className={`${index < tutorialProgress.step ? "is-done" : ""} ${index === tutorialProgress.step ? "is-current" : ""}`}
-                  >{index < tutorialProgress.step ? "✓" : index + 1}</i>
-                ))}
+            <button className="tutorial-exit" type="button" onClick={leaveTutorial} aria-label="Exit tutorial">✕</button>
+
+            {tutorialAwaitsTap && (
+              <div
+                className="tutorial-tap-catcher"
+                role="presentation"
+                onPointerDown={() => dispatchTutorial({ type: "TAP_ADVANCED" })}
+              />
+            )}
+
+            {/* The dim pass and the ring are one element: a circle whose spread
+                shadow paints everything outside it. Nothing is layered over the
+                play area, so the hole is genuinely clear. */}
+            {activeSpot && !tutorialComplete && (
+              <div
+                className="tutorial-spot"
+                aria-hidden="true"
+                style={{
+                  "--spot-x": `${activeSpot.x}px`,
+                  "--spot-y": `${activeSpot.y}px`,
+                  "--spot-w": `${activeSpot.w}px`,
+                  "--spot-h": `${activeSpot.h}px`,
+                  "--spot-round": activeSpot.round,
+                } as CSSProperties}
+              />
+            )}
+
+            {tutorialStepCopy && !tutorialComplete && (
+              <div
+                className={`tutorial-cue ${activeSpot ? (activeSpot.below ? "is-below" : "is-above") : "is-floating"} ${tutorialAwaitsTap ? "is-tappable" : ""}`}
+                role="status"
+                aria-live="polite"
+                aria-label={`Step ${tutorialProgress.step + 1} of ${tutorialStepTotal}. ${tutorialStepCopy.described}${tutorialAwaitsTap ? " Tap to continue." : ""}`}
+                style={activeSpot
+                  ? ({
+                    "--spot-y": `${activeSpot.y}px`,
+                    "--spot-h": `${activeSpot.h}px`,
+                    ...(tutorialFocusColor ? { "--tutorial-focus": COLOR_META[tutorialFocusColor].hex } : {}),
+                  } as CSSProperties)
+                  : (tutorialFocusColor ? ({ "--tutorial-focus": COLOR_META[tutorialFocusColor].hex } as CSSProperties) : undefined)}
+              >
+                <TutorialGlyph name={tutorialStepCopy.glyph} />
+                <b>{tutorialStepCopy.caption}</b>
+                <span className="tutorial-cue-dots" aria-hidden="true">
+                  {tutorialSteps.map((step, index) => (
+                    <i
+                      key={step.caption}
+                      className={`${index < tutorialProgress.step ? "is-done" : ""} ${index === tutorialProgress.step ? "is-current" : ""}`}
+                    />
+                  ))}
+                </span>
+                {tutorialAwaitsTap && <span className="tutorial-cue-next" aria-hidden="true">›</span>}
+                <span className="tutorial-cue-arrow" aria-hidden="true" />
               </div>
-            </section>
+            )}
 
             {tutorialComplete && (
-              <button className="tutorial-next" type="button" onClick={continueTutorial}>
-                {tutorialProgress.chapter === TUTORIAL_CHAPTERS.length - 1 ? "Finish tutorial" : "Next lesson"} →
-              </button>
+              <div className="tutorial-done" role="status" aria-live="polite">
+                <span className="tutorial-done-tick" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12.6l4.4 4.4L19 7.4" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                <button className="tutorial-next" type="button" onClick={continueTutorial}>
+                  {tutorialProgress.chapter === TUTORIAL_CHAPTERS.length - 1 ? "Finish" : "Next"} →
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -1112,15 +1387,17 @@ export default function GamePrototype() {
           <section className="goal-section" aria-label="Active goals">
             <div className="goal-grid">
               {state.activeGoals.map((goal, index) => {
-                // The emptied slot keeps its grid cell so the goal still in play
-                // does not slide sideways when its neighbour finishes.
-                if (!goal) return <div className="goal-slot-empty" data-goal-slot={index} key={`empty-${index}`} aria-hidden="true" />;
+                // While two goals are open the emptied cell is held so neither of
+                // them drifts sideways. Once only one is left there is nothing to
+                // hold a column for, so the cell is dropped and the survivor takes
+                // the first one — sliding over into it rather than appearing there.
+                if (!goal) return soleGoalIndex >= 0 ? null : <div className="goal-slot-empty" data-goal-slot={index} key={`empty-${index}`} aria-hidden="true" />;
                 const meta = COLOR_META[goal.color];
                 const shownCount = visualGoalCounts[goal.id] ?? goal.current;
                 const fillRatio = Math.min(1, goal.target === 0 ? 1 : shownCount / goal.target);
                 return (
                   <article
-                    className={`goal-card ${shownCount >= goal.target ? "is-full" : ""} ${tutorialFocusColor === goal.color ? "is-tutorial-focus" : ""}`}
+                    className={`goal-card ${shownCount >= goal.target ? "is-full" : ""} ${tutorialFocusColor === goal.color ? "is-tutorial-focus" : ""} ${soleGoalIndex === index && index > 0 ? "is-sliding-home" : ""}`}
                     data-goal-slot={index}
                     key={goal.id}
                     style={{ "--goal": meta.hex, "--goal-fill": `${fillRatio * 100}%` } as CSSProperties}
@@ -1162,14 +1439,15 @@ export default function GamePrototype() {
           </section>}
         </div>
 
-        <div className="scene-wrap">
+        <div className="scene-wrap" ref={sceneWrapRef}>
           <div className="scene-host" ref={sceneHostRef} />
           <div ref={modelZoneRef} className="model-input-zone" role="application" aria-label="Drag to rotate the block model 360 degrees" />
+          {/* The hand shows the gesture; the caption already names it, so this
+              carries no text of its own. */}
           {tutorialMode && tutorialStepCopy?.gesture && (
             <div className={`tutorial-gesture tutorial-gesture-${tutorialStepCopy.gesture}`} aria-hidden="true">
               <span>☝</span>
               <i />
-              <b>{tutorialStepCopy.gesture === "rotate" ? "DRAG TO ROTATE" : "DRAG & RELEASE"}</b>
             </div>
           )}
           <span ref={crosshairRef} className="aim-crosshair" aria-hidden="true">
