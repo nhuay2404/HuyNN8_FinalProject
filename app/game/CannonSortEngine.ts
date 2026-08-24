@@ -114,6 +114,14 @@ const RAINBOW_TARGET_IMPACT_PUSH = 0.32;
 const WEAK_POINT_TARGET_COLOR = 0xffffff;
 const WEAK_POINT_TARGET_OUTLINE = 0x10152f;
 const WEAK_POINT_SURFACE_GAP = 0.012;
+// Weak Points blink instead of sitting lit the whole round, so a shot only
+// scores the bonus if it lands while the mark is actually showing. Each point
+// gets its own phase offset (seeded off its spec id) so a cluster of them
+// never all blink in lockstep, which is what makes watching for the window
+// feel like aiming rather than waiting.
+const WEAK_POINT_BLINK_VISIBLE_SECONDS = 1.1;
+const WEAK_POINT_BLINK_HIDDEN_SECONDS = 0.9;
+const WEAK_POINT_BLINK_PERIOD_SECONDS = WEAK_POINT_BLINK_VISIBLE_SECONDS + WEAK_POINT_BLINK_HIDDEN_SECONDS;
 const RICOCHET_LIFETIME = 0.34;
 // The guard that flashes over a block a shot could not break. Slightly larger
 // than the cube so it reads as a layer wrapped around it rather than a recolour.
@@ -360,6 +368,9 @@ type WeakPointVisual = {
   spec: WeakPointSpec;
   block: BlockRuntime;
   group: THREE.Group;
+  // Where in the blink cycle this point starts, in seconds. Seeded off the
+  // spec id so every point on a level lands at a different point in the loop.
+  blinkPhase: number;
 };
 
 type RainbowTargetRuntime = {
@@ -697,6 +708,7 @@ export class CannonSortEngine {
   private roundClockActive = false;
   private rainbowTargetsEnabled = true;
   private weakPointBypassArmed = false;
+  private weakPointCycleElapsed = 0;
   private rainbowTargetStepMotions: RainbowTargetStepMotion[] | null = null;
   private hookSnapshotSignature = "";
   private rainbowVisualTime = 0;
@@ -862,9 +874,9 @@ export class CannonSortEngine {
       markMaterial,
     );
 
-    for (const spec of this.level.weakPoints) {
+    this.level.weakPoints.forEach((spec, index) => {
       const block = this.blockMap.get(gridKey(spec.x, spec.y, spec.z));
-      if (!block) continue; // The level validator rejects this before runtime.
+      if (!block) return; // The level validator rejects this before runtime.
       const normal = this.weakPointFaceNormal(spec.face);
       const group = new THREE.Group();
       group.position.copy(normal).multiplyScalar(BLOCK_HALF + WEAK_POINT_SURFACE_GAP);
@@ -883,11 +895,32 @@ export class CannonSortEngine {
       });
       block.mesh.add(group);
 
-      const visual = { spec, block, group };
+      const seed = index * 61 + spec.x * 17 + spec.y * 31 + spec.z * 53;
+      const blinkPhase = seededUnit(seed) * WEAK_POINT_BLINK_PERIOD_SECONDS;
+      const visual = { spec, block, group, blinkPhase };
       this.weakPointVisuals.push(visual);
       const authored = this.weakPointsByBlock.get(block.id) ?? [];
       authored.push(spec);
       this.weakPointsByBlock.set(block.id, authored);
+    });
+  }
+
+  private isWeakPointVisibleNow(visual: WeakPointVisual) {
+    const t = (this.weakPointCycleElapsed + visual.blinkPhase) % WEAK_POINT_BLINK_PERIOD_SECONDS;
+    return t < WEAK_POINT_BLINK_VISIBLE_SECONDS;
+  }
+
+  // Called once per fixed step, ahead of the projectile pass, so a hit this
+  // step is judged against the same on/off state the player just saw rendered.
+  private updateWeakPointBlink() {
+    if (!this.weakPointVisuals.length) return;
+    this.weakPointCycleElapsed += FIXED_STEP;
+    // Bypass hides every decal outright (any face will do), so the blink
+    // clock still runs underneath it but nothing is toggled while it's armed.
+    if (this.weakPointBypassArmed) return;
+    for (const visual of this.weakPointVisuals) {
+      if (!visual.block.active) continue;
+      visual.group.visible = this.isWeakPointVisibleNow(visual);
     }
   }
 
@@ -998,7 +1031,7 @@ export class CannonSortEngine {
   // for the next shot, and the rig puts its rainbow coat on.
   private setRainbowVisualState(active: boolean) {
     for (const visual of this.weakPointVisuals) {
-      visual.group.visible = !active && visual.block.active;
+      visual.group.visible = !active && visual.block.active && this.isWeakPointVisibleNow(visual);
     }
     if (active) this.rainbowVisualTime = 0;
     this.applyRainbowCannonFilter(active);
@@ -1376,6 +1409,8 @@ export class CannonSortEngine {
   // with the bypass being a flag read at impact there is no boundary left to
   // split on, so this is a flat step again.
   private updateTimedGameplayStep() {
+    if (!this.state.result) this.updateWeakPointBlink();
+
     if (this.roundClockActive && this.rainbowTargetsEnabled && !this.state.result) {
       this.roundElapsed += FIXED_STEP;
       this.rainbowTargetStepMotions = this.rainbowTargetMotionsForInterval(
@@ -2280,11 +2315,14 @@ export class CannonSortEngine {
       .sub(block.mesh.position);
     const face = this.impactedFace(localImpact);
     // Anywhere on the authored face counts. The bullseye is the decal that says
-    // which face; it is not the region being tested.
-    return authored.some((weakPoint) => isWeakPointFaceHit({
-      impactedFace: face,
-      weakPointFace: weakPoint.face,
-    }));
+    // which face; it is not the region being tested. But the decal blinks, so a
+    // shot on the right face while it is dark is a miss same as a wrong face —
+    // that gap is what makes hitting it about timing, not just aim.
+    return authored.some((weakPoint) => {
+      if (!isWeakPointFaceHit({ impactedFace: face, weakPointFace: weakPoint.face })) return false;
+      const visual = this.weakPointVisuals.find((candidate) => candidate.spec === weakPoint);
+      return visual ? visual.group.visible : true;
+    });
   }
 
   private shakeCluster(cluster: BlockRuntime[], shotIndex: number) {
