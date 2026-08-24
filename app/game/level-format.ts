@@ -27,6 +27,10 @@ export const COLOR_CODES: Record<string, BlockColor> = {
   B: "blue",
   P: "purple",
   O: "orange",
+  // B is already Blue. K follows the print/CMYK convention for blacK, while
+  // A is the neutral Ash tone used by framed pixel-art levels.
+  K: "black",
+  A: "gray",
 };
 
 export const COLOR_CODE_OF: Record<BlockColor, string> = {
@@ -36,6 +40,8 @@ export const COLOR_CODE_OF: Record<BlockColor, string> = {
   blue: "B",
   purple: "P",
   orange: "O",
+  black: "K",
+  gray: "A",
 };
 
 export const SHEET_COLUMNS = [
@@ -186,7 +192,7 @@ function parseBlocks(raw: string, dims: { x: number; y: number; z: number }, rep
         if (code === ".") continue;
         const color = COLOR_CODES[code];
         if (!color) {
-          report(`colour code "${raw}" is not valid (use R G Y B P O or .)`);
+          report(`colour code "${raw}" is not valid (use R G Y B P O K A or .)`);
           continue;
         }
         const key = `${x},${y},${z}`;
@@ -361,7 +367,23 @@ function parsePositiveNumber(raw: string, label: string, report: (message: strin
   return value;
 }
 
-const WEAK_POINT_FACES = new Set<WeakPointFace>(["PX", "NX", "PY", "NY", "PZ", "NZ"]);
+// Designers author against the Puzzle's local/default orientation. The short
+// axis codes remain valid for old sheets, while the readable names make a CSV
+// understandable without remembering which sign points towards the camera.
+const WEAK_POINT_FACE_ALIASES: Readonly<Record<string, WeakPointFace>> = {
+  PX: "PX",
+  NX: "NX",
+  PY: "PY",
+  NY: "NY",
+  PZ: "PZ",
+  NZ: "NZ",
+  RIGHT: "PX",
+  LEFT: "NX",
+  TOP: "PY",
+  BOTTOM: "NY",
+  FRONT: "PZ",
+  BACK: "NZ",
+};
 const WEAK_POINT_FACE_STEPS: Record<WeakPointFace, readonly [number, number, number]> = {
   PX: [1, 0, 0],
   NX: [-1, 0, 0],
@@ -477,12 +499,15 @@ function parseWeakPoints(
       report(`weak_points coordinate ${coordinate} is outside dims ${dims.x}x${dims.y}x${dims.z}`);
       continue;
     }
-    if (!WEAK_POINT_FACES.has(faceText as WeakPointFace)) {
-      report(`weak_points face "${faceText}" is not valid (use PX NX PY NY PZ or NZ)`);
+    const face = WEAK_POINT_FACE_ALIASES[faceText.toUpperCase()];
+    if (!face) {
+      report(
+        `weak_points face "${faceText}" is not valid `
+        + "(use FRONT BACK RIGHT LEFT TOP BOTTOM, or PX NX PY NY PZ NZ)",
+      );
       continue;
     }
 
-    const face = faceText as WeakPointFace;
     const key = `${coordinate}:${face}`;
     if (seen.has(key)) {
       report(`weak_points declares ${key} more than once`);

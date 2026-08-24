@@ -4,6 +4,7 @@ import {
   RAINBOW_TARGET_DEFAULTS,
   WEAK_POINT_VISUAL_RADIUS_RATIO,
   createRainbowSpawnSchedule,
+  isWeakPointFaceExposed,
   isWeakPointFaceHit,
   rainbowLinearAt,
   resolveBlockImpact,
@@ -123,6 +124,38 @@ test("the bullseye logo size is presentation only and no longer gates a hit", ()
   // counting, the logo can grow for readability without changing the rule.
   assert.equal(Object.keys(hook).some((name) => /HIT_RADIUS/.test(name)), false);
   assert.equal(typeof hook.isBullseyeHit, "undefined", "the radius predicate is gone");
+});
+
+test("a Weak Point face is exterior only when its adjacent Puzzle cell is inactive", () => {
+  const origin = { x: 4, y: 5, z: 6 };
+  const faceSteps = {
+    PX: [1, 0, 0],
+    NX: [-1, 0, 0],
+    PY: [0, 1, 0],
+    NY: [0, -1, 0],
+    PZ: [0, 0, 1],
+    NZ: [0, 0, -1],
+  };
+  const key = (x, y, z) => `${x}:${y}:${z}`;
+
+  for (const [face, [dx, dy, dz]] of Object.entries(faceSteps)) {
+    const neighborKey = key(origin.x + dx, origin.y + dy, origin.z + dz);
+    const occupancy = new Map();
+    const exposed = () => isWeakPointFaceExposed(
+      { ...origin, face },
+      (x, y, z) => occupancy.get(key(x, y, z)) === true,
+    );
+
+    assert.equal(exposed(), true, `${face} opens onto an empty cell`);
+    occupancy.set(neighborKey, true);
+    assert.equal(exposed(), false, `${face} is sandwiched behind its active neighbor`);
+    occupancy.set(neighborKey, false);
+    assert.equal(exposed(), true, `${face} becomes exterior when that neighbor is claimed`);
+
+    occupancy.clear();
+    occupancy.set(key(origin.x - dx, origin.y - dy, origin.z - dz), true);
+    assert.equal(exposed(), true, `${face} ignores a block behind the marked face`);
+  }
 });
 
 test("a Weak Point is the whole face, anywhere on it", () => {

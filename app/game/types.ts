@@ -1,6 +1,6 @@
 import type * as THREE from "three";
 
-export type BlockColor = "red" | "green" | "yellow" | "blue" | "purple" | "orange";
+export type BlockColor = "red" | "green" | "yellow" | "blue" | "purple" | "orange" | "black" | "gray";
 
 export type WeakPointFace = "PX" | "NX" | "PY" | "NY" | "PZ" | "NZ";
 

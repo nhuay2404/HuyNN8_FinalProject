@@ -62,6 +62,8 @@ const COLOR_META: Record<BlockColor, { hex: string; short: string }> = {
   blue: { hex: "#2f9dff", short: "BLUE" },
   purple: { hex: "#9d5cff", short: "PURPLE" },
   orange: { hex: "#ff8a1f", short: "ORANGE" },
+  black: { hex: "#1b1d24", short: "BLACK" },
+  gray: { hex: "#6b6f76", short: "GRAY" },
 };
 
 type SortSprite = {

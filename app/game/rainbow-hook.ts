@@ -160,6 +160,45 @@ export function createRainbowSpawnSchedule(options: RainbowScheduleOptions): rea
  */
 export const WEAK_POINT_VISUAL_RADIUS_RATIO = 0.32;
 
+export type WeakPointGridFace = Readonly<{
+  x: number;
+  y: number;
+  z: number;
+  face: WeakPointFace;
+}>;
+
+type GridOffset = Readonly<{ x: number; y: number; z: number }>;
+
+const WEAK_POINT_FACE_OFFSETS: Readonly<Record<WeakPointFace, GridOffset>> = Object.freeze({
+  PX: Object.freeze({ x: 1, y: 0, z: 0 }),
+  NX: Object.freeze({ x: -1, y: 0, z: 0 }),
+  PY: Object.freeze({ x: 0, y: 1, z: 0 }),
+  NY: Object.freeze({ x: 0, y: -1, z: 0 }),
+  PZ: Object.freeze({ x: 0, y: 0, z: 1 }),
+  NZ: Object.freeze({ x: 0, y: 0, z: -1 }),
+});
+
+/**
+ * Whether the marked face currently opens onto empty Puzzle space.
+ *
+ * Blocks remain in the engine's grid map after they are claimed, so callers
+ * supply the live occupancy check rather than a set of authored coordinates.
+ * That lets a mark begin attracting attention as soon as the block covering
+ * its face leaves the Puzzle, while a mark sandwiched between two active blocks
+ * stays visually quiet.
+ */
+export function isWeakPointFaceExposed(
+  point: WeakPointGridFace,
+  isBlockActiveAt: (x: number, y: number, z: number) => boolean,
+): boolean {
+  const offset = WEAK_POINT_FACE_OFFSETS[point.face];
+  return !isBlockActiveAt(
+    point.x + offset.x,
+    point.y + offset.y,
+    point.z + offset.z,
+  );
+}
+
 export type WeakPointHitInput = Readonly<{
   /** Face independently identified by collision code. */
   impactedFace: WeakPointFace;

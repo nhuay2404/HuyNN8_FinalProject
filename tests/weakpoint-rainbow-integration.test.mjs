@@ -51,7 +51,7 @@ test("Weak Points use the white target mark while flying Rainbow Targets keep th
   assert.match(targetBuild, /createSpectrumRingGeometries\(RAINBOW_TARGET_RADIUS\)/);
   assert.match(targetBuild, /RAINBOW_RING_COLORS\.map/, "target materials stay rainbow as well as their geometry");
   assert.doesNotMatch(build, /CylinderGeometry|TorusGeometry/, "only the flying target receives physical depth");
-  assert.doesNotMatch(source, /WEAK_POINT_CRACK|createWeakPointCrackGeometry|WEAK_POINT_PULSE|updateWeakPointVisuals/);
+  assert.doesNotMatch(source, /WEAK_POINT_CRACK|createWeakPointCrackGeometry/);
   assert.match(build, /block\.mesh\.add\(group\)/, "the marker has to inherit the block/model transform");
   assert.match(build, /weakPointFaceNormal\(spec\.face\)/);
   // Presentation only: the bullseye says which face, and the hit test reads the
@@ -60,6 +60,41 @@ test("Weak Points use the white target mark while flying Rainbow Targets keep th
   const test = isolate(source, "private projectileHitWeakPoint(block: BlockRuntime, projectile: Projectile) {");
   assert.doesNotMatch(test, /RADIUS|isBullseyeHit/, "the hit test must not consult the drawn radius");
   assert.match(test, /isWeakPointFaceHit\(\{/);
+});
+
+test("a Weak Point reveal pops subtly only when its Puzzle face is exterior", async () => {
+  const source = await readFile(engineUrl, "utf8");
+  const build = isolate(source, "private buildWeakPoints() {");
+  const exposure = isolate(source, "private isWeakPointExternallyExposed(visual: WeakPointVisual) {");
+  const reveal = isolate(source, "private updateWeakPointReveal(visual: WeakPointVisual) {");
+  const sync = isolate(source, "private syncWeakPointVisual(visual: WeakPointVisual) {");
+  const bypass = isolate(source, "private setRainbowVisualState(active: boolean) {");
+  const hit = isolate(source, "private projectileHitWeakPoint(block: BlockRuntime, projectile: Projectile) {");
+
+  const duration = Number(source.match(/const WEAK_POINT_REVEAL_SECONDS = ([0-9.]+);/)?.[1]);
+  const startScale = Number(source.match(/const WEAK_POINT_REVEAL_START_SCALE = ([0-9.]+);/)?.[1]);
+  const peakScale = Number(source.match(/const WEAK_POINT_REVEAL_PEAK_SCALE = ([0-9.]+);/)?.[1]);
+  assert.ok(duration >= 0.12 && duration <= 0.3, `the reveal should stay brief, got ${duration}s`);
+  assert.ok(startScale >= 0.85 && startScale < 1, `the mark should begin only slightly tucked in, got ${startScale}`);
+  assert.ok(peakScale > 1 && peakScale <= 1.08, `the overshoot should remain restrained, got ${peakScale}`);
+
+  assert.match(build, /group\.visible = false/, "the constructor must not flash every mark before the first fixed step");
+  assert.match(exposure, /isWeakPointFaceExposed\(visual\.spec/);
+  assert.match(exposure, /\?\.active === true/, "an inactive block left in blockMap no longer covers the face");
+  assert.match(
+    sync,
+    /visible && exposed && \(!visual\.wasVisible \|\| !visual\.wasExposed\)/,
+    "a blink reveal and a newly uncovered live mark each start one pop",
+  );
+  assert.match(sync, /else if \(!visible\)/, "hiding the mark cancels an unfinished pop");
+  assert.match(sync, /this\.updateWeakPointReveal\(visual\)/);
+
+  assert.match(reveal, /visual\.group\.scale\.setScalar\(scale\)/, "only the mark itself grows");
+  assert.match(reveal, /visual\.group\.scale\.setScalar\(1\)/, "every reveal lands on the exact resting scale");
+  assert.doesNotMatch(reveal, /block\.mesh\.scale|opacity|emissive|spawn/i, "the quiet cue needs no block pulse, flash or particles");
+
+  assert.match(bypass, /this\.syncWeakPointVisual\(visual\)/, "restoring marks after the bypass uses the same exposure gate");
+  assert.doesNotMatch(hit, /reveal|exposed|scale/i, "the presentation effect must not change the whole-face hit rule");
 });
 
 test("block impact reads the bypass flag at impact and splits claim from ricochet", async () => {
@@ -261,7 +296,10 @@ test("every result path clears transient gameplay and leaves Climax presentation
 test("an armed bypass hides every Weak Point and coats the rig", async () => {
   const source = await readFile(engineUrl, "utf8");
   const visual = isolate(source, "private setRainbowVisualState(active: boolean) {");
-  assert.match(visual, /visual\.group\.visible = !active && visual\.block\.active/);
+  assert.match(visual, /if \(active\)/);
+  assert.match(visual, /visual\.group\.visible = false/);
+  assert.match(visual, /visual\.revealAge = null/);
+  assert.match(visual, /this\.syncWeakPointVisual\(visual\)/);
   assert.match(visual, /this\.applyRainbowCannonFilter\(active\)/);
   const release = isolate(source, "private releaseCluster(cluster: BlockRuntime[], shotIndex: number) {");
   assert.match(release, /visual\.group\.visible = false/);
@@ -304,6 +342,9 @@ test("the canonical offline HTML ships the hook code and authored level columns"
   for (const marker of [
     "Next shot ignores Weak Points",
     "weak_points",
+    "Prefer FRONT BACK RIGHT LEFT TOP BOTTOM",
+    "Umbrella Trial",
+    "Pixel Spark Portrait",
     "rainbow_target_count",
     "faces occupied cell",
     "3D Cannon Sort — Weak Point &amp; Rainbow Climax",

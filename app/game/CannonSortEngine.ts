@@ -11,8 +11,10 @@ import {
   type CosmeticId,
 } from "./cosmetics";
 import { haptic } from "./haptics";
+import { computeModelPlayScale } from "./model-fit";
 import {
   createRainbowSpawnSchedule,
+  isWeakPointFaceExposed,
   isWeakPointFaceHit,
   rainbowLinearAt,
   resolveBlockImpact,
@@ -122,6 +124,11 @@ const WEAK_POINT_SURFACE_GAP = 0.012;
 const WEAK_POINT_BLINK_VISIBLE_SECONDS = 1.1;
 const WEAK_POINT_BLINK_HIDDEN_SECONDS = 0.9;
 const WEAK_POINT_BLINK_PERIOD_SECONDS = WEAK_POINT_BLINK_VISIBLE_SECONDS + WEAK_POINT_BLINK_HIDDEN_SECONDS;
+// A quiet scale pop: enough movement to catch the eye when a mark returns,
+// without adding particles or a flash that competes with the shot effects.
+const WEAK_POINT_REVEAL_SECONDS = 0.24;
+const WEAK_POINT_REVEAL_START_SCALE = 0.9;
+const WEAK_POINT_REVEAL_PEAK_SCALE = 1.025;
 const RICOCHET_LIFETIME = 0.34;
 // The guard that flashes over a block a shot could not break. Slightly larger
 // than the cube so it reads as a layer wrapped around it rather than a recolour.
@@ -136,7 +143,8 @@ const AIM_CURSOR_UP_RATIO = 0.4;
 const AIM_CURSOR_DOWN_RATIO = 0.15;
 // Slow enough to read every face of the cluster while the menu is open.
 const MENU_SPIN_SPEED = 0.5;
-// The menu holds the cluster back so entering a level has somewhere to zoom to.
+// Ratios of the fitted gameplay scale: every board still has somewhere to zoom
+// from, including a large board whose playable scale is already below 1.
 const MENU_MODEL_SCALE = 0.62;
 // Long enough to read as a camera move rather than a cut. Play unlocks when it
 // ends: the collision sweep tests the cluster where it is *now*, so a shot
@@ -253,6 +261,10 @@ const COLOR_HEX: Record<BlockColor, number> = {
   blue: 0x2f9dff,
   purple: 0x9d5cff,
   orange: 0xff8a1f,
+  // Near-black keeps the reference image's ink outline readable under the
+  // scene lights instead of disappearing into the dark playfield.
+  black: 0x1b1d24,
+  gray: 0x6b6f76,
 };
 
 // A Rainbow Target hit arms exactly one weak-point bypass, so the only hook
@@ -371,6 +383,9 @@ type WeakPointVisual = {
   // Where in the blink cycle this point starts, in seconds. Seeded off the
   // spec id so every point on a level lands at a different point in the loop.
   blinkPhase: number;
+  wasVisible: boolean;
+  wasExposed: boolean;
+  revealAge: number | null;
 };
 
 type RainbowTargetRuntime = {
@@ -416,6 +431,7 @@ type ReleasedBlock = {
   velocity: THREE.Vector3;
   angularVelocity: THREE.Vector3;
   age: number;
+  baseScale: number;
 };
 
 // One block riding the shock wave out of a break. `delay` is how long the wave
@@ -642,6 +658,7 @@ export class CannonSortEngine {
   private readonly camera = new THREE.PerspectiveCamera(37, 1, 0.1, 70);
   private readonly renderer: THREE.WebGLRenderer;
   private readonly modelRoot = new THREE.Group();
+  private readonly playModelScale: number;
   private readonly cannonRoot = new THREE.Group();
   private readonly turret = new THREE.Group();
   private readonly barrelPivot = new THREE.Group();
@@ -760,6 +777,7 @@ export class CannonSortEngine {
     this.aimZone = aimZone;
     this.crosshair = crosshair;
     this.level = level;
+    this.playModelScale = computeModelPlayScale(level.blocks, BLOCK_SIZE, BLOCK_SPACING);
     this.callbacks = callbacks;
     this.options = options;
     this.rainbowTargetsEnabled = options.rainbowTargetsEnabled ?? true;
@@ -811,6 +829,9 @@ export class CannonSortEngine {
     // Keep a readable stretch of world space between the cannon and model.
     this.modelRoot.position.set(0, 1.18, MODEL_DEPTH_OFFSET);
     this.modelRoot.quaternion.copy(this.defaultModelOrientation);
+    // Set the fitted pose before the constructor's first render. Otherwise a
+    // large level flashes at scale 1 for one frame before its menu/intro state.
+    this.modelRoot.scale.setScalar(this.playModelScale);
     this.scene.add(this.modelRoot);
     const geometry = new RoundedBoxGeometry(
       BLOCK_SIZE,
@@ -879,6 +900,9 @@ export class CannonSortEngine {
       if (!block) return; // The level validator rejects this before runtime.
       const normal = this.weakPointFaceNormal(spec.face);
       const group = new THREE.Group();
+      // animate() can render before the first fixed step. Keep every mark dark
+      // until that step has resolved its authored blink phase and exposure.
+      group.visible = false;
       group.position.copy(normal).multiplyScalar(BLOCK_HALF + WEAK_POINT_SURFACE_GAP);
       group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
       targetGeometries.outlines.forEach((geometry, ring) => {
@@ -897,7 +921,15 @@ export class CannonSortEngine {
 
       const seed = index * 61 + spec.x * 17 + spec.y * 31 + spec.z * 53;
       const blinkPhase = seededUnit(seed) * WEAK_POINT_BLINK_PERIOD_SECONDS;
-      const visual = { spec, block, group, blinkPhase };
+      const visual = {
+        spec,
+        block,
+        group,
+        blinkPhase,
+        wasVisible: false,
+        wasExposed: false,
+        revealAge: null,
+      };
       this.weakPointVisuals.push(visual);
       const authored = this.weakPointsByBlock.get(block.id) ?? [];
       authored.push(spec);
@@ -910,6 +942,64 @@ export class CannonSortEngine {
     return t < WEAK_POINT_BLINK_VISIBLE_SECONDS;
   }
 
+  private isWeakPointExternallyExposed(visual: WeakPointVisual) {
+    return isWeakPointFaceExposed(visual.spec, (x, y, z) => (
+      this.blockMap.get(gridKey(x, y, z))?.active === true
+    ));
+  }
+
+  private updateWeakPointReveal(visual: WeakPointVisual) {
+    if (visual.revealAge === null) {
+      visual.group.scale.setScalar(1);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp(
+      visual.revealAge / WEAK_POINT_REVEAL_SECONDS,
+      0,
+      1,
+    );
+    const riseEnd = 0.62;
+    const scale = progress < riseEnd
+      ? THREE.MathUtils.lerp(
+        WEAK_POINT_REVEAL_START_SCALE,
+        WEAK_POINT_REVEAL_PEAK_SCALE,
+        1 - Math.pow(1 - progress / riseEnd, 3),
+      )
+      : THREE.MathUtils.lerp(
+        WEAK_POINT_REVEAL_PEAK_SCALE,
+        1,
+        1 - Math.pow(1 - (progress - riseEnd) / (1 - riseEnd), 2),
+      );
+    visual.group.scale.setScalar(scale);
+    visual.revealAge += FIXED_STEP;
+    if (visual.revealAge >= WEAK_POINT_REVEAL_SECONDS) {
+      visual.revealAge = null;
+      visual.group.scale.setScalar(1);
+    }
+  }
+
+  private syncWeakPointVisual(visual: WeakPointVisual) {
+    const visible = visual.block.active
+      && !this.weakPointBypassArmed
+      && this.isWeakPointVisibleNow(visual);
+    const exposed = this.isWeakPointExternallyExposed(visual);
+
+    // A mark returning from its blink, or becoming exposed while already lit,
+    // gets one restrained pop. A mark between two live blocks keeps the regular
+    // scale, so no buried animation leaks through the seam between them.
+    if (visible && exposed && (!visual.wasVisible || !visual.wasExposed)) {
+      visual.revealAge = 0;
+    } else if (!visible) {
+      visual.revealAge = null;
+    }
+
+    visual.group.visible = visible;
+    visual.wasVisible = visible;
+    visual.wasExposed = exposed;
+    this.updateWeakPointReveal(visual);
+  }
+
   // Called once per fixed step, ahead of the projectile pass, so a hit this
   // step is judged against the same on/off state the player just saw rendered.
   private updateWeakPointBlink() {
@@ -919,8 +1009,7 @@ export class CannonSortEngine {
     // clock still runs underneath it but nothing is toggled while it's armed.
     if (this.weakPointBypassArmed) return;
     for (const visual of this.weakPointVisuals) {
-      if (!visual.block.active) continue;
-      visual.group.visible = this.isWeakPointVisibleNow(visual);
+      this.syncWeakPointVisual(visual);
     }
   }
 
@@ -1031,7 +1120,16 @@ export class CannonSortEngine {
   // for the next shot, and the rig puts its rainbow coat on.
   private setRainbowVisualState(active: boolean) {
     for (const visual of this.weakPointVisuals) {
-      visual.group.visible = !active && visual.block.active && this.isWeakPointVisibleNow(visual);
+      if (active) {
+        visual.group.visible = false;
+        visual.group.scale.setScalar(1);
+        visual.wasVisible = false;
+        visual.revealAge = null;
+      } else {
+        // Restoring the marks is a real reveal too. Route it through the same
+        // exposure gate so a buried face never receives the attention effect.
+        this.syncWeakPointVisual(visual);
+      }
     }
     if (active) this.rainbowVisualTime = 0;
     this.applyRainbowCannonFilter(active);
@@ -1462,7 +1560,7 @@ export class CannonSortEngine {
       if (this.modelPointer !== null) this.clearModelGesture();
       this.introActive = false;
       this.cannonRoot.visible = false;
-      this.modelRoot.scale.setScalar(MENU_MODEL_SCALE);
+      this.modelRoot.scale.setScalar(this.playModelScale * MENU_MODEL_SCALE);
       this.crosshair.classList.remove(
         "is-visible",
         "is-engaged",
@@ -1497,7 +1595,7 @@ export class CannonSortEngine {
     if (this.aimPointer !== null) this.clearAimGesture(false);
     if (this.modelPointer !== null) this.clearModelGesture();
     this.introFromQuaternion.copy(this.modelRoot.quaternion);
-    this.introFromScale = HANDOFF_MODEL_SCALE;
+    this.introFromScale = this.playModelScale * HANDOFF_MODEL_SCALE;
     this.introDuration = HANDOFF_INTRO_DURATION;
     this.introSpinTurn = HANDOFF_SPIN_TURN;
     // The cannon was already on screen a frame ago and stays exactly where it
@@ -1510,7 +1608,7 @@ export class CannonSortEngine {
     this.introActive = true;
     // Placed on the first frame rather than waited for, so the zoomed-out,
     // half-turned pose is what the player sees the moment the level swaps.
-    this.modelRoot.scale.setScalar(HANDOFF_MODEL_SCALE);
+    this.modelRoot.scale.setScalar(this.playModelScale * HANDOFF_MODEL_SCALE);
     this.introSpinDelta.setFromAxisAngle(this.worldUp, HANDOFF_SPIN_TURN);
     this.modelRoot.quaternion.copy(this.defaultModelOrientation).premultiply(this.introSpinDelta);
     this.cannonRoot.visible = true;
@@ -1536,7 +1634,7 @@ export class CannonSortEngine {
     } else {
       this.modelRoot.quaternion.slerpQuaternions(this.introFromQuaternion, this.defaultModelOrientation, eased);
     }
-    this.modelRoot.scale.setScalar(THREE.MathUtils.lerp(this.introFromScale, 1, eased));
+    this.modelRoot.scale.setScalar(THREE.MathUtils.lerp(this.introFromScale, this.playModelScale, eased));
 
     if (this.introRaisesCannon) {
       const cannonProgress = THREE.MathUtils.clamp(
@@ -1554,7 +1652,7 @@ export class CannonSortEngine {
     this.introActive = false;
     this.introSpinTurn = 0;
     this.modelRoot.quaternion.copy(this.defaultModelOrientation);
-    this.modelRoot.scale.setScalar(1);
+    this.modelRoot.scale.setScalar(this.playModelScale);
     this.modelRoot.updateMatrixWorld(true);
     this.cannonRoot.position.y = this.cannonRestY;
     this.resetCannonDirection();
@@ -2250,7 +2348,10 @@ export class CannonSortEngine {
   private sweepBlocks(worldA: THREE.Vector3, worldB: THREE.Vector3, inverseModel: THREE.Matrix4): SweepHit | null {
     const a = worldA.clone().applyMatrix4(inverseModel);
     const b = worldB.clone().applyMatrix4(inverseModel);
-    const radius = PROJECTILE_RADIUS;
+    // Applying the inverse model matrix also expands world space by the
+    // inverse fitted scale. Expand the projectile by the same amount so its
+    // collision forgiveness remains PROJECTILE_RADIUS in world space.
+    const radius = PROJECTILE_RADIUS / this.playModelScale;
     let best: { block: BlockRuntime; t: number } | null = null;
 
     for (const block of this.blocks) {
@@ -2634,6 +2735,9 @@ export class CannonSortEngine {
           (seededUnit(seed + 5) - 0.5) * 6,
         ),
         age: 0,
+        // scene.attach preserves the block's world transform, including the
+        // fitted parent scale. Keep that size as the fade's 100% value.
+        baseScale: member.mesh.scale.x,
       });
     }
     this.recenterModelPivot();
@@ -3012,7 +3116,7 @@ export class CannonSortEngine {
 
       if (released.age > 0.18) {
         const scale = THREE.MathUtils.clamp(1 - (released.age - 0.18) / 0.52, 0, 1);
-        mesh.scale.setScalar(scale);
+        mesh.scale.setScalar(released.baseScale * scale);
       }
       if (released.age < 0.72) survivors.push(released);
       else {

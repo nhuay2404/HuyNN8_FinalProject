@@ -3,11 +3,11 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 901.431 bytes, 3 màn campaign + 3 bài
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 925.172 bytes, 9 màn campaign + 3 bài
 tutorial, một file HTML chạy offline bằng `file://`, không cần server và không cần mạng.
 
-**Trạng thái kiểm tra:** 160/160 test pass · lint sạch · build production sạch · typecheck
-không phát sinh lỗi gameplay mới (còn 3 lỗi ambient Cloudflare đã biết).
+**Trạng thái kiểm tra:** 169/169 test pass · lint sạch · build production sạch · preview cục bộ
+trả HTTP 200.
 
 ---
 
@@ -2819,3 +2819,133 @@ Trong màn chơi thường (không phải tutorial), sau khi xoay cụm đi xa:
 
 **Chưa kiểm bằng tay:** nhấn giữ rồi mở dialog giữa lúc đang chờ. `pause()` gọi `clearModelGesture()`
 nên press bị bỏ — đọc từ code, không phải đo từ máy.
+
+## 32. Weak Point bung nhẹ khi lộ ở mặt ngoài (24/08)
+
+### 32.1 Một chuyển động nhỏ, không thêm ánh sáng hay hạt
+
+Mỗi lần Weak Point chuyển từ nhịp ẩn sang hiện, logo bắt đầu ở scale **0,90**, nở qua
+**1,025** rồi về đúng **1,00** trong **0,24 giây**. Đây chỉ là chuyển động của riêng logo:
+không đổi emissive của block, không chớp opacity và không sinh particle. Vì vậy nó đủ để mắt bắt được
+nhịp xuất hiện nhưng không tranh sự chú ý với va chạm, khiên hoặc Rainbow Target.
+
+Logo được khởi tạo ở trạng thái ẩn tới fixed step đầu tiên. Nếu để `THREE.Group` dùng mặc định
+`visible=true`, frame dựng engine có thể vẽ tất cả Weak Point trước khi nhịp blink đầu tiên kịp được
+tính — một flash ngắn nhưng đi ngược đúng ý "không quá nổi bật".
+
+### 32.2 "Mặt ngoài" là topology của Puzzle, không phải mặt hướng camera
+
+Từ mặt `PX/NX/PY/NY/PZ/NZ`, engine lấy đúng ô kề một bước theo pháp tuyến của mặt đó:
+
+- ô trống hoặc block ở đó đã `active=false` → Weak Point được coi là lộ, lần xuất hiện kế tiếp có pop;
+- block kề vẫn active → Weak Point đang kẹp giữa hai block, logo giữ scale thường và **không có hiệu ứng**;
+- nếu block che vừa bị phá trong lúc logo đang ở nhịp sáng, trạng thái `wasExposed` tạo đúng một pop ở
+  fixed step kế tiếp thay vì chờ hết cả chu kỳ blink.
+
+Quy tắc không đọc camera: một mặt `NZ` quay khỏi người chơi nhưng không có block che vẫn là mặt ngoài.
+Nó cũng đọc cờ `active`, không chỉ kiểm tra có key trong `blockMap`, vì block đã phá vẫn được giữ trong
+map để phục vụ các hệ thống khác. Luật hit cả mặt Weak Point không thay đổi; exposure chỉ điều khiển
+chuyển động thu hút chú ý.
+
+### 32.3 Regression đã khóa
+
+- Test pure đi qua đủ 6 hướng, ô trống, neighbor active, neighbor inactive và block ở phía đối diện.
+- Test tích hợp chốt thời lượng/biên scale nhỏ, chỉ scale logo, reset chính xác về `1`, không dùng
+  particle/opacity/emissive, và lúc Rainbow bypass trả logo lại vẫn đi qua cùng exposure gate.
+- Hai suite liên quan: **28/28 pass**.
+- Full suite đầu tiên lộ một test haptic phụ thuộc line ending LF (`;\n`), trong khi checkout Windows
+  dùng CRLF. Regex được sửa thành `;\r?\n`; đây chỉ là độ bền của test, không đổi haptic hay gameplay.
+- Pipeline standalone còn phát hiện `public/chapter-medieval-siege.png` bị thiếu dù ảnh vẫn nằm trong
+  bản HTML offline cũ. Asset PNG gốc được giải mã nguyên vẹn từ chính data URI đó (kiểm tra PNG magic)
+  và khôi phục về `public/` để lần đóng gói kế tiếp không còn phụ thuộc vào artifact cũ.
+
+**Đã kiểm trong lượt này:** 164/164 test pass, lint sạch, production build sạch và file HTML offline
+đã đóng gói lại thành công (920.580 bytes). Preview cục bộ được kiểm lại chung với thay đổi level kế tiếp.
+
+## 33. CSV dễ đặt mặt Weak Point + thử nghiệm Umbrella ở riêng màn 1 (24/08)
+
+### 33.1 Tên mặt đọc được theo tư thế gốc
+
+`weak_points` vẫn dùng địa chỉ `x.y.z:FACE` để gắn chính xác vào một block, nhưng `FACE` nay nhận
+thêm tên không phân biệt hoa/thường: `FRONT`, `BACK`, `RIGHT`, `LEFT`, `TOP`, `BOTTOM`. Parser chuẩn
+hóa chúng lần lượt về `PZ`, `NZ`, `PX`, `NX`, `PY`, `NY`, nên runtime và các CSV cũ không đổi.
+
+Phần hướng dẫn trong `work/levels.tsv`/CSV mirror và README ghi rõ: `x` trái→phải, `y` dưới→trên,
+`z` sau→trước, tất cả bắt đầu từ 0. Tên mặt thuộc block trong tư thế mặc định của Puzzle và xoay cùng
+block, không chạy theo camera. Ví dụ mới: `4.6.7:FRONT~3.7.4:TOP`.
+
+### 33.2 Chỉ màn 1 được scale để thử
+
+Row 1 đổi thành **Umbrella Trial** kích thước `9x8x9`, **132 block**, **6 màu**, 6 goal tuần tự
+(`Y20, O34, B26, P20, R16, G16`) và `batch_blocks=38`. HUD vẫn chỉ mở 2 goal cùng lúc để không kéo
+layout hiện có thành nhiều hàng. Màn dài có 1 Rainbow Target, xuất hiện muộn với `spawn_gap=36`;
+màn 2–8 không đổi gameplay/data.
+
+Không chỉ khó hơn về kích thước: Green là Weak Point duy nhất lộ ở mở màn trong khi hai goal `Y/O`
+đều bị che. Người chơi bắt buộc bắn **G16** vào batch, rồi chuỗi mặt gắn theo block mở lần lượt
+`G → Y → O → B → P → R`; khi goal Green vào cửa sổ cuối, 16 block trong batch tự điền về goal.
+Năm Weak Point nằm giữa hai màu ở đầu round vừa tạo reveal chain, vừa trực tiếp thử rule “bị kẹp thì
+không bung”; không có cycle và không cần Rainbow bypass.
+
+### 33.3 Auto-fit để model lớn vẫn ngắm được
+
+Bounds chiếm chỗ của Umbrella là `7,04 × 8,06 × 7,04` world unit; scale gameplay `1` sẽ bị cắt ngang
+trên viewport dọc. Engine nay đo ba span từ chính tọa độ block, lấy đường chéo xoay 3D và chỉ thu đồng
+đều model vượt ngưỡng `5,4`, đưa Umbrella về khoảng **0,422**. Board Prism có đường chéo `5,326` và
+mọi màn nhỏ hiện có vẫn đúng scale `1`. Dùng đường chéo thay cho trục dài nhất nên model vẫn nằm trong
+frame khi người chơi xoay một cạnh/đường chéo bất kỳ ra trước.
+
+Scale fit được đặt trước frame render đầu, dùng làm đích chính xác của cả intro menu lẫn handoff; scale
+menu/handoff trở thành tỉ lệ của đích đó. Vì toàn bộ `modelRoot` cùng scale, block, collider và Weak Point
+giữ nguyên tương quan — CSV không cần thêm thông số trình bày và aim/hit không lệch khỏi hình.
+Contract test của menu cũng đổi đích intro từ literal `1` sang `playModelScale`, để không thể vô tình
+phóng level lớn trở lại kích thước bị cắt ở frame cuối.
+
+Hai chỗ đổi parent/coordinate được bù scale rõ ràng: bán kính projectile chia cho `playModelScale` khi
+sweep chuyển từ world sang local, còn block bung khỏi `modelRoot` lưu `baseScale` ngay sau `scene.attach`
+và co từ đúng kích thước đó. Nhờ vậy auto-fit không làm hitbox khó hơn và block không phóng lớn ở frame
+đầu của hiệu ứng văng.
+
+Lệnh lint toàn repo còn quét các probe CDP chụp ảnh dùng một lần trong `work/gdd-capture/` (thư mục đã
+gitignore) và báo 16 lỗi không thuộc app. ESLint nay bỏ đúng thư mục probe này; source app, test và các
+script build/level còn lại vẫn nằm trong phạm vi lint. `.vinext/` cũng được thêm vào ignore vì đây là
+output production sinh tự động; nếu không, lint sau build phải quét lại toàn bộ bundle và có thể không
+kết thúc trong thời gian hợp lý.
+
+Regression mới khóa đủ sáu alias, việc normalize về mã trục canonical và phát hiện trùng giữa alias
+với mã cũ (ví dụ `FRONT` + `PZ`). Test cũng khóa toàn bộ inventory/goal của màn thử nghiệm, chữ ký
+tổng quan của màn 2–8 và các marker hướng dẫn trong HTML offline. Route chuẩn khóa đúng batch `16` qua bốn
+bước, auto-fill về `0`, sáu wave reveal và đúng một lượt off-goal bắt buộc; bộ giải exhaustive vẫn phải
+chứng minh được đường thắng.
+
+**Kiểm tra sau reveal chain:** `npm run levels` đồng bộ thành công TSV → CSV → bundled source → HTML;
+năm cảnh báo mặt bị che và cảnh báo hai goal mở đầu chưa chạm được ngay đều là chủ đích của chuỗi reveal.
+Toàn bộ **169/169 test pass** cả trước và sau khi dựng lại artifact; lint sạch; production build sạch;
+HTML offline tạo lại thành công ở **923.576 bytes** với đủ 8 màn; preview cục bộ trả **HTTP 200**. Audit
+raw diff xác nhận cả bảy dòng màn 2–8 không đổi; chỉ dòng gameplay/data của màn 1 được thử nghiệm.
+
+---
+
+## 34. Thêm một level tranh pixel 3D theo palette tham chiếu (24/08)
+
+Thêm đúng một campaign row mới, **Level 9 — Pixel Spark Portrait**; level 1–8 không bị sửa. Model là
+phù điêu `13x13x2`, tổng **187 block**: lớp sau tạo khung/tranh pixel, lớp trước nâng mắt, má, vùng sáng
+vàng và mảng cam để hình vẫn có chiều sâu khi xoay. Bảng màu bổ sung hai màu thật thay vì giả lập bằng
+tím/xanh: `K = black/ink` (`#1b1d24`) và `A = ash gray` (`#6b6f76`); `Y/O/R` giữ nguyên tông vàng,
+cam, đỏ của ảnh tham chiếu. Màu đen dùng near-black để viền còn bắt sáng trên playfield tối.
+
+Inventory/goal là `Y51 → O30 → A23 → R4 → K79`, hai goal cùng mở và Batch `74` — đúng bằng cụm lớn
+nhất. Chín cụm FACE_6 có đúng chín Weak Point. Hai marker Ink đặt dưới lớp Yellow/Orange nên bị che ở
+frame đầu, không chạy hiệu ứng; sau khi pigment tương ứng rời đi, mặt trở thành exterior và marker mới
+bung nhẹ. Route canonical gồm chín lượt, không buộc dùng Batch và kết thúc WIN/all-clear. Auto-fit dự kiến
+đưa tranh về khoảng `0.289` để cả khung vuông vẫn nằm trong vùng xoay.
+
+Parser, renderer và HUD đều nhận hai màu mới; README/legend giải thích `K/A`. Regression được mở rộng để
+khóa ID `1..9`, toàn bộ chữ ký portrait, inventory/goal, hai wave reveal, canonical route, số warning mặt
+bị che, rarity Rainbow và marker trong HTML offline.
+
+**Kiểm tra hoàn tất:** `npm run levels` nạp đúng **9 level**, sinh lại CSV/bundled source và vá HTML;
+Level 9 chỉ tạo đúng hai warning mặt Ink bị che đã chủ đích, không có error hay blocker cycle. Toàn bộ
+**169/169 test pass** cả trước và sau khi dựng artifact; lint sạch; production build sạch; standalone HTML
+tạo lại thành công ở **925.172 bytes** với `levels: 9`; preview cục bộ trả **HTTP 200**. Regression route
+thực thi đủ chín cụm, Batch luôn `0`, kết thúc WIN/all-clear và xác nhận Level 1–8 giữ nguyên chữ ký.

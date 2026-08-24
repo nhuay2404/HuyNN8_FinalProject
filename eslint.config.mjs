@@ -10,9 +10,13 @@ import tseslint from "typescript-eslint";
 const eslintConfig = defineConfig([
   globalIgnores([
     ".next/**",
+    ".vinext/**",
     "dist/**",
     "out/**",
     "build/**",
+    // Local CDP screenshot probes are disposable QA notes under a gitignored
+    // work folder, not application or build source.
+    "work/gdd-capture/**",
     "next-env.d.ts",
   ]),
   eslint.configs.recommended,

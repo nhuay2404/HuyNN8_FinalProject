@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { auditWeakPointRoutes, parseLevelSheet } from "../app/game/level-format.ts";
 import { level01 } from "../app/game/level-01.ts";
+import { computeModelPlayScale } from "../app/game/model-fit.ts";
 import { createGameState, parkedBlockCount, resolveCluster } from "../app/game/rules.ts";
 
 const sheetUrl = new URL("../work/levels.tsv", import.meta.url);
@@ -308,6 +309,36 @@ test("authored Weak Points and Rainbow values reach LevelConfig", () => {
   });
 });
 
+test("readable Weak Point face names follow the Puzzle's default local axes", () => {
+  const aliases = [
+    ["RIGHT", "PX"],
+    ["left", "NX"],
+    ["Top", "PY"],
+    ["bOtToM", "NY"],
+    ["FRONT", "PZ"],
+    ["back", "NZ"],
+  ];
+
+  for (const [authored, canonical] of aliases) {
+    const { levels, issues } = parseLevelSheet(sheet(levelRow(
+      "15\tReadable face\t1x1x1\tR\tR\t\t\t\t\t",
+      `0.0.0:${authored}`,
+    )));
+    assert.deepEqual(issues, [], authored);
+    assert.equal(levels[0].weakPoints[0].face, canonical, authored);
+    assert.match(levels[0].weakPoints[0].id, new RegExp(`-${canonical.toLowerCase()}$`), authored);
+  }
+});
+
+test("a readable face alias and its legacy axis code are one Weak Point", () => {
+  const { levels, issues } = parseLevelSheet(sheet(levelRow(
+    "16\tDuplicate face alias\t1x1x1\tR\tR\t\t\t\t\t",
+    "0.0.0:FRONT~0.0.0:PZ",
+  )));
+  assert.equal(levels.length, 0);
+  assert.ok(issues.some((issue) => /declares 0\.0\.0:PZ more than once/.test(issue.message)));
+});
+
 test("a Weak Point covered by an adjacent block warns without dropping its level", () => {
   const { levels, issues } = parseLevelSheet(sheet(levelRow(
     "32\tCovered point\t2x1x1\tRG\tR,G\t\t\t\t\t",
@@ -370,15 +401,90 @@ test("the shipped .csv template parses to the exact same levels as the .tsv", as
   assert.deepEqual(csvResult.issues, tsvResult.issues);
 });
 
+test("campaign keeps its existing rows and adds one framed pixel-art relief", async () => {
+  const { levels, issues } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
+  assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
+  assert.deepEqual(levels.map((level) => level.id), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const trial = levels.find((level) => level.id === 1);
+  assert.ok(trial);
+  assert.equal(trial.name, "Umbrella Trial");
+  assert.equal(trial.blocks.length, 132);
+  assert.deepEqual(
+    Object.fromEntries([...trial.blocks.reduce((counts, block) => {
+      counts.set(block.color, (counts.get(block.color) ?? 0) + 1);
+      return counts;
+    }, new Map()).entries()].sort()),
+    { blue: 26, green: 16, orange: 34, purple: 20, red: 16, yellow: 20 },
+  );
+  assert.deepEqual(
+    trial.goals.map((goal) => `${goal.color}:${goal.target}`),
+    ["yellow:20", "orange:34", "blue:26", "purple:20", "red:16", "green:16"],
+  );
+  assert.equal(trial.activeGoalSlots, 2, "the existing two-card HUD remains unchanged");
+  assert.equal(trial.reserveBlocks, 38);
+  assert.deepEqual(trial.weakPoints.map((point) => point.face), ["PZ", "NX", "NX", "PX", "PZ", "NZ"]);
+  assert.deepEqual(trial.rainbow, { targetCount: 1, spawnGapSeconds: 36, targetDurationSeconds: 7 });
+  const trialScale = computeModelPlayScale(trial.blocks, 0.92, 1.02);
+  assert.ok(trialScale > 0.42 && trialScale < 0.43, `unexpected Umbrella fit scale ${trialScale}`);
+  assert.equal(
+    computeModelPlayScale(levels.find((level) => level.id === 6).blocks, 0.92, 1.02),
+    1,
+    "the existing Prism and every smaller board keep their original gameplay scale",
+  );
+
+  const portrait = levels.find((level) => level.id === 9);
+  assert.ok(portrait);
+  assert.equal(portrait.name, "Pixel Spark Portrait");
+  assert.equal(portrait.blocks.length, 187);
+  assert.deepEqual(
+    Object.fromEntries([...portrait.blocks.reduce((counts, block) => {
+      counts.set(block.color, (counts.get(block.color) ?? 0) + 1);
+      return counts;
+    }, new Map()).entries()].sort()),
+    { black: 79, gray: 23, orange: 30, red: 4, yellow: 51 },
+  );
+  assert.deepEqual(
+    portrait.goals.map((goal) => `${goal.color}:${goal.target}`),
+    ["yellow:51", "orange:30", "gray:23", "red:4", "black:79"],
+  );
+  assert.equal(portrait.activeGoalSlots, 2);
+  assert.equal(portrait.reserveBlocks, 74);
+  assert.equal(portrait.weakPoints.length, 9);
+  assert.deepEqual(portrait.rainbow, { targetCount: 0, spawnGapSeconds: 12, targetDurationSeconds: 7 });
+  const portraitScale = computeModelPlayScale(portrait.blocks, 0.92, 1.02);
+  assert.ok(portraitScale > 0.288 && portraitScale < 0.29, `unexpected portrait fit scale ${portraitScale}`);
+
+  assert.deepEqual(
+    levels.filter((level) => level.id >= 2 && level.id <= 8).map((level) => [
+      level.id,
+      level.name,
+      level.blocks.length,
+      level.goals.length,
+      level.activeGoalSlots,
+      level.reserveBlocks,
+      level.weakPoints.length,
+    ]),
+    [
+      [2, "Turn to look", 4, 2, 2, 2, 2],
+      [3, "Park it", 4, 3, 2, 2, 3],
+      [4, "Read the order", 8, 3, 2, 4, 3],
+      [5, "Full sweep", 12, 5, 2, 4, 5],
+      [6, "Prism 4x3x2", 24, 6, 2, 8, 8],
+      [7, "Interleaved layers", 16, 4, 2, 8, 8],
+      [8, "Split purple goal", 18, 4, 2, 8, 6],
+    ],
+  );
+});
+
 test("the shipped sheet alternates immediate goal hits with acyclic blocker reveals", async () => {
   const { levels, issues } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   assert.deepEqual(issues.filter((issue) => issue.severity === "error"), []);
 
-  // The reveal shape is authored per level, not held to one universal rule: an
-  // introduction level with a three-deep blocker chain is not an introduction.
-  // The ramp is 1 beat, 1, 2, 2, 2, then the shipped boards at 5, 4 and 3.
+  // The reveal shape is authored per level, not held to one universal rule.
+  // Row 1 deliberately stress-tests a long chain; the normal onboarding rows
+  // stay short before the shipped boards at 5, 4 and 3 waves.
   const pacing = new Map([
-    [1, { waves: 1 }],
+    [1, { waves: 6, forcesReserveFirst: true }],
     [2, { waves: 1 }],
     // The only cluster in reach is off-goal, which is the entire lesson: the
     // reserve is where a claim goes when no goal will take it.
@@ -388,6 +494,7 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
     [6, { waves: 5 }],
     [7, { waves: 4 }],
     [8, { waves: 3 }],
+    [9, { waves: 2 }],
   ]);
 
   for (const level of levels) {
@@ -419,11 +526,10 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
     }
   }
 
-  // The ramp has to actually ramp: never fewer blocks than the level before it,
-  // so difficulty cannot quietly dip. Bonus targets are deliberately NOT on that
-  // curve — see the rarity rule below.
-  const ramp = [1, 2, 3, 4, 5].map((id) => levels.find((level) => level.id === id));
-  assert.ok(ramp.every(Boolean), "levels 1-5 are the authored onboarding ramp");
+  // Row 1 is deliberately isolated as the large-model experiment. The normal
+  // onboarding size curve therefore starts at row 2 and stays intact through 5.
+  const ramp = [2, 3, 4, 5].map((id) => levels.find((level) => level.id === id));
+  assert.ok(ramp.every(Boolean), "levels 2-5 are the unchanged onboarding ramp");
   for (let index = 1; index < ramp.length; index += 1) {
     assert.ok(
       ramp[index].blocks.length >= ramp[index - 1].blocks.length,
@@ -446,7 +552,7 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
     `${withBonus.length} of ${levels.length} levels carry a bonus; it stops being rare past half`,
   );
   // Skipped levels are the point: the pattern has gaps rather than tapering in.
-  assert.deepEqual(levels.map((level) => level.rainbow.targetCount), [0, 0, 0, 0, 1, 1, 0, 1]);
+  assert.deepEqual(levels.map((level) => level.rainbow.targetCount), [1, 0, 0, 0, 1, 1, 0, 1, 0]);
   // A bonus in the opening seconds is not a reward for a long round. The first
   // target lands at gap x 0.5-1.0, so a floor of 24 keeps it out of the first 12
   // seconds — which is most of a teaching level, hence none of them carry one.
@@ -460,7 +566,7 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
   // An inner face is one whose neighbour cell is occupied, so these warnings
   // document intentional reveals rather than malformed data.
   const covered = issues.filter((issue) => /may be inaccessible until that block is removed/.test(issue.message));
-  assert.equal(covered.length, 20, `expected one warning for every delayed reveal, found ${covered.length}`);
+  assert.equal(covered.length, 27, `expected one warning for every delayed reveal, found ${covered.length}`);
   assert.deepEqual(
     issues.filter((issue) => /HIGH-RISK/.test(issue.message)),
     [],
@@ -471,8 +577,15 @@ test("the shipped sheet alternates immediate goal hits with acyclic blocker reve
 test("shipped routes balance continuous progress with one forced off-goal decision", async () => {
   const { levels } = parseLevelSheet(await readFile(sheetUrl, "utf8"));
   const routes = new Map([
-    // 1-2: two claims, nothing to park. The whole lesson is "hit the mark".
-    [1, { anchors: ["0.1.0", "0.0.0"], parkedAfter: [0, 0], forcedOffGoalSteps: 0 }],
+    // Row 1 is the isolated 132-block trial. Green is the only opening mark,
+    // so its 16 blocks must wait in reserve before the five covered marks peel
+    // open in order; Green auto-fills when its goal finally enters the window.
+    [1, {
+      anchors: ["2.5.7", "3.5.7", "6.5.7", "3.5.4", "3.5.2", "5.5.3"],
+      parkedAfter: [16, 16, 16, 16, 0, 0],
+      forcedOffGoalSteps: 1,
+    }],
+    // Level 2 remains the compact two-claim lesson.
     [2, { anchors: ["1.1.0", "0.0.0"], parkedAfter: [0, 0], forcedOffGoalSteps: 0 }],
     // 3: the front pair covers both goal marks, so Yellow is parked before
     // anything can be sorted, and the auto-fill hands it back on step 2.
@@ -498,6 +611,13 @@ test("shipped routes balance continuous progress with one forced off-goal decisi
     [8, {
       anchors: ["0.1.1", "0.0.1", "0.1.0", "0.2.1", "0.0.0", "0.2.0"],
       parkedAfter: [0, 0, 0, 0, 0, 0],
+      forcedOffGoalSteps: 0,
+    }],
+    // 9: clear the raised pigment first; the two Black markers beneath Yellow
+    // and Orange then reveal with the exterior-only pop before the frame leaves.
+    [9, {
+      anchors: ["6.8.1", "8.3.1", "1.10.1", "6.11.0", "1.2.0", "11.3.0", "9.6.1", "10.1.0", "5.6.0"],
+      parkedAfter: [0, 0, 0, 0, 0, 0, 0, 0, 0],
       forcedOffGoalSteps: 0,
     }],
   ]);
@@ -565,7 +685,7 @@ test("shipped routes balance continuous progress with one forced off-goal decisi
     assert.equal(state.result?.allClear, true, `level ${level.id}: route left blocks behind`);
     assert.equal(
       minimumOffGoalClears(level),
-      level.id === 3 || level.id === 7 ? 1 : 0,
+      level.id === 1 || level.id === 3 || level.id === 7 ? 1 : 0,
       `level ${level.id}: minimum unavoidable off-goal clears`,
     );
   }

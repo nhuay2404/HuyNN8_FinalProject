@@ -35,7 +35,7 @@ test("the menu holds the cluster smaller and without the cannon", async () => {
   const source = await readFile(engineUrl, "utf8");
   const setIdle = isolate(source, "setIdle(next: boolean) {");
   assert.match(setIdle, /this\.cannonRoot\.visible = false/, "the menu shows the model alone");
-  assert.match(setIdle, /this\.modelRoot\.scale\.setScalar\(MENU_MODEL_SCALE\)/, "the menu needs room to zoom into");
+  assert.match(setIdle, /this\.modelRoot\.scale\.setScalar\(this\.playModelScale \* MENU_MODEL_SCALE\)/, "the menu zoom is relative to the fitted play size");
 });
 
 test("leaving the menu starts an intro instead of cutting straight to play", async () => {
@@ -50,9 +50,9 @@ test("the intro lands exactly on the authored transform and unlocks play only th
   const source = await readFile(engineUrl, "utf8");
   const updateIntro = isolate(source, "private updateIntro(frameDelta: number) {");
   assert.match(updateIntro, /slerpQuaternions\(this\.introFromQuaternion, this\.defaultModelOrientation, eased\)/);
-  assert.match(updateIntro, /lerp\(this\.introFromScale, 1, eased\)/);
+  assert.match(updateIntro, /lerp\(this\.introFromScale, this\.playModelScale, eased\)/);
   assert.match(updateIntro, /this\.modelRoot\.quaternion\.copy\(this\.defaultModelOrientation\)/, "the last frame must be exact, not eased-approximate");
-  assert.match(updateIntro, /this\.modelRoot\.scale\.setScalar\(1\)/);
+  assert.match(updateIntro, /this\.modelRoot\.scale\.setScalar\(this\.playModelScale\)/);
   assert.match(updateIntro, /this\.introActive = false/);
 
   // Firing mid-zoom would be judged against a model still in motion, which is

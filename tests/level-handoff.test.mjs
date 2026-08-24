@@ -31,8 +31,8 @@ test("the handoff entrance is set up before the new level's first frame is seen"
 test("the handoff pulls the cluster back and half turns it, then settles in 0.7s", async () => {
   const source = await readFile(engineUrl, "utf8");
   const handoff = isolate(source, "startHandoffIntro() {");
-  assert.match(handoff, /this\.introFromScale = HANDOFF_MODEL_SCALE/, "zoomed out, so there is somewhere to zoom back from");
-  assert.match(handoff, /this\.modelRoot\.scale\.setScalar\(HANDOFF_MODEL_SCALE\)/, "applied on the first frame, not waited for");
+  assert.match(handoff, /this\.introFromScale = this\.playModelScale \* HANDOFF_MODEL_SCALE/, "zoomed out from the fitted play size");
+  assert.match(handoff, /this\.modelRoot\.scale\.setScalar\(this\.playModelScale \* HANDOFF_MODEL_SCALE\)/, "applied on the first frame, not waited for");
   assert.match(handoff, /this\.introSpinTurn = HANDOFF_SPIN_TURN/);
   assert.match(handoff, /this\.introDuration = HANDOFF_INTRO_DURATION/);
   assert.match(handoff, /this\.introActive = true/, "play stays locked until the cluster stops moving");
@@ -88,10 +88,19 @@ test("the handoff turn is driven by angle, and both intros land on the authored 
   assert.match(updateIntro, /setFromAxisAngle\(this\.worldUp, this\.introSpinTurn \* \(1 - eased\)\)/);
   assert.match(updateIntro, /this\.introTime \+ frameDelta, this\.introDuration/, "the menu intro and the handoff run at different lengths");
   assert.match(updateIntro, /this\.introSpinTurn = 0/, "cleared on landing, so the menu intro is never spun");
+  assert.match(updateIntro, /lerp\(this\.introFromScale, this\.playModelScale, eased\)/, "every intro lands at the level's fitted play size");
+  assert.match(updateIntro, /this\.modelRoot\.scale\.setScalar\(this\.playModelScale\)/, "the exact fitted scale is restored at the end");
   // The menu path is untouched.
   assert.match(updateIntro, /slerpQuaternions\(this\.introFromQuaternion, this\.defaultModelOrientation, eased\)/);
 
   const setIdle = isolate(source, "setIdle(next: boolean) {");
   assert.match(setIdle, /this\.introSpinTurn = 0/, "coming out of the menu is a zoom, not a spin");
   assert.match(setIdle, /this\.introDuration = INTRO_DURATION/);
+});
+
+test("large levels are fitted before their first frame while compact levels stay full size", async () => {
+  const source = await readFile(engineUrl, "utf8");
+  assert.match(source, /this\.playModelScale = computeModelPlayScale\(level\.blocks, BLOCK_SIZE, BLOCK_SPACING\)/);
+  const buildBlocks = isolate(source, "private buildBlocks() {");
+  assert.match(buildBlocks, /this\.modelRoot\.scale\.setScalar\(this\.playModelScale\)/);
 });

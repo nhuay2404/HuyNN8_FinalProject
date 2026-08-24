@@ -64,7 +64,7 @@ test("every haptic call site goes through the shared module", async () => {
   );
   assert.match(
     engine,
-    /haptic\("lose"\);\n\s*this\.callbacks\.onState/,
+    /haptic\("lose"\);\r?\n\s*this\.callbacks\.onState/,
     "running out of shots is a separate loss path and needs its own buzz",
   );
   assert.match(ui, /hapticBlockLanded\(sprite\.order\)/, "each cube buzzes as it reaches its slot");

@@ -88,11 +88,22 @@ test("a shot that hit nothing shrinks away as it falls", async () => {
   // what a shot hits, which is the fairness bug the aim fix removed.
   assert.doesNotMatch(fall, /PROJECTILE_RADIUS/);
   const sweep = isolate(source, "private sweepBlocks(worldA: THREE.Vector3, worldB: THREE.Vector3, inverseModel: THREE.Matrix4): SweepHit | null {");
-  assert.match(sweep, /const radius = PROJECTILE_RADIUS;/, "the sweep never reads the mesh scale");
+  assert.match(sweep, /const radius = PROJECTILE_RADIUS \/ this\.playModelScale;/, "inverse-scaled local space keeps the same world-space hit radius");
+  assert.doesNotMatch(sweep, /projectile\.mesh\.scale/, "drawn fall size still cannot alter collision");
 
   // The pool hands the same mesh to the next shot.
   const fire = isolate(source, "private fire({ start, velocity }: BallisticSolution) {");
   assert.match(fire, /mesh\.scale\.setScalar\(1\)/, "a reused mesh would otherwise start out tiny");
+});
+
+test("released blocks shrink from their fitted world size instead of jumping to scale one", async () => {
+  const source = await readFile(engineUrl, "utf8");
+  const release = isolate(source, "private releaseCluster(cluster: BlockRuntime[], shotIndex: number) {");
+  assert.match(release, /this\.scene\.attach\(member\.mesh\)/, "the parent swap first preserves the fitted world transform");
+  assert.match(release, /baseScale: member\.mesh\.scale\.x/, "the preserved size is stored with the released block");
+  const update = isolate(source, "private updateReleasedBlocks() {");
+  assert.match(update, /mesh\.scale\.setScalar\(released\.baseScale \* scale\)/);
+  assert.doesNotMatch(update, /mesh\.scale\.setScalar\(scale\)/, "a fitted block must never balloon back to scale one");
 });
 
 test("a falling shot leaves a trail, spaced by time and gone quickly", async () => {
