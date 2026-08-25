@@ -2,26 +2,23 @@
 
 :root {
   --ink: #f8faff;
-  --muted: #aab5dd;
-  --panel: rgba(29, 37, 82, 0.72);
+  --muted: #c3b6dd;
+  --panel: rgba(46, 30, 74, 0.74);
   --line: rgba(255, 255, 255, 0.18);
   --accent: #ffd54a;
   --hud-inset: 14px;
-  --hud-height: 92px;
+  --hud-height: 106px;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  background: radial-gradient(circle at 50% -10%, rgba(96, 130, 255, 0.45), transparent 36rem), #142457;
+  background: radial-gradient(circle at 50% -10%, rgba(180, 122, 255, 0.42), transparent 36rem), #241640;
   color: var(--ink);
   font-family: Arial, Helvetica, sans-serif;
   overflow: hidden;
   /* Phones paint a translucent highlight over the whole box of whatever was
-     tapped. The menu's play button covers the entire frame, so that highlight
-     was a full-screen flash at the exact moment of the transition — invisible
-     on desktop, which is why it only showed up on a real phone. Inherited, so
-     one declaration covers every button and every drag zone. */
+     tapped. Inherited, so one declaration covers every button and drag zone. */
   -webkit-tap-highlight-color: transparent;
 }
 button { font: inherit; -webkit-tap-highlight-color: transparent; }
@@ -68,12 +65,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .loading-fill {
   display: block; height: 100%; width: var(--loading-progress, 10%);
   border-radius: 999px; background: linear-gradient(90deg, #ffd21f, #ff8a1f);
-  /* The width is a real checkpoint landing; the transition only keeps the jump
-     from being a snap. */
   transition: width .32s cubic-bezier(.3,.9,.3,1);
 }
-/* A highlight travelling along the filled part: decoration, and the only thing
-   here that is not tied to a checkpoint. */
 .loading-fill::after {
   content: ""; display: block; height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
@@ -82,6 +75,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes loading-dot { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
 @keyframes loading-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
+/* ---- Frame ------------------------------------------------------------- */
 .page-shell { min-height: 100dvh; display: grid; place-items: center; padding: 18px; }
 .game-frame {
   position: relative;
@@ -92,9 +86,9 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 34px;
   background:
-    radial-gradient(115% 68% at 80% 6%, rgba(96, 138, 255, 0.55), transparent 62%),
-    radial-gradient(95% 58% at 10% 98%, rgba(38, 214, 205, 0.4), transparent 66%),
-    linear-gradient(180deg, #2b3fa0 0%, #21489c 46%, #16527f 100%);
+    radial-gradient(115% 68% at 78% 4%, rgba(255, 168, 92, 0.34), transparent 62%),
+    radial-gradient(95% 58% at 8% 98%, rgba(120, 74, 220, 0.5), transparent 66%),
+    linear-gradient(180deg, #3a2160 0%, #2a1a4c 48%, #1b1233 100%);
   isolation: isolate;
 }
 .game-frame::before {
@@ -107,25 +101,6 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background-size: 30px 30px;
   mask-image: linear-gradient(to bottom, #000, transparent 78%);
 }
-/* One shot is owed. The whole frame warms up, which is the cheapest way to say
-   "something is different about the next shot" without covering the blocks. */
-.game-frame.is-rainbow-armed {
-  background:
-    radial-gradient(100% 55% at 15% 0%, rgba(255, 75, 125, .48), transparent 60%),
-    radial-gradient(100% 65% at 90% 42%, rgba(72, 235, 220, .42), transparent 60%),
-    radial-gradient(95% 60% at 20% 100%, rgba(255, 213, 74, .36), transparent 64%),
-    linear-gradient(180deg, #3f319b 0%, #1d4e9e 48%, #156882 100%);
-}
-.game-content { position: absolute; inset: 0; }
-
-.climax-fireworks { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; }
-.climax-fireworks span {
-  position: absolute; top: -38px; left: var(--climax-left); width: 3px; height: 24px;
-  border-radius: 999px; opacity: .54;
-  background: linear-gradient(to bottom, transparent, var(--climax-color) 30%, #fff 72%, transparent);
-  box-shadow: 0 0 9px var(--climax-color);
-  animation: climax-fall var(--climax-duration) linear var(--climax-delay) infinite;
-}
 
 .icon-button {
   width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 12px;
@@ -133,176 +108,93 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .icon-button:hover { background: rgba(255,255,255,.2); }
 .icon-button:active { transform: scale(.94); }
-.icon-button:focus-visible { outline: 2px solid #ffd54a; outline-offset: 2px; }
+.icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .game-tools {
-  position: absolute; z-index: 12; top: max(var(--hud-inset), env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 8px;
-}
-.game-tools .icon-button { width: 44px; height: 44px; font-size: 18px; line-height: 1; }
-/* Same rise as the HUD, one button after the other, so the whole level frame
-   arrives as one move instead of the tools popping in. */
-.game-tools.is-rising .icon-button { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) both; }
-.game-tools.is-rising .icon-button:nth-child(2) { animation-delay: .07s; }
-
-.hud-top {
   position: absolute; z-index: 12;
   top: max(var(--hud-inset), env(safe-area-inset-top));
-  left: max(16px, env(safe-area-inset-left));
-  right: 70px;
+  right: max(14px, env(safe-area-inset-right));
   display: flex; flex-direction: column; gap: 8px;
 }
-/* `hidden` alone loses to the class rule below, so the menu hides the HUD here. */
-.hud-top[hidden] { display: none; }
-/* Entering a level pushes the HUD up out of the surface instead of flying it in
-   from off-screen; the batch row follows a beat later. */
-.hud-top.is-rising .goal-section { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) both; }
-.hud-top.is-rising .batch-section { animation: hud-rise .5s cubic-bezier(.16,.84,.24,1) .1s both; }
-/* The armed banner. Pinned under the HUD rather than laid out inside it, so a
-   state that comes and goes mid-round cannot change --hud-height and shove the
-   3D scene up and down with it. */
-.bypass-banner {
-  position: absolute; z-index: 11;
-  top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 4px);
-  left: max(16px, env(safe-area-inset-left)); right: 70px;
-  overflow: hidden; height: 26px; padding: 0 10px;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,.5); border-radius: 10px;
-  background: rgba(6,10,32,.72);
-  box-shadow: 0 8px 20px -14px rgba(4,8,30,.9), inset 0 1px 0 rgba(255,255,255,.2);
-  animation: batch-in .3s cubic-bezier(.18,.8,.25,1.25) both;
-}
-/* The wave is its own layer behind the text: scrolling a gradient under live
-   text is what makes it a moving band rather than a striped label. */
-.bypass-banner-wave {
-  position: absolute; inset: 0;
-  background: linear-gradient(105deg, rgba(255,67,112,.9), rgba(255,178,66,.86), rgba(46,213,185,.88), rgba(92,117,238,.9), rgba(255,67,112,.9));
-  background-size: 220% 100%;
-  animation: rainbow-status 2.2s linear infinite;
-  opacity: .82;
-}
-.bypass-banner strong {
-  position: relative;
-  color: #fff; font-size: 11px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase;
-  text-shadow: 0 1px 6px rgba(5,8,28,.9);
+.game-tools .icon-button {
+  width: 42px; height: 42px; font-size: 19px; line-height: 1;
+  display: grid; place-items: center; text-decoration: none;
 }
 
-.goal-section { display: block; }
-.goal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.goal-card {
-  position: relative; overflow: hidden; height: 52px; padding: 0 12px 8px;
-  display: flex; align-items: center; gap: 10px;
-  border: 2px solid color-mix(in srgb, var(--goal), transparent 38%); border-radius: 18px;
-  background:
-    radial-gradient(125% 150% at 10% 0%, color-mix(in srgb, var(--goal), transparent 58%), transparent 72%),
-    linear-gradient(180deg, rgba(24, 32, 78, .82), rgba(14, 20, 54, .92));
-  box-shadow:
-    0 12px 24px -14px color-mix(in srgb, var(--goal), transparent 30%),
-    0 0 0 4px color-mix(in srgb, var(--goal), transparent 90%),
-    inset 0 1px 0 rgba(255,255,255,.18);
-  animation: goal-in .34s cubic-bezier(.2,.8,.2,1) both;
+/* ---- Ammo HUD ---------------------------------------------------------- */
+/* §23: total remaining, the current bullet, and a few upcoming ones — and
+   nothing that suggests the order can be changed, because it cannot. */
+.hud-top {
+  position: absolute; z-index: 10;
+  inset: max(var(--hud-inset), env(safe-area-inset-top)) 64px auto max(14px, env(safe-area-inset-left));
+  height: var(--hud-height);
+  display: flex; flex-direction: column; gap: 8px;
 }
-.cube-icon {
-  width: 24px; height: 24px; flex: 0 0 auto; border-radius: 7px;
-  background: linear-gradient(150deg, color-mix(in srgb, var(--goal), white 34%) 0%, var(--goal) 52%, color-mix(in srgb, var(--goal), black 26%) 100%);
-  box-shadow: 0 2px 0 color-mix(in srgb, var(--goal), black 42%), 0 0 16px color-mix(in srgb, var(--goal), transparent 45%);
+.ammo-row {
+  display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) auto;
+  align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel);
 }
-.goal-count { display: flex; align-items: baseline; gap: 1px; line-height: 1; font-variant-numeric: tabular-nums; }
-.goal-count strong { font-size: 24px; letter-spacing: -.03em; text-shadow: 0 2px 6px rgba(6,10,32,.6); animation: count-pop .34s cubic-bezier(.2,.9,.24,1.4) both; }
-.goal-count small { color: #cdd6f7; font-size: 14px; font-weight: 700; }
-.goal-bar { position: absolute; left: 12px; right: 12px; bottom: 7px; height: 5px; border-radius: 999px; background: rgba(6,10,32,.5); overflow: hidden; }
-.goal-bar i { display: block; width: var(--goal-fill, 0%); height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--goal), white 26%), var(--goal)); box-shadow: 0 0 10px color-mix(in srgb, var(--goal), transparent 40%); transition: width .28s cubic-bezier(.2,.8,.2,1); }
-.goal-card.is-full { border-color: color-mix(in srgb, var(--goal), white 18%); animation: goal-in .34s cubic-bezier(.2,.8,.2,1) both, goal-full-glow 1.4s ease-in-out infinite alternate; }
-/* A finished slot renders as an empty grid cell: it holds the column open so the
-   goal still in play keeps its place, and shows nothing at all. Once only one
-   goal is left the cell is dropped instead, and the survivor slides into it. */
-.goal-slot-empty { min-height: 0; }
+.ammo-label {
+  display: block; color: var(--muted);
+  font-size: 8px; font-weight: 900; letter-spacing: .16em;
+}
+.ammo-current, .ammo-next, .ammo-total { min-width: 0; }
+.ammo-bullet {
+  display: flex; align-items: center; gap: 7px; margin-top: 4px;
+}
+.ammo-bullet::before {
+  content: ""; width: 20px; height: 20px; flex: none; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.6);
+  background: radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--bullet, #888), white 42%), var(--bullet, #888));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--bullet, #888), transparent 45%);
+}
+.ammo-bullet b { font-size: 13px; font-weight: 900; letter-spacing: .04em; }
+/* Keyed on the ammo index, so spending a bullet visibly advances the queue. */
+.ammo-bullet.is-current { animation: bullet-load .3s cubic-bezier(.2,.9,.24,1.3) both; }
+.ammo-bullet.is-empty::before { background: rgba(255,255,255,.12); box-shadow: none; }
+.ammo-bullet.is-empty b { color: var(--muted); }
+.ammo-queue { display: flex; align-items: center; gap: 6px; margin-top: 6px; height: 20px; }
+.ammo-pip {
+  width: 14px; height: 14px; flex: none; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.42);
+  background: radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--bullet, #888), white 34%), var(--bullet, #888));
+  animation: pip-shift .3s cubic-bezier(.2,.9,.24,1.3) both;
+}
+.ammo-last { color: var(--muted); font-size: 10px; font-style: normal; font-weight: 700; }
+.ammo-total { text-align: right; }
+.ammo-total strong {
+  display: block; margin-top: 2px; font-size: 26px; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(6,10,32,.6);
+}
+.board-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px;
+  color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em;
+}
+.level-switch { display: flex; gap: 6px; }
+.level-switch button {
+  width: 22px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 50%;
+  background: rgba(255,255,255,.06); color: var(--muted);
+  font-size: 11px; font-weight: 800; line-height: 1; cursor: pointer;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.level-switch button:hover { background: rgba(255,255,255,.14); }
+.level-switch button.is-active {
+  border-color: rgba(255,213,74,.5); background: rgba(255,213,74,.16); color: #ffe9a8;
+}
+.level-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.level-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e7dcff; }
 
-/* The last goal standing travels from the second column into the first. It is
-   the same distance every time — one column plus the grid gap — so the trip is
-   authored in the element's own width rather than measured.
-   Cartoon timing, not a lerp: it runs past the mark, squashes as it stops, and
-   rebounds. The tilt is what sells the weight; without it the squash reads as a
-   glitch. */
-.goal-card.is-sliding-home { animation: goal-slide-home .52s cubic-bezier(.3,.85,.35,1) both; }
-/* A goal that fills on the very shot that empties its neighbour would otherwise
-   lose its glow to this rule replacing the animation list. */
-.goal-card.is-sliding-home.is-full {
-  animation: goal-slide-home .52s cubic-bezier(.3,.85,.35,1) both, goal-full-glow 1.4s ease-in-out infinite alternate;
+/* ---- Scene and controls ------------------------------------------------ */
+.scene-wrap {
+  --aim-touch-height: 40%;
+  position: absolute;
+  inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0;
+  overflow: hidden;
 }
-
-/* No chip, no counter: the row is the budget drawn out. */
-.batch-section { display: block; }
-/* The rack the blocks sit in. Thin walls with a thicker lip along the bottom is
-   the one asymmetry that keeps it from reading as another rounded pill, and the
-   interior stays neutral because it holds every colour the player has parked at
-   once — tinting the walls would either pick a winner or wash out. */
-.batch-slot {
-  position: relative; height: 32px; padding: 0 6px;
-  border: 2px solid rgba(255,255,255,.3); border-bottom-width: 4px; border-radius: 11px;
-  background: linear-gradient(180deg, rgba(6,10,32,.5), rgba(6,10,32,.72));
-  box-shadow:
-    0 8px 18px -12px rgba(6,10,32,.7),
-    inset 0 1px 0 rgba(255,255,255,.14);
-  animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both;
-}
-/* One column per slot, always a single row: the rack spans the whole HUD width,
-   so even a generous budget fits by narrowing its columns. Folding into two rows
-   is what would break it — the slot cap below is bounded by the rack's height,
-   and two of those stacked do not fit inside it. */
-.batch-tray {
-  display: grid; width: 100%; height: 100%; gap: 2px;
-  /* A small budget would otherwise spread four slots across the whole rack and
-     read as empty even when full. Clamped to what the slots need and centred,
-     so a tight budget looks deliberate; a generous one hits 100% and the
-     columns shrink as before. */
-  max-width: calc(var(--pips, 1) * 34px); margin-inline: auto;
-  grid-template-columns: repeat(var(--pips, 1), minmax(0, 1fr));
-  place-content: center; justify-items: center; align-items: center;
-}
-/* One slot is one block of budget, in the same 150deg three-stop language as
-   .cube-icon so a parked block reads as the same object as a goal block. Its
-   colour comes from the record it belongs to. The cap is what stops a small
-   budget from drawing enormous blocks; below it, minmax(0, 1fr) on the column
-   takes over and a generous budget narrows its slots to fit. */
-.batch-pip {
-  width: 100%; max-width: 22px; max-height: 22px; aspect-ratio: 1; border-radius: 6px;
-  background: linear-gradient(150deg, color-mix(in srgb, var(--batch), white 30%), var(--batch) 58%, color-mix(in srgb, var(--batch), black 24%));
-  box-shadow: 0 2px 0 color-mix(in srgb, var(--batch), black 38%);
-  animation: pip-drop .3s cubic-bezier(.18,.8,.25,1.25) both;
-}
-/* An unused slot is the same shape, empty: room left is something to count, not
-   a number to read. It has always been there, so it never animates in. */
-.batch-pip.is-socket {
-  background: rgba(255,255,255,.06);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.09);
-  animation: none;
-}
-/* Every slot taken: the whole rack pulses, which is the only warning the player
-   gets before a shot the reserve cannot absorb ends the level. Both animations
-   are listed because naming one here would drop the entrance. */
-.batch-section.is-warning .batch-slot {
-  border-color: rgba(255,145,48,.62);
-  animation: batch-in .38s cubic-bezier(.18,.8,.25,1.25) both, batch-warning 1.2s ease-in-out infinite;
-}
-
-.scene-wrap { --aim-touch-height: 44%; position: absolute; inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0; overflow: hidden; }
 .scene-host { position: absolute; inset: 0; z-index: 0; }
 .scene-host canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
-.model-input-zone { position: absolute; inset: 0 0 var(--aim-touch-height); z-index: 2; cursor: grab; touch-action: none; outline: none; }
-.model-input-zone.is-dragging { cursor: grabbing; }
-/* Drawn at the touch point and timed off the same constant the engine counts, so
-   what the player watches fill is the hold that is actually being measured. */
-.model-input-zone.is-holding::after {
-  content: ""; position: absolute; z-index: 3; pointer-events: none;
-  left: var(--hold-x); top: var(--hold-y); width: 60px; height: 60px; margin: -30px 0 0 -30px;
-  border-radius: 50%; border: 2px solid rgba(255,255,255,.9);
-  box-shadow: 0 0 14px rgba(140,190,255,.5), inset 0 0 12px rgba(255,255,255,.28);
-  animation: model-hold-fill var(--hold-ms, 460ms) linear both;
-}
-@keyframes model-hold-fill {
-  from { transform: scale(.28); opacity: 0; }
-  35% { opacity: .95; }
-  to { transform: scale(1); opacity: .95; }
-}
+
 .aim-crosshair {
   position: absolute; z-index: 5; left: 50%; top: 50%; width: 26px; height: 26px;
   opacity: 0; visibility: hidden; transform: translate(-50%,-50%) scale(.84); pointer-events: none;
@@ -313,82 +205,29 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   border: 2px solid #07080c; border-radius: 2px; background: #fff;
   transform: translate(-50%,-50%);
 }
-.aim-crosshair::before {
-  width: 26px; height: 6px;
-}
-.aim-crosshair::after {
-  width: 6px; height: 26px;
-}
+.aim-crosshair::before { width: 26px; height: 6px; }
+.aim-crosshair::after { width: 6px; height: 26px; }
 .aim-crosshair-core {
   position: absolute; z-index: 2; left: 50%; top: 50%; width: 8px; height: 8px; display: block;
-  border: 2px solid #07080c; border-radius: 50%; background: #fff; transform: translate(-50%,-50%);
+  border: 2px solid #07080c; border-radius: 50%;
+  /* Tinted with whatever sand is under the sight. It says what is being aimed
+     at, never whether that is the right colour to spend the bullet on. */
+  background: var(--aim-color, #fff);
+  transform: translate(-50%,-50%);
 }
 .aim-crosshair.is-visible { opacity: .28; visibility: visible; transform: translate(-50%,-50%) scale(.86); }
 .aim-crosshair.is-engaged { opacity: .84; transform: translate(-50%,-50%) scale(1); }
 .aim-crosshair.is-aiming:not(.is-target-valid) {
   opacity: .64; transform: translate(-50%,-50%) rotate(45deg) scale(.9);
 }
-.aim-crosshair.is-target-valid {
-  opacity: 1; transform: translate(-50%,-50%) scale(1.08);
-}
-.aim-crosshair.is-cooling-down { opacity: .24; transform: translate(-50%,-50%) scale(.82); }
-.aim-crosshair.is-blocked { animation: crosshair-blocked .28s ease-out; }
-
-/* The wand's sight: a rune circle instead of iron sights. Same three elements
-   as the cross, redefined — the bars become rings, the core keeps the centre
-   dot, and the tick marks come from a masked conic gradient so the whole thing
-   is still one span with two pseudo elements. Every ring carries a dark edge on
-   both sides, which is what keeps a white sight legible over a pale block and
-   over the dark backdrop alike. */
-.aim-crosshair.is-magic { width: 36px; height: 36px; }
-.aim-crosshair.is-magic::before, .aim-crosshair.is-magic::after {
-  border-radius: 50%; background: none;
-  box-shadow: 0 0 0 1.5px rgba(7,8,12,.85), inset 0 0 0 1.5px rgba(7,8,12,.85);
-}
-.aim-crosshair.is-magic::before {
-  width: 36px; height: 36px; border: 2px solid #fff;
-}
-.aim-crosshair.is-magic::after {
-  width: 23px; height: 23px; border: 2px dashed #fff;
-  animation: rune-spin 6s linear infinite;
-}
-.aim-crosshair.is-magic .aim-crosshair-core { width: 6px; height: 6px; }
-/* Four ticks around the outer ring: a conic gradient masked down to a thin
-   band, turning the other way so the sight never looks like one rigid part. */
-.aim-crosshair.is-magic .aim-crosshair-core::after {
-  content: ""; position: absolute; left: 50%; top: 50%; width: 46px; height: 46px;
-  transform: translate(-50%,-50%);
-  background: repeating-conic-gradient(from -3deg, #fff 0 6deg, transparent 6deg 90deg);
-  -webkit-mask: radial-gradient(farthest-side, transparent 62%, #000 64%);
-  mask: radial-gradient(farthest-side, transparent 62%, #000 64%);
-  animation: rune-spin 9s linear infinite reverse;
-}
-/* A circle cannot show a 45 degree turn, so "nothing to hit here" is a colour
-   and a squeeze instead of the cross flipping into an x. */
-.aim-crosshair.is-magic.is-aiming:not(.is-target-valid) {
-  transform: translate(-50%,-50%) scale(.88);
-}
-.aim-crosshair.is-magic.is-aiming:not(.is-target-valid)::before,
-.aim-crosshair.is-magic.is-aiming:not(.is-target-valid)::after {
-  border-color: #ff8097;
-}
-.aim-crosshair.is-magic.is-target-valid::before { border-color: #ffe9a8; }
-.aim-crosshair.is-magic.is-target-valid::after { border-color: #fff; }
-.auto-clear-label {
-  position: absolute; z-index: 7; top: 14px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid rgba(255,213,74,.28);
-  border-radius: 999px; background: rgba(18,25,70,.9); pointer-events: none;
-  animation: auto-clear-pulse .75s ease-in-out infinite alternate;
-}
-.auto-clear-label span { color: #ffd54a; font-size: 9px; font-weight: 900; letter-spacing: .1em; }
-.auto-clear-label b { color: #e7ebff; font-size: 10px; }
+.aim-crosshair.is-target-valid { opacity: 1; transform: translate(-50%,-50%) scale(1.08); }
 
 .aim-zone {
   --joystick-x: 50%; --joystick-y: 50%; --joystick-dx: 0px; --joystick-dy: 0px;
-  position: absolute; z-index: 4; inset: auto 0 0; height: var(--aim-touch-height); touch-action: none; cursor: grab;
+  position: absolute; z-index: 4; inset: auto 0 0; height: var(--aim-touch-height);
+  touch-action: none; cursor: grab;
 }
 .aim-zone.is-aiming { cursor: grabbing; }
-.aim-zone.is-cooling-down:not(.is-aiming) { cursor: progress; }
 .aim-joystick {
   position: absolute; left: var(--joystick-x); top: var(--joystick-y); width: 128px; height: 128px;
   border: 1px solid rgba(243,214,107,.34); border-radius: 50%; background: rgba(243,214,107,.045);
@@ -401,7 +240,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   transform: translate(-50%,-50%);
 }
 .aim-joystick-knob {
-  position: absolute; z-index: 1; left: 50%; top: 50%; width: 25px; height: 25px; display: grid; place-items: center;
+  position: absolute; z-index: 1; left: 50%; top: 50%; width: 25px; height: 25px;
+  display: grid; place-items: center;
   border: 1px solid rgba(255,255,255,.46); border-radius: 50%; background: rgba(243,214,107,.5);
   color: #fff; font-size: 14px; line-height: 1;
   transform: translate(calc(-50% + var(--joystick-dx)),calc(-50% + var(--joystick-dy)));
@@ -412,605 +252,200 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255,255,255,.16); }
 .aim-zone.is-cancelled .aim-joystick-knob::after { content: "×"; }
 
-.sort-flight-layer { position: absolute; z-index: 15; inset: 0; overflow: hidden; pointer-events: none; }
-.sort-flight-cube {
-  position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 3px;
-  border: 1px solid color-mix(in srgb, var(--sort-color), white 35%); background: var(--sort-color);
-  box-shadow: 2px 2px 0 color-mix(in srgb, var(--sort-color), black 28%);
-  opacity: 0; will-change: transform, opacity;
-  animation: sort-flight var(--sort-flight) cubic-bezier(.2,.72,.24,1) var(--sort-delay) forwards;
+/* ---- Locked-input and feedback ---------------------------------------- */
+/* §24 asks for a visible sign that firing is locked while sand is moving.
+   Without it, a settle just looks like the game stopped responding. */
+.settle-badge {
+  position: absolute; z-index: 7; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border: 1px solid rgba(255,213,74,.3); border-radius: 999px;
+  background: rgba(28,18,50,.9); pointer-events: none;
+  animation: badge-in .2s ease-out both;
 }
-/* Cubes coming out of a batch travel between two pieces of HUD rather than out
-   of the board, so they carry a brighter rim to read against the panels. */
-.sort-flight-cube.is-from-batch {
-  border-color: color-mix(in srgb, var(--sort-color), white 55%);
-  box-shadow: 2px 2px 0 color-mix(in srgb, var(--sort-color), black 28%), 0 0 12px color-mix(in srgb, var(--sort-color), transparent 45%);
+.settle-badge i {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  animation: badge-pulse .7s ease-in-out infinite alternate;
 }
-.game-frame.is-paused .sort-flight-cube { animation-play-state: paused; }
-.game-frame.is-paused .climax-fireworks span,
-.game-frame.is-paused .bypass-banner-wave { animation-play-state: paused; }
+.settle-badge span { color: #ffe9a8; font-size: 9px; font-weight: 900; letter-spacing: .14em; }
 
-/* The end of a level is a moment, so it arrives as one object: a bordered panel
-   that comes out of the depth of the frame, not a flat wash laid over it. The
-   backdrop only darkens and holds it; everything else is the card. `perspective`
-   sits here because the card's pop moves in z, and that needs a 3D context from
-   its parent. */
-.result-overlay {
-  position: absolute; z-index: 40; inset: 0; display: grid; place-items: center;
-  padding: 24px; text-align: center; perspective: 720px;
-  background: radial-gradient(88% 58% at 50% 46%, rgba(28,20,86,.62), rgba(7,10,34,.92));
-  animation: overlay-in .22s ease both;
+.sand-toast {
+  /* In the clear band above the frame. Anywhere lower and it covers the sand
+     the message is about. */
+  position: absolute; z-index: 8; left: 50%; top: 44px;
+  transform: translateX(-50%);
+  max-width: 84%; padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: rgba(20,13,38,.92);
+  color: #eee6ff; font-size: 11px; font-weight: 700; text-align: center;
+  pointer-events: none; animation: toast-in .22s ease-out both;
+}
+.sand-toast.is-warn { border-color: rgba(255,128,151,.5); color: #ffd7de; }
+.sand-toast.is-good { border-color: rgba(36,224,127,.5); color: #c8ffe2; }
+
+/* ---- Result ------------------------------------------------------------ */
+.result-screen {
+  position: absolute; z-index: 30; inset: 0; display: grid; place-items: center;
+  padding: 24px; background: rgba(14, 8, 28, .78); animation: overlay-in .24s ease-out both;
 }
 .result-card {
-  position: relative; z-index: 1; width: min(100%, 300px); padding: 24px 22px 22px;
-  border: 2px solid rgba(255,213,74,.55); border-radius: 26px;
-  background: linear-gradient(180deg, #2c3679, #1a2052);
-  box-shadow:
-    0 26px 58px -22px rgba(4,8,30,.95),
-    0 0 0 7px rgba(255,213,74,.08),
-    inset 0 1px 0 rgba(255,255,255,.16);
-  /* Slightly behind the backdrop's fade, so the panel is seen arriving rather
-     than being there already. */
-  animation: result-pop .44s cubic-bezier(.18,1.04,.32,1.12) .05s both;
+  width: 100%; max-width: 300px; padding: 26px 22px; text-align: center;
+  border: 1px solid var(--line); border-radius: 24px;
+  background: linear-gradient(180deg, rgba(64,42,104,.96), rgba(30,19,56,.96));
+  animation: result-pop .34s cubic-bezier(.2,.9,.24,1.3) both;
 }
-.result-fail .result-card {
-  border-color: rgba(255,77,106,.6);
-  box-shadow:
-    0 26px 58px -22px rgba(4,8,30,.95),
-    0 0 0 7px rgba(255,77,106,.1),
-    inset 0 1px 0 rgba(255,255,255,.14);
-}
-.result-card h2 { margin: 9px 0 7px; font-size: 25px; letter-spacing: -.04em; }
-.result-card p { margin: 0 auto 18px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
+.result-card h2 { margin: 0 0 10px; font-size: 21px; letter-spacing: .04em; }
+.result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .result-card button {
-  width: 100%; border: 0; border-radius: 14px; padding: 13px 18px; color: #2b1d00; background: #ffd54a;
-  font-size: 12px; font-weight: 900; letter-spacing: .04em; cursor: pointer;
-  transition: transform .18s ease, filter .18s ease;
+  width: 100%; padding: 13px; border: none; border-radius: 14px;
+  background: linear-gradient(180deg, #ffd54a, #ff9f1f); color: #2a1a06;
+  font-size: 14px; font-weight: 900; letter-spacing: .06em; cursor: pointer;
 }
-.result-card button:hover { transform: translateY(-2px); filter: brightness(1.06); }
-.result-card button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.result-medal {
-  width: 62px; height: 62px; margin: 0 auto; display: grid; place-items: center;
-  border-radius: 20px; color: #2b1d00; background: #ffd54a; font-size: 30px;
-  box-shadow: 0 10px 22px -10px rgba(255,213,74,.9);
-  animation: result-medal-in .5s cubic-bezier(.2,1.2,.3,1.1) .16s both;
-}
-.result-fail .result-medal { color: #fff; background: #ff4d6a; box-shadow: 0 10px 22px -10px rgba(255,77,106,.9); }
-.result-fail button { color: #fff; background: #ff4d6a; }
+.result-card button:active { transform: scale(.98); }
 
-/* Fireworks: one ring of sparks thrown outward from behind the panel, twice.
-   Each spark carries its own angle, reach and delay, so the burst is one
-   keyframe reused eighteen times rather than eighteen keyframes. */
-.result-fireworks { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-.result-fireworks span {
-  position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
-  border-radius: 3px; background: var(--spark-color);
-  animation: result-spark 1.05s ease-out var(--spark-delay) 2 both;
-}
+/* ---- Keyframes --------------------------------------------------------- */
+@keyframes bullet-load { from { opacity: 0; transform: translateX(-10px) scale(.82); } }
+@keyframes pip-shift { from { opacity: 0; transform: translateX(9px); } }
+@keyframes badge-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+@keyframes badge-pulse { to { opacity: .35; transform: scale(.78); } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
+@keyframes overlay-in { from { opacity: 0; } }
+@keyframes result-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
 
-.modal-overlay {
-  position: absolute; z-index: 50; inset: 0; display: grid; place-items: center;
-  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-  background: rgba(11,16,52,.9); animation: overlay-in .2s ease both;
-}
-.modal-card {
-  width: min(100%, 330px); max-height: 100%; overflow-y: auto; padding: 24px;
-  border: 1px solid rgba(255,255,255,.14); border-radius: 24px; background: #212a63;
-  text-align: center;
-}
-.modal-icon {
-  width: 48px; height: 48px; margin: 0 auto 12px; display: grid; place-items: center;
-  border: 1px solid rgba(255,213,74,.25); border-radius: 16px; color: #ffd54a;
-  background: rgba(255,213,74,.09); font-size: 23px;
-}
-.restart-icon { color: #ffce68; }
-.modal-card h2 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
-.modal-description { margin: 8px auto 20px; color: #b6c0e4; font-size: 12px; line-height: 1.55; }
-.sensitivity-control { display: block; margin-top: 17px; text-align: left; }
-.sensitivity-control > label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.sensitivity-control b { font-size: 12px; }
-.sensitivity-control output { color: #ffd54a; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.sensitivity-control input {
-  width: 100%; height: 38px; margin: 4px 0 0; cursor: pointer; accent-color: #ffd54a;
-}
-.sensitivity-control input:focus-visible { outline: 2px solid rgba(255,213,74,.7); outline-offset: 2px; border-radius: 8px; }
+/* ---- Level editor ------------------------------------------------------ */
+/* A desktop tool, unlike the game: authoring wants a mouse, a keyboard and
+   room for three columns at once. It shares the game's palette so a picture
+   drawn here reads the same as the sand it becomes. */
+/* The game locks body scrolling so an aim drag cannot rubber-band the page.
+   The editor is a tall document and needs it back — scoped to the editor so the
+   game keeps the lock. */
+body:has(.editor-shell) { overflow: auto; }
 
-.toggle-control {
-  display: flex; align-items: center; justify-content: space-between; gap: 14px;
-  margin-top: 19px; padding-top: 17px; border-top: 1px solid var(--line); text-align: left;
-}
-.toggle-control > label { display: flex; flex-direction: column; gap: 3px; }
-.toggle-control b { font-size: 12px; }
-.toggle-control span { color: #b6c0e4; font-size: 11px; line-height: 1.45; }
-/* A native checkbox restyled as a switch: it keeps keyboard, screen reader and
-   label-click behaviour, so only the visuals are custom. */
-.toggle-control input {
-  appearance: none; flex: 0 0 auto; position: relative; width: 50px; height: 30px; margin: 0;
-  border: 1px solid var(--line); border-radius: 999px; background: rgba(11,16,46,.6);
-  cursor: pointer; transition: background .18s, border-color .18s;
-}
-.toggle-control input::after {
-  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
-  border-radius: 50%; background: #8b95bf; transition: transform .18s, background .18s;
-}
-.toggle-control input:checked { border-color: rgba(255,213,74,.6); background: rgba(255,213,74,.24); }
-.toggle-control input:checked::after { transform: translateX(20px); background: #ffd54a; }
-.toggle-control input:focus-visible { outline: 2px solid rgba(255,213,74,.7); outline-offset: 2px; }
-.toggle-control input:disabled { cursor: not-allowed; opacity: .45; }
-.toggle-control input:disabled + label, .toggle-control:has(input:disabled) span { color: #8b95bf; }
-.modal-done-button, .restart-actions button {
-  min-height: 44px; border: 0; border-radius: 13px; font-size: 12px; font-weight: 900; cursor: pointer;
-}
-.modal-done-button { width: 100%; margin-top: 19px; color: #2b1d00; background: #ffd54a; }
-.restart-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 2px; }
-.restart-actions .confirm-yes { color: #03301c; background: #2fe58f; }
-.restart-actions .confirm-no { color: #fff; background: #ff4d6a; }
-.modal-done-button:focus-visible, .restart-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-
-.settings-section-label {
-  margin: 20px 0 0; color: var(--muted); font-size: 11px; font-weight: 900; letter-spacing: .1em; text-align: left;
-}
-.hub-return-button { width: 100%; margin-top: 19px; color: #eef2ff; background: rgba(255,255,255,.12); border: 1px solid var(--line); }
-.hub-return-button:hover { background: rgba(255,255,255,.2); }
-
-/* ---- Menu hub ---------------------------------------------------------- */
-/* The 3D scene stays visible underneath: the cluster turning in the middle of
-   the menu is the same model the level starts with, not a picture of it. */
-.hub-screen { position: absolute; inset: 0; z-index: 30; }
-.hub-tap {
-  position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
-  display: flex; align-items: flex-end; justify-content: center;
-  padding-bottom: max(58px, env(safe-area-inset-bottom));
-  background:
-    radial-gradient(120% 62% at 50% 42%, transparent 38%, rgba(9, 13, 40, .58) 78%),
-    linear-gradient(180deg, rgba(9,13,40,.62) 0%, transparent 26%, transparent 62%, rgba(9,13,40,.72) 100%);
+.editor-shell {
+  min-height: 100dvh;
+  padding: 18px clamp(12px, 3vw, 32px) 40px;
   color: var(--ink);
 }
-.hub-play-hint {
-  font-size: 23px; font-weight: 900; letter-spacing: .12em;
-  text-shadow: 0 4px 18px rgba(6,10,32,.85);
+.editor-empty { padding: 60px; text-align: center; color: var(--muted); }
+.editor-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 18px; flex-wrap: wrap;
 }
-/* The pulse lives on the inner span so the exit animation on the parent cannot
-   cancel it mid-cycle: replacing a running animation snaps the value back to
-   the base style, which read as the text popping brighter right as it left. */
-.hub-play-hint > span { display: block; animation: hub-play-pulse 1.5s ease-in-out infinite alternate; }
-.hub-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: -8px; }
-.hub-level-name {
-  position: absolute; z-index: 1; top: max(74px, calc(env(safe-area-inset-top) + 64px)); left: 0; right: 0;
-  margin: 0; padding: 0 68px; text-align: center; pointer-events: none;
-  font-size: 25px; font-weight: 500; letter-spacing: -.02em;
-  text-shadow: 0 4px 16px rgba(6,10,32,.8);
+.editor-top h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+.editor-top-actions { display: flex; gap: 8px; }
+
+.editor-body {
+  display: grid; gap: 16px; align-items: start;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(280px, 340px);
 }
-.hub-side-buttons {
-  position: absolute; z-index: 2; left: max(14px, env(safe-area-inset-left)); top: 38%;
-  display: flex; flex-direction: column; gap: 10px;
+@media (max-width: 1080px) { .editor-body { grid-template-columns: 1fr; } }
+
+.editor-panel {
+  padding: 16px; border: 1px solid var(--line); border-radius: 18px;
+  background: var(--panel);
 }
-/* One min-height for both buttons, so the one with a mark and the one that is
-   still only a word stay the same size in the column. */
-.hub-side-button {
-  width: 62px; min-height: 58px; padding: 7px 4px; cursor: default;
-  display: grid; place-items: center; gap: 3px;
-  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
-  color: #dfe5ff; font-size: 12px; font-weight: 900;
+.editor-panel h2 {
+  margin: 18px 0 8px; font-size: 11px; font-weight: 900;
+  letter-spacing: .16em; color: var(--muted); text-transform: uppercase;
 }
-.hub-side-icon { display: block; width: 27px; height: 27px; fill: currentColor; }
-.hub-side-icon-accent { fill: var(--accent); }
-.hub-tutorial-icon {
-  display: grid; place-items: center; width: 27px; height: 27px;
-  border: 2px solid currentColor; border-radius: 50%;
-  color: var(--accent); font-size: 17px; font-weight: 900; line-height: 1;
-  box-shadow: inset 0 0 0 3px rgba(255,213,74,.1);
+.editor-panel h2:first-child { margin-top: 0; }
+.editor-note { margin: 0 0 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.editor-hint { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+.editor-ok { margin: 10px 0 0; color: #c8ffe2; font-size: 11px; font-weight: 700; }
+
+.editor-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.editor-button {
+  padding: 7px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255,255,255,.07); color: #eee6ff;
+  font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center; transition: background .16s, border-color .16s;
 }
-/* They are visibly inert rather than hidden: the menu shows where they will go. */
-.hub-side-button[disabled] { opacity: .62; }
-/* Only positioned here: the look and size come from .icon-button, the same rule
-   the in-game tools use, so the button does not change shape or jump when the
-   menu hands over to the level. */
-.hub-settings-button {
-  position: absolute; z-index: 2;
-  top: max(var(--hud-inset), env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
-  width: 44px; height: 44px; display: grid; place-items: center;
-  font-size: 18px; line-height: 1;
+.editor-button:hover { background: rgba(255,255,255,.15); }
+.editor-button.is-active { border-color: rgba(255,213,74,.55); background: rgba(255,213,74,.18); color: #ffe9a8; }
+.editor-button.is-primary { border-color: rgba(255,213,74,.5); background: linear-gradient(180deg,#ffd54a,#ff9f1f); color: #2a1a06; }
+.editor-button.is-danger:hover { border-color: rgba(255,128,151,.6); background: rgba(255,80,110,.22); }
+.editor-button:disabled, .editor-button.is-disabled { opacity: .4; pointer-events: none; }
+
+.editor-mini {
+  padding: 3px 7px; border: 1px solid var(--line); border-radius: 7px;
+  background: rgba(255,255,255,.07); color: #eee6ff;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.editor-mini:hover { background: rgba(255,255,255,.16); }
+.editor-mini:disabled { opacity: .35; pointer-events: none; }
+.editor-mini.is-danger:hover { background: rgba(255,80,110,.25); }
+
+/* ---- level list ---- */
+.editor-level-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.editor-level-list button {
+  width: 100%; display: grid; gap: 2px; text-align: left;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(255,255,255,.05); color: #eee6ff; cursor: pointer;
+}
+.editor-level-list button:hover { background: rgba(255,255,255,.12); }
+.editor-level-list button.is-active { border-color: rgba(255,213,74,.5); background: rgba(255,213,74,.14); }
+.editor-level-list strong { font-size: 13px; }
+.editor-level-list small { color: var(--muted); font-size: 10px; }
+
+/* ---- canvas ---- */
+.editor-canvas-panel { display: grid; justify-items: center; }
+.editor-tools { width: 100%; }
+.editor-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.editor-swatch {
+  width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+  border: 2px solid rgba(255,255,255,.24); background: var(--swatch);
+  transition: transform .12s, border-color .12s;
+}
+.editor-swatch:hover { transform: translateY(-2px); }
+.editor-swatch.is-active { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.2); }
+.editor-canvas {
+  margin-top: 14px; max-width: 100%; border-radius: 12px;
+  border: 1px solid var(--line);
+  /* The picture is pixel art; smoothing it would lie about what is drawn. */
+  image-rendering: pixelated;
+  cursor: crosshair; touch-action: none;
 }
 
-/* Tapping play hands the level over on the same frame, so the overlay stops
-   catching input while its furniture is still sliding away. */
-.hub-screen.is-leaving { pointer-events: none; }
-.hub-screen.is-leaving .hub-tap {
-  animation: hub-backdrop-out .3s ease forwards;
-  /* This button is the size of the screen, so any focus ring on it is a
-     full-screen ring. Some phones treat a tap as focus-visible; once play has
-     started the ring has nothing left to point at. */
-  outline: none;
+/* ---- settings ---- */
+.editor-field { display: grid; gap: 4px; margin-top: 10px; }
+.editor-field > span { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.editor-field input, .editor-field select {
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px;
+  background: rgba(10,6,20,.5); color: var(--ink); font-size: 13px;
 }
-.hub-screen.is-leaving .hub-play-hint { animation: hub-exit-down .3s cubic-bezier(.4,0,.9,.4) forwards; }
-.hub-screen.is-leaving .hub-level-name { animation: hub-exit-up .3s cubic-bezier(.4,0,.9,.4) forwards; }
-.hub-screen.is-leaving .hub-side-buttons { animation: hub-exit-left .3s cubic-bezier(.4,0,.9,.4) forwards; }
+.editor-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-/* Entry animation is kept off .hub-play-hint so its idle pulse survives; the
-   hint arrives with the backdrop instead. */
-.hub-level-name, .hub-side-buttons { animation: hub-enter .34s cubic-bezier(.2,.8,.2,1) both; }
-.hub-side-buttons { animation-delay: .05s; }
-.hub-side-button:not([disabled]) { cursor: pointer; transition: background .2s, transform .2s; }
-.hub-side-button:not([disabled]):hover { background: rgba(53,66,134,.86); transform: translateX(2px); }
-.hub-side-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* ---- Guided tutorial -------------------------------------------------- */
-/* The lesson never becomes a pane over the controls. The layer itself takes no
-   pointer events; only the exit and next buttons do, so every drag reaches the
-   engine zones underneath. */
-.tutorial-layer { position: absolute; z-index: 18; inset: 0; pointer-events: none; }
-
-/* Overall progress as segments along the very top edge. 3px tall, so it costs
-   the scene nothing. */
-.tutorial-chapter-rail {
-  position: absolute; z-index: 2; top: max(4px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); right: max(56px, calc(env(safe-area-inset-right) + 52px));
-  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px;
-}
-.tutorial-chapter-rail i { height: 3px; border-radius: 999px; background: rgba(255,255,255,.22); }
-.tutorial-chapter-rail i.is-done { background: #45e3b4; }
-.tutorial-chapter-rail i.is-current { background: var(--accent); box-shadow: 0 0 8px rgba(255,213,74,.6); }
-
-/* Sits in the slot the settings gear uses during a real level, so it displaces
-   nothing. */
-.tutorial-exit {
-  pointer-events: auto; position: absolute; z-index: 3;
-  top: max(14px, calc(env(safe-area-inset-top) + 10px)); right: max(16px, env(safe-area-inset-right));
-  width: 34px; height: 34px;
-  border: 1px solid rgba(255,255,255,.2); border-radius: 11px;
-  background: rgba(10,16,52,.82); color: #fff; cursor: pointer; font-size: 13px; font-weight: 900;
-  backdrop-filter: blur(10px);
-}
-.tutorial-exit:focus-visible, .tutorial-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* The dim pass and the ring in one element. A spread shadow larger than the
-   frame paints everything outside the circle, so the circle is a real hole and
-   not a lighter patch over a cover. */
-.tutorial-spot {
-  position: absolute; z-index: 1;
-  left: var(--spot-x); top: var(--spot-y);
-  width: var(--spot-w); height: var(--spot-h);
-  margin: calc(var(--spot-h) / -2) 0 0 calc(var(--spot-w) / -2);
-  border-radius: var(--spot-round);
-  border: 2px solid rgba(255,255,255,.82);
-  box-shadow: 0 0 0 2000px rgba(4,7,26,.72), inset 0 0 26px rgba(255,255,255,.14);
-  animation: tutorial-spot-pulse 1.7s ease-in-out infinite;
+.editor-queue { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+.editor-queue li { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.editor-queue li > span { flex: 1; }
+.editor-queue-empty { color: var(--muted); font-style: italic; }
+.editor-pip {
+  width: 15px; height: 15px; flex: none; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.45); background: var(--swatch);
 }
 
-/* Icon, three words, step dots. Placed on the far side of the ring from the
-   middle of the frame, so it never covers what it points at. */
-.tutorial-cue {
-  --tutorial-focus: #ffd54a;
-  position: absolute; z-index: 4; left: 50%;
-  max-width: calc(100% - 32px);
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px;
-  border: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%); border-radius: 999px;
-  background: rgba(8,13,44,.93); color: #fff;
-  box-shadow: 0 14px 28px -18px rgba(3,7,28,.95);
-  backdrop-filter: blur(12px);
-}
-.tutorial-cue.is-below { top: calc(var(--spot-y) + var(--spot-h) / 2 + 16px); transform: translateX(-50%); }
-.tutorial-cue.is-above { top: calc(var(--spot-y) - var(--spot-h) / 2 - 16px); transform: translate(-50%, -100%); }
-/* A step with nothing to ring still has something to say. Parked high, clear of
-   both the cluster and the rig, since with no scrim the whole board is in play. */
-.tutorial-cue.is-floating {
-  top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 16px);
-  transform: translateX(-50%);
-}
-.tutorial-cue.is-floating .tutorial-cue-arrow { display: none; }
-.tutorial-glyph { flex: 0 0 auto; width: 26px; height: 26px; color: var(--tutorial-focus); }
-.tutorial-cue b { font-size: 13px; font-weight: 900; letter-spacing: -.01em; white-space: nowrap; }
-.tutorial-cue-dots { flex: 0 0 auto; display: flex; gap: 4px; margin-left: 2px; }
-.tutorial-cue-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.24); }
-.tutorial-cue-dots i.is-current { background: var(--tutorial-focus); }
-.tutorial-cue-dots i.is-done { background: #45e3b4; }
-
-/* Cards that are read, not played: the whole frame takes the tap so reading one
-   cannot double as a shot, and a nudging chevron says another tap moves on. */
-.tutorial-tap-catcher { pointer-events: auto; position: absolute; z-index: 2; inset: 0; }
-.tutorial-cue-next {
-  flex: 0 0 auto; margin-left: -2px;
-  color: var(--tutorial-focus); font-size: 19px; font-weight: 900; line-height: 1;
-  animation: tutorial-cue-nudge 1.1s ease-in-out infinite;
-}
-@keyframes tutorial-cue-nudge {
-  0%, 100% { transform: translateX(0); opacity: .55; }
-  50% { transform: translateX(3px); opacity: 1; }
-}
-
-/* The arrow points out of the card, back at the ring. */
-.tutorial-cue-arrow {
-  position: absolute; left: 50%; width: 12px; height: 12px;
-  background: rgba(8,13,44,.93);
-  border-right: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%);
-  border-bottom: 1px solid color-mix(in srgb, var(--tutorial-focus), transparent 52%);
-}
-.tutorial-cue.is-below .tutorial-cue-arrow { top: -7px; transform: translateX(-50%) rotate(-135deg); }
-.tutorial-cue.is-above .tutorial-cue-arrow { bottom: -7px; transform: translateX(-50%) rotate(45deg); }
-
-/* Lesson finished: a tick and one button, no paragraph explaining that it is
-   finished. */
-.tutorial-done {
-  position: absolute; z-index: 4; left: 50%; bottom: max(20px, calc(env(safe-area-inset-bottom) + 16px));
-  display: grid; justify-items: center; gap: 12px; transform: translateX(-50%);
-}
-.tutorial-done-tick {
-  width: 54px; height: 54px; display: grid; place-items: center;
-  border-radius: 50%; background: rgba(69,227,180,.16); border: 2px solid #45e3b4; color: #7cf0cd;
-  animation: tutorial-tick-in .32s ease-out both;
-}
-.tutorial-done-tick svg { width: 30px; height: 30px; }
-.tutorial-next {
-  pointer-events: auto; min-width: 154px; min-height: 48px; padding: 0 22px;
-  border: 0; border-radius: 15px;
-  background: linear-gradient(135deg, #45e3b4, #b7ffcf); color: #062c21;
-  box-shadow: 0 12px 24px -14px rgba(3,7,28,.9); cursor: pointer; font-size: 13px; font-weight: 900;
-}
-
-/* The HUD keeps its normal position: the lesson chrome is a top edge rail and a
-   corner button now, so there is nothing for it to clear. A lesson that hides
-   the HUD outright still hands that band back to the scene rather than leaving
-   a blank 92px reserved for a bar that is not there. */
-.game-frame.is-tutorial-no-hud .scene-wrap { inset: max(var(--hud-inset), env(safe-area-inset-top)) 0 0; }
-.goal-card.is-tutorial-focus, .batch-section.is-tutorial-focus .batch-slot {
-  animation: tutorial-focus 1s ease-in-out infinite alternate;
-}
-
-.tutorial-gesture {
-  position: absolute; z-index: 6; left: 50%; width: 170px; height: 52px;
-  transform: translateX(-50%); pointer-events: none; color: #fff; text-align: center;
-  filter: drop-shadow(0 5px 10px rgba(5,9,32,.75));
-}
-.tutorial-gesture span { position: absolute; left: 50%; top: 3px; font-size: 30px; transform: translateX(-50%); }
-.tutorial-gesture i { position: absolute; left: 30px; right: 30px; top: 38px; height: 2px; border-radius: 999px; background: rgba(255,255,255,.76); }
-.tutorial-gesture i::before, .tutorial-gesture i::after { content: ""; position: absolute; top: -4px; width: 8px; height: 8px; border-top: 2px solid #fff; border-right: 2px solid #fff; }
-.tutorial-gesture i::before { left: 0; transform: rotate(-135deg); }
-.tutorial-gesture i::after { right: 0; transform: rotate(45deg); }
-.tutorial-gesture-rotate { top: 22%; animation: tutorial-hand-horizontal 1.5s ease-in-out infinite; }
-/* A press has no travel to draw, so the ring is the whole story: it fills, holds
-   and starts over, which is the shape of the gesture being asked for. */
-.tutorial-gesture-hold { top: 22%; }
-.tutorial-gesture-hold i { left: 50%; right: auto; top: 8px; width: 46px; height: 46px; margin-left: -23px; border: 2px solid rgba(255,255,255,.42); border-radius: 50%; background: none; animation: tutorial-hand-hold 1.5s ease-in-out infinite; }
-.tutorial-gesture-hold i::before, .tutorial-gesture-hold i::after { display: none; }
-@keyframes tutorial-hand-hold {
-  0% { transform: scale(.62); border-color: rgba(255,255,255,.28); }
-  62% { transform: scale(1); border-color: rgba(255,255,255,.95); }
-  100% { transform: scale(1); border-color: rgba(255,255,255,0); }
-}
-.tutorial-gesture-aim { bottom: 22%; animation: tutorial-hand-aim 1.4s ease-in-out infinite; }
-.tutorial-gesture-aim i { transform: rotate(-18deg); }
-
-@keyframes tutorial-focus {
-  to { transform: translateY(-2px); filter: brightness(1.18); box-shadow: 0 0 0 5px color-mix(in srgb, var(--tutorial-focus, #ffd54a), transparent 76%); }
-}
-@keyframes tutorial-spot-pulse {
-  0%, 100% { border-color: rgba(255,255,255,.6); }
-  50% { border-color: rgba(255,255,255,.98); }
-}
-@keyframes tutorial-tick-in { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes tutorial-hand-horizontal { 0%,100% { transform: translateX(-57%); opacity: .64; } 50% { transform: translateX(-43%); opacity: 1; } }
-@keyframes tutorial-hand-aim { 0%,100% { transform: translate(-55%,8px); opacity: .62; } 50% { transform: translate(-43%,-9px); opacity: 1; } }
-
-/* ---- Cosmetic picker --------------------------------------------------- */
-/* Sits above the menu and below the dialogs. Its middle is left empty on
-   purpose: the rig being previewed is the engine's own, drawn behind this
-   screen, so anything opaque there would cover the thing being sold. */
-.cosmetic-screen {
-  position: absolute; z-index: 40; inset: 0;
-  display: grid; grid-template-rows: auto 1fr auto auto;
-  padding: max(var(--hud-inset), env(safe-area-inset-top)) 0 max(14px, env(safe-area-inset-bottom));
-  /* Dark enough at the top for the title, and then it gets out of the way: the
-     rig fills 26-55% of the frame height, so the old ramp to .78 by 72% was
-     sitting on the pedestal and putting the model's base in shadow. The tray
-     paints its own background, so nothing down there needs the scrim either. */
-  background: linear-gradient(180deg, rgba(9,13,40,.7) 0%, rgba(9,13,40,.13) 22%, rgba(9,13,40,.05) 52%, rgba(9,13,40,.18) 68%, rgba(9,13,40,.4) 100%);
-  animation: overlay-in .2s ease both;
-}
-.cosmetic-bar {
+.editor-issues { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.editor-issues li {
   display: flex; align-items: flex-start; gap: 8px;
-  padding: 0 max(14px, env(safe-area-inset-left));
+  padding: 8px 10px; border-radius: 10px; font-size: 11px; line-height: 1.5;
+  border: 1px solid var(--line);
 }
-/* The left margin matches the close button on the right, so the title is
-   centred in the frame rather than in the space left over beside the button. */
-.cosmetic-heading { flex: 1; margin-left: 44px; text-align: center; }
-.cosmetic-heading h2 {
-  margin: 0; font-size: 27px; font-weight: 900; letter-spacing: -.03em; text-transform: uppercase;
-  text-shadow: 0 4px 16px rgba(6,10,32,.8);
-}
-.cosmetic-heading p { margin: 2px 0 0; color: #c3cbf2; font-size: 12px; letter-spacing: .02em; }
-.cosmetic-close {
-  flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center; cursor: pointer;
-  border: 1px solid rgba(255,255,255,.24); border-radius: 14px;
-  background: #ff4d6a; color: #fff; font-size: 17px; font-weight: 900;
-  transition: background .2s, transform .2s;
-}
-.cosmetic-close:hover { background: #ff6580; transform: scale(1.04); }
-.cosmetic-close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-/* The window onto the 3D preview. Nothing is drawn here and nothing may catch a
-   tap, or the rig would be sitting behind a pane of glass. */
-.cosmetic-stage { pointer-events: none; }
-.cosmetic-equip {
-  justify-self: center; min-width: 124px; margin: 0 0 12px; padding: 9px 22px; cursor: pointer;
-  border: 0; border-radius: 999px; background: #fff; color: #2b3fa0;
-  font-size: 13px; font-weight: 900; letter-spacing: -.01em;
-  box-shadow: 0 8px 20px rgba(6,10,32,.42);
-  transition: transform .2s, background .2s;
-}
-.cosmetic-equip:hover:not([disabled]) { transform: translateY(-2px); }
-.cosmetic-equip[disabled] { color: #4a5aa8; background: rgba(255,255,255,.82); cursor: default; }
-.cosmetic-equip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.cosmetic-tray {
-  padding: 12px max(12px, env(safe-area-inset-left)) 2px;
-  border-top: 1px solid var(--line); border-radius: 22px 22px 0 0;
-  background: rgba(15,22,62,.86);
-}
-.cosmetic-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.cosmetic-card {
-  position: relative; aspect-ratio: 1; display: grid; place-items: center; padding: 4px; cursor: pointer;
-  border: 2px solid transparent; border-radius: 16px;
-  background: linear-gradient(180deg, rgba(120,158,255,.34), rgba(46,66,150,.5));
-  color: #dfe5ff; font-size: 18px;
-  transition: border-color .2s, transform .2s;
-}
-.cosmetic-card img { width: 100%; height: 100%; object-fit: contain; }
-.cosmetic-card:hover:not([disabled]) { transform: translateY(-2px); }
-.cosmetic-card.is-previewing { border-color: #fff; }
-.cosmetic-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cosmetic-card-tick {
-  position: absolute; right: 4px; bottom: 4px; width: 20px; height: 20px;
-  display: grid; place-items: center; border-radius: 999px;
-  background: #24e07f; color: #04321b; font-size: 12px; font-weight: 900;
-}
-.cosmetic-card-blank { color: rgba(223,229,255,.55); font-size: 22px; }
-/* Inert but visible, the same way the menu's Shop button shows where it goes. */
-.cosmetic-card.is-locked { cursor: default; opacity: .42; background: rgba(24,33,84,.75); }
+.editor-issues li > span { flex: 1; }
+.editor-issues li.is-error { border-color: rgba(255,128,151,.5); background: rgba(255,80,110,.14); color: #ffd7de; }
+.editor-issues li.is-warning { border-color: rgba(255,213,74,.4); background: rgba(255,213,74,.1); color: #ffe9a8; }
 
-.game-frame.is-sheet-drag { outline: 2px dashed rgba(255,213,74,.7); outline-offset: -6px; }
-.sheet-drop-hint {
-  position: absolute; z-index: 45; inset: 0; display: grid; place-items: center;
-  background: rgba(11,16,52,.72); pointer-events: none;
+.editor-analysis {
+  margin-top: 10px; padding: 11px 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: rgba(10,6,20,.4);
+  font-size: 12px; line-height: 1.6;
 }
-.sheet-drop-hint span {
-  padding: 14px 18px; border: 2px dashed rgba(255,213,74,.7); border-radius: 16px;
-  background: rgba(18,25,70,.9); color: var(--accent); font-size: 13px; font-weight: 900;
-}
-.sheet-toast {
-  position: absolute; z-index: 46; left: 16px; right: 16px; bottom: 18px;
-  padding: 11px 14px; border: 1px solid rgba(36,224,127,.5); border-radius: 14px;
-  background: rgba(12,20,52,.94); box-shadow: 0 16px 30px -18px rgba(4,8,30,.9);
-  animation: toast-in .22s ease-out both;
-}
-.sheet-toast.is-warn { border-color: rgba(255,138,31,.6); }
-.sheet-toast p { margin: 0; color: #e7ebff; font-size: 12px; line-height: 1.5; }
-.sheet-toast p + p { margin-top: 4px; color: #b6c0e4; font-size: 11px; }
+.editor-analysis p { margin: 0 0 4px; }
+.editor-analysis.is-good { border-color: rgba(36,224,127,.45); }
+.editor-analysis.is-too-tight, .editor-analysis.is-too-easy { border-color: rgba(255,213,74,.45); }
+.editor-analysis.is-unclearable { border-color: rgba(255,128,151,.5); }
+.editor-verdict { color: var(--muted); }
 
-.levels-card { text-align: left; }
-.levels-card h2, .levels-card .modal-description { text-align: center; }
-.level-list { display: grid; gap: 6px; max-height: 42vh; overflow-y: auto; margin: 4px 0 0; padding: 2px; }
-.level-row {
-  display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px;
-  min-height: 42px; padding: 6px 10px; cursor: pointer; text-align: left;
-  border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.05); color: var(--ink);
-}
-.level-row:hover { background: rgba(255,255,255,.11); }
-.level-row.is-current { border-color: rgba(255,213,74,.65); background: rgba(255,213,74,.14); }
-.level-row b { color: var(--accent); font-size: 14px; font-variant-numeric: tabular-nums; }
-.level-row span { font-size: 13px; }
-.level-row small { color: var(--muted); font-size: 11px; }
-.level-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sheet-issue-list {
-  margin: 12px 0 0; padding: 10px 12px 10px 26px; list-style: disc;
-  border: 1px solid rgba(255,138,31,.45); border-radius: 12px; background: rgba(255,138,31,.1);
-}
-.sheet-issue-list li { color: #ffd0a0; font-size: 11px; line-height: 1.55; }
-.sheet-file-button {
-  display: block; margin-top: 14px; padding: 11px; cursor: pointer; text-align: center;
-  border: 1px dashed var(--line); border-radius: 13px; background: rgba(255,255,255,.05);
-  font-size: 12px; font-weight: 900;
-}
-.sheet-file-button:hover { background: rgba(255,255,255,.1); }
-.sheet-file-button input { display: none; }
-.result-actions { display: grid; gap: 9px; }
-.result-card .result-next { color: #03301c; background: #24e07f; }
-
-@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
-@keyframes hud-rise { from { opacity: 0; transform: translateY(26px); } }
-@keyframes climax-fall {
-  from { transform: translate3d(0,-8vh,0) rotate(8deg); }
-  to { transform: translate3d(var(--climax-drift),112vh,0) rotate(34deg); }
-}
-@keyframes rainbow-status { to { background-position: -220% 0; } }
-@keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
-@keyframes hub-play-pulse { to { opacity: .58; transform: scale(.975); } }
-@keyframes hub-backdrop-out { to { opacity: 0; } }
-/* Each piece leaves through the edge it sits against, so the menu clears the
-   board instead of dissolving in place. */
-@keyframes hub-exit-up { to { opacity: 0; transform: translateY(-150%); } }
-@keyframes hub-exit-down { to { opacity: 0; transform: translateY(240%); } }
-@keyframes hub-exit-left { to { opacity: 0; transform: translateX(-190%); } }
-
-@keyframes goal-in { from { opacity: 0; transform: translateY(-7px) scale(.98); } }
-/* One column plus the 10px grid gap, in the card's own width. */
-@keyframes goal-slide-home {
-  0% { transform: translateX(calc(100% + 10px)) rotate(0deg) scale(1, 1); }
-  52% { transform: translateX(-7%) rotate(-2.5deg) scale(1.05, .93); }
-  72% { transform: translateX(3%) rotate(1.4deg) scale(.97, 1.04); }
-  88% { transform: translateX(-1.2%) rotate(-.5deg) scale(1.01, .99); }
-  100% { transform: translateX(0) rotate(0deg) scale(1, 1); }
-}
-@keyframes count-pop { from { opacity: .4; transform: translateY(-4px) scale(.68); } }
-@keyframes goal-full-glow {
-  to {
-    border-color: color-mix(in srgb, var(--goal), white 42%);
-    box-shadow:
-      0 12px 24px -14px color-mix(in srgb, var(--goal), transparent 18%),
-      0 0 0 7px color-mix(in srgb, var(--goal), transparent 80%),
-      inset 0 1px 0 rgba(255,255,255,.24);
-  }
-}
-@keyframes batch-in { from { opacity: 0; transform: translateY(-10px) scale(.8); } }
-/* Each new block drops into the tray on its own. Pips are keyed by index, so
-   only the one that just arrived plays this; the ones already in the tray sit
-   still instead of the whole row flashing on every hit. */
-@keyframes pip-drop { from { opacity: 0; transform: translateY(-6px) scale(.7); } }
-@keyframes batch-warning { 50% { opacity: .74; transform: scale(.982); } }
-@keyframes overlay-in { from { opacity: 0; } }
-/* Out of the depth of the frame and toward the player, overshooting once before
-   it settles — the cone shape of the move is what makes it read as popping out
-   rather than fading in. */
-@keyframes result-pop {
-  from { opacity: 0; transform: translateZ(-300px) translateY(30px) scale(.82); }
-  58% { opacity: 1; transform: translateZ(34px) translateY(-7px) scale(1.03); }
-  to { opacity: 1; transform: translateZ(0) translateY(0) scale(1); }
-}
-@keyframes result-medal-in {
-  from { opacity: 0; transform: rotate(-24deg) scale(.3); }
-  70% { transform: rotate(4deg) scale(1.12); }
-  to { opacity: 1; transform: rotate(-6deg) scale(1); }
-}
-/* rotate then translate, so one angle per spark aims the whole flight outward. */
-@keyframes result-spark {
-  0% { opacity: 0; transform: rotate(var(--spark-angle)) translateY(-12px) scale(.35); }
-  14% { opacity: 1; transform: rotate(var(--spark-angle)) translateY(calc(var(--spark-distance) * -.35)) scale(1); }
-  100% { opacity: 0; transform: rotate(var(--spark-angle)) translateY(calc(var(--spark-distance) * -1)) scale(.2); }
-}
-@keyframes auto-clear-pulse { to { opacity: .74; transform: translateX(-50%) scale(1.03); } }
-@keyframes crosshair-blocked {
-  40% { opacity: .34; transform: translate(-50%,-50%) scale(.68); }
-  72% { transform: translate(-50%,-50%) scale(1.12); }
-}
-/* Centre-anchored, because both rune rings are positioned by the same
-   translate the cross uses. */
-@keyframes rune-spin {
-  from { transform: translate(-50%,-50%) rotate(0deg); }
-  to { transform: translate(-50%,-50%) rotate(360deg); }
-}
-@keyframes sort-flight {
-  0% { opacity: 0; transform: translate3d(var(--sort-sx),var(--sort-sy),0) scale(1) rotate(0deg); }
-  10% { opacity: 1; }
-  58% { opacity: .92; transform: translate3d(var(--sort-mx),var(--sort-my),0) scale(.68) rotate(105deg); }
-  88% { opacity: .72; }
-  100% { opacity: 0; transform: translate3d(var(--sort-tx),var(--sort-ty),0) scale(.03) rotate(190deg); }
-}
-
-@media (max-width: 520px) {
-  .page-shell { padding: 0; }
-  .game-frame { width: 100%; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
-}
-
-@media (max-height: 730px) {
-  :root { --hud-inset: 10px; --hud-height: 86px; }
-  .page-shell { padding-block: 0; }
-  .game-frame { height: 100dvh; min-height: 0; }
-  .hud-top { gap: 6px; }
-  .goal-card { height: 46px; border-radius: 16px; }
-  .goal-count strong { font-size: 21px; }
-  .cube-icon { width: 21px; height: 21px; }
-  .batch-slot { height: 28px; }
-  .batch-pip { max-width: 18px; max-height: 18px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+.editor-export {
+  width: 100%; margin-top: 10px; min-height: 180px; resize: vertical;
+  padding: 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(10,6,20,.6); color: #d8ccf5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5;
 }

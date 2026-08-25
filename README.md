@@ -1,18 +1,95 @@
-# 3D Cannon Sort — playable prototype
+# 3D Sand Cannon Sort — playable prototype
 
-Prototype puzzle WebGL 3D với một cụm 24 cube màu tĩnh có thể xoay tự do 360 độ.
+Prototype puzzle WebGL 3D theo brief `sand_cannon_concept.md`. Người chơi bắn đạn màu vào một bức
+tranh cát 3D nằm trong khung tĩnh; cát bị lấy đi thì phần còn lại rơi xuống.
 
-## Gameplay hiện tại
+Bản pivot này thay hoàn toàn core cũ (xoay model, Goal/Batch, Weak Point, Rainbow Target). Những
+thứ đó đã bị gỡ khỏi source, không phải chỉ tắt đi.
 
-- Kéo trong vùng model để xoay cụm block theo ngang và dọc.
-- Chạm vùng aim để đặt floating joystick; kéo để điều khiển crosshair rồi thả để bắn.
-- Lực bắn cố định. Crosshair bám theo joystick, không tự snap vào block; dấu `+`/`×` báo quỹ đạo trúng hoặc hụt.
-- Projectile chạm block đầu tiên và claim toàn bộ connected component cùng màu theo FACE_6.
-- Cụm bị bắn bay lên, thu nhỏ; từng cube sprite tiếp tục bay vào đúng Goal hoặc Batch.
-- Có hai active Goal và một kho Batch giữ tối đa `batch_blocks` block (mặc định 8). Kho đầy vẫn hợp lệ; **thua khi kho đầy mà phát bắn tiếp theo không đưa được gì vào goal đang mở** — cả claim phải vào kho và không còn chỗ. Hàng batch pulse ở mức đầy là cảnh báo.
-- Settings điều chỉnh riêng sensitivity xoay model và ngắm bắn. Restart có modal xác nhận.
+## Một bộ luật: bắn theo bán kính
 
-Concept đầy đủ nằm trong `outputs/final_concept.md`.
+Hai gameplay thử nghiệm trước đây (bắn cả vùng với settle cohesive, và bắn cả vùng với grain fall)
+**đã bị gỡ khỏi source**, không phải chỉ tắt đi. Chỉ còn luật bán kính.
+
+Phát bắn nhắm vào một **chỗ**, không phải một vùng. Nó lấy mọi hạt cùng màu nằm trong đĩa bán kính
+quanh điểm chạm — kể cả khi đĩa với sang nhiều vùng khác nhau, và chỉ lấy phần nằm trong đĩa. Bắn
+giữa mảng thì khoét thủng, bắn rìa chỉ gặm được vài hạt. Đĩa được vẽ thành vòng tròn bám crosshair
+lúc ngắm và loé lên chỗ đạn rơi.
+
+Queue là một **bánh xe**: bắn xong, nếu màu đó vẫn còn cát trên board thì viên đạn quay lại cuối
+hàng; màu vừa sạch hẳn thì rời bánh xe luôn. Nên không bao giờ có đạn chết, và **ngân sách duy nhất
+là số lượt bắn** — đó cũng là nơi độ khó của một màn nằm.
+
+Phát bắn không lấy được gì (trong bán kính không có màu đó) **vẫn tiêu một lượt**; cả đĩa rung để
+báo tầm với vừa trượt. Bắn hụt khung hoặc trúng thành khung thì **không** tiêu lượt.
+
+Thắng khi khung sạch cát. Thua khi hết lượt mà **sau khi phát cuối đã resolve và cát đã settle
+xong** vẫn còn cát. Có restart.
+
+### Mọi luật nằm trong `RADIUS_GAMEPLAY`
+
+Trước đây mỗi level tự khai tám dòng policy giống hệt nhau. Giờ chúng gom vào một object duy nhất
+trong `sand-types.ts`, và một level chỉ còn mang **nội dung của chính nó**: bức tranh, bánh xe màu,
+bán kính, ngân sách lượt, độ phân giải. Đổi một quyết định thiết kế là đổi một dòng, và level do
+editor xuất ra cũng ngắn đúng bằng thứ nó thật sự mô tả.
+
+Các hằng đó vẫn được **đặt tên** chứ không inline, vì mỗi cái là câu trả lời cho một Open Decision
+trong brief mà người thiết kế chưa chốt hẳn.
+
+## Level editor
+
+Mở ở `/editor` (hoặc bấm nút ✎ trong game).
+
+| Tính năng | Chi tiết |
+| --- | --- |
+| Vẽ tranh pixel | Canvas theo grid, 6 màu trong palette, công cụ Brush / Fill / Eraser, Undo-Redo (kèm Ctrl+Z) |
+| Kích thước tuỳ ý | Rộng 6–24, cao 6–28 ô blueprint. Đổi kích thước **neo theo đáy khung**, vì cát nằm trên sàn |
+| Bánh xe đạn | Chỉ nạp được màu đã vẽ; sắp xếp thứ tự bằng ↑ ↓; nút **Match picture** dựng lại wheel từ tranh |
+| Số lượt bắn | Ô `Shots`, kèm nút **Measure difficulty** đo thật (xem dưới) |
+| Nhiều level | Danh sách bên trái: New / Duplicate / Delete. Lưu tự động vào trình duyệt |
+| Thử trong game | Nút **Test in game** mở thẳng level đó. Mọi draft hợp lệ cũng hiện trong level switcher |
+| Đưa vào source | Nút **Export TypeScript** sinh sẵn khối code, copy vào clipboard |
+
+### Hai lỗi editor bắt buộc phải chặn
+
+Cả hai đều đến từ bánh xe đạn, và cả hai đều là **ván không thể thắng nhưng game không hề báo gì**:
+
+- **Màu có trong tranh nhưng không có trong wheel** — vùng cát đó không bao giờ được bắn tới, nên
+  khung không bao giờ sạch.
+- **Màu có trong wheel nhưng không có trong tranh** — viên đạn mở màn không có gì để bắn.
+
+Vì thế cả hai là **error** (không phải warning), và cả hai sửa được bằng một nút **Fix wheel**, do
+wheel suy được từ tranh. Level nào còn error thì không xuất hiện trong level switcher của game —
+đưa vào chỉ là đặt bẫy.
+
+Ngoài ra editor cảnh báo khi tranh **chưa đứng yên**: cát vẽ lơ lửng sẽ sụp ngay frame đầu, nên cái
+người chơi thấy không phải cái đã vẽ. Nút **Settle it** thả tranh xuống đúng trạng thái nghỉ, không
+thêm không mất hạt nào.
+
+### Đo độ khó, không đoán
+
+Ngân sách lượt **chính là** độ khó, nên chọn nó bằng cảm tính là chọn độ khó bằng cảm tính. Nút
+**Measure difficulty** chạy hai model chơi trên **đúng solver của game** (`resolveShot`):
+
+| Model | Câu hỏi nó trả lời |
+| --- | --- |
+| Chơi giỏi — luôn chọn đĩa lấy được nhiều hạt nhất | Sàn tối thiểu: bao nhiêu lượt là đủ nếu đọc board tốt |
+| Chơi ẩu — bắn đại vào một ô đúng màu | Ngân sách có thật sự phạt được sự cẩu thả không |
+
+Editor kết luận thành một trong bốn: **unclearable / too-tight / good / too-easy**, và gợi ý một
+ngân sách để chơi giỏi còn dư 6 lượt.
+
+Hai model chạy ở **độ phân giải blueprint**, không phải pixel. Điều này đúng chứ không phải đi tắt:
+`expandLevelForPixelBoard` phóng cả tranh lẫn bán kính theo cùng một hệ số nguyên, nên đĩa phủ đúng
+cùng một tỉ lệ của cùng một bức tranh — puzzle giống hệt nhau về hình học. Chạy trên vài trăm ô thay
+vì vài nghìn là thứ khiến nút này bấm xong có kết quả ngay.
+
+### Đưa một level vào source
+
+Level lưu trong trình duyệt là đủ để chơi và thử. Muốn nó sống qua việc xoá cache trình duyệt thì
+bấm **Export TypeScript**, dán khối vừa copy vào `app/game/sand-levels.ts`, rồi thêm tên nó vào
+mảng `BUILT_IN_LEVELS`.
+
 
 ## Chạy source
 
@@ -20,92 +97,188 @@ Yêu cầu Node.js 22.13 trở lên.
 
 ```bash
 npm install
+```
+
+```bash
 npm run dev
 ```
 
-Build production và chạy regression test:
-
 ```bash
-npm run build
 npm test
 ```
 
-Tạo lại artifact HTML offline:
+## Kiến trúc: logic tách khỏi visual
 
-```bash
-node work/build-standalone.mjs
-```
+Đây là ràng buộc quan trọng nhất của brief, và nó là ranh giới file:
 
-File chơi canonical là `outputs/3d-cannon-sort.html`; mở trực tiếp bằng `file://` hoặc double-click, không cần localhost và không cần mạng.
+| File | Vai trò |
+| --- | --- |
+| `app/game/sand-types.ts` | Chỉ có type. Không chứa giá trị runtime nào |
+| `app/game/sand-rules.ts` | Toàn bộ luật: connectivity, radius sort, settle solver, win/fail, mở rộng độ phân giải. Không có three.js, không có DOM, không có đồng hồ |
+| `app/game/SandCannonEngine.ts` | Khung, cannon, projectile, input 3D — và một canvas pixel 2D **phát lại** kết quả mà solver đã quyết |
+| `app/game/sand-levels.ts` | Level ship kèm build, và mảng `BUILT_IN_LEVELS` |
+| `app/game/level-drafts.ts` | Model level của editor: lưu trữ, validate, settle, sinh TypeScript |
+| `app/game/level-analysis.ts` | Hai model chơi để đo độ khó. Dùng chung bởi editor và test |
+| `app/SandGame.tsx` | Chọn level, HUD ammo, badge khoá input, màn thắng/thua, restart |
+| `app/LevelEditor.tsx` | Toàn bộ giao diện editor |
+
+`runGrainSettle()` trả về một **danh sách bước** chứ không chỉ trả board cuối.
+Renderer diễn lại đúng danh sách đó, nên cái người chơi nhìn thấy chính là quá trình solver đã
+chạy — không phải một animation được dựng song song. Có test dựng lại board bằng tay từ danh sách
+bước và so với board solver trả ra.
+
+### Board là một canvas pixel 2D thật, đặt trong khung 3D
+
+Bức tranh cát **không còn** là mesh 3D. Nó là một `HTMLCanvasElement` runtime — mỗi ô grid logic
+đúng một pixel canvas, tô bằng `CanvasRenderingContext2D`, dán lên một `THREE.PlaneGeometry` duy
+nhất nằm trong khung. `texture.magFilter/minFilter = NearestFilter` giữ cạnh pixel sắc nét thay vì
+mờ đi khi phóng to — đúng chất "board pixel" chứ không phải ảnh 2D bị blur.
+
+Khung, cannon, ánh sáng, camera **không đổi gì** — vẫn 3D thật như trước. Chỉ riêng bức tranh cát
+bên trong khung chuyển từ hàng nghìn mesh grain sang một texture phẳng.
+
+**Gameplay grid CHÍNH LÀ pixel grid**, không có hai lớp độ phân giải giả vờ đồng bộ với nhau. Một
+level được viết ở kích thước blueprint nhỏ, dễ đọc (7×8, 12×14); `expandLevelForPixelBoard()` mở
+rộng nó theo `pixelScale` **một lần** khi engine khởi tạo, và mọi luật sau đó — connectivity, xoá
+vùng, bán kính, win/lose — chạy thẳng trên các pixel đã mở rộng. Không có gì "giả mịn" cho đẹp mắt
+trong khi logic thật vẫn thô; độ phân giải thấy được và độ phân giải quyết định đều là một.
+
+Phóng to đều theo bội số nguyên không thể làm sai puzzle: một vùng blueprint trở thành khối
+`pixelScale × pixelScale` liền màu, nên số lượng vùng, độ liền kề và các lần merge giữ nguyên y
+hệt — chỉ nhiều pixel nhỏ hơn hợp thành. Có test khẳng định điều này (`sand-pixel-board.test.ts`):
+số vùng, số vùng theo màu, và việc board mở rộng vẫn đứng yên như bản gốc.
+
+### Va chạm: giao cắt mặt phẳng, không quét từng ô
+
+Vì cát giờ là một mặt phẳng duy nhất, việc dò trúng ô nào không cần quét AABB của từng ô như trước
+(vốn tốn O(số ô) mỗi khung hình lúc ngắm và lúc đạn bay). Giờ chỉ là một phép giao cắt tia với MỘT
+mặt phẳng: giải ra điểm chạm, quy đổi sang toạ độ pixel, tra thẳng trong lưới. `PROJECTILE_RADIUS`
+vẫn cho một chút dung sai — nếu pixel đúng tâm trống, tìm pixel có cát gần nhất trong bán kính đó.
+
+### Texture: HSV jitter từng pixel
+
+Mỗi pixel được lệch nhẹ saturation/lightness so với màu gốc của ô, **cố định khi sinh ra** — kỹ
+thuật mượn nguyên bản từ `Pixel.GetDrawColor()` của UniSand. Hue không bao giờ bị đụng: lệch đủ để
+thấy sẽ bắt đầu đọc thành màu gameplay khác.
+
+Saturation lệch ±0.10, lightness ±0.09 — gần với con số gốc của UniSand, vì cát mịn đủ nhỏ và đủ
+dày để đốm màu đọc thành kết cấu thật, đúng tinh thần ảnh chụp game sandsort thị trường.
+
+`pixelScale` quyết định độ mịn: level có sẵn dùng `5` (12×14 blueprint → 60×70 pixel). Editor tự
+chọn hệ số lớn nhất giữ board dưới ngân sách ~4.500 pixel đã đo, và cho override thủ công.
+
+## Settle solver — cát rơi theo từng hạt
+
+Một cellular automaton falling-sand đúng nghĩa, tham khảo trực tiếp từ
+[UniSand](https://github.com/etopuz/UniSand) (MIT): mỗi pixel rơi thẳng nếu ô dưới trống, không thì
+lăn xuống chéo — trái trước phải sau. Lăn chéo còn đòi ô **bên cạnh** cũng trống, nếu không hạt sẽ
+chui lọt qua khe chéo giữa hai hạt khác.
+
+Chạy **thật** ở độ phân giải hiển thị, không phải một lớp trình diễn phủ lên lưới thô hơn.
+
+Một pass là mọi hạt di chuyển được một bước, và **cả pass là một step**: một cột cát rút mười bốn
+hàng phải là mười bốn nhịp cát chảy, không phải hai trăm cú giật riêng lẻ. Board được quét từ đáy
+lên nên hạt vừa rơi không bị xử lý hai lần trong cùng một pass.
+
+Body được suy lại từ đầu sau khi rơi xong: cohesion đã bỏ thì không có gì để giữ, và hai vùng cùng
+màu chạm nhau đơn giản là **một** connected component. Nhãn body chỉ đúng ở thời điểm cuối, nên
+renderer được báo một lần bằng step `REINDEX` khép lại cascade.
+
+**Vì sao phải bỏ cohesion.** Luật bán kính khoét lỗ vào giữa một mảng cát. Với solver giữ liền khối
+(bản cũ, đã gỡ), mảng cát phía trên cái lỗ đó treo lại thành một cái vòm — đúng theo rule Phase C
+của brief, nhưng nhìn như lỗi chứ không như cát. Đây là Open Decision 3, và bản này chọn đầu bên
+kia của nó.
+
 
 ## Quyển sổ màn chơi
 
-`work/levels.tsv` là nơi duy nhất khai báo màn chơi: một dòng là một màn, mở được bằng Excel hoặc Google Sheets. Cột trống nghĩa là dùng mặc định.
+Level nào cũng có thể vẽ bằng **editor** ở `/editor` — đó là cách nhanh nhất. Muốn viết tay thì một
+level là một object trong `app/game/sand-levels.ts`, spread `RADIUS_GAMEPLAY` rồi khai phần nội
+dung. Bức tranh viết bằng `rows`, hàng trên cùng viết trước, một ký tự một ô, `.` là ô trống:
 
-| Cột | Ý nghĩa |
+| Mã | Màu |
 | --- | --- |
-| `level` | Số màn, không được trùng |
-| `name` | Tên hiển thị trong danh sách màn |
-| `dims` | `x` × `y` × `z`, ví dụ `4x3x2` |
-| `layers` | Một ký tự là một block: `\|` ngăn lớp theo z, `/` ngăn hàng theo y (hàng trên viết trước), `.` là ô trống. Màu: `R G Y B P O K A` |
-| `goal_order` | Thứ tự mở goal, ví dụ `R,G,Y,B,P,O`. Để trống thì xếp theo số block giảm dần |
-| `goal_split` | Chẻ một màu thành nhiều goal, ví dụ `P:3+3`. Tổng phải bằng số block màu đó |
-| `goal_slots`, `batch_blocks`, `shot_limit` | Ghi đè mặc định `2`, `8`, không giới hạn. `batch_blocks` đếm **block** đang giữ trong kho, không đếm số batch, và không được nhỏ hơn cụm lớn nhất của màn |
-| `weak_points` | Các điểm `x.y.z:FACE`, ngăn nhau bằng `~`. Mỗi cụm cùng màu nối FACE_6 cần 1–3 điểm |
-| `rainbow_target_count`, `rainbow_spawn_gap`, `rainbow_target_duration` | Số Rainbow Target, khoảng xuất hiện và số giây tồn tại; để trống dùng mặc định |
-| `notes` | Ghi chú cho người, game không đọc |
+| `R` | đỏ |
+| `G` | xanh lá |
+| `Y` | vàng |
+| `B` | xanh dương |
+| `P` | tím |
+| `O` | cam |
 
-Số lượng goal luôn được suy ra từ số block trong `layers`, nên rule "inventory từng màu bằng đúng tổng goal cùng màu" không thể sai. Dòng nào có lỗi thì màn đó không được nạp, kèm thông báo chỉ rõ số dòng và nguyên nhân.
+SandBody **không** khai báo riêng: body chính là vùng 4-connected cùng màu trong bức tranh. Nhờ vậy
+Open Decision 15 được trả lời bằng chính cách biểu diễn — hai vùng cùng màu vẽ dính nhau đơn giản
+là một body, không có cách nào biểu diễn chúng thành hai.
 
-Mã màu hiện có: `R` đỏ, `G` xanh lá, `Y` vàng, `B` xanh dương, `P` tím, `O` cam,
-`K` đen mực và `A` xám tro. Dùng `K` cho đen vì `B` đã dành cho Blue; cặp `K/A` giúp dựng viền
-và mảng trung tính của tranh pixel mà không làm đổi palette sáu màu cũ.
+Toạ độ: `x` chạy trái → phải, `y` chạy dưới → trên, `y = 0` nằm trên đáy khung.
 
-### Đặt Weak Point theo tư thế mặc định
+### Bức tranh phải đứng yên sẵn
 
-Tọa độ bắt đầu từ `0`: `x` chạy **trái → phải**, `y` chạy **dưới → trên**, `z` chạy
-**sau → trước**. Trong `layers`, lớp đầu tiên là `z=0`; trong mỗi lớp, hàng trên cùng được
-viết trước dù nó có giá trị `y` lớn nhất.
+Cát vẽ lơ lửng sẽ sụp ngay frame đầu, và cái người chơi nhìn thấy sẽ không phải cái đã author. Bức
+tranh của level có sẵn lấp kín khung nên ổn định theo cấu trúc; editor thì cảnh báo và có nút
+**Settle it** thả tranh xuống trạng thái nghỉ.
 
-| FACE nên dùng | Mã cũ tương đương | Mặt của block ở tư thế gốc |
+Viết tay thì tự kiểm bằng `runGrainSettle(bodies, frame)` — không có step `GRAIN_PASS` nào nghĩa là
+board đã đứng yên.
+
+### Level có sẵn — `Sand Bloom`
+
+Khung 12 × 14 blueprint (60 × 70 pixel mô phỏng), 4 màu, bán kính `2.5`, giới hạn **26 lượt**.
+
+Con số 26 là đo chứ không phải đoán — bằng đúng `analyseLevel` mà editor gọi:
+
+| Model | Kết quả |
+| --- | --- |
+| Chơi giỏi — luôn chọn đĩa lấy nhiều hạt nhất | **19 lượt**, thắng, dư 7 |
+| Chơi ẩu — bắn đại vào ô đúng màu | thắng 8/12 lần |
+
+Có test giữ kết luận này: nếu chơi giỏi không còn dư ≥ 3 lượt, hoặc chơi ẩu thắng mọi lần, test đỏ.
+
+
+## Rule đã chốt
+
+- Adjacency: `ORTHOGONAL_4`. Chạm góc không nối.
+- Phát bắn lấy mọi hạt cùng màu trong đĩa bán kính quanh điểm chạm — không phải cả vùng.
+- Phát bắn không lấy được gì vẫn tiêu một lượt, board không đổi.
+- Một projectile một lượt. Không bắn trong `PROJECTILE_FLYING`, `HIT_RESOLUTION`, `SETTLING`.
+- Win kiểm tra trước, fail kiểm tra sau — phát cuối dọn sạch khung là thắng, không phải hoà.
+
+## Policy tạm — Open Decision chưa chốt
+
+Mọi điểm brief để mở đều nằm trong config với hậu tố `_TEMP`, không hardcode rải rác trong solver.
+Đổi quyết định thiết kế là đổi một dòng.
+
+Tất cả nằm trong `RADIUS_GAMEPLAY` (`sand-types.ts`), không rải rác trong solver.
+
+| Trường | Giá trị hiện tại | Open Decision |
 | --- | --- | --- |
-| `FRONT` | `PZ` | phía trước, hướng `+z` |
-| `BACK` | `NZ` | phía sau, hướng `-z` |
-| `RIGHT` | `PX` | bên phải, hướng `+x` |
-| `LEFT` | `NX` | bên trái, hướng `-x` |
-| `TOP` | `PY` | phía trên, hướng `+y` |
-| `BOTTOM` | `NY` | phía dưới, hướng `-y` |
+| `adjacencyMode` | `ORTHOGONAL_4` | 1, 2 |
+| `settlePolicy` | `GRAIN_FALL_TEMP` | 3 |
+| `slideTieBreak` | `LEFT_FIRST_TEMP` — rule global, trái thắng | 4, 5 |
+| `missAmmoPolicy` | `MISS_IS_FREE_TEMP` — hụt khung và trúng thành khung đều không tiêu lượt | 6, 7 |
+| `nextPreviewCount` | `3` | 9 |
+| `deadBulletPolicy` | `VALIDATOR_ONLY_TEMP` — editor chặn ngay lúc author | 12 |
+| `shotRule` | `RADIUS_SORT_TEMP` | **ngoài brief** |
+| `ammoRule` | `CYCLE_UNTIL_COLOR_CLEARED_TEMP` | **ngoài brief** |
+| `pixelScale` | mỗi level tự khai (level có sẵn: `5`) | ngoài brief — độ phân giải mô phỏng, đo bằng benchmark |
 
-Ví dụ `4.6.7:FRONT~3.7.4:TOP` đặt hai Weak Point lên block `(4,6,7)` và `(3,7,4)`.
-Tên mặt thuộc hệ tọa độ cục bộ của Puzzle và xoay cùng block; nó không đổi theo phía đang hướng vào
-camera sau khi người chơi xoay. Nếu ngay sát mặt đó còn một block active, Weak Point nằm giữa hai
-block: parser cảnh báo, marker bị che và hiệu ứng bung chỉ chạy sau khi block che đã rời đi.
+**Hai dòng "ngoài brief" là chỗ bản này cố tình đi ngược tài liệu.** Brief chốt ở §5 rằng một phát
+trúng màu xoá toàn bộ connected body, và nói thẳng là **không** được chỉ xoá "một bán kính quanh
+impact". Bản này làm đúng điều bị cấm đó, vì đã chọn hướng market-style sau khi so ba gameplay
+cạnh nhau. Đây là quyết định có chủ ý, không phải sơ suất — nhưng nó là chỗ code và brief lệch
+nhau, nên cần biết khi đọc lại tài liệu.
 
-`work/levels.csv` là bản CSV mirror để xem/sửa bằng Excel. Nguồn canonical vẫn là
-`work/levels.tsv`; chạy `npm run levels` sẽ kiểm tra TSV rồi tạo lại CSV, bản bundled và data trong
-HTML offline. Nếu đang thử trực tiếp một CSV export, có thể chạy
-`node work/sync-levels.mjs work/levels.csv`, nhưng cần chép thay đổi về TSV trước lần build canonical.
+Về Open Decision 17 (settle bao lâu thì quá lâu): thay vì cắt ngang bằng snap-to-stable, cả cascade
+được ép vào một budget thời gian. Settle hai bước chạy chậm và đọc được; sụp đổ bốn mươi bước chạy
+nhanh nhưng vẫn diễn đủ từng bước theo đúng thứ tự. Không bước nào bị bỏ.
 
-Model có đường kính xoay 3D lớn hơn `5.4` world unit sẽ tự scale đồng đều khi chơi; tọa độ, mặt Weak
-Point, cluster và hit box vẫn cùng scale nên file CSV không cần thêm cột kích thước hiển thị. Dùng
-đường chéo ba trục giữ model trong frame ở mọi góc xoay; các board nhỏ giữ nguyên scale `1`.
+### Đạn chết không tồn tại
 
-Ba cách sửa một màn, từ nhanh tới chậm:
+Màu nào sạch hẳn thì rời khỏi bánh xe ngay, nên viên đạn trên tay luôn còn cát để bắn. Có test đi
+hết một ván và kiểm tra điều này ở từng lượt. Editor chặn nốt đầu còn lại: một màu có trong wheel
+mà không có trong tranh là **error**, không cho vào game.
 
-1. Sửa `work/levels.tsv` (hoặc file `.tsv` export từ Excel) rồi **kéo thả file vào game đang mở**. Không cần build, không cần terminal. Nút số ở góc phải mở danh sách để nhảy thẳng tới màn cần thử.
-2. `npm run levels` — kiểm tra quyển sổ, cập nhật bản dùng cho `npm run dev`, và ghi lại khối level trong `outputs/3d-cannon-sort.html` mà không bundle lại.
-3. `node work/build-standalone.mjs` — build lại toàn bộ; build sẽ fail nếu quyển sổ có lỗi.
+## Chưa có trong bản này
 
-Trong file HTML đã build, level data nằm ở khối `<script id="levels" type="text/tab-separated-values">` và không bị minify, nên vẫn sửa tay được rồi reload để hotfix. Lưu ý: `fetch` bị chặn với `file://` nên game không tự đọc được file `.tsv` nằm cạnh nó — phải kéo thả hoặc bấm "Mở file .tsv" trong danh sách màn.
-
-## Rule chính
-
-- Fixture fallback `app/game/level-01.ts`: solid prism `4 × 3 × 2`, tổng 24 block; campaign row 1 có thể là màn thử nghiệm riêng.
-- Adjacency: FACE_6 (`±X`, `±Y`, `±Z`), không nối diagonal.
-- Inventory từng màu phải bằng chính xác tổng Goal cùng màu.
-- Overfill hợp lệ; phần dư tạo Batch.
-- Giới hạn Batch đếm **block**, không đếm record: một Batch 6 block tốn 6, không tốn 1.
-- Batch auto-fill được phép dùng một phần và ưu tiên record cũ nhất trong prototype. Batch cùng màu từ hai shot khác nhau vẫn không gộp.
-- Cooldown: 400 ms; shot limit: không giới hạn.
-
-Các policy mang hậu tố `_TEMP` trong source vẫn là quyết định prototype, chưa phải luật production cuối.
+Meta progression, economy, special sand, đổi/skip đạn, booster, random queue, Z-layer gameplay,
+full granular rigidbody simulation, âm thanh. Đây đúng phạm vi
+MVP mà brief đặt ra (§34).

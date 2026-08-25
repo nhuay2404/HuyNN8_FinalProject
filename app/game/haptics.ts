@@ -7,9 +7,9 @@ const STORAGE_KEY = "cannon-sort:v1:haptics";
 
 export type HapticEvent =
   | "impact"
-  | "goalComplete"
-  | "batchCreated"
-  | "batchFull"
+  | "wrongColor"
+  | "bodyCleared"
+  | "merge"
   | "win"
   | "lose";
 
@@ -17,17 +17,20 @@ export type HapticEvent =
 // session. A single number is one pulse; an array alternates pulse and gap.
 export const HAPTIC_PATTERNS: Record<HapticEvent, number | number[]> = {
   impact: 25,
-  goalComplete: [30, 50, 45],
-  batchCreated: 40,
-  batchFull: [50, 70, 50],
+  // Two short knocks rather than one. A wrong-colour shot still costs a bullet
+  // while leaving the board untouched, so it has to feel different from a hit
+  // in the hand as well as on screen.
+  wrongColor: [18, 40, 18],
+  bodyCleared: [30, 50, 45],
+  merge: 40,
   win: [50, 60, 50, 60, 120],
   lose: 200,
 };
 
-// Cubes land a few dozen milliseconds apart, so each one gets its own shorter
-// tick: a burst then reads as separate taps instead of one long buzz. The tail
-// is capped because a large cluster would otherwise turn into a rattle, and
-// pulses stay at or above 10ms since shorter ones are unreliable on Android.
+// Sand settles a step at a time, so each landing gets its own shorter tick: a
+// cascade then reads as separate taps instead of one long buzz. The tail is
+// capped because a tall collapse would otherwise turn into a rattle, and pulses
+// stay at or above 10ms since shorter ones are unreliable on Android.
 const LANDING_BASE_MS = 18;
 const LANDING_DECAY_MS = 2;
 const LANDING_MIN_MS = 10;
@@ -94,6 +97,6 @@ export function haptic(event: HapticEvent) {
   fire(HAPTIC_PATTERNS[event]);
 }
 
-export function hapticBlockLanded(order: number) {
+export function hapticSandLanded(order: number) {
   fire(landingPulseMs(order));
 }
