@@ -3029,3 +3029,36 @@ nhìn.
 Xác nhận trực tiếp trên preview: bắn một phát BLUE, HUD chuyển sang YELLOW/cam/xanh lá — mô hình súng
 đồng bộ đúng thứ tự và màu ở cả ba phần (buồng nạp vàng phát sáng, viền họng vàng, ray xếp cam→xanh lá→
 lam).
+
+---
+
+## 38. HUD bỏ CURRENT/NEXT, thay bằng thanh tiến độ dọc theo từng màu (26/08)
+
+Sau mục 37, mô hình súng đã tự nói nó đang cầm đạn gì và hàng chờ có gì — HUD lặp lại đúng thông tin đó
+là thừa. Bỏ hẳn hai ô `CURRENT` và `NEXT` (`app/SandGame.tsx`), chỉ giữ `SHOTS`. Kéo theo đó, các class
+`.ammo-bullet`, `.ammo-pip`, `.ammo-queue`, `.ammo-last` và hai keyframes `bullet-load`/`pip-shift` bị
+xoá khỏi `app/globals.css`; `currentAmmo`/`nextAmmo` không còn được import trong `SandGame.tsx`.
+
+Thay vào chỗ trống là một **thanh tiến độ dọc cho mỗi màu có trong tranh**, fill từ dưới lên theo phần
+cát màu đó đã được dọn khỏi khung. Không hiện phần trăm, không hiện số ô — cả điểm của một thanh là
+liếc một cái là đủ, có con số bên cạnh thì người chơi sẽ đọc số thay vì nhìn thanh. Thanh nào càng đầy
+thì **càng dày**: `width` nội suy từ `9px` (0%) tới `20px` (100%) theo cùng biến `--fill` điều khiển
+chiều cao phần fill, nên mức tiến độ vẫn đọc được khi nhìn thoáng qua hoặc với người không phân biệt
+được hai tông màu cạnh nhau.
+
+Vài quyết định đáng ghi:
+
+- **Mốc đo là riêng từng màu**, không phải toàn bức tranh: một màu chỉ có chục hạt phải đọc là *xong*
+  khi chục hạt đó hết, chứ không phải một vệt mỏng bên cạnh màu chiếm nửa khung.
+- **Thứ tự thanh theo `SAND_COLORS` canonical**, không theo hàng chờ đạn — nếu theo hàng chờ thì thanh
+  sẽ nhảy ngang mỗi lần một màu sạch hẳn và rời bánh xe.
+- **Track rỗng vẫn được tô nhạt màu của nó** (`color-mix` 84% trong suốt). Lần đầu để track trắng mờ
+  thì một thanh chưa ai chạm vào không cho biết nó đang chờ màu nào.
+- Phần fill bo tròn **chỉ ở đỉnh**, để track bo tròn + `overflow: hidden` lo phần đáy — bo tròn cả hai
+  đầu khiến thanh mới fill một ít trông như viên thuốc trôi lơ lửng trong ống.
+- `role="progressbar"` + `aria-valuenow` vẫn mang con số cho screen reader; yêu cầu bỏ số là bỏ **trên
+  màn hình**, không phải bỏ với người dùng trợ năng.
+
+**Kiểm tra:** 56/56 test pass (thay đổi thuần HUD, không đụng luật). Xác nhận trực tiếp trên preview
+sau 7 phát bắn: HUD chỉ còn `SHOTS 20`; bốn thanh đọc GREEN 18% (rộng 10,9px), YELLOW 15% (10,6px),
+BLUE 46% (14,1px), ORANGE 0% (9px) — bề dày tăng đúng theo mức fill.

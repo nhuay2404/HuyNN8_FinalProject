@@ -5,8 +5,8 @@ import Link from "next/link";
 import { SandCannonEngine, SAND_COLOR_HEX, type SandEngineEvent } from "./game/SandCannonEngine";
 import { BUILT_IN_LEVELS } from "./game/sand-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
-import { ammoRemaining, createSandGameState, currentAmmo, expandLevelForPixelBoard, nextAmmo } from "./game/sand-rules";
-import type { SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
+import { ammoRemaining, createSandGameState, expandLevelForPixelBoard, SAND_COLOR_BY_LETTER } from "./game/sand-rules";
+import { SAND_COLORS, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 
 const COLOR_NAME: Record<SandColor, string> = {
@@ -182,8 +182,6 @@ export default function SandGame() {
     setRunId((id) => id + 1);
   }, [playables]);
 
-  const current = currentAmmo(level, state);
-  const upcoming = nextAmmo(level, state);
   const remaining = ammoRemaining(level, state);
   const busy = BUSY_PHASES.has(state.phase);
   // Measured against the sand this level actually started with, not the area of
@@ -197,39 +195,66 @@ export default function SandGame() {
     ? 100
     : Math.round(((startingCells - state.remainingCells) / startingCells) * 100);
 
+  /**
+   * How much of each colour the player has already taken out of the frame.
+   *
+   * Measured per colour against what that colour started with, not against the
+   * whole picture: a colour that only ever had a dozen grains should read as
+   * finished when those twelve are gone, not as a sliver next to the colour
+   * that filled half the frame.
+   *
+   * Order is the canonical palette order rather than the ammo queue's, so a bar
+   * never jumps sideways when the wheel drops a finished colour.
+   */
+  const startingByColor = useMemo(() => {
+    const counts = new Map<SandColor, number>();
+    for (const row of level.rows) {
+      for (const letter of row) {
+        if (letter === ".") continue;
+        const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
+        if (color) counts.set(color, (counts.get(color) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [level]);
+
+  const colorProgress = useMemo(() => {
+    const left = new Map<SandColor, number>();
+    for (const body of state.bodies) {
+      left.set(body.color, (left.get(body.color) ?? 0) + body.cells.length);
+    }
+    return SAND_COLORS.filter((color) => startingByColor.has(color)).map((color) => {
+      const total = startingByColor.get(color) ?? 0;
+      const remainingCells = left.get(color) ?? 0;
+      return { color, fill: total === 0 ? 1 : (total - remainingCells) / total };
+    });
+  }, [startingByColor, state.bodies]);
+
   return (
     <main className="page-shell">
       <div className="game-frame">
         {/* §22, top to bottom: ammo, the 3D frame, then the cannon and its aim zone. */}
         <header className="hud-top">
           <div className="ammo-row">
-            <div className="ammo-current">
-              <span className="ammo-label">CURRENT</span>
-              {current ? (
+            {/* One bar per colour in the picture, filling as that colour leaves
+                the frame. The cannon model itself now carries the bullet in
+                hand and the queue behind it, so the HUD no longer repeats it. */}
+            <div className="color-bars">
+              {colorProgress.map((entry) => (
                 <span
-                  key={state.shotsUsed}
-                  className="ammo-bullet is-current"
-                  style={{ "--bullet": hex(current) } as React.CSSProperties}
+                  key={entry.color}
+                  className="color-bar"
+                  style={{ "--bullet": hex(entry.color), "--fill": entry.fill } as React.CSSProperties}
+                  title={COLOR_NAME[entry.color]}
+                  role="progressbar"
+                  aria-label={`${COLOR_NAME[entry.color]} cleared`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(entry.fill * 100)}
                 >
-                  <b>{COLOR_NAME[current]}</b>
+                  <i />
                 </span>
-              ) : (
-                <span className="ammo-bullet is-empty"><b>EMPTY</b></span>
-              )}
-            </div>
-            <div className="ammo-next">
-              <span className="ammo-label">NEXT</span>
-              <span className="ammo-queue">
-                {upcoming.map((color, index) => (
-                  <i
-                    key={`${state.shotsUsed}-${index}`}
-                    className="ammo-pip"
-                    style={{ "--bullet": hex(color), animationDelay: `${index * 40}ms` } as React.CSSProperties}
-                    title={COLOR_NAME[color]}
-                  />
-                ))}
-                {upcoming.length === 0 && <em className="ammo-last">{current ? "last colour" : "wheel spent"}</em>}
-              </span>
+              ))}
             </div>
             <div className="ammo-total">
               <span className="ammo-label">SHOTS</span>
