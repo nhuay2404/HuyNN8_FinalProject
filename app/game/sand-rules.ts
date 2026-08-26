@@ -11,10 +11,17 @@ import type {
   SandColor,
   SandFrame,
   SandGameState,
+  SandKey,
   SandLevelConfig,
   SettleOutcome,
   SettleStep,
+  WindDirection,
+  WindPhase,
+  WindZone,
 } from "./sand-types";
+// A value import, not a type one, so it needs the extension the test runner
+// resolves with — this file is executed by node directly, not only bundled.
+import { SAND_COLORS } from "./sand-types.ts";
 
 /** The picture's alphabet. One letter per colour keeps an authored row readable. */
 export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
@@ -25,6 +32,19 @@ export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
   P: "purple",
   O: "orange",
 };
+
+/**
+ * The key's letter. Not a colour, so it never collides with the palette.
+ *
+ * `K` was free: the sand palette is R G Y B P O, and lower case is spoken for
+ * by locked sand.
+ */
+export const KEY_LETTER = "K";
+
+/** Locked sand is the colour's letter in lower case — `y` is frozen yellow. */
+export function isLockedLetter(letter: string) {
+  return letter !== letter.toUpperCase() && SAND_COLOR_BY_LETTER[letter.toUpperCase()] !== undefined;
+}
 
 /** ORTHOGONAL_4. Corner contact is not contact — Open Decisions 1 and 2. */
 const ORTHOGONAL_4 = [
@@ -96,7 +116,14 @@ export function findSplitBodies(bodies: SandBody[]) {
 // ---- Level loading ------------------------------------------------------
 
 export type LevelIssue = { severity: "error" | "warning"; message: string };
-export type ParsedLevel = { bodies: SandBody[]; issues: LevelIssue[] };
+export type ParsedLevel = {
+  bodies: SandBody[];
+  /** Cells the picture drew in lower case: sand that starts frozen. */
+  locked: CellCoord[];
+  /** One key per connected group of `K` cells. */
+  keys: SandKey[];
+  issues: LevelIssue[];
+};
 
 /**
  * Expand a level's blueprint by its `pixelScale`, once, before anything else
@@ -128,7 +155,27 @@ export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfi
     frame: { width: level.frame.width * scale, height: level.frame.height * scale },
     rows,
     sortRadius: level.sortRadius * scale,
+    // Wind is authored in blueprint cells like the disc is, so a gust carries
+    // sand the same fraction of the way across the frame — and reaches the same
+    // part of the picture — at any resolution.
+    wind: level.wind ? { phases: level.wind.phases.map((phase) => scaleWindPhase(phase, scale)) } : level.wind,
     pixelScale: 1,
+  };
+}
+
+function scaleWindPhase(phase: WindPhase, scale: number): WindPhase {
+  return {
+    ...phase,
+    power: phase.power * scale,
+    // Durations are real time and must not be scaled — only the geometry is.
+    zone: phase.zone
+      ? {
+        x: phase.zone.x * scale,
+        y: phase.zone.y * scale,
+        width: phase.zone.width * scale,
+        height: phase.zone.height * scale,
+      }
+      : null,
   };
 }
 
@@ -143,6 +190,8 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
   const issues: LevelIssue[] = [];
   const { width, height } = level.frame;
   const grid = new Map<string, SandColor>();
+  const locked: CellCoord[] = [];
+  const keyCells = new Set<string>();
 
   if (level.rows.length !== height) {
     issues.push({ severity: "error", message: `frame height is ${height} but ${level.rows.length} rows were written` });
@@ -155,12 +204,19 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
     }
     [...row].forEach((letter, x) => {
       if (letter === ".") return;
+      const inside = y >= 0 && y < height && x < width;
+      if (letter === KEY_LETTER) {
+        if (inside) keyCells.add(cellKey(x, y));
+        return;
+      }
       const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
       if (!color) {
         issues.push({ severity: "error", message: `row ${index} column ${x}: "${letter}" is not a palette colour` });
         return;
       }
-      if (y >= 0 && y < height && x < width) grid.set(cellKey(x, y), color);
+      if (!inside) return;
+      grid.set(cellKey(x, y), color);
+      if (isLockedLetter(letter)) locked.push({ x, y });
     });
   });
 
@@ -196,7 +252,56 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
       issues.push({ severity: "warning", message: `the queue holds ${color} but the picture has none` });
     }
   }
-  return { bodies, issues };
+
+  // One key per connected group of `K`, so a key drawn several cells across is
+  // one object rather than a handful of them standing next to each other.
+  const keys = groupCells([...keyCells].map(parseCellKey)).map((cells) => ({
+    id: `key-${cells[0].x}-${cells[0].y}`,
+    cells,
+  }));
+  if (locked.length && !keys.length) {
+    issues.push({
+      severity: "error",
+      message: "the picture has locked sand but no key — that sand could never be freed",
+    });
+  }
+  if (keys.length && !locked.length) {
+    issues.push({ severity: "warning", message: "the picture has a key but nothing locked for it to open" });
+  }
+  return { bodies, locked, keys, issues };
+}
+
+function parseCellKey(key: string): CellCoord {
+  const [x, y] = key.split(",");
+  return { x: Number(x), y: Number(y) };
+}
+
+/** Split a loose set of cells into its ORTHOGONAL_4 connected groups. */
+function groupCells(cells: CellCoord[]): CellCoord[][] {
+  const remaining = new Map(cells.map((cell) => [cellKey(cell.x, cell.y), cell]));
+  const groups: CellCoord[][] = [];
+  // Highest y first, then leftmost, so a group's identity comes from a corner
+  // that does not depend on the order the cells were collected in.
+  for (const start of sortCells(cells).reverse()) {
+    const startKey = cellKey(start.x, start.y);
+    if (!remaining.has(startKey)) continue;
+    remaining.delete(startKey);
+    const group: CellCoord[] = [];
+    const queue: CellCoord[] = [start];
+    while (queue.length) {
+      const cell = queue.pop()!;
+      group.push(cell);
+      for (const [dx, dy] of ORTHOGONAL_4) {
+        const nextKey = cellKey(cell.x + dx, cell.y + dy);
+        const next = remaining.get(nextKey);
+        if (!next) continue;
+        remaining.delete(nextKey);
+        queue.push(next);
+      }
+    }
+    groups.push(sortCells(group));
+  }
+  return groups;
 }
 
 /**
@@ -216,50 +321,280 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
  * preserve, and same-colour regions that have come to touch are simply one
  * component, so merging needs no separate pass here.
  */
-export function runGrainSettle(bodies: SandBody[], frame: SandFrame): SettleOutcome {
+export function runGrainSettle(
+  bodies: SandBody[],
+  frame: SandFrame,
+  fixtures: Fixtures = {},
+): SettleOutcome {
+  const world = buildWorld(bodies, fixtures);
+  const steps: SettleStep[] = [];
+  settleWorld(world, frame, steps);
+  return finishWorld(world, frame, steps);
+}
+
+/**
+ * One gust, then everything it disturbed falling back to rest.
+ *
+ * A gust is not a second physics: it slides loose grains sideways `strength`
+ * times and then hands the board straight back to the same settle loop. So sand
+ * blown off a ledge falls exactly the way sand always falls, and a level with
+ * wind stays as predictable as one without — the only new thing is *when* the
+ * board changes, which is the point of the mechanic.
+ *
+ * Locked sand does not move: it is the one thing in the frame the weather
+ * cannot argue with, which is what makes it a landmark to aim a key at.
+ */
+export function runWindGust(
+  bodies: SandBody[],
+  frame: SandFrame,
+  direction: WindDirection,
+  strength: number,
+  fixtures: Fixtures = {},
+  zone: WindZone | null = null,
+): SettleOutcome {
+  const world = buildWorld(bodies, fixtures);
+  const steps: SettleStep[] = [];
+  const step = direction === "left" ? -1 : 1;
+  for (let gust = 0; gust < Math.max(0, Math.round(strength)); gust += 1) {
+    if (!windPass(world, frame, step, zone, steps)) break;
+  }
+  // The settle is NOT zoned. Wind reaches where it reaches, but gravity is the
+  // whole frame's — sand blown to the edge of a zone still falls out of it.
+  settleWorld(world, frame, steps);
+  return finishWorld(world, frame, steps);
+}
+
+/** Whether a cell is inside a phase's reach. No zone means the whole frame. */
+function inZone(zone: WindZone | null, x: number, y: number) {
+  if (!zone) return true;
+  return x >= zone.x && x < zone.x + zone.width && y >= zone.y && y < zone.y + zone.height;
+}
+
+// ---- the settle world ----------------------------------------------------
+// One mutable board that the settle loop, the key loop and the wind pass all
+// work on, so a grain, a key and a lock can never disagree about what is where.
+
+/** The parts of the board that are not plain falling sand. */
+export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[] };
+
+type World = {
+  /** Every sand cell, frozen ones included — locked sand still fills its cell. */
+  grid: Map<string, SandColor>;
+  locked: Set<string>;
+  keys: Map<string, CellCoord[]>;
+  /** Reverse index of `keys`, so occupancy is one lookup rather than a scan. */
+  keyAt: Map<string, string>;
+};
+
+function buildWorld(bodies: SandBody[], fixtures: Fixtures): World {
   const grid = new Map<string, SandColor>();
   for (const body of bodies) {
     for (const cell of body.cells) grid.set(cellKey(cell.x, cell.y), body.color);
   }
+  const locked = new Set<string>();
+  for (const cell of fixtures.locked ?? []) {
+    const key = cellKey(cell.x, cell.y);
+    // A lock on a cell no sand occupies is not a lock, it is a stray mark.
+    if (grid.has(key)) locked.add(key);
+  }
+  const keys = new Map<string, CellCoord[]>();
+  const keyAt = new Map<string, string>();
+  for (const key of fixtures.keys ?? []) {
+    keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
+    for (const cell of key.cells) keyAt.set(cellKey(cell.x, cell.y), key.id);
+  }
+  return { grid, locked, keys, keyAt };
+}
 
-  const steps: SettleStep[] = [];
-  for (let pass = 0; pass < frame.width * frame.height; pass += 1) {
-    const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
-    for (let y = 1; y < frame.height; y += 1) {
-      for (let x = 0; x < frame.width; x += 1) {
-        const from = cellKey(x, y);
-        const color = grid.get(from);
-        if (color === undefined) continue;
+function occupied(world: World, frame: SandFrame, x: number, y: number) {
+  if (x < 0 || x >= frame.width || y < 0 || y >= frame.height) return true;
+  const key = cellKey(x, y);
+  return world.grid.has(key) || world.keyAt.has(key);
+}
 
-        let to: CellCoord | null = null;
-        if (!grid.has(cellKey(x, y - 1))) {
-          to = { x, y: y - 1 };
-        } else {
-          for (const dx of SLIDE_ORDER) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= frame.width) continue;
-            if (grid.has(cellKey(nx, y)) || grid.has(cellKey(nx, y - 1))) continue;
-            to = { x: nx, y: y - 1 };
-            break;
-          }
+/** One pass of falling sand. Returns whether anything moved. */
+function sandPass(world: World, frame: SandFrame, steps: SettleStep[]) {
+  const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
+  for (let y = 1; y < frame.height; y += 1) {
+    for (let x = 0; x < frame.width; x += 1) {
+      const from = cellKey(x, y);
+      const color = world.grid.get(from);
+      if (color === undefined || world.locked.has(from)) continue;
+
+      let to: CellCoord | null = null;
+      if (!occupied(world, frame, x, y - 1)) {
+        to = { x, y: y - 1 };
+      } else {
+        for (const dx of SLIDE_ORDER) {
+          if (occupied(world, frame, x + dx, y) || occupied(world, frame, x + dx, y - 1)) continue;
+          to = { x: x + dx, y: y - 1 };
+          break;
         }
-        if (!to) continue;
+      }
+      if (!to) continue;
 
-        grid.delete(from);
-        grid.set(cellKey(to.x, to.y), color);
-        moves.push({ from: { x, y }, to });
+      world.grid.delete(from);
+      world.grid.set(cellKey(to.x, to.y), color);
+      moves.push({ from: { x, y }, to });
+    }
+  }
+  if (!moves.length) return false;
+  steps.push({ kind: "GRAIN_PASS", moves });
+  return true;
+}
+
+/** Try to shift one whole key by (dx, dy). Returns whether it went. */
+function moveKey(world: World, frame: SandFrame, id: string, dx: number, dy: number, steps: SettleStep[]) {
+  const cells = world.keys.get(id);
+  if (!cells) return false;
+  const own = new Set(cells.map((cell) => cellKey(cell.x, cell.y)));
+  for (const cell of cells) {
+    const tx = cell.x + dx;
+    const ty = cell.y + dy;
+    // The key sliding into its own trailing cell is not a collision.
+    if (own.has(cellKey(tx, ty))) continue;
+    if (occupied(world, frame, tx, ty)) return false;
+  }
+  for (const cell of cells) world.keyAt.delete(cellKey(cell.x, cell.y));
+  const moved = cells.map((cell) => ({ x: cell.x + dx, y: cell.y + dy }));
+  world.keys.set(id, moved);
+  for (const cell of moved) world.keyAt.set(cellKey(cell.x, cell.y), id);
+  steps.push({ kind: "KEY_MOVE", keyId: id, dx, dy });
+  return true;
+}
+
+/** One pass of falling keys — same rule as a grain, applied to the whole shape. */
+function keyPass(world: World, frame: SandFrame, steps: SettleStep[]) {
+  let moved = false;
+  // Lowest key first, so one resting on another does not jump through it.
+  const order = [...world.keys.keys()].sort((a, b) => lowestY(world, a) - lowestY(world, b));
+  for (const id of order) {
+    if (moveKey(world, frame, id, 0, -1, steps)) {
+      moved = true;
+      continue;
+    }
+    for (const dx of SLIDE_ORDER) {
+      if (moveKey(world, frame, id, dx, -1, steps)) {
+        moved = true;
+        break;
       }
     }
-    if (!moves.length) break;
-    steps.push({ kind: "GRAIN_PASS", moves });
   }
+  return moved;
+}
 
+function lowestY(world: World, id: string) {
+  const cells = world.keys.get(id) ?? [];
+  return cells.reduce((low, cell) => Math.min(low, cell.y), Number.POSITIVE_INFINITY);
+}
+
+/**
+ * A key touching a lock opens it, and is spent doing so.
+ *
+ * The whole connected region of frozen sand thaws, not the one cell that was
+ * touched: a lock is a thing in the picture, and half of it coming loose would
+ * read as the key having missed.
+ */
+function unlockPass(world: World, steps: SettleStep[]) {
+  let opened = false;
+  for (const [id, cells] of [...world.keys]) {
+    let touched: string | null = null;
+    for (const cell of cells) {
+      for (const [dx, dy] of ORTHOGONAL_4) {
+        const key = cellKey(cell.x + dx, cell.y + dy);
+        if (world.locked.has(key)) { touched = key; break; }
+      }
+      if (touched) break;
+    }
+    if (!touched) continue;
+
+    const region: CellCoord[] = [];
+    const queue = [touched];
+    world.locked.delete(touched);
+    while (queue.length) {
+      const current = parseCellKey(queue.pop()!);
+      region.push(current);
+      for (const [dx, dy] of ORTHOGONAL_4) {
+        const next = cellKey(current.x + dx, current.y + dy);
+        if (!world.locked.has(next)) continue;
+        world.locked.delete(next);
+        queue.push(next);
+      }
+    }
+    for (const cell of cells) world.keyAt.delete(cellKey(cell.x, cell.y));
+    world.keys.delete(id);
+    steps.push({ kind: "UNLOCK", keyId: id, cells: sortCells(region) });
+    opened = true;
+  }
+  return opened;
+}
+
+/**
+ * One sideways shove. Grains at the downwind edge move first, or they jam.
+ *
+ * A grain is moved when it *starts* inside the zone. Being carried one cell
+ * past the edge is what a zone boundary should look like — a wall that sand
+ * piles up against would be a wall, not weather.
+ */
+function windPass(
+  world: World,
+  frame: SandFrame,
+  step: -1 | 1,
+  zone: WindZone | null,
+  steps: SettleStep[],
+) {
+  const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
+  const columns = Array.from({ length: frame.width }, (_, index) =>
+    step === 1 ? frame.width - 1 - index : index);
+  for (let y = 0; y < frame.height; y += 1) {
+    for (const x of columns) {
+      if (!inZone(zone, x, y)) continue;
+      const from = cellKey(x, y);
+      const color = world.grid.get(from);
+      if (color === undefined || world.locked.has(from)) continue;
+      if (occupied(world, frame, x + step, y)) continue;
+      world.grid.delete(from);
+      world.grid.set(cellKey(x + step, y), color);
+      moves.push({ from: { x, y }, to: { x: x + step, y } });
+    }
+  }
+  // Keys are blown too — a key parked on a ledge would otherwise be the one
+  // thing in the frame the weather could not reach. A key counts as inside the
+  // zone if any part of it is: half a key in the wind still catches it.
+  let keysMoved = false;
+  for (const [id, cells] of [...world.keys]) {
+    if (!cells.some((cell) => inZone(zone, cell.x, cell.y))) continue;
+    if (moveKey(world, frame, id, step, 0, steps)) keysMoved = true;
+  }
+  if (moves.length) steps.push({ kind: "GRAIN_PASS", moves });
+  return moves.length > 0 || keysMoved;
+}
+
+/**
+ * Run sand, keys and locks to a standstill.
+ *
+ * The three are interleaved rather than run one after another because they feed
+ * each other: sand falling lets a key drop, a key dropping opens a lock, and an
+ * opened lock is a new pile of sand with nothing holding it up.
+ */
+function settleWorld(world: World, frame: SandFrame, steps: SettleStep[]) {
+  const limit = frame.width * frame.height;
+  for (let pass = 0; pass < limit; pass += 1) {
+    const sand = sandPass(world, frame, steps);
+    const keys = keyPass(world, frame, steps);
+    const unlocked = unlockPass(world, steps);
+    if (!sand && !keys && !unlocked) break;
+  }
+}
+
+/** Re-derive bodies from the settled grid and close the step list. */
+function finishWorld(world: World, frame: SandFrame, steps: SettleStep[]): SettleOutcome {
   const settled: SandBody[] = [];
   const claimed = new Set<string>();
   for (let y = frame.height - 1; y >= 0; y -= 1) {
     for (let x = 0; x < frame.width; x += 1) {
       const key = cellKey(x, y);
-      const color = grid.get(key);
+      const color = world.grid.get(key);
       if (color === undefined || claimed.has(key)) continue;
       const cells: CellCoord[] = [];
       const queue: CellCoord[] = [{ x, y }];
@@ -269,7 +604,7 @@ export function runGrainSettle(bodies: SandBody[], frame: SandFrame): SettleOutc
         cells.push(cell);
         for (const [dx, dy] of ORTHOGONAL_4) {
           const nextKey = cellKey(cell.x + dx, cell.y + dy);
-          if (claimed.has(nextKey) || grid.get(nextKey) !== color) continue;
+          if (claimed.has(nextKey) || world.grid.get(nextKey) !== color) continue;
           claimed.add(nextKey);
           queue.push({ x: cell.x + dx, y: cell.y + dy });
         }
@@ -288,21 +623,34 @@ export function runGrainSettle(bodies: SandBody[], frame: SandFrame): SettleOutc
       ),
     });
   }
-  return { bodies: settled, steps };
+  return {
+    bodies: settled,
+    steps,
+    locked: sortCells([...world.locked].map(parseCellKey)),
+    keys: [...world.keys].map(([id, cells]) => ({ id, cells: sortCells(cells) })),
+  };
 }
 
-/** The cells a radius shot of `color` would sort out, centred on one cell. */
+/**
+ * The cells a radius shot of `color` would sort out, centred on one cell.
+ *
+ * `frozen` is left out of the answer entirely: locked sand is not a hard
+ * target the disc fails against, it is sand the disc cannot see. A shot aimed
+ * into a lock still takes every loose grain of its colour around it.
+ */
 export function cellsInRadius(
   bodies: SandBody[],
   center: CellCoord,
   radius: number,
   color: SandColor,
+  frozen?: ReadonlySet<string>,
 ) {
   const found: CellCoord[] = [];
   const limit = radius * radius;
   for (const body of bodies) {
     if (body.color !== color) continue;
     for (const cell of body.cells) {
+      if (frozen?.has(cellKey(cell.x, cell.y))) continue;
       const dx = cell.x - center.x;
       const dy = cell.y - center.y;
       if (dx * dx + dy * dy <= limit) found.push({ x: cell.x, y: cell.y });
@@ -314,15 +662,32 @@ export function cellsInRadius(
 // ---- Game state ---------------------------------------------------------
 
 export function createSandGameState(level: SandLevelConfig): SandGameState {
-  const { bodies } = parseSandLevel(level);
+  const { bodies, locked, keys } = parseSandLevel(level);
+  const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
+  // A colour that starts entirely locked is authored into the wheel — it has to
+  // be, or it could never be shot once freed — but it must not be *handed out*
+  // until a key has opened it.
+  const shootable = shootableColors(bodies, frozen);
   return {
     phase: "READY",
     bodies,
-    queue: [...level.ammoQueue],
+    queue: level.ammoQueue.filter((color) => shootable.includes(color)),
     shotsUsed: 0,
     remainingCells: countCells(bodies),
+    locked,
+    keys,
     result: null,
   };
+}
+
+/** The board's non-sand furniture, in the shape the solver wants it. */
+export function fixturesOf(state: SandGameState): Fixtures {
+  return { locked: state.locked, keys: state.keys };
+}
+
+/** Cell keys of everything frozen, for the lookups a shot and a redraw need. */
+export function frozenSet(state: SandGameState) {
+  return new Set(state.locked.map((cell) => cellKey(cell.x, cell.y)));
 }
 
 export function currentAmmo(_level: SandLevelConfig, state: SandGameState): SandColor | null {
@@ -378,12 +743,36 @@ export type ShotResolution = {
  * the queue wherever it sits — so the player is never handed a bullet with
  * nothing left to shoot at.
  */
-function advanceQueue(queue: SandColor[], bodies: SandBody[]): SandColor[] {
+function advanceQueue(
+  queue: SandColor[],
+  bodies: SandBody[],
+  frozen: ReadonlySet<string>,
+): SandColor[] {
   const [spent, ...rest] = queue;
-  if (spent === undefined) return queue;
-  const remaining = new Set(bodies.map((body) => body.color));
-  const recycled = remaining.has(spent) ? [...rest, spent] : rest;
-  return recycled.filter((color) => remaining.has(color));
+  if (spent === undefined) return shootableColors(bodies, frozen);
+  const shootable = new Set(shootableColors(bodies, frozen));
+  const recycled = shootable.has(spent) ? [...rest, spent] : rest;
+  const kept = recycled.filter((color) => shootable.has(color));
+  // A colour that is entirely locked away is not gone, it is unreachable — and
+  // it comes back the moment a key frees it, or the wheel would have dropped it
+  // for good and left that sand unshootable.
+  const returning = shootableColors(bodies, frozen).filter((color) => !kept.includes(color));
+  return [...kept, ...returning];
+}
+
+/**
+ * Colours the player could actually hit right now.
+ *
+ * A colour whose every grain is frozen is not on the wheel: handing out that
+ * bullet would be exactly the dead bullet `deadBulletPolicy` exists to forbid.
+ * Palette order, not board order, so the wheel is the same on every run.
+ */
+function shootableColors(bodies: SandBody[], frozen: ReadonlySet<string>): SandColor[] {
+  const live = new Set<SandColor>();
+  for (const body of bodies) {
+    if (body.cells.some((cell) => !frozen.has(cellKey(cell.x, cell.y)))) live.add(body.color);
+  }
+  return SAND_COLORS.filter((color) => live.has(color));
 }
 
 /**
@@ -408,8 +797,8 @@ function withResult(level: SandLevelConfig, state: SandGameState): SandGameState
  * is nothing to normalise first: the labels it hands back are already true of
  * the settled grid.
  */
-function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[]) {
-  const settle = runGrainSettle(bodies, level.frame);
+function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures: Fixtures) {
+  const settle = runGrainSettle(bodies, level.frame, fixtures);
   return { settle, steps: settle.steps };
 }
 /**
@@ -441,8 +830,8 @@ export function resolveShot(
   const hitBody = hit?.bodyId ? state.bodies.find((body) => body.id === hit.bodyId) ?? null : null;
   if (!hit) return { ...idle, state: { ...state, phase: "READY" } };
 
-  const spend = (bodies: SandBody[]): Pick<SandGameState, "queue" | "shotsUsed"> => ({
-    queue: advanceQueue(state.queue, bodies),
+  const spend = (bodies: SandBody[], stillFrozen: ReadonlySet<string>): Pick<SandGameState, "queue" | "shotsUsed"> => ({
+    queue: advanceQueue(state.queue, bodies, stillFrozen),
     shotsUsed: state.shotsUsed + 1,
   });
 
@@ -451,21 +840,83 @@ export function resolveShot(
   // and only the part of each that falls inside it. The place may be empty air
   // — the disc still reaches down from it. A shot that finds none of its colour
   // in reach is not a special case; NO_MATCH covers it.
-  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, level.sortRadius, ammo);
+  const frozen = frozenSet(state);
+  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, level.sortRadius, ammo, frozen);
   if (!removed.length) {
-    const missed = { ...state, ...spend(state.bodies) };
+    const missed = { ...state, ...spend(state.bodies, frozen) };
     return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody };
   }
   const taken = new Set(removed.map((cell) => cellKey(cell.x, cell.y)));
   const left = state.bodies
     .map((body) => ({ ...body, cells: body.cells.filter((cell) => !taken.has(cellKey(cell.x, cell.y))) }))
     .filter((body) => body.cells.length);
-  const { settle, steps } = settleAfterRemoval(level, left);
+  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(state));
+  const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
   const sorted: SandGameState = {
     ...state,
     bodies: settle.bodies,
-    ...spend(settle.bodies),
+    ...spend(settle.bodies, stillFrozen),
     remainingCells: countCells(settle.bodies),
+    locked: settle.locked,
+    keys: settle.keys,
   };
   return { state: withResult(level, sorted), outcome: "SORTED", hitBody, removed, settle, steps };
+}
+
+/**
+ * A gust, as a resolved change to the state.
+ *
+ * Separate from `resolveShot` on purpose: wind is not a turn. It spends no
+ * ammo, it can win a level (by burying nothing and clearing the last grain it
+ * cannot — but a lock freed by a blown key can), and it can never lose one,
+ * because the budget only moves when the player fires.
+ */
+export function resolveWind(
+  level: SandLevelConfig,
+  state: SandGameState,
+  phase: WindPhase,
+): ShotResolution {
+  const idle: ShotResolution = {
+    state,
+    outcome: "MISS",
+    hitBody: null,
+    removed: [],
+    settle: null,
+    steps: [],
+  };
+  if (state.result) return idle;
+
+  const settle = runWindGust(
+    state.bodies,
+    level.frame,
+    phase.direction,
+    phase.power,
+    fixturesOf(state),
+    phase.zone,
+  );
+  if (!settle.steps.some((step) => step.kind !== "REINDEX")) return idle;
+
+  // A gust can blow a key into a lock, so the wheel has to be re-checked even
+  // though no bullet was spent — the colour that just came free needs a bullet.
+  const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
+  const shootable = shootableColors(settle.bodies, stillFrozen);
+  const blown: SandGameState = {
+    ...state,
+    bodies: settle.bodies,
+    queue: [
+      ...state.queue.filter((color) => shootable.includes(color)),
+      ...shootable.filter((color) => !state.queue.includes(color)),
+    ],
+    remainingCells: countCells(settle.bodies),
+    locked: settle.locked,
+    keys: settle.keys,
+  };
+  return {
+    state: withResult(level, blown),
+    outcome: "SORTED",
+    hitBody: null,
+    removed: [],
+    settle,
+    steps: settle.steps,
+  };
 }

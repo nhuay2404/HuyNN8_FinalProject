@@ -72,4 +72,155 @@ export const sandBloom: SandLevelConfig = {
   notes: "Radius sorting with a recycling queue; difficulty is the shot budget alone.",
 };
 
-export const BUILT_IN_LEVELS: SandLevelConfig[] = [sandBloom];
+/**
+ * Lock & Key — the first of two levels that exist to try a mechanic out.
+ *
+ * A slab of purple hangs in mid-air, frozen: those are the lower-case letters
+ * in the picture. Nothing can shoot it and it does not fall, so it is the one
+ * fixed point in the frame. Above it sits a plug of yellow with the key resting
+ * on top; take the yellow out and the key drops two cells onto the slab, which
+ * opens on contact and lets the purple pour to the floor.
+ *
+ * The plug steps in by one cell per layer, and the slab is two cells wider than
+ * it. That is not decoration: falling sand only holds still where each edge
+ * column is at most one higher than its neighbour, so a square plug on a narrow
+ * slab would roll off its own sides on the first frame.
+ *
+ * Purple is in the wheel from the start because it is in the picture, but the
+ * wheel will not hand it out while every purple grain is frozen — see
+ * `shootableColors`. It arrives the moment the lock opens.
+ */
+const LOCK_PICTURE = [
+  "............",
+  "............",
+  "............",
+  ".....KK.....",
+  ".....YY.....",
+  "....YYYY....",
+  "...pppppp...",
+  "...pppppp...",
+  "............",
+  "............",
+  "GG........GG",
+  "GGGG....GGGG",
+  "OOOOOOOOOOOO",
+  "OOOOOOOOOOOO",
+];
+
+export const lockAndKey: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 2,
+  name: "Lock & Key",
+
+  frame: { width: 12, height: 14 },
+  rows: LOCK_PICTURE,
+
+  ammoQueue: ["yellow", "green", "orange", "purple"],
+
+  sortRadius: 2.5,
+  shotLimit: 24,
+  pixelScale: 5,
+
+  notes: "Mechanic test: frozen sand hanging in the frame, opened by a falling key.",
+};
+
+/**
+ * Crosswind — the second mechanic level.
+ *
+ * A mound built of one-cell steps, which is the only shape falling sand holds
+ * still in, so every gust has somewhere to push grains and the change is
+ * visible rather than theoretical.
+ *
+ * The weather is a three-phase loop, written to show what the loop is for
+ * rather than to be the fairest possible level:
+ *
+ *   1. a long push right across the whole frame — the mound walks downwind
+ *   2. a short, hard shove back left, but only through the upper half, so the
+ *      peak is knocked back while the base it stands on is not
+ *   3. a soft right-hand drift, again everywhere
+ *
+ * `power` and `zone` are in blueprint cells like `sortRadius`, and are scaled
+ * with the board by `expandLevelForPixelBoard`. The durations are real time and
+ * are not scaled.
+ */
+const CROSSWIND_PICTURE = [
+  "............",
+  "............",
+  "............",
+  "............",
+  "............",
+  "............",
+  ".....BB.....",
+  "....GGGG....",
+  "...GGGGGG...",
+  "..YYYYYYYY..",
+  ".YYYYYYYYYY.",
+  "OOOOOOOOOOOO",
+  "OOOOOOOOOOOO",
+  "OOOOOOOOOOOO",
+];
+
+export const crosswind: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 3,
+  name: "Crosswind",
+
+  frame: { width: 12, height: 14 },
+  rows: CROSSWIND_PICTURE,
+
+  ammoQueue: ["blue", "green", "yellow", "orange"],
+
+  sortRadius: 2.5,
+  shotLimit: 30,
+  pixelScale: 5,
+
+  wind: {
+    phases: [
+      { direction: "right", durationMs: 2600, cooldownMs: 3600, power: 1, zone: null },
+      // Upper half only: y counts up from the floor, so this starts at row 7.
+      { direction: "left", durationMs: 1400, cooldownMs: 3000, power: 2, zone: { x: 0, y: 7, width: 12, height: 7 } },
+      { direction: "right", durationMs: 1800, cooldownMs: 4200, power: 1, zone: null },
+    ],
+  },
+
+  notes: "Mechanic test: a looping wind pattern that reshapes the board between shots.",
+};
+
+export const BUILT_IN_LEVELS: SandLevelConfig[] = [sandBloom, lockAndKey, crosswind];
+
+export const newLevel: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 2,
+  name: "New level",
+
+  frame: { width: 12, height: 14 },
+  rows: [
+    "PPPPPPPPPPPP",
+    "PPPOOOOOPPPP",
+    "POOPPPPOOPPP",
+    "POPPPPPPOOPP",
+    "POPPPPPPOOPP",
+    "POPPPPPPOPPP",
+    "POPPPPPOOPPP",
+    "POOPPPOOPPPP",
+    "PPOOOOOPPPPP",
+    "PPPOOBBPPPPP",
+    "BBBBBBBBBBBB",
+    "BBBBBBBBBBBB",
+    "YYYYYYYYYYYY",
+    "BBBBBBBBBBBB",
+  ],
+
+  // The starting rotation only — under the cycling rule this is a wheel, not a
+  // budget: colours come round again until they are gone.
+  ammoQueue: ["blue", "purple", "yellow", "orange"],
+
+  sortRadius: 2.5,
+  shotLimit: 20,
+
+  // 12 x 14 blueprint at 5x = 4,200 simulated pixels.
+  pixelScale: 5,
+};

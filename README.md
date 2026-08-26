@@ -242,6 +242,36 @@ Có test giữ kết luận này: nếu chơi giỏi không còn dư ≥ 3 lư�
 - Một projectile một lượt. Không bắn trong `PROJECTILE_FLYING`, `HIT_RESOLUTION`, `SETTLING`.
 - Win kiểm tra trước, fail kiểm tra sau — phát cuối dọn sạch khung là thắng, không phải hoà.
 
+## Hai map mechanic đang thử
+
+Cả hai đều là **data của level**, không phải nhánh code riêng: level không dùng tới chúng đọc và chạy
+y hệt như trước khi chúng tồn tại.
+
+**Lock & Key.** Chữ thường trong tranh (`y`, `p`, …) là cát **bị khoá**: vẫn là cát — có màu, chiếm ô,
+đỡ cát khác, tính vào điều kiện thắng — nhưng không rơi và đĩa bắn không nhìn thấy. Vì không rơi nên nó
+lơ lửng giữa khung. Chữ `K` là **chìa khoá**, một sprite pixel cứng: nó rơi như cát nhưng cả khối cùng
+đi, vì một chìa khoá vỡ thành từng hạt ở lần rơi đầu tiên thì không còn là một vật thể. Chìa khoá chạm
+vào ô khoá nào thì **cả vùng khoá liền kề đó** tan băng cùng lúc, và chìa khoá mất đi.
+
+Một màu bị khoá **toàn bộ** sẽ không được bánh xe phát ra (`shootableColors`) — phát viên đạn đó ra thì
+đúng là dead bullet mà `deadBulletPolicy` sinh ra để cấm — và nó quay lại bánh xe ngay khi khoá mở.
+
+**Wind.** `wind: { everyMs, direction, strength }` trong level. Cứ `everyMs` một lần, gió đẩy mọi hạt
+cát rời sang ngang `strength` ô rồi trả board về đúng solver rơi cũ — nên cát bị thổi khỏi mép vẫn rơi
+y như cát vẫn rơi. Cát khoá không nhúc nhích; chìa khoá thì có, nên gió tự nó có thể mở một ổ khoá.
+Gió **không tiêu lượt** và không bao giờ làm thua, vì ngân sách chỉ động khi người chơi bắn.
+
+Đồng hồ nằm ở engine chứ không ở rules — `sand-rules.ts` vẫn không có đồng hồ. Engine cũng không bao
+giờ cho gió nổi giữa lúc đạn đang bay: board người chơi ngắm phải là board viên đạn hạ xuống (§21).
+
+Một lưu ý khi tự vẽ level có khoá: cát chỉ đứng yên khi mỗi cột mép cao hơn cột bên cạnh **tối đa 1 ô**,
+nên một khối vuông đặt trên một slab hẹp sẽ lăn khỏi sườn của chính nó ở frame đầu. Nút chặn của
+`Lock & Key` thụt vào một ô mỗi tầng vì lý do đó, không phải để cho đẹp.
+
+Hai level thử: `Lock & Key` và `Crosswind` trong `sand-levels.ts`. Editor vẽ được cả hai — nút
+`❄ Locked` là *modifier của cọ* (khoá là một trạng thái của màu, nên phải vẽ bằng một màu), nút `Key`
+là một tool riêng, và mục **Wind** ở panel settings.
+
 ## Policy tạm — Open Decision chưa chốt
 
 Mọi điểm brief để mở đều nằm trong config với hậu tố `_TEMP`, không hardcode rải rác trong solver.

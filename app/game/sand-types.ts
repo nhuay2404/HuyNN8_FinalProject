@@ -6,7 +6,14 @@
 // decide what a cell *is*. Z exists in the scene for the frame, the cannon and
 // perspective only — never as a second layer of puzzle.
 
-/** Palette letters used by the authored picture: R G Y B P O — see SAND_COLOR_BY_LETTER. */
+/**
+ * Palette letters used by the authored picture: R G Y B P O.
+ *
+ * The same letter in lower case is that colour LOCKED, and `K` is a key cell —
+ * see `SAND_COLOR_BY_LETTER` and `KEY_LETTER`. Both survive
+ * `expandLevelForPixelBoard` untouched, because expansion only ever repeats
+ * letters.
+ */
 export type SandColor = "red" | "green" | "yellow" | "blue" | "purple" | "orange";
 
 export const SAND_COLORS: readonly SandColor[] = [
@@ -37,6 +44,74 @@ export type SandBody = {
 export type SandFrame = {
   width: number;
   height: number;
+};
+
+// ---- map mechanics -------------------------------------------------------
+// Two experiments, both authored as data rather than as code paths: a level
+// that uses neither reads and runs exactly as it did before they existed.
+
+/**
+ * Which way a gust crosses the frame.
+ *
+ * Only the two horizontal directions. A vertical gust is either gravity, which
+ * the settle solver already is, or the opposite of it — and sand that flies
+ * upward stops being sand.
+ */
+export type WindDirection = "left" | "right";
+
+/**
+ * The part of the frame a phase of wind reaches, in blueprint cells.
+ *
+ * `x`/`y` are the bottom-left corner, the same way the grid counts. A phase
+ * with no zone reaches the whole frame — which is the common case, so it is
+ * spelled `null` rather than a rectangle the size of the board.
+ */
+export type WindZone = { x: number; y: number; width: number; height: number };
+
+/**
+ * One leg of a level's weather.
+ *
+ * Wind blows for `durationMs`, then the air is still for `cooldownMs`, then the
+ * next phase takes over. A phase is a *stretch* of weather rather than a single
+ * gust: how long it lasts and how hard it pushes are separate dials, so "a long
+ * soft breeze" and "one hard slap" are different things an author can write.
+ */
+export type WindPhase = {
+  direction: WindDirection;
+  durationMs: number;
+  cooldownMs: number;
+  /** Cells one gust of this phase carries a loose grain, at blueprint scale. */
+  power: number;
+  /** null reaches the whole frame. */
+  zone: WindZone | null;
+};
+
+/**
+ * Weather for a level: a loop of phases.
+ *
+ * Timed in real milliseconds, so the pressure is on the player rather than on
+ * the turn — weather arrives whether or not they have taken their shot. The
+ * rules that move the sand stay clockless pure functions; only the engine owns
+ * the timer, and it never lets a gust land during a shot.
+ *
+ * The list runs in order and then round again, so one phase is a level that
+ * always blows the same way, and several are a pattern the player can learn.
+ */
+export type WindConfig = {
+  phases: WindPhase[];
+};
+
+/**
+ * A key, as the rigid pixel sprite it is drawn as.
+ *
+ * Keys do not settle grain by grain the way sand does. A key that scattered
+ * into its own pixels the first time it fell would stop reading as an object,
+ * and the mechanic is about an object arriving somewhere — so the whole shape
+ * moves or nothing does.
+ */
+export type SandKey = {
+  id: string;
+  cells: CellCoord[];
 };
 
 /**
@@ -144,6 +219,8 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * fraction of the picture.
    */
   pixelScale: number;
+  /** Still air when absent. */
+  wind?: WindConfig | null;
   notes?: string;
 };
 
@@ -172,6 +249,16 @@ export type SandGameState = {
   shotsUsed: number;
   /** Cells still in the frame. Win is this reaching zero. */
   remainingCells: number;
+  /**
+   * The cells still frozen, as a subset of the cells in `bodies`.
+   *
+   * Locked sand is sand: it has a colour, it fills a cell, it holds other sand
+   * up and it counts toward the win. It just cannot fall and cannot be shot
+   * out — which is exactly why a locked region hangs in mid-air.
+   */
+  locked: CellCoord[];
+  /** The keys still in the frame. Each opens the first lock it touches. */
+  keys: SandKey[];
   result: SandResult;
 };
 
@@ -198,9 +285,27 @@ export type SettleStep =
    * Bodies are re-derived from the settled grid, so the labels only become true
    * once the pouring is over. The renderer is told once, at the end.
    */
-  | { kind: "REINDEX"; assignment: Array<{ x: number; y: number; bodyId: string }> };
+  | { kind: "REINDEX"; assignment: Array<{ x: number; y: number; bodyId: string }> }
+  /**
+   * A key shifting by one cell, as a whole.
+   *
+   * A delta rather than a cell list: the renderer already knows where the key
+   * is, and a key is rigid, so one pair of numbers says everything that
+   * happened to it.
+   */
+  | { kind: "KEY_MOVE"; keyId: string; dx: number; dy: number }
+  /**
+   * A key reached a lock. The whole locked region thaws at once and the key is
+   * spent — `cells` is what stopped being frozen, so the renderer can flash
+   * exactly the sand that just came free.
+   */
+  | { kind: "UNLOCK"; keyId: string; cells: CellCoord[] };
 
 export type SettleOutcome = {
   bodies: SandBody[];
   steps: SettleStep[];
+  /** What is still frozen once everything has come to rest. */
+  locked: CellCoord[];
+  /** The keys that have not been spent. */
+  keys: SandKey[];
 };

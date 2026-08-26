@@ -3062,3 +3062,127 @@ Vài quyết định đáng ghi:
 **Kiểm tra:** 56/56 test pass (thay đổi thuần HUD, không đụng luật). Xác nhận trực tiếp trên preview
 sau 7 phát bắn: HUD chỉ còn `SHOTS 20`; bốn thanh đọc GREEN 18% (rộng 10,9px), YELLOW 15% (10,6px),
 BLUE 46% (14,1px), ORANGE 0% (9px) — bề dày tăng đúng theo mức fill.
+
+---
+
+## 39. Home screen trở lại, với bức tranh pixel thay cho khối lập phương xoay (26/08)
+
+Bản pivot ở mục 35 bỏ luôn menu hub của kiến trúc cũ — game vào thẳng màn chơi. Dựng lại home screen
+theo đúng hình dạng cũ (`hub-screen` / `hub-tap` / `hub-level-name` / `TAP TO PLAY`, kể cả keyframes
+`hub-enter` và `hub-play-pulse`), nhưng đổi phần trung tâm: trước là một khối lập phương 3D xoay tại
+chỗ, giờ là **chính bức tranh pixel của level**.
+
+Điểm mấu chốt về mặt kiến trúc: home screen **không vẽ đè** lên scene, nó *đóng khung* scene. Không có
+canvas hay ảnh thumbnail riêng nào được dựng cho màn hình này — thứ người chơi nhìn thấy ở giữa là
+scene three.js thật, đang render bức tranh trong khung của nó, chỉ là không được chơi. Thêm
+`setIdle(boolean)` vào `SandCannonEngine` để nói đúng điều đó: khác với `pause()` của tab bị ẩn,
+`setIdle(true)` vẫn để scene được render (vì tranh chính là artwork của home screen), chỉ dừng phần
+*chơi* — không tick, không ngắm, và gỡ luôn crosshair khỏi một màn hình chẳng có gì để nhắm.
+
+Thanh nút dưới đáy, trái sang phải: **Shop · Skin · Home · Gallery · Customize**. Trong đó:
+
+- **Home** là chính màn hình này — chạm bất kỳ đâu để vào chơi.
+- **Gallery** là thật: liệt kê mọi level kèm thumbnail pixel dựng từ `level.rows` của **blueprint gốc**
+  (không phải board đã mở rộng — mở rộng trước rồi render sẽ tốn hàng trăm ô cho mỗi thumbnail để hiện
+  đúng bức ảnh đó). Chọn một bức thì home screen đổi sang bức đó ở trạng thái chưa chơi.
+- **Shop / Skin / Customize** chưa có gì đằng sau. Chúng mở một panel nói rõ mục đó dùng để làm gì và
+  **"Not built yet"** — thanh nút được yêu cầu dựng bây giờ, còn nội dung thì chưa tồn tại, nên chúng
+  nói thẳng thay vì giả vờ.
+
+Vài chi tiết đi kèm: nút `⌂` được thêm vào cột công cụ trong màn chơi và một nút `Home` vào màn kết
+quả, để có đường về; về home luôn dựng lại board sạch, vì home screen hứa hẹn bức tranh *như lúc được
+vẽ ra*. HUD và cột công cụ bị `hidden` khi đang ở home — không cái nào trong đó là sự thật trước khi
+level thực sự bắt đầu. Khi một mục đang mở, nền không phải backdrop bấm-xuyên-qua mà là một nút đóng
+mục đó, để chạm ra ngoài không khởi động một level người chơi chưa hề chọn. Handler `visibilitychange`
+nay cũng xét `playing`: một tab quay lại không được trao quyền điều khiển cho người đang nhìn menu.
+
+**Kiểm tra:** 56/56 test pass, lint sạch, `npx tsc` không lỗi mới. Xác nhận trực tiếp trên preview:
+home screen hiện tên level, tranh pixel và thanh 5 nút với Home đang active; Gallery liệt kê đúng 3
+level kèm thumbnail và đánh dấu level đang chọn; Shop mở panel placeholder đúng nội dung; chạm play thì
+HUD + cột công cụ hiện ra và engine bỏ trạng thái idle — đo được `paused: true` lúc ở home và
+`paused: false` 60ms sau khi chạm, thao tác ngắm bắt đầu bình thường ngay sau đó.
+
+*(Ghi chú môi trường: preview pane của công cụ tự động báo `document.hidden === true` giữa các lệnh,
+nên handler tab-ẩn pause engine liên tục và `requestAnimationFrame` gần như không chạy. Đây là hành vi
+đúng của game, không phải lỗi — chỉ cần biết khi test bằng automation.)*
+
+---
+
+## 40. Hai map mechanic để playtest: Lock & Key, và gió (26/08)
+
+Cả hai được cài **hoàn toàn bằng data của level**, không phải nhánh code song song. Một level không
+dùng tới chúng đọc và chạy y hệt như trước khi chúng tồn tại, và cả hai vẫn nằm trong đúng
+`RADIUS_GAMEPLAY` cũ.
+
+### Lock & Key
+
+Bảng chữ cái của tranh được mở rộng theo cách không tốn thêm kênh dữ liệu nào: **chữ thường là cát bị
+khoá** (`p` là tím đóng băng), **`K` là chìa khoá**. Cả hai sống sót qua `expandLevelForPixelBoard`
+nguyên vẹn vì bước mở rộng chỉ nhân bản chữ cái.
+
+Cát khoá **vẫn là cát**: có màu, chiếm ô, đỡ cát khác và tính vào điều kiện thắng. Nó chỉ không rơi và
+không bị đĩa bắn nhìn thấy (`cellsInRadius` nhận thêm tham số `frozen` và loại hẳn chúng ra — cát khoá
+không phải mục tiêu cứng mà là thứ đĩa *không thấy*, nên bắn vào ổ khoá vẫn hút được cát rời cùng màu
+xung quanh). Vì không rơi nên nó lơ lửng giữa khung, đúng yêu cầu.
+
+Chìa khoá là một **sprite pixel cứng**, không phải hạt cát: cả khối cùng di chuyển hoặc không ai đi.
+Một chìa khoá vỡ vụn thành từng pixel ở lần rơi đầu tiên thì không còn đọc ra là một vật thể, mà cơ chế
+này nói về việc một vật thể *đến được một chỗ*. Chạm vào ô khoá nào thì **cả vùng khoá liền kề** tan
+băng cùng lúc — mở nửa vùng sẽ đọc thành "chìa khoá trượt" — và chìa khoá mất đi.
+
+Solver được viết lại quanh một `World` dùng chung (`sand-rules.ts`): mỗi vòng chạy lần lượt *cát rơi →
+chìa khoá rơi → kiểm tra mở khoá*, lặp tới khi đứng yên. Ba thứ này nuôi nhau nên không thể chạy tuần tự
+tách rời: cát rơi làm chìa khoá tụt xuống, chìa khoá tụt xuống mở ổ khoá, ổ khoá mở ra là một đống cát
+mới không còn gì đỡ. Hai `SettleStep` mới, `KEY_MOVE` và `UNLOCK`, để renderer phát lại đúng thứ tự đó.
+
+**Sửa kèm một lỗ hổng luật:** một màu bị khoá *toàn bộ* mà vẫn được bánh xe phát ra thì đúng là dead
+bullet mà `deadBulletPolicy` sinh ra để cấm. `shootableColors` nay chỉ tính màu còn ít nhất một hạt
+chưa khoá, và `advanceQueue` cho màu đó **quay lại** bánh xe ngay khi khoá mở — nếu chỉ biết loại bỏ thì
+màu vừa được giải phóng sẽ vĩnh viễn không có đạn để bắn.
+
+### Gió
+
+`wind: { everyMs, direction, strength }` trên level. Một cơn gió đẩy mọi hạt cát rời sang ngang
+`strength` ô (quét từ mép xuôi gió vào, nếu không cát dồn cục), rồi trả board thẳng về **đúng solver rơi
+cũ** — nên cát bị thổi khỏi mép rơi y như cát vẫn rơi, và level có gió vẫn đoán trước được hệt như level
+không gió. Cát khoá không nhúc nhích. Chìa khoá thì có, nên gió tự nó có thể mở một ổ khoá — có test
+khoá đúng hành vi đó.
+
+Gió **không tiêu lượt** và không bao giờ làm thua: ngân sách chỉ động khi người chơi bắn. Đồng hồ nằm ở
+engine chứ không ở rules (`sand-rules.ts` vẫn đúng lời hứa "không có đồng hồ"), và engine không bao giờ
+cho gió nổi giữa lúc đạn đang bay hay cát đang rơi — board người chơi ngắm phải là board viên đạn hạ
+xuống, đúng thứ §21 sinh ra để bảo vệ. Bộ đếm vẫn chạy trong lúc đó, nên cơn gió bị hoãn sẽ đến ngay khi
+board thuộc về người chơi trở lại.
+
+### Trình bày và editor
+
+Cát khoá được vẽ phủ sương băng thở nhẹ ~0,55 Hz (cả vùng thở như một tấm, không phải từng hạt lấp lánh)
+và giữ nguyên màu gốc bên dưới, vì màu đó là thứ bánh xe phải chuẩn bị đạn cho. Chìa khoá vẽ màu vàng
+kim — không màu nào trong palette là vàng kim — và vẽ **sau cùng**, để chìa khoá nằm trong hốc không bị
+cát lấp mất. Mở khoá thì loé trắng rồi trở về màu thật.
+
+Editor: nút `❄ Locked` là **modifier của cọ** chứ không phải tool riêng (khoá là một *trạng thái của
+một màu*, nên phải vẽ bằng một màu), `Key` là tool riêng, và có mục **Wind** trong panel settings.
+Validate và "settle" của editor nay đều nhận lock/key, nếu không một slab đứng yên *vì bị khoá* sẽ bị
+báo nhầm là đang sụp. Thêm hai luật author: khoá mà không có chìa là **error** (cát đó không bao giờ
+giải phóng được), chìa mà không có khoá là warning.
+
+### Hai lỗi thật tìm được khi playtest
+
+1. **Gió thổi ngay trên home screen.** Effect `setIdle` chỉ phụ thuộc `[playing, runId]`, nên khi engine
+   bị dựng lại vì một lý do khác thì engine mới không bao giờ được báo là đang idle — và nó chạy tiếp
+   sau màn hình chính, tự thổi bay bức tranh của chính nó. Sửa bằng cách bỏ `engineRef` và giữ engine
+   trong **state**, để chính instance engine làm dependency: một engine mới luôn được báo, ngay trong
+   commit nó xuất hiện. (Ref không thể làm dependency — đó chính là cái bẫy.)
+2. **`4% cleared` ngay khi mở màn Lock & Key.** `startingCells` đếm mọi ký tự khác `.`, nên hai ô chìa
+   khoá bị tính là cát trong mẫu số nhưng không bao giờ nằm ở tử số.
+
+Nhân tiện bọc `setPointerCapture` của canvas editor trong try/catch, giống hệt lý do engine đã làm từ
+trước: capture ném lỗi với con trỏ trình duyệt không theo dõi, và mất cả nét vẽ vì chuyện đó thì không
+đáng.
+
+**Kiểm tra:** 71/71 test pass (thêm `tests/sand-mechanics.test.ts`, 15 test mới, và đưa file này vào
+`npm test`); lint sạch; `npx tsc` không lỗi mới. Xác nhận trực tiếp trên preview: `Lock & Key` — bắn nút
+chặn vàng → chìa khoá rơi → slab tan băng → tím đổ xuống sàn **và viên đạn tím xuất hiện trên ray**;
+`Crosswind` — cảnh báo "Gust incoming →", đống cát dịch dần sang phải qua từng cơn, `SHOTS` không đổi;
+home screen của cả hai đứng yên hoàn toàn.

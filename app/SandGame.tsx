@@ -5,7 +5,13 @@ import Link from "next/link";
 import { SandCannonEngine, SAND_COLOR_HEX, type SandEngineEvent } from "./game/SandCannonEngine";
 import { BUILT_IN_LEVELS } from "./game/sand-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
-import { ammoRemaining, createSandGameState, expandLevelForPixelBoard, SAND_COLOR_BY_LETTER } from "./game/sand-rules";
+import {
+  ammoRemaining,
+  createSandGameState,
+  expandLevelForPixelBoard,
+  KEY_LETTER,
+  SAND_COLOR_BY_LETTER,
+} from "./game/sand-rules";
 import { SAND_COLORS, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 
@@ -24,6 +30,99 @@ function hex(color: SandColor) {
 
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
 const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
+
+/**
+ * The home screen's bottom bar, left to right.
+ *
+ * `home` and `gallery` are real: one is the screen itself, the other picks the
+ * level the screen is showing. The other three are named here because the bar
+ * they belong to is being built now, but nothing behind them exists yet — they
+ * say so when opened rather than pretending.
+ */
+const HUB_TABS = ["shop", "skin", "home", "gallery", "customize"] as const;
+type HubTab = (typeof HUB_TABS)[number];
+
+const HUB_TAB_NAME: Record<HubTab, string> = {
+  shop: "Shop",
+  skin: "Skin",
+  home: "Home",
+  gallery: "Gallery",
+  customize: "Customize",
+};
+
+/** What each unbuilt section is for, so the placeholder is not just an apology. */
+const HUB_TAB_BLURB: Record<HubTab, string> = {
+  shop: "Where bundles and shot refills would be bought.",
+  skin: "Where the cannon's finish would be chosen.",
+  home: "",
+  gallery: "",
+  customize: "Where the frame, the sand texture and the board's colours would be set.",
+};
+
+/** Line art, one path set per tab, drawn in currentColor so the active tab tints it. */
+function HubIcon({ tab }: { tab: HubTab }) {
+  return (
+    <svg className="hub-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {tab === "shop" && (
+        <>
+          <path d="M4.6 7.5h14.8l-1.2 12H5.8z" />
+          <path d="M8.8 9.4V6.6a3.2 3.2 0 0 1 6.4 0v2.8" />
+        </>
+      )}
+      {tab === "skin" && (
+        <>
+          <path d="M12 3.6c4.2 0 6.6 2.2 6.6 5 0 2.2-1.7 2.9-3 2.9h-1.4c-1 0-1.8.7-1.8 1.7 0 .5.2.9.5 1.3.3.4.5.8.5 1.3 0 1-.8 1.8-1.9 1.8-3.8 0-6.9-3.1-6.9-7s3-7 7.4-7Z" />
+          <circle cx="9" cy="8.6" r="1.1" />
+          <circle cx="14.4" cy="7.4" r="1.1" />
+        </>
+      )}
+      {tab === "home" && (
+        <>
+          <path d="M4.4 10.6 12 4.4l7.6 6.2" />
+          <path d="M6.4 12v7.6h11.2V12" />
+        </>
+      )}
+      {tab === "gallery" && (
+        <>
+          <rect x="4" y="5.2" width="16" height="13.6" rx="2" />
+          <path d="M4.6 15.2 9 11.2l3.4 3 2.6-2.2 4.4 3.6" />
+          <circle cx="8.9" cy="8.9" r="1.2" />
+        </>
+      )}
+      {tab === "customize" && (
+        <>
+          <path d="M5 8h14M5 16h14" />
+          <circle cx="10" cy="8" r="2.1" />
+          <circle cx="15" cy="16" r="2.1" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * A level's picture at postage-stamp size.
+ *
+ * Drawn from the authored blueprint rather than the expanded pixel board: the
+ * blueprint is what the picture IS, and expanding it first would render
+ * hundreds of cells per thumbnail to show the same image.
+ */
+function PixelThumb({ level }: { level: SandLevelConfig }) {
+  return (
+    <span
+      className="pixel-thumb"
+      style={{ "--cols": level.frame.width } as React.CSSProperties}
+      aria-hidden="true"
+    >
+      {level.rows.flatMap((row, y) =>
+        [...row].map((letter, x) => {
+          const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
+          return <i key={`${x}-${y}`} style={color ? { background: hex(color) } : undefined} />;
+        }),
+      )}
+    </span>
+  );
+}
 
 type Toast = { id: number; text: string; tone: "warn" | "good" };
 
@@ -89,7 +188,16 @@ export default function SandGame() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const aimZoneRef = useRef<HTMLDivElement | null>(null);
   const crosshairRef = useRef<HTMLSpanElement | null>(null);
-  const engineRef = useRef<SandCannonEngine | null>(null);
+  /**
+   * State, not a ref.
+   *
+   * Everything that has to be told about the engine — above all whether it is
+   * idle — depends on *which* engine it is. A ref cannot be a dependency, so
+   * an effect watching one silently skips a rebuilt engine, and a rebuilt
+   * engine that never heard "you are idle" comes up playing behind the home
+   * screen.
+   */
+  const [engine, setEngine] = useState<SandCannonEngine | null>(null);
 
   const boot = useSyncExternalStore(noopSubscribe, readBoot, () => SERVER_BOOT);
   const playables = boot.playables;
@@ -110,6 +218,9 @@ export default function SandGame() {
   const [state, setState] = useState<SandGameState>(() => createSandGameState(level));
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<number | null>(null);
+  // The game opens on the home screen, the way it did before the pivot.
+  const [playing, setPlaying] = useState(false);
+  const [tab, setTab] = useState<HubTab>("home");
 
   const pushToast = useCallback((text: string, tone: Toast["tone"]) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -138,12 +249,23 @@ export default function SandGame() {
           // and the player has to be told, or a missing shot is the only clue.
           pushToast(event.hitFrame ? "Hit the frame — no shot spent" : "Missed the frame — no shot spent", "warn");
           break;
+        case "UNLOCKED":
+          pushToast("Lock opened — the sand is free", "good");
+          break;
+        case "WIND_INCOMING":
+          // Ahead of the wind, not with it: a warning that arrives at the same
+          // moment as the sand it is warning about is not a warning.
+          pushToast(event.direction === "right" ? "Wind picking up →" : "← Wind picking up", "warn");
+          break;
+        case "WIND_END":
+          pushToast("The air is still", "good");
+          break;
         default:
           break;
       }
     };
 
-    const engine = new SandCannonEngine(host, aimZone, crosshair, level, {
+    const built = new SandCannonEngine(host, aimZone, crosshair, level, {
       onState: setState,
       onEvent,
       onFirstFrame: () => {
@@ -151,28 +273,45 @@ export default function SandGame() {
         finishLoading();
       },
     });
-    engineRef.current = engine;
+    setEngine(built);
     return () => {
-      engine.dispose();
-      engineRef.current = null;
+      built.dispose();
+      setEngine((current) => (current === built ? null : current));
     };
   }, [level, runId, pushToast]);
 
+  // The scene is the home screen's artwork as well as the board, so it is never
+  // torn down — it is only told whether it is being played. `engine` is a
+  // dependency so that a rebuilt one is told too, on the commit it appears.
+  useEffect(() => {
+    engine?.setIdle(!playing);
+  }, [engine, playing]);
+
   useEffect(() => {
     const onVisibility = () => {
-      const engine = engineRef.current;
       if (!engine) return;
-      if (document.hidden) engine.pause();
+      // A tab coming back must not hand control to a player looking at a menu.
+      if (document.hidden || !playing) engine.pause();
       else engine.resume();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+  }, [engine, playing]);
 
   const restart = useCallback(() => {
     setState(createSandGameState(level));
     setToast(null);
     setRunId((id) => id + 1);
+  }, [level]);
+
+  const goHome = useCallback(() => {
+    // Back to a fresh board, not to the half-played one: the home screen shows
+    // the picture as it was authored, and that is what "tap to play" promises.
+    setState(createSandGameState(level));
+    setToast(null);
+    setRunId((id) => id + 1);
+    setPlaying(false);
+    setTab("home");
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -182,13 +321,25 @@ export default function SandGame() {
     setRunId((id) => id + 1);
   }, [playables]);
 
+  /** Picking from the gallery shows that picture on the home screen, unplayed. */
+  const pickFromGallery = useCallback((index: number) => {
+    openLevel(index);
+    setPlaying(false);
+    setTab("home");
+  }, [openLevel]);
+
   const remaining = ammoRemaining(level, state);
   const busy = BUSY_PHASES.has(state.phase);
   // Measured against the sand this level actually started with, not the area of
   // the frame. A picture that does not fill its frame — which an editor level
   // need not — would otherwise open at "69% cleared" before a shot was fired.
+  // The key is not sand — it is never cleared and never counted, so counting it
+  // here would open every lock level at "4% cleared" before a shot was fired.
   const startingCells = useMemo(
-    () => level.rows.reduce((total, row) => total + [...row].filter((letter) => letter !== ".").length, 0),
+    () => level.rows.reduce(
+      (total, row) => total + [...row].filter((letter) => letter !== "." && letter !== KEY_LETTER).length,
+      0,
+    ),
     [level],
   );
   const cleared = startingCells === 0
@@ -233,8 +384,10 @@ export default function SandGame() {
   return (
     <main className="page-shell">
       <div className="game-frame">
-        {/* §22, top to bottom: ammo, the 3D frame, then the cannon and its aim zone. */}
-        <header className="hud-top">
+        {/* §22, top to bottom: ammo, the 3D frame, then the cannon and its aim
+            zone. Hidden on the home screen — none of it is true until a level
+            has actually been started. */}
+        <header className="hud-top" hidden={!playing}>
           <div className="ammo-row">
             {/* One bar per colour in the picture, filling as that colour leaves
                 the frame. The cannon model itself now carries the bullet in
@@ -309,7 +462,10 @@ export default function SandGame() {
           )}
         </div>
 
-        <div className="game-tools">
+        <div className="game-tools" hidden={!playing}>
+          <button type="button" className="icon-button" onClick={goHome} aria-label="Back to the home screen" title="Home">
+            ⌂
+          </button>
           <Link className="icon-button" href="/editor" aria-label="Open the level editor" title="Level editor">
             ✎
           </Link>
@@ -317,6 +473,80 @@ export default function SandGame() {
             ⟲
           </button>
         </div>
+
+        {/* The home screen. It does not cover the picture, it frames it: the
+            scene underneath is still the level's own pixel painting, sitting
+            idle in its frame, which is what the player is choosing to play. */}
+        {!playing && (
+          <div className="hub-screen" role="group" aria-label="Home screen">
+            {tab === "home" ? (
+              <button
+                className="hub-tap"
+                type="button"
+                onClick={() => setPlaying(true)}
+                aria-label={`Play ${level.name}`}
+              >
+                <span className="hub-play-hint"><span>TAP TO PLAY</span></span>
+              </button>
+            ) : (
+              // Not a click-through backdrop: while a section is open, tapping
+              // anywhere off it goes back to the picture rather than starting a
+              // level the player never chose.
+              <button
+                className="hub-scrim"
+                type="button"
+                onClick={() => setTab("home")}
+                aria-label={`Close ${HUB_TAB_NAME[tab]}`}
+              />
+            )}
+
+            <h2 className="hub-level-name">{level.name}</h2>
+
+            {tab === "gallery" && (
+              <div className="hub-panel" role="group" aria-label="Gallery">
+                <h3>Gallery</h3>
+                <div className="hub-gallery">
+                  {playables.map((entry, index) => (
+                    <button
+                      key={entry.level.id}
+                      type="button"
+                      className={index === levelIndex ? "is-active" : ""}
+                      onClick={() => pickFromGallery(index)}
+                      aria-current={index === levelIndex ? "true" : undefined}
+                      title={entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name}
+                    >
+                      <PixelThumb level={entry.level} />
+                      <b>{entry.level.name}</b>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tab !== "home" && tab !== "gallery" && (
+              <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
+                <h3>{HUB_TAB_NAME[tab]}</h3>
+                <p>{HUB_TAB_BLURB[tab]}</p>
+                <p className="hub-panel-note">Not built yet.</p>
+              </div>
+            )}
+
+            <nav className="hub-nav" aria-label="Sections">
+              {HUB_TABS.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  className={entry === tab ? "is-active" : ""}
+                  onClick={() => setTab(entry)}
+                  aria-current={entry === tab ? "page" : undefined}
+                >
+                  <HubIcon tab={entry} />
+                  <span>{HUB_TAB_NAME[entry]}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
+        )}
 
         {state.result && (
           <div className="result-screen" role="dialog" aria-modal="true">
@@ -327,9 +557,14 @@ export default function SandGame() {
                   ? `Every grain gone with ${remaining} shot${remaining === 1 ? "" : "s"} to spare.`
                   : `${cleared}% cleared — ${state.remainingCells} grains still in the frame.`}
               </p>
-              <button type="button" onClick={restart}>
-                Play again
-              </button>
+              <div className="result-actions">
+                <button type="button" onClick={restart}>
+                  Play again
+                </button>
+                <button type="button" className="is-quiet" onClick={goHome}>
+                  Home
+                </button>
+              </div>
             </div>
           </div>
         )}

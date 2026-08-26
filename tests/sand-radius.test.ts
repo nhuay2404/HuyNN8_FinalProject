@@ -282,6 +282,9 @@ test("replaying the step list by hand reproduces the settled board", () => {
       }
       continue;
     }
+    // This level has no locks or keys, so nothing but sand should ever move.
+    assert.equal(step.kind, "GRAIN_PASS", `unexpected ${step.kind} on a level with no fixtures`);
+    if (step.kind !== "GRAIN_PASS") continue;
     for (const move of step.moves) {
       const cell = live.get(cellKey(move.from.x, move.from.y));
       assert.ok(cell, "a GRAIN_PASS move named a cell that is not on the board");

@@ -6,6 +6,7 @@ import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
 import {
   EMPTY_CELL,
+  KEY_LETTER,
   LETTER_BY_SAND_COLOR,
   MAX_HEIGHT,
   MAX_PIXEL_SCALE,
@@ -18,8 +19,12 @@ import {
   createDraft,
   draftToLevel,
   draftToTypeScript,
+  defaultWindPhase,
   effectivePixelScale,
+  fixtureCounts,
   loadDrafts,
+  lockedLetter,
+  readCell,
   resizeDraft,
   saveDrafts,
   settleDraft,
@@ -27,10 +32,10 @@ import {
   validateDraft,
   type LevelDraft,
 } from "./game/level-drafts";
-import { SAND_COLORS, type SandColor } from "./game/sand-types";
+import { SAND_COLORS, type SandColor, type WindConfig, type WindPhase } from "./game/sand-types";
 import { finishLoading } from "./loading-screen";
 
-type Tool = "brush" | "eraser" | "bucket";
+type Tool = "brush" | "eraser" | "bucket" | "key";
 
 const COLOR_NAME: Record<SandColor, string> = {
   red: "Red",
@@ -43,6 +48,25 @@ const COLOR_NAME: Record<SandColor, string> = {
 
 function hex(color: SandColor) {
   return `#${SAND_COLOR_HEX[color].toString(16).padStart(6, "0")}`;
+}
+
+/** The key's gold, matching what the engine paints on the board. */
+const KEY_HEX = "#ffd654";
+
+/** Replace one phase of a wind loop, leaving the rest of the list alone. */
+function editWindPhase(wind: WindConfig | null | undefined, index: number, patch: Partial<WindPhase>) {
+  if (!wind) return wind ?? null;
+  return { phases: wind.phases.map((phase, at) => (at === index ? { ...phase, ...patch } : phase)) };
+}
+
+/** Move one phase up or down the loop. Order is the whole point of a loop. */
+function moveWindPhase(wind: WindConfig | null | undefined, index: number, delta: number) {
+  if (!wind) return wind ?? null;
+  const target = index + delta;
+  if (target < 0 || target >= wind.phases.length) return wind;
+  const phases = [...wind.phases];
+  [phases[index], phases[target]] = [phases[target], phases[index]];
+  return { phases };
 }
 
 /** Reading a cell out of the row strings, and writing one back. */
@@ -119,6 +143,10 @@ export default function LevelEditor() {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const selectedId = pickedId ?? drafts[0]?.id ?? null;
   const [tool, setTool] = useState<Tool>("brush");
+  /** Whether the brush lays sand down frozen. A modifier, not a tool. */
+  const [locking, setLocking] = useState(false);
+  /** Which wind phase's zone is drawn over the picture. */
+  const [phaseIndex, setPhaseIndex] = useState(0);
   const [color, setColor] = useState<SandColor>("blue");
   const [analysis, setAnalysis] = useState<LevelAnalysis | null>(null);
   const [analysing, setAnalysing] = useState(false);
@@ -223,19 +251,30 @@ export default function LevelEditor() {
   }, [draft]);
 
   const paintAt = useCallback((x: number, y: number, record: boolean) => {
-    const letter = tool === "eraser" ? EMPTY_CELL : LETTER_BY_SAND_COLOR[color];
+    const letter = tool === "eraser"
+      ? EMPTY_CELL
+      : tool === "key"
+        ? KEY_LETTER
+        : locking ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
     update((current) => {
       const rows = tool === "bucket"
         ? bucketFill(current.rows, current.width, current.height, x, y, letter)
         : withCell(current.rows, x, y, current.height, letter);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, update]);
+  }, [tool, color, locking, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
     if (!cell) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // Capture throws on a pointer the browser is not tracking, and losing the
+    // whole stroke to that is not worth it: without capture a drag simply stops
+    // following a finger that leaves the canvas.
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Not capturable — carry on with the stroke.
+    }
     painting.current = true;
     paintAt(cell.x, cell.y, true);
   };
@@ -269,11 +308,32 @@ export default function LevelEditor() {
 
     for (let row = 0; row < draft.height; row += 1) {
       for (let x = 0; x < draft.width; x += 1) {
-        const letter = draft.rows[row]?.[x] ?? EMPTY_CELL;
-        const entry = SAND_COLORS.find((candidate) => LETTER_BY_SAND_COLOR[candidate] === letter);
-        if (!entry) continue;
-        context.fillStyle = hex(entry);
-        context.fillRect(x * cellPx, row * cellPx, cellPx, cellPx);
+        const cell = readCell(draft.rows[row]?.[x] ?? EMPTY_CELL);
+        if (cell.kind === "empty") continue;
+        const left = x * cellPx;
+        const top = row * cellPx;
+
+        if (cell.kind === "key") {
+          context.fillStyle = KEY_HEX;
+          context.fillRect(left, top, cellPx, cellPx);
+          continue;
+        }
+
+        context.fillStyle = hex(cell.color);
+        context.fillRect(left, top, cellPx, cellPx);
+        if (!cell.locked) continue;
+        // Frost over the colour, so a locked cell still says which colour it
+        // will be once it thaws — that is what the wheel has to cover.
+        context.fillStyle = "rgba(198,226,255,.5)";
+        context.fillRect(left, top, cellPx, cellPx);
+        context.strokeStyle = "rgba(255,255,255,.85)";
+        context.lineWidth = Math.max(1, cellPx * 0.08);
+        context.beginPath();
+        context.moveTo(left + cellPx * 0.28, top + cellPx * 0.28);
+        context.lineTo(left + cellPx * 0.72, top + cellPx * 0.72);
+        context.moveTo(left + cellPx * 0.72, top + cellPx * 0.28);
+        context.lineTo(left + cellPx * 0.28, top + cellPx * 0.72);
+        context.stroke();
       }
     }
 
@@ -292,7 +352,24 @@ export default function LevelEditor() {
       context.lineTo(canvas.width, row * cellPx + 0.5);
       context.stroke();
     }
-  }, [draft]);
+
+    // The selected wind phase's reach, over everything. Four numbers in a
+    // sidebar are impossible to picture; the rectangle on the drawing is not.
+    const zone = draft.wind?.phases[phaseIndex]?.zone;
+    if (!zone) return;
+    // Grid y counts up from the floor, canvas rows count down from the top.
+    const top = (draft.height - (zone.y + zone.height)) * cellPx;
+    const left = zone.x * cellPx;
+    const width = zone.width * cellPx;
+    const height = zone.height * cellPx;
+    context.fillStyle = "rgba(120,200,255,.14)";
+    context.fillRect(left, top, width, height);
+    context.strokeStyle = "rgba(150,215,255,.95)";
+    context.lineWidth = 2;
+    context.setLineDash([6, 4]);
+    context.strokeRect(left + 1, top + 1, width - 2, height - 2);
+    context.setLineDash([]);
+  }, [draft, phaseIndex]);
 
   // ---- derived -----------------------------------------------------------
 
@@ -300,6 +377,7 @@ export default function LevelEditor() {
   const errors = issues.filter((issue) => issue.severity === "error");
   const used = draft ? coloursUsed(draft) : [];
   const painted = draft ? countPaintedCells(draft) : 0;
+  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0 };
   const scale = draft ? effectivePixelScale(draft) : 1;
   const pixels = draft ? draft.width * draft.height * scale * scale : 0;
 
@@ -429,16 +507,30 @@ export default function LevelEditor() {
               ))}
             </div>
             <div className="editor-row">
-              {(["brush", "bucket", "eraser"] as Tool[]).map((entry) => (
+              {(["brush", "bucket", "eraser", "key"] as Tool[]).map((entry) => (
                 <button
                   key={entry}
                   type="button"
                   className={`editor-button${tool === entry ? " is-active" : ""}`}
                   onClick={() => setTool(entry)}
+                  title={entry === "key" ? "Paint the key that opens locked sand" : undefined}
                 >
-                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : "Eraser"}
+                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : entry === "eraser" ? "Eraser" : "Key"}
                 </button>
               ))}
+              {/* A modifier on the brush rather than a tool of its own: a lock
+                  is a state of a colour, so it has to be painted with one. */}
+              <button
+                type="button"
+                className={`editor-button${locking ? " is-active" : ""}`}
+                onClick={() => {
+                  setLocking((value) => !value);
+                  if (tool === "eraser" || tool === "key") setTool("brush");
+                }}
+                title="Paint this colour frozen: it hangs in the frame and cannot be shot until a key reaches it"
+              >
+                ❄ Locked
+              </button>
               <button type="button" className="editor-button" onClick={undo}>Undo</button>
               <button type="button" className="editor-button" onClick={redo}>Redo</button>
               <button
@@ -500,10 +592,204 @@ export default function LevelEditor() {
             </label>
           </div>
 
+          <h2>Wind</h2>
+          <p className="editor-note">
+            A loop of phases. Each one blows one way for a while, then leaves the air still, then
+            hands over to the next — and the list starts again. Frozen sand never moves; a key does,
+            so wind can open a lock on its own.
+          </p>
+          <label className="editor-check">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.wind)}
+              onChange={(event) => update((current) => ({
+                ...current,
+                wind: event.target.checked ? { phases: [defaultWindPhase()] } : null,
+              }))}
+            />
+            <span>This level has wind</span>
+          </label>
+
+          {draft.wind && (
+            <ol className="editor-phases">
+              {draft.wind.phases.map((phase, index) => (
+                <li
+                  key={index}
+                  className={index === phaseIndex ? "is-active" : ""}
+                  // Selecting a phase is what puts its zone on the canvas, so
+                  // the rectangle being edited is the one being looked at.
+                  onFocusCapture={() => setPhaseIndex(index)}
+                  onClick={() => setPhaseIndex(index)}
+                >
+                  <header>
+                    <b>Phase {index + 1}</b>
+                    <span className="editor-phase-summary">
+                      {phase.direction === "right" ? "→" : "←"} {(phase.durationMs / 1000).toFixed(1)}s
+                      {" · "}rest {(phase.cooldownMs / 1000).toFixed(1)}s
+                      {" · "}power {phase.power}
+                      {phase.zone ? " · zoned" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="editor-mini"
+                      disabled={index === 0}
+                      onClick={() => update((current) => ({ ...current, wind: moveWindPhase(current.wind, index, -1) }))}
+                      aria-label={`Move phase ${index + 1} earlier`}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="editor-mini"
+                      disabled={index === (draft.wind?.phases.length ?? 0) - 1}
+                      onClick={() => update((current) => ({ ...current, wind: moveWindPhase(current.wind, index, 1) }))}
+                      aria-label={`Move phase ${index + 1} later`}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="editor-mini"
+                      onClick={() => update((current) => ({
+                        ...current,
+                        wind: current.wind
+                          ? { phases: current.wind.phases.filter((_, at) => at !== index) }
+                          : current.wind,
+                      }))}
+                      aria-label={`Remove phase ${index + 1}`}
+                    >
+                      ✕
+                    </button>
+                  </header>
+
+                  <div className="editor-field-row">
+                    <label className="editor-field">
+                      <span>Blows</span>
+                      <select
+                        value={phase.direction}
+                        onChange={(event) => update((current) => ({
+                          ...current,
+                          wind: editWindPhase(current.wind, index, {
+                            direction: event.target.value === "left" ? "left" : "right",
+                          }),
+                        }))}
+                      >
+                        {/* Named for where the sand goes, which is what the
+                            field stores — labelling it by where the wind comes
+                            from would read as the opposite of the value. */}
+                        <option value="right">right →</option>
+                        <option value="left">← left</option>
+                      </select>
+                    </label>
+                    <label className="editor-field">
+                      <span>For (s)</span>
+                      <input
+                        type="number"
+                        min={0.2}
+                        max={30}
+                        step={0.2}
+                        value={phase.durationMs / 1000}
+                        onChange={(event) => update((current) => ({
+                          ...current,
+                          wind: editWindPhase(current.wind, index, {
+                            durationMs: Math.round(Number(event.target.value) * 1000),
+                          }),
+                        }))}
+                      />
+                    </label>
+                    <label className="editor-field">
+                      <span>Rest (s)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={60}
+                        step={0.2}
+                        value={phase.cooldownMs / 1000}
+                        onChange={(event) => update((current) => ({
+                          ...current,
+                          wind: editWindPhase(current.wind, index, {
+                            cooldownMs: Math.round(Number(event.target.value) * 1000),
+                          }),
+                        }))}
+                      />
+                    </label>
+                    <label className="editor-field">
+                      <span>Power</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={6}
+                        value={phase.power}
+                        onChange={(event) => update((current) => ({
+                          ...current,
+                          wind: editWindPhase(current.wind, index, {
+                            power: Math.max(1, Math.round(Number(event.target.value))),
+                          }),
+                        }))}
+                      />
+                    </label>
+                  </div>
+
+                  <label className="editor-check">
+                    <input
+                      type="checkbox"
+                      checked={phase.zone !== null}
+                      onChange={(event) => update((current) => ({
+                        ...current,
+                        wind: editWindPhase(current.wind, index, {
+                          zone: event.target.checked
+                            ? { x: 0, y: Math.floor(current.height / 2), width: current.width, height: Math.ceil(current.height / 2) }
+                            : null,
+                        }),
+                      }))}
+                    />
+                    <span>Only part of the frame</span>
+                  </label>
+
+                  {phase.zone && (
+                    <div className="editor-field-row">
+                      {(["x", "y", "width", "height"] as const).map((field) => (
+                        <label className="editor-field" key={field}>
+                          <span>{field === "x" ? "Left" : field === "y" ? "Bottom" : field === "width" ? "Wide" : "Tall"}</span>
+                          <input
+                            type="number"
+                            min={field === "x" || field === "y" ? 0 : 1}
+                            max={field === "x" || field === "width" ? draft.width : draft.height}
+                            value={phase.zone![field]}
+                            onChange={(event) => update((current) => ({
+                              ...current,
+                              wind: editWindPhase(current.wind, index, {
+                                zone: { ...phase.zone!, [field]: Math.max(0, Math.round(Number(event.target.value))) },
+                              }),
+                            }))}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              ))}
+              <li className="editor-phase-add">
+                <button
+                  type="button"
+                  className="editor-button"
+                  onClick={() => update((current) => ({
+                    ...current,
+                    wind: { phases: [...(current.wind?.phases ?? []), defaultWindPhase()] },
+                  }))}
+                >
+                  + Add phase
+                </button>
+              </li>
+            </ol>
+          )}
+
           <h2>Ammo wheel</h2>
           <p className="editor-note">
             Only colours you have painted can be loaded, and every painted colour has to be here —
-            otherwise that sand could never be shot at.
+            otherwise that sand could never be shot at. Frozen sand counts: it needs a bullet the
+            moment a key frees it.
+            {fixtures.locked > 0 && ` This picture has ${fixtures.locked} frozen cells and ${fixtures.keys} key cells.`}
           </p>
           <ol className="editor-queue">
             {draft.ammoQueue.map((entry, position) => (

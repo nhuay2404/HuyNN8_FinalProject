@@ -7,8 +7,15 @@
 // single place the two are joined, so a level tested in the editor and a level
 // pasted into `sand-levels.ts` cannot drift apart.
 
-import { parseSandLevel, runGrainSettle } from "./sand-rules.ts";
-import { RADIUS_GAMEPLAY, SAND_COLORS, type SandColor, type SandLevelConfig } from "./sand-types.ts";
+import { KEY_LETTER, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
+import {
+  RADIUS_GAMEPLAY,
+  SAND_COLORS,
+  type SandColor,
+  type SandLevelConfig,
+  type WindConfig,
+  type WindPhase,
+} from "./sand-types.ts";
 
 const STORAGE_KEY = "sand-cannon:v1:level-drafts";
 
@@ -37,6 +44,22 @@ export const LETTER_BY_SAND_COLOR: Record<SandColor, string> = {
 };
 
 export const EMPTY_CELL = ".";
+/** The key's letter, re-exported so the editor never has to spell it itself. */
+export { KEY_LETTER };
+
+/** The same colour, frozen. Lower case is the whole representation of a lock. */
+export function lockedLetter(color: SandColor) {
+  return LETTER_BY_SAND_COLOR[color].toLowerCase();
+}
+
+/** What a cell holds, for an editor that has to draw three different things. */
+export function readCell(letter: string): { kind: "empty" } | { kind: "key" }
+  | { kind: "sand"; color: SandColor; locked: boolean } {
+  if (letter === KEY_LETTER) return { kind: "key" };
+  const color = SAND_COLORS.find((entry) => LETTER_BY_SAND_COLOR[entry] === letter.toUpperCase());
+  if (!color) return { kind: "empty" };
+  return { kind: "sand", color, locked: letter === letter.toLowerCase() };
+}
 
 export type LevelDraft = {
   id: string;
@@ -50,6 +73,8 @@ export type LevelDraft = {
   shotLimit: number;
   /** null means "fit it to the pixel budget for me". */
   pixelScale: number | null;
+  /** null is still air. */
+  wind?: WindConfig | null;
   updatedAt: number;
 };
 
@@ -70,6 +95,11 @@ export function effectivePixelScale(draft: LevelDraft) {
   return draft.pixelScale ?? autoPixelScale(draft.width, draft.height);
 }
 
+/** A sensible phase to add when the author asks for one. Blows right, gently. */
+export function defaultWindPhase(): WindPhase {
+  return { direction: "right", durationMs: 2000, cooldownMs: 3500, power: 1, zone: null };
+}
+
 /** The editor's bounds, applied wherever a dimension enters the model. */
 export function clampDimensions(width: number, height: number) {
   return {
@@ -82,10 +112,27 @@ export function blankRows(width: number, height: number) {
   return Array.from({ length: height }, () => EMPTY_CELL.repeat(width));
 }
 
-/** Colours actually painted in the picture, in palette order. */
+/**
+ * Colours actually painted in the picture, in palette order.
+ *
+ * Locked sand counts. It is only frozen for now — the moment a key opens it,
+ * that colour needs a bullet, so it belongs in the wheel from the start.
+ */
 export function coloursUsed(draft: LevelDraft): SandColor[] {
   const present = new Set(draft.rows.join(""));
-  return SAND_COLORS.filter((color) => present.has(LETTER_BY_SAND_COLOR[color]));
+  return SAND_COLORS.filter((color) =>
+    present.has(LETTER_BY_SAND_COLOR[color]) || present.has(lockedLetter(color)));
+}
+
+/** Whether the picture has any frozen sand, and any key to open it with. */
+export function fixtureCounts(draft: LevelDraft) {
+  let locked = 0;
+  let keys = 0;
+  for (const letter of draft.rows.join("")) {
+    if (letter === KEY_LETTER) keys += 1;
+    else if (readCell(letter).kind === "sand" && letter === letter.toLowerCase()) locked += 1;
+  }
+  return { locked, keys };
 }
 
 export function countPaintedCells(draft: LevelDraft) {
@@ -144,6 +191,7 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     sortRadius: draft.sortRadius,
     shotLimit: draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
+    wind: draft.wind ? { ...draft.wind } : null,
   };
 }
 
@@ -206,17 +254,68 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
   }
 
   // A picture that is not already at rest slumps on the very first frame, so
-  // what the player sees is not what was drawn.
+  // what the player sees is not what was drawn. Locks and keys are handed to
+  // the solver here for the same reason the game hands them over: a slab that
+  // is only still because it is frozen must not be reported as slumping.
   const level = draftToLevel(draft, 0);
-  const { bodies } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame);
-  if (settled.steps.some((step) => step.kind === "GRAIN_PASS")) {
+  const { bodies, locked, keys } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys });
+  if (settled.steps.some((step) => step.kind !== "REINDEX")) {
     issues.push({
       severity: "warning",
       message: "This sand is not at rest — it will slump the moment the level loads, so the player will not see what you drew.",
       fix: "settle",
     });
   }
+
+  // The two ways a lock-and-key picture can be nonsense. A lock with no key is
+  // sand that can never be freed, which quietly makes the level unwinnable; a
+  // key with nothing to open is a prop the player will chase for no reason.
+  const fixtures = fixtureCounts(draft);
+  if (fixtures.locked && !fixtures.keys) {
+    issues.push({
+      severity: "error",
+      message: "There is locked sand but no key. That sand could never be freed, so the frame could never be cleared.",
+    });
+  }
+  if (fixtures.keys && !fixtures.locked) {
+    issues.push({
+      severity: "warning",
+      message: "There is a key but nothing locked for it to open.",
+    });
+  }
+
+  if (draft.wind && !draft.wind.phases.length) {
+    issues.push({
+      severity: "error",
+      message: "Wind is on but has no phases. Add one, or turn wind off.",
+    });
+  }
+  draft.wind?.phases.forEach((phase, index) => {
+    const label = `Wind phase ${index + 1}`;
+    if (phase.power < 1) {
+      issues.push({ severity: "error", message: `${label}: power has to be at least 1 cell, or its gusts move nothing.` });
+    }
+    if (phase.durationMs < 200) {
+      issues.push({ severity: "error", message: `${label}: it has to blow for at least 0.2s to do anything.` });
+    }
+    if (phase.cooldownMs < 600) {
+      issues.push({
+        severity: "warning",
+        message: `${label}: less than 0.6s of still air leaves the player almost no settled board to aim at.`,
+      });
+    }
+    const zone = phase.zone;
+    if (!zone) return;
+    const clipped = zone.x < 0 || zone.y < 0
+      || zone.x + zone.width > draft.width || zone.y + zone.height > draft.height;
+    if (clipped) {
+      issues.push({ severity: "warning", message: `${label}: its zone reaches outside the frame, so part of it does nothing.` });
+    }
+    if (zone.width < 1 || zone.height < 1) {
+      issues.push({ severity: "error", message: `${label}: an empty zone means the phase can never move anything.` });
+    }
+  });
 
   const pixels = draft.width * draft.height * effectivePixelScale(draft) ** 2;
   if (pixels > PIXEL_BUDGET * 1.6) {
@@ -229,22 +328,41 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
   return issues;
 }
 
-/** Drop the picture to rest, so the drawing and the opening board are the same. */
+/**
+ * Drop the picture to rest, so the drawing and the opening board are the same.
+ *
+ * Locks and keys are carried through the settle and written back where they
+ * ended up. A key that was floating lands, a frozen slab stays exactly where it
+ * was drawn — and if the key happened to reach the lock, the settle opens it,
+ * which is the honest answer: that level starts already unlocked.
+ */
 export function settleDraft(draft: LevelDraft): LevelDraft {
   const level = draftToLevel(draft, 0);
-  const { bodies } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame);
+  const { bodies, locked, keys } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys });
 
   const grid = new Map<string, SandColor>();
   for (const body of settled.bodies) {
     for (const cell of body.cells) grid.set(`${cell.x},${cell.y}`, body.color);
   }
+  const frozen = new Set(settled.locked.map((cell) => `${cell.x},${cell.y}`));
+  const keyCells = new Set(settled.keys.flatMap((key) => key.cells.map((cell) => `${cell.x},${cell.y}`)));
+
   const rows = Array.from({ length: draft.height }, (_, row) => {
     const y = draft.height - 1 - row;
     let line = "";
     for (let x = 0; x < draft.width; x += 1) {
-      const color = grid.get(`${x},${y}`);
-      line += color ? LETTER_BY_SAND_COLOR[color] : EMPTY_CELL;
+      const at = `${x},${y}`;
+      if (keyCells.has(at)) {
+        line += KEY_LETTER;
+        continue;
+      }
+      const color = grid.get(at);
+      if (!color) {
+        line += EMPTY_CELL;
+        continue;
+      }
+      line += frozen.has(at) ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
     }
     return line;
   });
@@ -276,6 +394,33 @@ function isDraft(value: unknown): value is LevelDraft {
     && typeof draft.shotLimit === "number";
 }
 
+/**
+ * Bring a stored draft's wind up to the current shape.
+ *
+ * Wind was once a single `{ everyMs, direction, strength }` gust. A draft
+ * written then is still a real level someone drew, so it is translated rather
+ * than dropped: the old gust becomes a one-phase loop that blows for a moment
+ * and then waits out the rest of the interval, which is what it always did.
+ */
+function normaliseWind(wind: unknown): WindConfig | null {
+  if (!wind || typeof wind !== "object") return null;
+  const current = wind as Partial<WindConfig>;
+  if (Array.isArray(current.phases)) return { phases: current.phases };
+
+  const legacy = wind as { everyMs?: unknown; direction?: unknown; strength?: unknown };
+  if (typeof legacy.everyMs !== "number") return null;
+  const everyMs = Math.max(1000, legacy.everyMs);
+  return {
+    phases: [{
+      direction: legacy.direction === "left" ? "left" : "right",
+      durationMs: 800,
+      cooldownMs: Math.max(600, everyMs - 800),
+      power: typeof legacy.strength === "number" ? Math.max(1, legacy.strength) : 1,
+      zone: null,
+    }],
+  };
+}
+
 export function loadDrafts(): LevelDraft[] {
   if (typeof window === "undefined") return [];
   try {
@@ -284,7 +429,8 @@ export function loadDrafts(): LevelDraft[] {
     const parsed: unknown = JSON.parse(raw);
     // Anything that does not round-trip is dropped rather than crashing the
     // editor: a half-written draft must never make the tool unopenable.
-    return Array.isArray(parsed) ? parsed.filter(isDraft) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isDraft).map((draft) => ({ ...draft, wind: normaliseWind(draft.wind) }));
   } catch {
     return [];
   }
@@ -325,6 +471,18 @@ export function draftToTypeScript(draft: LevelDraft, id: number) {
 
   const rows = draft.rows.map((row) => `    ${quoted(row)},`).join("\n");
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
+  // Omitted entirely on a still level, so a level that has no weather does not
+  // carry a line saying so.
+  const phaseLines = (draft.wind?.phases ?? []).map((phase) => {
+    const zone = phase.zone
+      ? `{ x: ${phase.zone.x}, y: ${phase.zone.y}, width: ${phase.zone.width}, height: ${phase.zone.height} }`
+      : "null";
+    return `      { direction: ${quoted(phase.direction)}, durationMs: ${phase.durationMs}, `
+      + `cooldownMs: ${phase.cooldownMs}, power: ${phase.power}, zone: ${zone} },`;
+  }).join("\n");
+  const wind = draft.wind
+    ? `\n  wind: {\n    phases: [\n${phaseLines}\n    ],\n  },\n`
+    : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -346,6 +504,6 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-};
+${wind}};
 `;
 }

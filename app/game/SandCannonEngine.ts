@@ -10,10 +10,12 @@ import {
   nextAmmo,
   parseSandLevel,
   resolveShot,
+  resolveWind,
 } from "./sand-rules";
 import type {
   CellCoord,
   SandColor,
+  WindDirection,
   SandGameState,
   SandLevelConfig,
   SettleStep,
@@ -157,12 +159,39 @@ const SORT_RING_SECONDS = 0.5;
 /** How far a shaking pixel is redrawn off its true column, in canvas pixels. */
 const SHAKE_DRAW_OFFSET_PX = 1.6;
 
+// ---- map mechanics -------------------------------------------------------
+/** Frozen sand is drawn this far toward frost, so a lock reads without a legend. */
+const LOCK_FROST_MIX = 0.52;
+const LOCK_FROST_RGB: readonly [number, number, number] = [198, 226, 255];
+/** Breathing rate of the frost, in cycles per second. Slow — it is ice, not an alarm. */
+const LOCK_SHIMMER_HZ = 0.55;
+/** The key's own colour. Gold, and nothing in the sand palette is gold. */
+const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
+const THAW_SECONDS = 0.5;
+/** How long the warning shows before a phase of wind starts blowing. */
+const WIND_WARNING_MS = 900;
+/**
+ * Shortest gap between two gusts inside one phase.
+ *
+ * A phase is a stretch of weather, not one shove: it gusts repeatedly for as
+ * long as it lasts. This is only a floor — a gust also waits for the board to
+ * come to rest, so a long settle paces the next one rather than stacking on it.
+ */
+const WIND_GUST_INTERVAL_MS = 620;
+
 export type SandEngineEvent =
   | { type: "AIM_TOUCHED" }
   | { type: "SHOT_FIRED"; color: SandColor }
   | { type: "SAND_SORTED"; color: SandColor; cells: number }
   | { type: "NO_MATCH"; ammo: SandColor }
   | { type: "MISS"; hitFrame: boolean }
+  | { type: "UNLOCKED"; cells: number }
+  /** Wind is about to start. Fired once, `WIND_WARNING_MS` before the phase. */
+  | { type: "WIND_INCOMING"; direction: WindDirection }
+  | { type: "WIND_START"; direction: WindDirection }
+  | { type: "WIND_END" }
+  /** One gust inside a blowing phase. */
+  | { type: "WIND"; direction: WindDirection }
   | { type: "SETTLE_END" };
 
 export type SandEngineCallbacks = {
@@ -182,6 +211,10 @@ type PixelCell = {
   /** 0 -> 1 while fading out after being sorted away. */
   dying: number | null;
   shake: number;
+  /** Frozen: drawn as frost, cannot fall, cannot be shot out. */
+  locked: boolean;
+  /** 1 -> 0 right after a lock opened, so the sand that came free is seen to. */
+  thaw: number;
 };
 
 type Projectile = {
@@ -262,6 +295,17 @@ export class SandCannonEngine {
   /** Live pixels by "x,y". Rebuilt on every settle step so lookups stay exact. */
   private cells = new Map<string, PixelCell>();
   private dying: PixelCell[] = [];
+  /** The keys on the board, by id, as the cells they currently cover. */
+  private keys = new Map<string, CellCoord[]>();
+  /** Where the level's wind loop has got to. */
+  private windPhase = 0;
+  /** Milliseconds left in whatever the current phase is doing. */
+  private windRemaining = 0;
+  /** True while the current phase is blowing, false while it is cooling down. */
+  private windBlowing = false;
+  private windSinceGust = 0;
+  private windWarned = false;
+  private lockAge = 0;
 
   private state: SandGameState;
   /** The resolved state waiting for its animation to finish before it is published. */
@@ -427,7 +471,8 @@ export class SandCannonEngine {
    * it IS, not something recomputed frame to frame.
    */
   private buildSand() {
-    const { bodies } = parseSandLevel(this.level);
+    const { bodies, locked, keys } = parseSandLevel(this.level);
+    const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
 
     for (const body of bodies) {
       for (const cell of body.cells) {
@@ -446,8 +491,18 @@ export class SandCannonEngine {
           rgb,
           dying: null,
           shake: 0,
+          locked: frozen.has(cellKey(cell.x, cell.y)),
+          thaw: 0,
         });
       }
+    }
+    for (const key of keys) this.keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
+    // The loop opens on the first phase's cooldown, so a level does not start
+    // by immediately blowing the picture the player has not looked at yet.
+    const first = this.level.wind?.phases[0];
+    if (first) {
+      this.windBlowing = false;
+      this.windRemaining = first.cooldownMs;
     }
 
     const openWidth = this.level.frame.width * this.cell;
@@ -481,8 +536,24 @@ export class SandCannonEngine {
       data[index + 3] = alpha;
     };
 
+    // Frost breathes as one sheet rather than per grain, so a locked region
+    // reads as a single frozen thing instead of a field of twinkling pixels.
+    const shimmer = 0.5 + 0.5 * Math.sin(this.lockAge * Math.PI * 2 * LOCK_SHIMMER_HZ);
+    const frostMix = LOCK_FROST_MIX + shimmer * 0.1;
+
     for (const cell of this.cells.values()) {
-      const [r, g, b] = cell.rgb;
+      let [r, g, b] = cell.rgb;
+      if (cell.locked) {
+        r = Math.round(r + (LOCK_FROST_RGB[0] - r) * frostMix);
+        g = Math.round(g + (LOCK_FROST_RGB[1] - g) * frostMix);
+        b = Math.round(b + (LOCK_FROST_RGB[2] - b) * frostMix);
+      } else if (cell.thaw > 0) {
+        // Just came free: flare white and fall back to its own colour.
+        const flare = cell.thaw;
+        r = Math.round(r + (255 - r) * flare);
+        g = Math.round(g + (255 - g) * flare);
+        b = Math.round(b + (255 - b) * flare);
+      }
       // A canvas has no sub-pixel space, so a "shake" is a whole-pixel wobble
       // in where a grain is drawn this frame — its true grid position, which
       // gameplay reasons about, never moves.
@@ -495,6 +566,14 @@ export class SandCannonEngine {
     for (const cell of this.dying) {
       const alpha = Math.round(255 * Math.max(0, 1 - (cell.dying ?? 0)));
       writePixel(cell.x, height - 1 - cell.y, cell.rgb[0], cell.rgb[1], cell.rgb[2], alpha);
+    }
+
+    // Keys last, so a key resting in a hollow is never buried by the sand it is
+    // sitting against. It is the one thing on the board the player is tracking.
+    for (const cells of this.keys.values()) {
+      for (const cell of cells) {
+        writePixel(cell.x, height - 1 - cell.y, KEY_RGB[0], KEY_RGB[1], KEY_RGB[2], 255);
+      }
     }
 
     this.sandContext.putImageData(this.sandImage, 0, 0);
@@ -1356,6 +1435,32 @@ export class SandCannonEngine {
       return;
     }
 
+    if (step.kind === "KEY_MOVE") {
+      const cells = this.keys.get(step.keyId);
+      if (cells) {
+        for (const cell of cells) {
+          cell.x += step.dx;
+          cell.y += step.dy;
+        }
+      }
+      return;
+    }
+
+    if (step.kind === "UNLOCK") {
+      // The solver has already decided this region is free. All the renderer
+      // does is stop drawing it as ice and flash it once.
+      for (const coord of step.cells) {
+        const cell = this.cells.get(cellKey(coord.x, coord.y));
+        if (!cell) continue;
+        cell.locked = false;
+        cell.thaw = 1;
+      }
+      this.keys.delete(step.keyId);
+      haptic("bodyCleared");
+      this.callbacks.onEvent?.({ type: "UNLOCKED", cells: step.cells.length });
+      return;
+    }
+
     if (step.kind === "GRAIN_PASS") {
       // Applied in the order the solver recorded them, because a grain can move
       // into a cell another grain vacated earlier in the same pass. Doing all
@@ -1371,6 +1476,84 @@ export class SandCannonEngine {
       this.settleLandings += 1;
       if (this.settleLandings % 2 === 1) hapticSandLanded(Math.floor(this.settleLandings / 2));
     }
+  }
+
+  // ---- wind ---------------------------------------------------------------
+
+  /**
+   * The clock the rules are not allowed to own.
+   *
+   * A gust only ever lands in READY, with nothing else playing: interrupting a
+   * shot mid-flight would make the board the player aimed at a different board
+   * by the time the disc arrived, which is the one thing §21 exists to prevent.
+   * The timer keeps running through a shot, so a gust held back by a long
+   * settle arrives as soon as the board is the player's again.
+   */
+  private updateWind(deltaMs: number) {
+    const phases = this.level.wind?.phases;
+    if (!phases?.length || this.state.result) return;
+
+    const phase = phases[this.windPhase % phases.length];
+    this.windRemaining -= deltaMs;
+    this.windSinceGust += deltaMs;
+
+    if (!this.windBlowing) {
+      // Cooling down. Announce the phase that is about to start, once, so the
+      // player can spend the last of the still air on a shot that expects it.
+      if (!this.windWarned && this.windRemaining <= WIND_WARNING_MS) {
+        this.windWarned = true;
+        this.callbacks.onEvent?.({ type: "WIND_INCOMING", direction: phase.direction });
+      }
+      if (this.windRemaining > 0) return;
+      this.windBlowing = true;
+      this.windWarned = false;
+      this.windRemaining = phase.durationMs;
+      this.windSinceGust = WIND_GUST_INTERVAL_MS;
+      this.callbacks.onEvent?.({ type: "WIND_START", direction: phase.direction });
+    }
+
+    if (this.windRemaining <= 0) {
+      // The phase blew itself out. Hand over to the next one's cooldown.
+      this.windBlowing = false;
+      this.windPhase = (this.windPhase + 1) % phases.length;
+      this.windRemaining = phases[this.windPhase].cooldownMs;
+      this.windWarned = false;
+      this.callbacks.onEvent?.({ type: "WIND_END" });
+      return;
+    }
+
+    // A gust only lands on a board that is the player's again. §21 exists so
+    // that what was aimed at is what the disc arrives at; weather is no more
+    // entitled to break that than a second shot would be. The phase clock keeps
+    // running through a settle, so a held-back gust arrives the moment it can.
+    if (this.windSinceGust < WIND_GUST_INTERVAL_MS) return;
+    if (this.projectile || this.beats.length || this.state.phase !== "READY") return;
+    this.windSinceGust = 0;
+
+    const resolution = resolveWind(this.level, this.state, phase);
+    if (resolution.outcome === "MISS") return;
+
+    haptic("impact");
+    this.callbacks.onEvent?.({ type: "WIND", direction: phase.direction });
+
+    const timed = resolution.steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
+    const perStep = timed
+      ? THREE.MathUtils.clamp(SETTLE_BUDGET_MS / timed, SETTLE_STEP_MIN_MS, SETTLE_STEP_MAX_MS)
+      : 0;
+    this.beats = [
+      ...resolution.steps.map((step): Beat => ({
+        kind: "STEP",
+        step,
+        ms: step.kind === "REINDEX" ? 0 : perStep,
+      })),
+      { kind: "HOLD", ms: SETTLE_TAIL_MS },
+    ];
+    this.beatElapsed = 0;
+    this.beatStarted = false;
+    this.settleLandings = 0;
+    this.pendingState = resolution.state;
+    this.setPhase("SETTLING");
+    this.callbacks.onState({ ...resolution.state, phase: "SETTLING" });
   }
 
   private advanceBeats(deltaMs: number) {
@@ -1417,6 +1600,12 @@ export class SandCannonEngine {
   private step(deltaMs: number) {
     if (this.projectile) this.updateProjectile(this.projectile);
     else this.advanceBeats(deltaMs);
+
+    this.lockAge += FIXED_STEP;
+    this.updateWind(deltaMs);
+    for (const cell of this.cells.values()) {
+      if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);
+    }
 
     this.recoil = Math.max(0, this.recoil - FIXED_STEP * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
@@ -1489,6 +1678,23 @@ export class SandCannonEngine {
   }
 
   // ---- lifecycle ---------------------------------------------------------
+
+  /**
+   * The home screen is up.
+   *
+   * Not the same thing as a paused tab: the scene keeps being rendered, because
+   * the picture in the frame IS the home screen's artwork. Only the playing of
+   * it stops — no ticking, no aiming, and no sight left hanging over a menu
+   * that has nothing to aim at.
+   */
+  setIdle(idle: boolean) {
+    if (!idle) {
+      this.resume();
+      return;
+    }
+    this.pause();
+    this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
+  }
 
   pause() {
     this.paused = true;

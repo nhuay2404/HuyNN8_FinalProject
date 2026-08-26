@@ -8,6 +8,9 @@
   --accent: #ffd54a;
   --hud-inset: 14px;
   --hud-height: 106px;
+  /* The home screen's bottom bar, excluding the phone's own safe area. Shared
+     so the play hint and any open section know where the bar starts. */
+  --hub-nav-height: 62px;
 }
 
 * { box-sizing: border-box; }
@@ -310,8 +313,118 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 14px; font-weight: 900; letter-spacing: .06em; cursor: pointer;
 }
 .result-card button:active { transform: scale(.98); }
+.result-actions { display: grid; gap: 8px; }
+.result-card button.is-quiet {
+  background: rgba(255,255,255,.09); color: #dfe5ff;
+  border: 1px solid var(--line); font-weight: 800;
+}
+
+/* ---- Home screen ------------------------------------------------------- */
+/* Carried over in shape from the pre-pivot menu hub, with one thing changed:
+   the centrepiece is no longer a cube turning in place. It is the level's own
+   pixel painting, sitting still in its frame — the scene underneath, left
+   rendering but not playing. Nothing here paints over the middle of the
+   screen, because the middle of the screen is the artwork being chosen. */
+.hub-screen { position: absolute; z-index: 30; inset: 0; }
+.hub-tap, .hub-scrim {
+  position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: calc(var(--hub-nav-height) + 26px);
+  color: var(--ink);
+  background:
+    radial-gradient(122% 60% at 50% 44%, transparent 40%, rgba(9,13,40,.56) 80%),
+    linear-gradient(180deg, rgba(9,13,40,.66) 0%, transparent 27%, transparent 58%, rgba(9,13,40,.8) 100%);
+}
+/* A section is open, so the picture steps back and stops inviting a tap. */
+.hub-scrim { background: rgba(11,7,26,.72); cursor: default; }
+.hub-play-hint {
+  font-size: 23px; font-weight: 900; letter-spacing: .12em;
+  text-shadow: 0 4px 18px rgba(6,10,32,.85);
+}
+/* The pulse lives on the inner span so an exit animation on the parent cannot
+   cancel it mid-cycle. */
+.hub-play-hint > span { display: block; animation: hub-play-pulse 1.5s ease-in-out infinite alternate; }
+.hub-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: -8px; }
+.hub-level-name {
+  position: absolute; z-index: 1; top: max(30px, calc(env(safe-area-inset-top) + 22px)); left: 0; right: 0;
+  margin: 0; padding: 0 24px; text-align: center; pointer-events: none;
+  font-size: 25px; font-weight: 500; letter-spacing: -.02em;
+  text-shadow: 0 4px 16px rgba(6,10,32,.8);
+  animation: hub-enter .34s cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* A section's contents sit above the bar that opened them, never behind it. */
+.hub-panel {
+  position: absolute; z-index: 2; left: 14px; right: 14px;
+  bottom: calc(var(--hub-nav-height) + 14px);
+  max-height: 54%; overflow: auto; padding: 16px 16px 18px;
+  border: 1px solid var(--line); border-radius: 22px;
+  background: linear-gradient(180deg, rgba(58,38,96,.97), rgba(26,16,50,.97));
+  animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
+}
+.hub-panel h3 { margin: 0 0 12px; font-size: 15px; letter-spacing: .1em; text-transform: uppercase; }
+.hub-panel.is-empty { text-align: center; }
+.hub-panel.is-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.hub-panel-note {
+  margin-top: 10px !important; color: var(--accent) !important;
+  font-size: 11px !important; font-weight: 900; letter-spacing: .12em; text-transform: uppercase;
+}
+
+.hub-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.hub-gallery button {
+  display: grid; justify-items: center; gap: 7px; padding: 9px 7px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 15px;
+  background: rgba(255,255,255,.05); color: #dfe5ff;
+  transition: background .18s, border-color .18s, transform .18s;
+}
+.hub-gallery button:hover { background: rgba(255,255,255,.12); transform: translateY(-2px); }
+.hub-gallery button.is-active { border-color: rgba(255,213,74,.6); background: rgba(255,213,74,.15); }
+.hub-gallery button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hub-gallery b { font-size: 11px; font-weight: 800; text-align: center; line-height: 1.25; }
+
+/* The picture itself, one grid cell per authored cell. `image-rendering` is not
+   involved: these are real boxes, so they stay square at any size. */
+.pixel-thumb {
+  display: grid; grid-template-columns: repeat(var(--cols, 12), 1fr);
+  width: 100%; aspect-ratio: var(--cols, 12) / 14;
+  border-radius: 7px; overflow: hidden;
+  background: rgba(10,6,24,.55);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.pixel-thumb i { display: block; aspect-ratio: 1; }
+
+/* ---- Home screen: the bottom bar --------------------------------------- */
+.hub-nav {
+  position: absolute; z-index: 3; left: 0; right: 0; bottom: 0;
+  height: calc(var(--hub-nav-height) + env(safe-area-inset-bottom));
+  padding: 0 6px env(safe-area-inset-bottom);
+  display: grid; grid-template-columns: repeat(5, 1fr); align-items: center;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(30,18,58,.9), rgba(16,9,36,.98));
+  backdrop-filter: blur(10px);
+}
+.hub-nav button {
+  display: grid; justify-items: center; gap: 3px; padding: 7px 2px; cursor: pointer;
+  border: 0; border-radius: 13px; background: none; color: var(--muted);
+  font-size: 9.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  transition: color .18s, background .18s;
+}
+.hub-nav button:hover { color: #e9e2ff; background: rgba(255,255,255,.06); }
+.hub-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hub-nav button.is-active { color: var(--accent); }
+.hub-nav-icon {
+  display: block; width: 23px; height: 23px;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* The active tab's mark is filled as well as outlined, so which tab is current
+   survives being read in greyscale. */
+.hub-nav button.is-active .hub-nav-icon { fill: color-mix(in srgb, var(--accent), transparent 76%); }
 
 /* ---- Keyframes --------------------------------------------------------- */
+@keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
+@keyframes hub-play-pulse { to { opacity: .58; transform: scale(.975); } }
+@keyframes hub-panel-in { from { opacity: 0; transform: translateY(16px); } }
 @keyframes badge-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 @keyframes badge-pulse { to { opacity: .35; transform: scale(.78); } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
@@ -429,6 +542,28 @@ body:has(.editor-shell) { overflow: auto; }
   width: 15px; height: 15px; flex: none; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.45); background: var(--swatch);
 }
+
+/* ---- Editor: the wind loop --------------------------------------------- */
+/* One card per phase, in the order they play. The order IS the loop, so the
+   list is numbered and reorderable rather than a set of named settings. */
+.editor-phases { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.editor-phases > li {
+  padding: 9px 10px 10px; border: 1px solid var(--line); border-radius: 13px;
+  background: rgba(255,255,255,.04); display: grid; gap: 7px;
+  transition: border-color .18s, background .18s;
+}
+/* The selected phase is the one whose zone is drawn on the picture, so it has
+   to be obvious which card that is. */
+.editor-phases > li.is-active {
+  border-color: rgba(150,215,255,.65); background: rgba(120,200,255,.1);
+}
+.editor-phases > li > header { display: flex; align-items: center; gap: 6px; }
+.editor-phases > li > header b { font-size: 12px; letter-spacing: .04em; }
+.editor-phase-summary {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.editor-phase-add { border: 0 !important; background: none !important; padding: 0 !important; }
 
 .editor-issues { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .editor-issues li {
