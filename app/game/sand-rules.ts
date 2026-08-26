@@ -347,8 +347,16 @@ export function ammoRemaining(level: SandLevelConfig, state: SandGameState) {
 
 export type ShotOutcome = "SORTED" | "NO_MATCH" | "MISS";
 
-/** Where a projectile landed: which body, and which cell of it. */
-export type ShotHit = { bodyId: string; x: number; y: number };
+/**
+ * Where a projectile landed.
+ *
+ * `bodyId` is null when the shot came down on empty air inside the frame — the
+ * gap above the sand, or a hole a previous shot opened. That is a real place to
+ * aim at, not a miss: the disc is centred there and sorts whatever it reaches,
+ * so a player can shoot past the surface and still pull colour out from under
+ * it.
+ */
+export type ShotHit = { bodyId: string | null; x: number; y: number };
 
 export type ShotResolution = {
   state: SandGameState;
@@ -428,8 +436,10 @@ export function resolveShot(
   const ammo = currentAmmo(level, state);
   if (state.result || ammo === null) return idle;
 
-  const hitBody = hit ? state.bodies.find((body) => body.id === hit.bodyId) ?? null : null;
-  if (!hit || !hitBody) return { ...idle, state: { ...state, phase: "READY" } };
+  // A hit with no body under it still counts: the shot landed inside the frame,
+  // on air. Only a shot that never reached the frame at all is a miss.
+  const hitBody = hit?.bodyId ? state.bodies.find((body) => body.id === hit.bodyId) ?? null : null;
+  if (!hit) return { ...idle, state: { ...state, phase: "READY" } };
 
   const spend = (bodies: SandBody[]): Pick<SandGameState, "queue" | "shotsUsed"> => ({
     queue: advanceQueue(state.queue, bodies),
@@ -438,9 +448,9 @@ export function resolveShot(
 
   // A radius shot is aimed at a place, not at a region: it takes every matching
   // grain inside the disc, across as many bodies as the disc happens to touch,
-  // and only the part of each that falls inside it. A shot that lands on sand
-  // of the wrong colour is not a special case — the disc simply finds none of
-  // its own colour in reach, and NO_MATCH covers it.
+  // and only the part of each that falls inside it. The place may be empty air
+  // — the disc still reaches down from it. A shot that finds none of its colour
+  // in reach is not a special case; NO_MATCH covers it.
   const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, level.sortRadius, ammo);
   if (!removed.length) {
     const missed = { ...state, ...spend(state.bodies) };

@@ -7,10 +7,12 @@ import {
   createSandGameState,
   currentAmmo,
   expandLevelForPixelBoard,
+  nextAmmo,
   parseSandLevel,
   resolveShot,
 } from "./sand-rules";
 import type {
+  CellCoord,
   SandColor,
   SandGameState,
   SandLevelConfig,
@@ -69,6 +71,32 @@ const AIM_CURSOR_DOWN_RATIO = 0.15;
 const RECOIL_TRAVEL = 0.23;
 const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
 const MUZZLE_Z = -2.18;
+
+// ---- the ammo the cannon is carrying ------------------------------------
+// The HUD already names the bullet in hand, but the cannon itself said nothing
+// about what it was loaded with. These give the model the same answer: a
+// chamber in the breech holding the live round and lit by its colour, a band
+// of that colour at the muzzle, and the preview queue rolling down a rail into
+// the chamber as each shot is spent.
+/**
+ * Centre of the breech chamber, in barrel space.
+ *
+ * Forward of the cradle rather than behind it: the camera looks down the gun
+ * from above and behind, and anything much further back than this falls off
+ * the bottom of the view along with the rail feeding it.
+ */
+const CHAMBER_POSITION = new THREE.Vector3(0, 0.4, -0.62);
+const CHAMBER_BALL_RADIUS = 0.19;
+/** Gap between queued rounds on the feed rail, and how far each sits above the last. */
+const FEED_SLOT_SPACING = 0.44;
+const FEED_SLOT_RISE = 0.075;
+const FEED_BALL_RADIUS = 0.15;
+/** How long a round takes to roll from its slot into the one ahead of it. */
+const FEED_ROLL_SECONDS = 0.28;
+/** Breathing rate of the chamber glow, in cycles per second. */
+const CHAMBER_GLOW_HZ = 1.5;
+/** Wider than the bore at that point, or the band is buried inside the barrel. */
+const MUZZLE_BAND_RADIUS = 0.42;
 
 // ---- board presentation --------------------------------------------------
 /** The painting is fitted into this opening whatever the authored grid is. */
@@ -208,6 +236,22 @@ export class SandCannonEngine {
   private aimRing: THREE.Mesh | null = null;
   private sortRing: THREE.Mesh | null = null;
   private sortRingAge = 0;
+
+  /** The live round in the breech, its halo, and the light it throws. */
+  private chamberBall: THREE.Mesh | null = null;
+  private chamberGlow: THREE.Mesh | null = null;
+  private chamberLight: THREE.PointLight | null = null;
+  /** The colour band at the muzzle: what this cannon is about to fire. */
+  private muzzleBand: THREE.Mesh | null = null;
+  /** The preview queue, nearest first, waiting on the rail. */
+  private feedBalls: THREE.Mesh[] = [];
+  /** 1 the moment a round is chambered, decaying to 0 as the queue rolls forward. */
+  private feedRoll = 0;
+  /** Whether the breech is holding a round — false between firing and resolution. */
+  private chamberLoaded = true;
+  /** The queue the model is currently showing, so a change can be spotted. */
+  private ammoKey = "";
+  private chamberAge = 0;
 
   private readonly sandCanvas: HTMLCanvasElement;
   private readonly sandContext: CanvasRenderingContext2D;
@@ -493,7 +537,205 @@ export class SandCannonEngine {
     muzzle.position.z = MUZZLE_Z + 0.06;
     this.barrelVisual.add(muzzle);
 
+    // The muzzle says what is about to come out of it. Thin enough to read as a
+    // painted line around the lip rather than a second ring of hardware, and
+    // unlit so the colour is the colour — the same hex the HUD names.
+    this.muzzleBand = new THREE.Mesh(
+      this.track(new THREE.TorusGeometry(MUZZLE_BAND_RADIUS, 0.045, 10, 32)),
+      this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })),
+    );
+    this.muzzleBand.position.z = MUZZLE_Z + 0.2;
+    this.barrelVisual.add(this.muzzleBand);
+
+    this.buildAmmoFeed(dark);
     this.applyCannonTransform();
+  }
+
+  /**
+   * The breech chamber and the rail that feeds it.
+   *
+   * Both hang off `barrelPivot`, not the turret: they are part of the barrel
+   * assembly, so they swing and tilt with it and a round never appears to sit
+   * beside the gun it is about to be fired from. They do NOT hang off
+   * `barrelVisual`, which is the piece that slides back on recoil — the
+   * chamber holding the *next* round should not kick with the shot that just
+   * left.
+   */
+  private buildAmmoFeed(dark: THREE.Material) {
+    // A groove for the queue to roll down, sloping up and back from the breech.
+    const railLength = FEED_SLOT_SPACING * 3.6;
+    const railGeometry = this.track(new THREE.BoxGeometry(0.07, 0.05, railLength));
+    for (const side of [-1, 1]) {
+      const rail = new THREE.Mesh(railGeometry, dark);
+      rail.position.set(side * (FEED_BALL_RADIUS + 0.05), CHAMBER_POSITION.y - 0.1 + railLength * 0.5 * (FEED_SLOT_RISE / FEED_SLOT_SPACING), CHAMBER_POSITION.z + railLength * 0.5);
+      rail.rotation.x = -Math.atan2(FEED_SLOT_RISE, FEED_SLOT_SPACING);
+      this.barrelPivot.add(rail);
+    }
+
+    // The housing is see-through on purpose: the round inside it is the point,
+    // and a solid breech would hide the one thing this part exists to show.
+    const housing = new THREE.Mesh(
+      this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 2.4, 24, 1, true)),
+      this.track(new THREE.MeshLambertMaterial({
+        color: 0xc3d2ff,
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })),
+    );
+    housing.rotation.x = Math.PI / 2;
+    housing.position.copy(CHAMBER_POSITION);
+    this.barrelPivot.add(housing);
+
+    const rimGeometry = this.track(new THREE.TorusGeometry(CHAMBER_BALL_RADIUS * 1.52, 0.035, 10, 26));
+    for (const offset of [-CHAMBER_BALL_RADIUS * 1.2, CHAMBER_BALL_RADIUS * 1.2]) {
+      const rim = new THREE.Mesh(rimGeometry, dark);
+      rim.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y, CHAMBER_POSITION.z + offset);
+      this.barrelPivot.add(rim);
+    }
+
+    // A short throat down into the barrel, so the chamber reads as connected to
+    // the bore rather than parked on top of it.
+    const throat = new THREE.Mesh(
+      this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 0.8, CHAMBER_BALL_RADIUS * 0.95, 0.3, 16, 1, true)),
+      this.track(new THREE.MeshLambertMaterial({ color: 0x3d4680, side: THREE.DoubleSide })),
+    );
+    throat.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y - 0.2, CHAMBER_POSITION.z);
+    this.barrelPivot.add(throat);
+
+    this.chamberBall = new THREE.Mesh(
+      this.track(new THREE.SphereGeometry(CHAMBER_BALL_RADIUS, 20, 14)),
+      this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })),
+    );
+    this.chamberBall.position.copy(CHAMBER_POSITION);
+    this.chamberBall.renderOrder = 4;
+    this.barrelPivot.add(this.chamberBall);
+
+    // The glow is a shell around the round, additive so it reads as light
+    // coming off it rather than a bigger ball of paint.
+    this.chamberGlow = new THREE.Mesh(
+      this.track(new THREE.SphereGeometry(CHAMBER_BALL_RADIUS * 1.9, 18, 12)),
+      this.track(new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.3,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })),
+    );
+    this.chamberGlow.position.copy(CHAMBER_POSITION);
+    this.chamberGlow.renderOrder = 5;
+    this.barrelPivot.add(this.chamberGlow);
+
+    // Real light, so the colour spills onto the breech around it.
+    this.chamberLight = new THREE.PointLight(0xffffff, 0, 2.6);
+    this.chamberLight.position.copy(CHAMBER_POSITION);
+    this.barrelPivot.add(this.chamberLight);
+
+    const feedGeometry = this.track(new THREE.SphereGeometry(FEED_BALL_RADIUS, 16, 12));
+    const count = Math.max(0, this.level.nextPreviewCount);
+    for (let index = 0; index < count; index += 1) {
+      const ball = new THREE.Mesh(feedGeometry, this.track(new THREE.MeshLambertMaterial({ color: 0xffffff })));
+      ball.visible = false;
+      this.barrelPivot.add(ball);
+      this.feedBalls.push(ball);
+    }
+
+    this.syncAmmoModel(false);
+  }
+
+  /** Where the queued round `slot` places along the rail — 0 is the chamber. */
+  private feedSlotPosition(slot: number) {
+    return new THREE.Vector3(
+      CHAMBER_POSITION.x,
+      CHAMBER_POSITION.y + FEED_SLOT_RISE * slot,
+      CHAMBER_POSITION.z + FEED_SLOT_SPACING * slot,
+    );
+  }
+
+  /**
+   * Point the model at whatever the queue now holds.
+   *
+   * Called every tick and cheap when nothing changed: the queue is compared as
+   * a string, and only a real change restarts the roll. `animate` is false for
+   * the first load and after a restart, where there is no previous round for
+   * the new one to have rolled in behind.
+   */
+  private syncAmmoModel(animate: boolean) {
+    const current = currentAmmo(this.level, this.state);
+    const upcoming = nextAmmo(this.level, this.state);
+    const key = `${current ?? "-"}|${upcoming.join(",")}|${this.chamberLoaded}`;
+    if (key === this.ammoKey) return;
+    // Only a chamber that has just gained a round rolls. Emptying it on the
+    // shot is a change too, and that one must not drag the queue forward.
+    const rolled = animate && this.ammoKey !== "" && this.chamberLoaded;
+    this.ammoKey = key;
+    if (rolled) this.feedRoll = 1;
+
+    if (this.chamberBall) {
+      this.chamberBall.visible = current !== null && this.chamberLoaded;
+      if (current) (this.chamberBall.material as THREE.MeshBasicMaterial).color.setHex(SAND_COLOR_HEX[current]);
+    }
+    if (this.chamberGlow) {
+      this.chamberGlow.visible = current !== null && this.chamberLoaded;
+      if (current) (this.chamberGlow.material as THREE.MeshBasicMaterial).color.setHex(SAND_COLOR_HEX[current]);
+    }
+    if (this.chamberLight && current) this.chamberLight.color.setHex(SAND_COLOR_HEX[current]);
+    if (this.muzzleBand) {
+      // Grey once the wheel is spent: an empty cannon must not still be
+      // advertising a colour it can no longer fire.
+      (this.muzzleBand.material as THREE.MeshBasicMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x6a6f8f);
+    }
+    this.feedBalls.forEach((ball, index) => {
+      const color = upcoming[index];
+      ball.visible = color !== undefined;
+      if (color) (ball.material as THREE.MeshLambertMaterial).color.setHex(SAND_COLOR_HEX[color]);
+    });
+  }
+
+  /**
+   * The roll, and the breathing of the chambered round.
+   *
+   * Every queued round is drawn one slot further back than it belongs while
+   * `feedRoll` runs down, so the whole line slides forward together and the new
+   * round grows into the chamber as it arrives — one shot spent, one round in.
+   */
+  private updateAmmoModel() {
+    // The next round is only handed over once the board is at rest and the
+    // player may fire again — the same moment §21 unlocks input.
+    if (!this.projectile && this.state.phase === "READY") this.chamberLoaded = true;
+    this.syncAmmoModel(true);
+    this.chamberAge += FIXED_STEP;
+    if (this.feedRoll > 0) this.feedRoll = Math.max(0, this.feedRoll - FIXED_STEP / FEED_ROLL_SECONDS);
+    // Ease-out: a round that has just been released moves fastest, then settles.
+    const eased = 1 - (1 - this.feedRoll) * (1 - this.feedRoll);
+
+    this.feedBalls.forEach((ball, index) => {
+      if (!ball.visible) return;
+      const slot = index + 1 + eased;
+      ball.position.copy(this.feedSlotPosition(slot));
+      // Rolling, not sliding: the spin is tied to the distance travelled, so it
+      // stops the moment the ball settles into its slot.
+      ball.rotation.x = -(slot * FEED_SLOT_SPACING) / FEED_BALL_RADIUS;
+    });
+
+    const seated = 1 - eased;
+    if (this.chamberBall?.visible) {
+      this.chamberBall.position.copy(this.feedSlotPosition(eased));
+      this.chamberBall.scale.setScalar(0.45 + 0.55 * seated);
+      this.chamberBall.rotation.x = -(eased * FEED_SLOT_SPACING) / CHAMBER_BALL_RADIUS;
+    }
+    // The halo breathes so a loaded cannon never looks frozen, and flares once
+    // as the round drops in.
+    const breath = 0.5 + 0.5 * Math.sin(this.chamberAge * Math.PI * 2 * CHAMBER_GLOW_HZ);
+    const strength = this.chamberBall?.visible ? 0.34 + 0.16 * breath + 0.5 * eased : 0;
+    if (this.chamberGlow) {
+      this.chamberGlow.position.copy(this.chamberBall?.position ?? CHAMBER_POSITION);
+      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength;
+      this.chamberGlow.scale.setScalar((0.86 + 0.1 * breath + 0.2 * eased) * (0.45 + 0.55 * seated));
+    }
+    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4;
   }
 
   /**
@@ -741,9 +983,17 @@ export class SandCannonEngine {
     const gx = Math.round(local.x / this.cell + (this.level.frame.width - 1) / 2);
     const gy = Math.round(local.y / this.cell + (this.level.frame.height - 1) / 2);
 
+    // Anywhere inside the frame is a place the player may aim at, sand or not.
+    // The empty air above the pile is the clearest case: the disc lands there
+    // and still reaches the colour below it, so the shot has to resolve rather
+    // than be thrown away as a miss.
+    const inside = gx >= 0 && gx < this.level.frame.width && gy >= 0 && gy < this.level.frame.height;
+    if (!inside) return null;
+    const grid = { x: gx, y: gy };
+
     const exact = this.cells.get(cellKey(gx, gy));
-    if (exact) return { t, point, cell: exact };
-    if (!forgive) return null;
+    if (exact) return { t, point, grid, cell: exact };
+    if (!forgive) return { t, point, grid, cell: null };
 
     const reach = Math.max(1, Math.round(PROJECTILE_RADIUS / this.cell));
     let best: { cell: PixelCell; distanceSq: number } | null = null;
@@ -756,7 +1006,7 @@ export class SandCannonEngine {
         if (!best || distanceSq < best.distanceSq) best = { cell: candidate, distanceSq };
       }
     }
-    return best ? { t, point, cell: best.cell } : null;
+    return { t, point, grid, cell: best?.cell ?? null };
   }
 
   /** Fallback so a trajectory can still be solved over empty parts of the frame. */
@@ -813,7 +1063,18 @@ export class SandCannonEngine {
     const crossing = this.positionAt(solution.start, solution.velocity, planeTime);
     const residual = Math.hypot(crossing.x - target.x, crossing.y - target.y);
     if (residual > 0.16) return null;
-    return { solution, cell: hit?.cell ?? null };
+    // The grid square is what the ring is drawn on and what the shot will be
+    // centred on, so it is reported whether or not sand happens to sit there.
+    return { solution, cell: hit?.cell ?? null, grid: hit?.grid ?? this.gridAtPoint(target) };
+  }
+
+  /** The frame square a world point falls in, or null if it falls outside. */
+  private gridAtPoint(point: THREE.Vector3) {
+    const local = point.clone().sub(this.frameRoot.position);
+    const x = Math.round(local.x / this.cell + (this.level.frame.width - 1) / 2);
+    const y = Math.round(local.y / this.cell + (this.level.frame.height - 1) / 2);
+    const inside = x >= 0 && x < this.level.frame.width && y >= 0 && y < this.level.frame.height;
+    return inside ? { x, y } : null;
   }
 
   private ballisticSetup(): BallisticSolution {
@@ -851,7 +1112,9 @@ export class SandCannonEngine {
     this.crosshair.style.left = `${THREE.MathUtils.clamp(cursor.x, AIM_CURSOR_EDGE_MARGIN, Math.max(AIM_CURSOR_EDGE_MARGIN, this.host.clientWidth - AIM_CURSOR_EDGE_MARGIN))}px`;
     this.crosshair.style.top = `${THREE.MathUtils.clamp(cursor.y, AIM_CURSOR_EDGE_MARGIN, Math.max(AIM_CURSOR_EDGE_MARGIN, this.host.clientHeight - AIM_CURSOR_EDGE_MARGIN))}px`;
     this.crosshair.classList.add("is-visible", "is-engaged", "is-aiming");
-    this.crosshair.classList.toggle("is-target-valid", Boolean(solved?.cell) && this.aimArmed);
+    // Valid means "inside the frame", not "on sand": aiming at the gap above
+    // the pile is a shot the player is allowed to take and one that resolves.
+    this.crosshair.classList.toggle("is-target-valid", Boolean(solved?.grid) && this.aimArmed);
     // Tints the sight with whatever sand it is over. It reports what is under
     // the crosshair, never whether that is the right answer — the player still
     // has to read the ammo colour against it.
@@ -861,8 +1124,8 @@ export class SandCannonEngine {
       this.crosshair.style.removeProperty("--aim-color");
     }
     if (this.aimRing) {
-      this.aimRing.visible = Boolean(solved?.cell);
-      if (solved?.cell) this.moveRingToCell(this.aimRing, solved.cell.x, solved.cell.y);
+      this.aimRing.visible = Boolean(solved?.grid);
+      if (solved?.grid) this.moveRingToCell(this.aimRing, solved.grid.x, solved.grid.y);
     }
     this.aimPreviewDirty = false;
   }
@@ -874,6 +1137,9 @@ export class SandCannonEngine {
     if (!color) return;
     this.nextShotAt = performance.now() + SHOT_COOLDOWN_MS;
     this.recoil = 1;
+    // The round left the chamber. It stays empty until the shot resolves and
+    // the queue hands the next one over.
+    this.chamberLoaded = false;
 
     if (!this.projectileMesh) {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
@@ -916,7 +1182,7 @@ export class SandCannonEngine {
     if (validHit) {
       const contact = hit.point;
       projectile.mesh.position.copy(contact);
-      this.handleImpact(hit.cell, contact);
+      this.handleImpact(hit.cell, hit.grid, contact);
       return;
     }
 
@@ -962,16 +1228,24 @@ export class SandCannonEngine {
     this.projectile = null;
   }
 
-  private handleImpact(cell: PixelCell, contact: THREE.Vector3) {
+  private handleImpact(cell: PixelCell | null, grid: CellCoord, contact: THREE.Vector3) {
     const ammo = this.projectile?.color ?? null;
     this.clearProjectile();
     if (!ammo) return;
     this.spawnImpactFlash(contact, ammo);
     haptic("impact");
 
-    const resolution = resolveShot(this.level, this.state, { bodyId: cell.bodyId, x: cell.x, y: cell.y });
+    // Sand under the impact centres the disc on that grain; empty air centres it
+    // on the square the shot came down in. Either way the disc has a centre and
+    // sorts from it.
+    const center = cell ? { x: cell.x, y: cell.y } : grid;
+    const resolution = resolveShot(this.level, this.state, {
+      bodyId: cell?.bodyId ?? null,
+      x: center.x,
+      y: center.y,
+    });
     this.setPhase("HIT_RESOLUTION");
-    this.spawnSortRing(cell.x, cell.y);
+    this.spawnSortRing(center.x, center.y);
 
     // The disc landed on sand but found none of its own colour in reach. The
     // shot is still spent and the board is untouched, so the only thing left to
@@ -984,14 +1258,14 @@ export class SandCannonEngine {
       this.pendingState = resolution.state;
       this.callbacks.onState({ ...resolution.state, phase: "HIT_RESOLUTION" });
       this.beats = [
-        { kind: "SHAKE_AREA", center: { x: cell.x, y: cell.y }, radius: this.sortRadius, ms: NO_MATCH_SHAKE_MS },
+        { kind: "SHAKE_AREA", center, radius: this.sortRadius, ms: NO_MATCH_SHAKE_MS },
       ];
       this.beatElapsed = 0;
       this.beatStarted = false;
       return;
     }
 
-    if (!resolution.removed.length || !resolution.hitBody) {
+    if (!resolution.removed.length) {
       this.setPhase("READY");
       this.callbacks.onState(this.cloneState());
       return;
@@ -1146,6 +1420,7 @@ export class SandCannonEngine {
 
     this.recoil = Math.max(0, this.recoil - FIXED_STEP * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
+    this.updateAmmoModel();
 
     if (this.impactFlash && this.impactFlash.intensity > 0) {
       this.impactFlashAge += FIXED_STEP;

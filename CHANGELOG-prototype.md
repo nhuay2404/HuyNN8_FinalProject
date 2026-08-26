@@ -2949,3 +2949,83 @@ Level 9 chỉ tạo đúng hai warning mặt Ink bị che đã chủ đích, kh�
 **169/169 test pass** cả trước và sau khi dựng artifact; lint sạch; production build sạch; standalone HTML
 tạo lại thành công ở **925.172 bytes** với `levels: 9`; preview cục bộ trả **HTTP 200**. Regression route
 thực thi đủ chín cụm, Batch luôn `0`, kết thúc WIN/all-clear và xác nhận Level 1–8 giữ nguyên chữ ký.
+
+---
+
+## 35. Pivot sang Sand Cannon Sort — thay hẳn kiến trúc block bằng cát pixel (25/08)
+
+Kiến trúc block-cluster ở mục 1–34 (`app/GamePrototype.tsx`, `app/game/CannonSortEngine.ts`,
+`app/game/level-format.ts`, `app/game/rules.ts`, `app/game/cosmetics.ts`, `app/game/rainbow-hook.ts`,
+`app/game/tutorial.ts` và toàn bộ test đi kèm) bị gỡ bỏ hoàn toàn, thay bằng gameplay cát: bắn một quả
+đạn màu vào khung tranh vẽ bằng pixel cát, đĩa bán kính quanh điểm chạm hút hết cát cùng màu trong tầm,
+phần cát còn lại rơi/lăn xuống theo solver falling-sand (`app/game/sand-rules.ts`,
+`app/game/SandCannonEngine.ts`). Đi kèm là một editor level mới ngay trong app
+(`app/LevelEditor.tsx`, `app/game/level-drafts.ts`, `app/game/level-analysis.ts`) để vẽ tranh, validate
+màu chết và chấm độ khó trước khi lưu vào danh sách level chơi được. `README.md` viết lại toàn bộ để mô
+tả rule đã chốt, mở decision và benchmark `pixelScale` của kiến trúc mới; các file changelog/README nói
+về block-cluster ở trên vẫn giữ nguyên làm nhật ký, không sửa lại theo hồi tố.
+
+Merge fast-forward vào `main`: 52 file đổi, +4.881/−12.428 dòng.
+
+---
+
+## 36. Bắn được vào ô trống trong khung, không chỉ vào cát (25/08)
+
+`resolveShot` trước đó coi một cú bắn là **MISS** bất cứ khi nào điểm chạm không rơi đúng lên một hạt
+cát — kể cả khi điểm đó vẫn nằm hẳn trong khung tranh, chỉ là phần trống phía trên đống cát hoặc một lỗ
+do phát trước đào ra. Người chơi ngắm vào khu vực đó thấy crosshair và vòng bán kính biến mất, không bắn
+được, dù về mặt luật một đĩa bán kính đặt ở đó vẫn hoàn toàn hợp lệ và có thể hút được cát nằm chếch bên
+dưới.
+
+Sửa ở hai lớp. `ShotHit.bodyId` (`app/game/sand-rules.ts`) nay nhận `null` — "chạm vào không khí trong
+khung" là một kết quả hợp lệ, khác với "đạn bay ra khỏi khung/trúng khung" mới thật sự là MISS.
+`resolveShot` chỉ còn coi là miss khi `hit` là `null`; có `hit` nhưng không có `bodyId` vẫn resolve bình
+thường, đĩa bán kính (`cellsInRadius`, giới hạn đúng `level.sortRadius`, không phải vô hạn) vẫn quét
+quanh toạ độ đó. Ở `SandCannonEngine.ts`, `planeHit()` đổi từ "chỉ trả kết quả khi có pixel cát tại ô đó"
+sang "trả toạ độ ô lưới cho mọi điểm nằm trong biên khung, `cell` chỉ là thông tin phụ có thể null" —
+kéo theo crosshair, `is-target-valid`, vòng ngắm (`aimRing`) và tâm hiệu ứng khi bắn trúng
+(`handleImpact`) đều dùng toạ độ ô thay vì chờ có cell.
+
+Thêm test `"a shot into empty air inside the frame still sorts what the disc reaches"`
+(`tests/sand-radius.test.ts`): bắn một phát mở đường trước để tạo khoảng trống, tìm một ô trống có màu
+đạn đang cầm trong tầm bán kính, bắn vào đó và so kết quả `removed` với `cellsInRadius` tính tay — khớp
+tuyệt đối, `hitBody` là `null`, và lượt vẫn bị trừ đúng một.
+
+Nhân tiện phát hiện một sửa đổi chưa commit từ trước (không phải của phiên này) đổi bán kính đĩa từ
+`level.sortRadius` thành `Infinity` — mỗi phát hút sạch toàn bộ màu đó trên bàn, bỏ luật bán kính. Đã trả
+lại `level.sortRadius` vì ngược với yêu cầu "sort trong radius" và làm hỏng 3 test có sẵn.
+
+**Kiểm tra:** 56/56 test pass (`npm test`, thêm 1 test mới so với 55 trước đó). `npx tsc --noEmit` không
+phát sinh lỗi mới (lỗi còn lại ở `work/standalone-entry.tsx` là tàn dư import module đã xoá ở mục 35,
+không liên quan). Xác nhận trực tiếp trên preview: ngắm vào vùng nâu trống phía trên cát hiện crosshair +
+vòng bán kính, bắn ra tiêu đúng một lượt và đổi đạn kế tiếp trên HUD.
+
+---
+
+## 37. Mô hình súng mang đạn: buồng nạp phát sáng, viền họng súng, đạn preview lăn vào (25/08)
+
+Trước đó mô hình 3D của súng không nói gì về việc nó đang cầm đạn màu gì — thông tin đó chỉ nằm ở HUD.
+Thêm ba phần vào `SandCannonEngine.ts`, tất cả gắn vào `barrelPivot` (xoay/nghiêng theo nòng, nhưng
+không giật lùi theo `barrelVisual` khi bắn — viên đạn *kế tiếp* không được giật theo phát vừa rời nòng):
+
+- **Buồng nạp** (`buildAmmoFeed`): một khoang trụ trong suốt ở đoạn nối thân–nòng, chứa quả cầu đạn tô
+  đúng màu ammo hiện tại (`SAND_COLOR_HEX`), quầng glow additive bọc ngoài và một `PointLight` thật hắt
+  màu lên vỏ súng quanh đó. Quầng sáng "thở" theo sin ~1,5 Hz (`CHAMBER_GLOW_HZ`) để súng đã nạp đạn
+  không bao giờ đứng hình.
+- **Viền họng súng**: một vòng torus mảnh quanh miệng nòng (`MUZZLE_BAND_RADIUS = 0.42`, phải lớn hơn
+  bán kính nòng tại đó — thử `0.29` lúc đầu bị chìm lọt vào trong, không thấy được), tô màu ammo đang
+  sẵn sàng bắn, chuyển xám khi hết đạn.
+- **Đạn preview lăn vào buồng**: các quả cầu nhỏ hơn xếp trên một ray dốc phía sau buồng nạp, đúng thứ
+  tự và màu của `NEXT` trên HUD. Bắn xong buồng rỗng ngay (`chamberLoaded = false`); chỉ khi ván trở về
+  `READY` (cùng thời điểm §21 mở khoá input) viên kế mới được nạp — cả hàng trượt lên một slot theo
+  easing ease-out, viên mới nở dần vào buồng kèm một nhịp loé glow. Góc xoay của mỗi quả cầu buộc theo
+  quãng đường đã đi (`rotation.x = -quãng đường / bán kính`) để đọc ra là đang *lăn*, không phải trượt.
+
+Vị trí buồng nạp (`CHAMBER_POSITION`) đặt phía trước cụm cradle thay vì phía sau: camera nhìn súng từ
+trên-sau xuống, đặt buồng lùi ra sau cradle như thử ban đầu khiến cả buồng và ray rơi ra ngoài khung
+nhìn.
+
+**Kiểm tra:** 56/56 test pass, không đổi so với mục 36 (thay đổi thuần trình bày, không đụng luật).
+Xác nhận trực tiếp trên preview: bắn một phát BLUE, HUD chuyển sang YELLOW/cam/xanh lá — mô hình súng
+đồng bộ đúng thứ tự và màu ở cả ba phần (buồng nạp vàng phát sáng, viền họng vàng, ray xếp cam→xanh lá→
+lam).

@@ -39,9 +39,10 @@ function ownerOf(bodies: SandBody[], x: number, y: number) {
 
 /** Aim the disc that takes the most of the bullet in hand. A strong player's line. */
 function bestShot(state: SandGameState, color: SandColor) {
-  // Centres are limited to cells that hold sand: a projectile can only ever
-  // detonate where it hits a grain, so a disc centred on empty space is not a
-  // shot the player could actually take.
+  // Centres are limited to cells that hold sand. Empty air inside the frame is
+  // a legal centre too (see the empty-air test below), but landing on a grain
+  // of the colour in hand is what a strong line does, so that is what this
+  // model plays.
   let best: { x: number; y: number; take: number } | null = null;
   for (const body of state.bodies) {
     for (const cell of body.cells) {
@@ -155,6 +156,39 @@ test("a shot that finds none of its colour in range still costs a shot and moves
   assert.deepEqual(resolution.removed, []);
   assert.equal(boardKey(resolution.state.bodies), boardKey(state.bodies));
   assert.equal(resolution.state.shotsUsed, 1, "a dud still comes out of the budget");
+});
+
+test("a shot into empty air inside the frame still sorts what the disc reaches", () => {
+  // One shot first: this level starts with a full frame, and the gap over the
+  // pile — the place this test is about — only exists once sand has come out.
+  const opening = createSandGameState(LEVEL);
+  const first = bestShot(opening, currentAmmo(LEVEL, opening)!)!;
+  const state = resolveShot(LEVEL, opening, {
+    bodyId: ownerOf(opening.bodies, first.x, first.y)!.id,
+    x: first.x,
+    y: first.y,
+  }).state;
+  const ammo = currentAmmo(LEVEL, state)!;
+  const filled = new Set(state.bodies.flatMap((body) => body.cells.map((cell) => cellKey(cell.x, cell.y))));
+  // Somewhere over the pile: no sand under the crosshair, but the colour in
+  // hand within the disc. That is the shot the ring promises and it has to pay.
+  let air: { x: number; y: number } | null = null;
+  for (let y = LEVEL.frame.height - 1; y >= 0 && !air; y -= 1) {
+    for (let x = 0; x < LEVEL.frame.width; x += 1) {
+      if (filled.has(cellKey(x, y))) continue;
+      if (!cellsInRadius(state.bodies, { x, y }, RADIUS, ammo).length) continue;
+      air = { x, y };
+      break;
+    }
+  }
+  assert.ok(air, "no empty square has the colour in hand in reach");
+
+  const expected = cellsInRadius(state.bodies, air, RADIUS, ammo);
+  const resolution = resolveShot(LEVEL, state, { bodyId: null, x: air.x, y: air.y });
+  assert.equal(resolution.outcome, "SORTED");
+  assert.equal(resolution.hitBody, null, "there was no body under the impact, and the result says so");
+  assert.deepEqual(resolution.removed, expected, "the disc takes exactly what it reaches from that place");
+  assert.equal(resolution.state.shotsUsed, state.shotsUsed + 1);
 });
 
 test("a shot that reaches no sand at all costs nothing", () => {
