@@ -1265,29 +1265,36 @@ export default function LevelEditor() {
             <button
               type="button"
               className="editor-button is-primary"
-              disabled={shipping || errors.length > 0}
+              disabled={shipping}
+              title="Writes every level in the list on the left into sand-levels.ts, replacing what was there before — a level you delete here disappears from the file on the next ship."
               onClick={async () => {
                 setShipping(true);
+                // The whole list ships together and replaces the file's
+                // editor-shipped section wholesale, so the game never ends up
+                // with more built-in levels than the editor actually has.
+                // Broken drafts are left out rather than blocking the rest.
+                const shippable = drafts.filter((entry) =>
+                  !validateDraft(entry).some((issue) => issue.severity === "error"));
                 try {
-                  const response = await fetch("http://localhost:4787/export-level", {
+                  const response = await fetch("http://localhost:4787/ship-levels", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ draft }),
+                    body: JSON.stringify({ drafts: shippable }),
                   });
                   const payload = await response.json().catch(() => null);
                   if (!response.ok) {
                     throw new Error(payload?.error || "The level writer could not write the file.");
                   }
-                  flash(payload.updated
-                    ? `Updated ${payload.name} in sand-levels.ts`
-                    : `Added ${payload.name} to sand-levels.ts`);
+                  const skipped = drafts.length - shippable.length;
+                  flash(`Shipped ${payload.count} level${payload.count === 1 ? "" : "s"} to sand-levels.ts`
+                    + (skipped ? ` (${skipped} skipped for errors)` : ""));
                 } catch {
                   flash("Couldn't reach the level writer — run `npm run level-writer` in a terminal, then try again.");
                 }
                 setShipping(false);
               }}
             >
-              {shipping ? "Writing…" : "Ship to sand-levels.ts"}
+              {shipping ? "Writing…" : "Ship all levels to sand-levels.ts"}
             </button>
             <button
               type="button"
@@ -1306,11 +1313,13 @@ export default function LevelEditor() {
           </div>
           <p className="editor-note">
             Saved levels already show up in the game&apos;s level switcher, and stay in this editor,
-            because they live in your browser. &quot;Ship to sand-levels.ts&quot; writes the level
-            straight into the source file — run <code>npm run level-writer</code> once in a terminal
-            alongside the dev server, then this button needs no copy-paste and survives clearing your
-            browser or a fresh checkout. &quot;Copy TypeScript&quot; is the manual fallback if that
-            terminal isn&apos;t running.
+            because they live in your browser. &quot;Ship all levels to sand-levels.ts&quot; writes
+            the whole list on the left into the source file, replacing what was there before — so the
+            file always has exactly the levels the editor has, not every level ever shipped. Run{" "}
+            <code>npm run level-writer</code> once in a terminal alongside the dev server; then this
+            button needs no copy-paste and survives clearing your browser or a fresh checkout.
+            &quot;Copy TypeScript&quot; exports just this one level&apos;s block, for the manual fallback
+            if that terminal isn&apos;t running.
           </p>
           {status && <p className="editor-ok">{status}</p>}
           {exported && (

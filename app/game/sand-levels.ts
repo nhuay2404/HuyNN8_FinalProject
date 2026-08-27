@@ -81,27 +81,26 @@ export const sandBloom: SandLevelConfig = {
  * on top; take the yellow out and the key drops onto the slab, which opens on
  * contact and lets the purple pour to the floor.
  *
- * The `K` cells are `KEY_SPRITE` at scale 1 — a round bow, a neck and a
- * three-prong bit, because this key does not roll: it slides, and a flat
- * silhouette is what reads as skidding across sand instead of tumbling over
- * it. It never authors `keyFriction`, so it is maximally slippery by default —
- * it moves the instant a slope or a gust offers it a way down.
+ * The `K` cells are `KEY_SPRITE` at scale 1 — a plain filled disc, because a
+ * solid shape is the one silhouette that cannot read as broken. It never
+ * authors `keyFriction`, so it is maximally slippery by default — it moves
+ * the instant a slope or a gust offers it a way down.
  *
  * The plug (cols3-8, 6 cells) sits a column in from the slab on each side
- * (cols2-9, 8 cells) — no partial overhang for the teeth to reason about by
- * hand, and the key's own bow overflows the plug by one column on the left,
- * same as before: a rigid body cell without support is still valid, it just
- * cannot be sand.
+ * (cols2-9, 8 cells) — no partial overhang to reason about by hand, and the
+ * key's own disc overflows the plug by one column on each side: a rigid body
+ * cell without support is still valid, it just cannot be sand.
  */
 const LOCK_PICTURE = [
   "............",
   "............",
+  "....KKK.....",
   "...KKKKK....",
   "..KKKKKKK...",
+  "..KKKKKKK...",
+  "..KKKKKKK...",
   "...KKKKK....",
-  ".....K......",
-  "...KKKKK....",
-  "...K.K.K....",
+  "....KKK.....",
   "...YYYYYY...",
   "..pppppppp..",
   "..pppppppp..",
@@ -119,7 +118,7 @@ export const lockAndKey: SandLevelConfig = {
   id: 2,
   name: "Lock & Key",
 
-  frame: { width: 12, height: 17 },
+  frame: { width: 12, height: 18 },
   rows: LOCK_PICTURE,
 
   ammoQueue: ["yellow", "green", "orange", "purple"],
@@ -194,7 +193,109 @@ export const crosswind: SandLevelConfig = {
   notes: "Mechanic test: a looping wind pattern that reshapes the board between shots.",
 };
 
-export const BUILT_IN_LEVELS: SandLevelConfig[] = [sandBloom, lockAndKey, crosswind];
+// ==== Editor-shipped levels ====
+
+// Regenerated in full every time a level is shipped from `/editor` (the
+// "Ship to sand-levels.ts" button, via `npm run level-writer`) — this array
+// always mirrors the editor's current level list exactly, so a level deleted
+// in the editor disappears from here on the next ship rather than lingering.
+// Hand edits inside this block are overwritten on the next ship; edit the
+// level in the editor instead.
+export const level2: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 4,
+  name: "Level 2",
+
+  frame: { width: 60, height: 70 },
+  rows: [
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKPPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKPPP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
+    "PPPPPPrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
+    "rrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
+    "rrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
+    "rrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
+    "PPrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBOOOOOOBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  ],
+
+  // The starting rotation only — under the cycling rule this is a wheel, not a
+  // budget: colours come round again until they are gone.
+  ammoQueue: ["blue", "red", "purple", "orange"],
+
+  sortRadius: 12,
+  shotLimit: 20,
+
+  // 60 x 70 blueprint at 1x = 4,200 simulated pixels.
+  pixelScale: 1,
+};
+
+export const EDITOR_LEVELS: SandLevelConfig[] = [level2];
+// ==== End editor-shipped levels ====
+
+export const BUILT_IN_LEVELS: SandLevelConfig[] = [sandBloom, lockAndKey, crosswind, ...EDITOR_LEVELS];
 
 export const newLevel: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,

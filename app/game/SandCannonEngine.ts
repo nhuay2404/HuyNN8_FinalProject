@@ -79,6 +79,20 @@ const RECOIL_TRAVEL = 0.23;
 const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
 const MUZZLE_Z = -2.18;
 
+// ---- cannon entrance (home screen -> gameplay) ---------------------------
+// The gun is hidden entirely on the home screen (`buildCannon`) so the
+// picture is the only thing on screen while it turns. The moment the player
+// taps Play, `startCannonEntrance` brings it on: the whole rig rises up from
+// below the frame, and partway through, the turret drops onto the base from
+// above and settles with a small overshoot — the last part snapping into
+// place rather than the whole gun sliding in as one block.
+const TURRET_REST_Y = 0.46;
+const CANNON_RISE_DISTANCE = 3.4;
+const CANNON_RISE_SECONDS = 0.8;
+const TURRET_DROP_HEIGHT = 1.7;
+const TURRET_DROP_SECONDS = 0.5;
+const TURRET_DROP_DELAY_SECONDS = 0.34;
+
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
 // about what it was loaded with. These give the model the same answer: a
@@ -107,12 +121,22 @@ const MUZZLE_BAND_RADIUS = 0.42;
 
 // ---- board presentation --------------------------------------------------
 /** The painting is fitted into this opening whatever the authored grid is. */
-const FIT_WIDTH = 4.45;
-const FIT_HEIGHT = 5.2;
-const FRAME_CENTER_Y = 1.05;
+const FIT_WIDTH = 5.4;
+const FIT_HEIGHT = 6.15;
+const FRAME_CENTER_Y = 1.95;
 const SAND_PLANE_Z = -2.3;
 /** Where the pixel plane sits inside the recess, as a fraction of one pixel's world size. */
 const PLANE_LOCAL_Z_RATIO = 0.5;
+/** Centre and depth of the frame's rear backing panel, as fractions of one pixel's world
+ * size. `buildSand` reads these too, to park the back-facing picture just outside it. */
+const BACKING_Z_RATIO = -0.72;
+const BACKING_DEPTH_RATIO = 0.3;
+/** How fast the picture turns on the home screen, one full turn per this many seconds. */
+const IDLE_SPIN_SECONDS_PER_TURN = 10;
+/** How long the picture takes to ease back to its authored, unrotated orientation once the
+ * player taps Play. Gameplay stays paused for this stretch — a shot resolved mid-spin would
+ * hit the wrong cell, since the aim math assumes frameRoot is unrotated. */
+const SPIN_RETURN_SECONDS = 1;
 
 // SAND_SATURATION_JITTER / SAND_LIGHTNESS_JITTER live in ./sand-color, shared
 // with the editor's preview so a level textures the same in both places.
@@ -150,9 +174,11 @@ const LOCK_DARKEN = 0.62;
 /** The padlock drawn on top of a locked region, and the smallest region worth one. */
 const LOCK_ICON_RGB: readonly [number, number, number] = [236, 243, 255];
 const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
-/** The key's own gold, and a darker gold for its one-pixel drop shadow. */
+/** The key's own gold, and a pale glint that orbits the disc as it moves —
+ * the one cue that reads as "rolling" on a shape with no notch or seam to
+ * track otherwise. No drop shadow (see `redrawSand`). */
 const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
-const KEY_SHADOW_RGB: readonly [number, number, number] = [120, 82, 10];
+const KEY_GLINT_RGB: readonly [number, number, number] = [255, 250, 214];
 const THAW_SECONDS = 0.5;
 /** How long the warning shows before a phase of wind starts blowing. */
 const WIND_WARNING_MS = 900;
@@ -222,6 +248,16 @@ type BallisticSolution = { start: THREE.Vector3; velocity: THREE.Vector3 };
 
 export type ControlSensitivity = { aim: number };
 
+/** Overshoots past 1 before settling back — used for the turret dropping onto
+ * the cannon's base, so the last part of its entrance reads as snapping into
+ * place rather than just arriving. */
+function easeOutBack(t: number): number {
+  const overshoot = 1.7;
+  const c3 = overshoot + 1;
+  const p = t - 1;
+  return 1 + c3 * p ** 3 + overshoot * p ** 2;
+}
+
 export class SandCannonEngine {
   private readonly host: HTMLDivElement;
   private readonly aimZone: HTMLDivElement;
@@ -258,6 +294,9 @@ export class SandCannonEngine {
   private chamberLight: THREE.PointLight | null = null;
   /** The colour band at the muzzle: what this cannon is about to fire. */
   private muzzleBand: THREE.Mesh | null = null;
+  /** The collar around the base — the same colour as the muzzle band, so the
+   * cannon reads its own next shot from any angle, not just head-on. */
+  private baseRing: THREE.Mesh | null = null;
   /** The preview queue, nearest first, waiting on the rail. */
   private feedBalls: THREE.Mesh[] = [];
   /** 1 the moment a round is chambered, decaying to 0 as the queue rolls forward. */
@@ -273,6 +312,9 @@ export class SandCannonEngine {
   private readonly sandImage: ImageData;
   private readonly sandTexture: THREE.CanvasTexture;
   private readonly sandMesh: THREE.Mesh;
+  /** The same picture, facing the opposite way, so the frame is never blank
+   * from behind while it turns on the home screen. */
+  private readonly sandMeshBack: THREE.Mesh;
 
   /** Live pixels by "x,y". Rebuilt on every settle step so lookups stay exact. */
   private cells = new Map<string, PixelCell>();
@@ -286,6 +328,15 @@ export class SandCannonEngine {
    * same way sand is, not stood in for by a separate object.
    */
   private keys = new Map<string, CellCoord[]>();
+  /**
+   * How far each key has rolled, in radians, accumulated as it moves.
+   *
+   * A round key has no feature of its own to show it turning, so the glint
+   * drawn in `redrawSand` reads its position off this angle — the key does
+   * not actually spin, the mark just walks around its rim at the rate a
+   * disc of its own measured radius would if it were truly rolling.
+   */
+  private keyRotation = new Map<string, number>();
   /** Where the level's wind loop has got to. */
   private windPhase = 0;
   /** Milliseconds left in whatever the current phase is doing. */
@@ -333,6 +384,18 @@ export class SandCannonEngine {
   private disposed = false;
   private firstFrameSent = false;
 
+  /** True while the home screen is up — the state `setIdle` is toggling. */
+  private idle = true;
+  /** Set the moment the player taps Play; cleared once the picture has eased
+   * back to rotation 0 and gameplay is unpaused. */
+  private spinReturnStart: number | null = null;
+  /** frameRoot's rotation.y when the return-to-default animation began. */
+  private spinReturnFrom = 0;
+  /** Set the moment the player taps Play, alongside `spinReturnStart`; cleared
+   * once the cannon has finished rising into place. Null the rest of the
+   * time, including the whole time the cannon sits hidden on the home screen. */
+  private cannonEntranceStart: number | null = null;
+
   constructor(
     host: HTMLDivElement,
     aimZone: HTMLDivElement,
@@ -367,7 +430,13 @@ export class SandCannonEngine {
     const sandMaterial = this.track(
       new THREE.MeshBasicMaterial({ map: this.sandTexture, transparent: true }),
     );
-    this.sandMesh = new THREE.Mesh(this.track(new THREE.PlaneGeometry(1, 1)), sandMaterial);
+    const sandGeometry = this.track(new THREE.PlaneGeometry(1, 1));
+    this.sandMesh = new THREE.Mesh(sandGeometry, sandMaterial);
+    // Rotated 180° about Y rather than mirrored in place: that flip is what
+    // makes a viewer standing behind a rotated plane see it right-reading
+    // instead of backwards, the same trick a two-sided sign uses.
+    this.sandMeshBack = new THREE.Mesh(sandGeometry, sandMaterial);
+    this.sandMeshBack.rotation.y = Math.PI;
 
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid", "is-cooling-down");
     this.scene.fog = new THREE.FogExp2(0x2a1c46, 0.02);
@@ -425,11 +494,11 @@ export class SandCannonEngine {
     this.scene.add(this.frameRoot);
 
     const backing = this.track(
-      new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * 0.3),
+      new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
     const backingMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0x241a3d }));
     const back = new THREE.Mesh(backing, backingMaterial);
-    back.position.z = -this.cell * 0.72;
+    back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
 
     const railMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xc99a5b, emissive: 0x3a2410, emissiveIntensity: 0.35 }));
@@ -496,6 +565,14 @@ export class SandCannonEngine {
     this.sandMesh.scale.set(openWidth, openHeight, 1);
     this.sandMesh.position.z = this.cell * PLANE_LOCAL_Z_RATIO;
     this.frameRoot.add(this.sandMesh);
+
+    this.sandMeshBack.scale.set(openWidth, openHeight, 1);
+    // Just outside the backing panel, so it is fully hidden behind that panel
+    // (and the front picture) head-on, and fully clear of it once the frame
+    // has turned around.
+    this.sandMeshBack.position.z = this.cell * (BACKING_Z_RATIO - BACKING_DEPTH_RATIO / 2 - 0.1);
+    this.frameRoot.add(this.sandMeshBack);
+
     this.redrawSand();
   }
 
@@ -565,14 +642,39 @@ export class SandCannonEngine {
 
     // Keys last, so a key resting in a hollow is never buried by the sand it
     // sits against — it is the one thing on the board the player is tracking.
-    // One-pixel drop shadow, then the flat gold shape over it: the silhouette
-    // is the whole point of an authored shape, so nothing here shades it into
-    // looking like something rounder than it is.
-    for (const cells of this.keys.values()) {
-      for (const cell of cells) writePixel(cell.x + 1, height - 1 - cell.y + 1, ...KEY_SHADOW_RGB, 210);
-    }
-    for (const cells of this.keys.values()) {
-      for (const cell of cells) writePixel(cell.x, height - 1 - cell.y, ...KEY_RGB, 255);
+    // No drop shadow here (unlike the padlock icon above): offsetting a copy
+    // of a *round* shape down-right leaves a one-pixel sliver of shadow colour
+    // poking out past the fill along the bottom and right rim only, since the
+    // fill exactly covers the shadow everywhere else — that sliver is what
+    // read as a bite taken out of the disc, not a shadow under it. The flat
+    // gold shape, plus a glint cell placed by `keyRotation` so a shape with no
+    // notch of its own still reads as turning while it moves, is the whole
+    // drawing.
+    for (const [id, cells] of this.keys) {
+      const xs = cells.map((cell) => cell.x);
+      const ys = cells.map((cell) => cell.y);
+      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const radius = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 || 1;
+      const angle = this.keyRotation.get(id) ?? 0;
+      // Sits inboard of the rim, not on it — a glint riding the actual edge
+      // disappears whenever the rotation happens to point it off the shape's
+      // own filled cells.
+      const glintX = centerX + Math.cos(angle) * radius * 0.55;
+      const glintY = centerY + Math.sin(angle) * radius * 0.55;
+      let glintCell = cells[0];
+      let bestDistance = Infinity;
+      for (const cell of cells) {
+        const distance = (cell.x - glintX) ** 2 + (cell.y - glintY) ** 2;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          glintCell = cell;
+        }
+      }
+      for (const cell of cells) {
+        const rgb = cell === glintCell ? KEY_GLINT_RGB : KEY_RGB;
+        writePixel(cell.x, height - 1 - cell.y, ...rgb, 255);
+      }
     }
 
     this.sandContext.putImageData(this.sandImage, 0, 0);
@@ -623,9 +725,12 @@ export class SandCannonEngine {
   }
 
   private buildCannon() {
+    // Hidden until the player actually enters a level — the home screen shows
+    // off the picture, not the gun it will be shot with. `setIdle` toggles this.
+    this.cannonRoot.visible = false;
     this.cannonRoot.position.copy(CANNON_ROOT_POSITION);
     this.scene.add(this.cannonRoot);
-    this.turret.position.y = 0.46;
+    this.turret.position.y = TURRET_REST_Y;
     this.cannonRoot.add(this.turret);
     this.barrelPivot.position.y = 0.12;
     this.turret.add(this.barrelPivot);
@@ -639,10 +744,15 @@ export class SandCannonEngine {
 
     const base = new THREE.Mesh(this.track(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40)), dark);
     this.cannonRoot.add(base);
-    const ring = new THREE.Mesh(this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)), accent);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.27;
-    this.cannonRoot.add(ring);
+    // Its own material, not `accent` — it starts the same gold, but it has to
+    // repaint independently of the muzzle ring once ammo starts cycling.
+    this.baseRing = new THREE.Mesh(
+      this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
+      this.track(new THREE.MeshLambertMaterial({ color: 0xffd54a })),
+    );
+    this.baseRing.rotation.x = Math.PI / 2;
+    this.baseRing.position.y = 0.27;
+    this.cannonRoot.add(this.baseRing);
 
     // Squashed enough to keep swallowing the barrel's back rim through the
     // whole recoil travel, so nothing pops out of the cradle on a shot.
@@ -807,6 +917,9 @@ export class SandCannonEngine {
       // Grey once the wheel is spent: an empty cannon must not still be
       // advertising a colour it can no longer fire.
       (this.muzzleBand.material as THREE.MeshBasicMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x6a6f8f);
+    }
+    if (this.baseRing) {
+      (this.baseRing.material as THREE.MeshLambertMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x6a6f8f);
     }
     this.feedBalls.forEach((ball, index) => {
       const color = upcoming[index];
@@ -1512,6 +1625,20 @@ export class SandCannonEngine {
     if (step.kind === "KEY_MOVE") {
       const cells = this.keys.get(step.keyId);
       if (cells) {
+        // Radius from the shape's own current bounding box — an author's key
+        // is never guaranteed to be `KEY_SPRITE` exactly, so this has to read
+        // the shape rather than assume it.
+        const xs = cells.map((cell) => cell.x);
+        const ys = cells.map((cell) => cell.y);
+        const radius = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 || 1;
+        // Rolling without slipping: the arc length covered by one step is the
+        // step's own path length, so the angle it turns through is that
+        // length over the radius. `dx - dy` is a simple, direction-aware
+        // stand-in for that length on a grid where a step is at most one cell
+        // in each axis, and it keeps a straight vertical drop visibly turning
+        // too, rather than only spinning on a sideways nudge.
+        const previous = this.keyRotation.get(step.keyId) ?? 0;
+        this.keyRotation.set(step.keyId, previous + (step.dx - step.dy) / radius);
         for (const cell of cells) {
           cell.x += step.dx;
           cell.y += step.dy;
@@ -1531,6 +1658,7 @@ export class SandCannonEngine {
       }
       this.lockRegionsDirty = true;
       this.keys.delete(step.keyId);
+      this.keyRotation.delete(step.keyId);
       haptic("bodyCleared");
       this.callbacks.onEvent?.({ type: "UNLOCKED", cells: step.cells.length });
       return;
@@ -1721,6 +1849,8 @@ export class SandCannonEngine {
     const now = performance.now();
     const delta = Math.min(now - this.lastFrame, 120);
     this.lastFrame = now;
+    this.updateFrameSpin(delta);
+    this.updateCannonEntrance();
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;
@@ -1745,7 +1875,7 @@ export class SandCannonEngine {
     const height = Math.max(this.host.clientHeight, 1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    this.camera.fov = this.camera.aspect < 0.62 ? 40 : 37;
+    this.camera.fov = this.camera.aspect < 0.62 ? 44 : 37;
     this.camera.updateProjectionMatrix();
     if (this.aimPointer !== null) this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     else this.showIdleCrosshair();
@@ -1762,12 +1892,89 @@ export class SandCannonEngine {
    * that has nothing to aim at.
    */
   setIdle(idle: boolean) {
+    this.idle = idle;
     if (!idle) {
-      this.resume();
+      this.cannonRoot.visible = true;
+      this.startCannonEntrance();
+      // Ease the picture back to its authored orientation first; `resume()`
+      // fires once that finishes, from `updateFrameSpin`. Staying paused for
+      // that stretch keeps a shot from landing before the aim math (which
+      // assumes frameRoot is unrotated) is valid again.
+      this.spinReturnFrom = this.frameRoot.rotation.y;
+      this.spinReturnStart = performance.now();
       return;
     }
+    this.cannonRoot.visible = false;
+    // Cancel any animation in progress rather than snapping to it — if the
+    // player is back on the home screen there is nothing left for either to
+    // finish playing towards.
+    this.cannonEntranceStart = null;
+    this.spinReturnStart = null;
     this.pause();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
+  }
+
+  /** Sets the cannon rig to its "just arriving" pose; `updateCannonEntrance`
+   * eases it from here to its resting pose on every frame that follows. */
+  private startCannonEntrance() {
+    this.cannonEntranceStart = performance.now();
+    this.cannonRoot.position.y = CANNON_ROOT_POSITION.y - CANNON_RISE_DISTANCE;
+    this.turret.position.y = TURRET_REST_Y + TURRET_DROP_HEIGHT;
+  }
+
+  /**
+   * Plays out the entrance `startCannonEntrance` set up: the rig rises into
+   * place, and — starting partway through that rise — the turret drops onto
+   * the base from above with a small overshoot, as if the two had just been
+   * fitted together. Runs every frame regardless of `paused`, like
+   * `updateFrameSpin`: the entrance has to keep playing through the very
+   * pause it is layered on top of.
+   */
+  private updateCannonEntrance() {
+    if (this.cannonEntranceStart === null) return;
+    const elapsed = (performance.now() - this.cannonEntranceStart) / 1000;
+
+    const riseT = Math.min(1, elapsed / CANNON_RISE_SECONDS);
+    const riseEased = 1 - (1 - riseT) ** 3;
+    this.cannonRoot.position.y = THREE.MathUtils.lerp(
+      CANNON_ROOT_POSITION.y - CANNON_RISE_DISTANCE,
+      CANNON_ROOT_POSITION.y,
+      riseEased,
+    );
+
+    const dropElapsed = elapsed - TURRET_DROP_DELAY_SECONDS;
+    const dropT = Math.min(1, Math.max(0, dropElapsed) / TURRET_DROP_SECONDS);
+    const dropEased = easeOutBack(dropT);
+    this.turret.position.y = TURRET_REST_Y + TURRET_DROP_HEIGHT * (1 - dropEased);
+
+    if (riseT >= 1 && dropElapsed >= TURRET_DROP_SECONDS) {
+      this.cannonRoot.position.y = CANNON_ROOT_POSITION.y;
+      this.turret.position.y = TURRET_REST_Y;
+      this.cannonEntranceStart = null;
+    }
+  }
+
+  /**
+   * Turns the picture while the home screen is up, and eases it back to
+   * rotation 0 once the player has tapped Play. Runs every rendered frame
+   * regardless of `paused`, since the idle spin has to keep turning through
+   * the very pause it is layered on top of.
+   */
+  private updateFrameSpin(deltaMs: number) {
+    if (this.spinReturnStart !== null) {
+      const t = Math.min(1, (performance.now() - this.spinReturnStart) / (SPIN_RETURN_SECONDS * 1000));
+      const eased = 1 - (1 - t) ** 3;
+      this.frameRoot.rotation.y = this.spinReturnFrom * (1 - eased);
+      if (t >= 1) {
+        this.frameRoot.rotation.y = 0;
+        this.spinReturnStart = null;
+        this.resume();
+      }
+      return;
+    }
+    if (!this.idle) return;
+    const twoPi = Math.PI * 2;
+    this.frameRoot.rotation.y = (this.frameRoot.rotation.y + (twoPi / IDLE_SPIN_SECONDS_PER_TURN) * (deltaMs / 1000)) % twoPi;
   }
 
   pause() {

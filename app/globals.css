@@ -7,7 +7,7 @@
   --line: rgba(255, 255, 255, 0.18);
   --accent: #ffd54a;
   --hud-inset: 14px;
-  --hud-height: 106px;
+  --hud-height: 44px;
   /* The home screen's bottom bar, excluding the phone's own safe area. Shared
      so the play hint and any open section know where the bar starts. */
   --hub-nav-height: 62px;
@@ -112,91 +112,82 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .icon-button:hover { background: rgba(255,255,255,.2); }
 .icon-button:active { transform: scale(.94); }
 .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.game-tools {
+/* ---- Settings menu ------------------------------------------------------ */
+/* Everything that is a menu rather than a live number — level pick, home,
+   editor, restart — collapses behind one button so the HUD reads as "one
+   number, one menu" instead of a row of icons competing with the picture. */
+.settings-wrap {
   position: absolute; z-index: 12;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
-  display: flex; flex-direction: column; gap: 8px;
 }
-.game-tools .icon-button {
+.settings-button {
   width: 42px; height: 42px; font-size: 19px; line-height: 1;
-  display: grid; place-items: center; text-decoration: none;
+  display: grid; place-items: center;
 }
-
-/* ---- Ammo HUD ---------------------------------------------------------- */
-/* §23: total remaining, the current bullet, and a few upcoming ones — and
-   nothing that suggests the order can be changed, because it cannot. */
-.hud-top {
-  position: absolute; z-index: 10;
-  inset: max(var(--hud-inset), env(safe-area-inset-top)) 64px auto max(14px, env(safe-area-inset-left));
-  height: var(--hud-height);
-  display: flex; flex-direction: column; gap: 8px;
+.settings-backdrop {
+  position: fixed; z-index: 11; inset: 0; border: 0; padding: 0;
+  background: transparent; cursor: default;
 }
-.ammo-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center; gap: 12px;
-  padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px;
-  background: var(--panel);
+.settings-menu {
+  position: absolute; z-index: 13; top: 50px; right: 0;
+  width: 212px; padding: 14px; display: flex; flex-direction: column; gap: 12px;
+  border: 1px solid var(--line); border-radius: 18px; background: var(--panel);
+  backdrop-filter: blur(10px);
 }
-.ammo-label {
-  display: block; color: var(--muted);
-  font-size: 8px; font-weight: 900; letter-spacing: .16em;
+.settings-level { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.settings-level .level-name {
+  font-size: 14px; font-weight: 800; color: #e7dcff;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ammo-total { min-width: 0; text-align: right; }
-
-/* One upright bar per colour in the picture, filling from the bottom as that
-   colour is cleared. No number on it: the whole point of a bar is that a
-   glance is enough, and a percentage beside it would only be read instead of
-   the bar. A colour's bar also THICKENS as it fills, so how far along each one
-   is survives being seen out of the corner of the eye, or by someone who
-   cannot separate two of the hues. */
-.color-bars {
-  display: flex; align-items: flex-end; gap: 8px;
-  height: 56px; min-width: 0;
-}
-.color-bar {
-  --fill: 0;
-  position: relative; display: block; height: 100%; flex: none;
-  width: calc(9px + var(--fill) * 11px);
-  border-radius: 999px;
-  /* The empty track is tinted too, or a bar nobody has touched yet says
-     nothing about which colour it is waiting on. */
-  border: 1px solid color-mix(in srgb, var(--bullet, #888), transparent 48%);
-  background: color-mix(in srgb, var(--bullet, #888), transparent 84%);
-  overflow: hidden;
-  transition: width .45s cubic-bezier(.2,.9,.24,1);
-}
-.color-bar i {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  height: calc(var(--fill) * 100%);
-  /* Rounded on top only — the track clips the bottom, so a part-filled bar
-     reads as a rising column instead of a pill floating in a tube. */
-  border-radius: 999px 999px 0 0;
-  background: linear-gradient(to top, var(--bullet, #888), color-mix(in srgb, var(--bullet, #888), white 34%));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--bullet, #888), transparent 55%);
-  transition: height .45s cubic-bezier(.2,.9,.24,1);
-}
-.ammo-total strong {
-  display: block; margin-top: 2px; font-size: 26px; letter-spacing: -.03em;
-  font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(6,10,32,.6);
-}
-.board-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px;
-  color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em;
-}
-.level-switch { display: flex; gap: 6px; }
-.level-switch button {
-  width: 22px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 50%;
+.settings-level .level-cleared { font-size: 11px; font-weight: 700; color: var(--muted); }
+.settings-levels { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-levels button {
+  width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 50%;
   background: rgba(255,255,255,.06); color: var(--muted);
   font-size: 11px; font-weight: 800; line-height: 1; cursor: pointer;
   transition: background .18s, color .18s, border-color .18s;
 }
-.level-switch button:hover { background: rgba(255,255,255,.14); }
-.level-switch button.is-active {
+.settings-levels button:hover { background: rgba(255,255,255,.14); }
+.settings-levels button.is-active {
   border-color: rgba(255,213,74,.5); background: rgba(255,213,74,.16); color: #ffe9a8;
 }
-.level-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.level-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e7dcff; }
+.settings-levels button:focus-visible,
+.settings-actions button:focus-visible, .settings-actions a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.settings-actions { display: flex; flex-direction: column; gap: 6px; }
+.settings-actions button, .settings-actions a {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255,255,255,.05); color: var(--ink);
+  font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer;
+  transition: background .18s;
+}
+.settings-actions button:hover, .settings-actions a:hover { background: rgba(255,255,255,.14); }
+
+/* ---- Ammo HUD ---------------------------------------------------------- */
+/* §23: just the number that changes every shot, small and to the edge —
+   a casual-game HUD reads at a glance, not as a panel to study. */
+.hud-top {
+  position: absolute; z-index: 10;
+  top: max(var(--hud-inset), env(safe-area-inset-top));
+  left: max(14px, env(safe-area-inset-left));
+}
+.shots-badge {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px 6px 8px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel);
+}
+.shots-icon {
+  width: 14px; height: 14px; flex: none; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff9dd, var(--accent) 55%, #b8790f 100%);
+  box-shadow: 0 0 6px rgba(255,213,74,.55);
+}
+.shots-badge strong {
+  font-size: 19px; font-weight: 900; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(6,10,32,.6);
+}
 
 /* ---- Scene and controls ------------------------------------------------ */
 .scene-wrap {
@@ -322,9 +313,12 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* ---- Home screen ------------------------------------------------------- */
 /* Carried over in shape from the pre-pivot menu hub, with one thing changed:
    the centrepiece is no longer a cube turning in place. It is the level's own
-   pixel painting, sitting still in its frame — the scene underneath, left
-   rendering but not playing. Nothing here paints over the middle of the
-   screen, because the middle of the screen is the artwork being chosen. */
+   pixel painting — the scene underneath, left rendering but not playing —
+   turning slowly in its frame the way that cube once did (SandCannonEngine's
+   `updateFrameSpin`), with the cannon and the level name hidden so nothing
+   but the picture is on screen while it spins. Nothing here paints over the
+   middle of the screen, because the middle of the screen is the artwork
+   being chosen. */
 .hub-screen { position: absolute; z-index: 30; inset: 0; }
 .hub-tap, .hub-scrim {
   position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
@@ -337,13 +331,19 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 /* A section is open, so the picture steps back and stops inviting a tap. */
 .hub-scrim { background: rgba(11,7,26,.72); cursor: default; }
-.hub-play-hint {
-  font-size: 23px; font-weight: 900; letter-spacing: .12em;
-  text-shadow: 0 4px 18px rgba(6,10,32,.85);
+.hub-play-hint { display: block; }
+/* A real button rather than a glowing label: rounded, filled, and matching
+   the accent gradient used everywhere else a primary action is offered
+   (see .result-card button). The pulse lives on it directly so an exit
+   animation on the parent tap target cannot cancel it mid-cycle. */
+.hub-play-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 16px 40px; border-radius: 999px;
+  background: linear-gradient(180deg, #ffd54a, #ff9f1f);
+  color: #2a1a06; font-size: 16px; font-weight: 900; letter-spacing: .05em;
+  box-shadow: 0 10px 28px rgba(255,159,31,.4), inset 0 1px 0 rgba(255,255,255,.5);
+  animation: hub-play-pulse 1.6s ease-in-out infinite alternate;
 }
-/* The pulse lives on the inner span so an exit animation on the parent cannot
-   cancel it mid-cycle. */
-.hub-play-hint > span { display: block; animation: hub-play-pulse 1.5s ease-in-out infinite alternate; }
 .hub-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: -8px; }
 .hub-level-name {
   position: absolute; z-index: 1; top: max(30px, calc(env(safe-area-inset-top) + 22px)); left: 0; right: 0;
@@ -352,6 +352,18 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   text-shadow: 0 4px 16px rgba(6,10,32,.8);
   animation: hub-enter .34s cubic-bezier(.2,.8,.2,1) both;
 }
+
+/* ---- Home screen: leaving for gameplay ---------------------------------- */
+/* Tapping Play does not cut the home screen away instantly — `homeVisible`
+   in SandGame.tsx keeps it mounted through one more beat of `.is-leaving` so
+   this can actually play: the Play button shrinks away, the darkening
+   overlay clears, and the bottom bar slides down off the screen. Durations
+   here have to stay under HOME_EXIT_MS in SandGame.tsx (the two are not read
+   from one source — one is a JS timer, the other a CSS animation-duration). */
+.hub-screen.is-leaving { pointer-events: none; }
+.hub-screen.is-leaving .hub-tap { animation: hub-tap-exit .46s ease-in forwards; }
+.hub-screen.is-leaving .hub-play-btn { animation: hub-play-btn-exit .4s cubic-bezier(.5,0,1,1) forwards; }
+.hub-screen.is-leaving .hub-nav { animation: hub-nav-exit .44s cubic-bezier(.4,0,1,.7) forwards; }
 
 /* A section's contents sit above the bar that opened them, never behind it. */
 .hub-panel {
@@ -394,36 +406,55 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .pixel-thumb i { display: block; aspect-ratio: 1; }
 
 /* ---- Home screen: the bottom bar --------------------------------------- */
+/* No labels any more — just the five marks — so the pressed tab has to carry
+   its own "this one" signal. It does that by growing: `flex-grow` on
+   `.is-active` bulges that slot and, because every button shares the same
+   flexible row, the bulge visibly shoulders its neighbours aside rather than
+   the bar just recolouring one fixed-width cell. */
 .hub-nav {
   position: absolute; z-index: 3; left: 0; right: 0; bottom: 0;
   height: calc(var(--hub-nav-height) + env(safe-area-inset-bottom));
-  padding: 0 6px env(safe-area-inset-bottom);
-  display: grid; grid-template-columns: repeat(5, 1fr); align-items: center;
+  padding: 8px 6px env(safe-area-inset-bottom);
+  display: flex; align-items: stretch; gap: 5px;
   border-top: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(30,18,58,.9), rgba(16,9,36,.98));
   backdrop-filter: blur(10px);
 }
 .hub-nav button {
-  display: grid; justify-items: center; gap: 3px; padding: 7px 2px; cursor: pointer;
-  border: 0; border-radius: 13px; background: none; color: var(--muted);
-  font-size: 9.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
-  transition: color .18s, background .18s;
+  flex: 1 1 0%; min-width: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 16px; background: none; color: var(--muted);
+  transition: flex-grow .28s cubic-bezier(.2,.8,.2,1), background .2s, color .2s, box-shadow .2s;
 }
 .hub-nav button:hover { color: #e9e2ff; background: rgba(255,255,255,.06); }
 .hub-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.hub-nav button.is-active { color: var(--accent); }
+/* The gradient matches every other primary action in the game (.hub-play-btn,
+   .result-card button), so "pressed" reads the same accent everywhere. */
+.hub-nav button.is-active {
+  flex-grow: 2.15;
+  color: #2a1a06;
+  background: linear-gradient(180deg, #ffd54a, #ff9f1f);
+  box-shadow: 0 6px 16px rgba(255,159,31,.4);
+}
 .hub-nav-icon {
   display: block; width: 23px; height: 23px;
   fill: none; stroke: currentColor; stroke-width: 1.7;
   stroke-linecap: round; stroke-linejoin: round;
+  /* Sized to the button, not stretched by it — the bulge widens the slot
+     around the icon, the icon itself only grows a little to sell the pop. */
+  transition: width .28s cubic-bezier(.2,.8,.2,1), height .28s cubic-bezier(.2,.8,.2,1), fill .2s;
 }
-/* The active tab's mark is filled as well as outlined, so which tab is current
-   survives being read in greyscale. */
-.hub-nav button.is-active .hub-nav-icon { fill: color-mix(in srgb, var(--accent), transparent 76%); }
+.hub-nav button.is-active .hub-nav-icon {
+  width: 27px; height: 27px;
+  fill: color-mix(in srgb, currentColor, transparent 82%);
+}
 
 /* ---- Keyframes --------------------------------------------------------- */
 @keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
-@keyframes hub-play-pulse { to { opacity: .58; transform: scale(.975); } }
+@keyframes hub-play-pulse { to { transform: scale(1.045); } }
+@keyframes hub-tap-exit { to { opacity: 0; } }
+@keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
+@keyframes hub-nav-exit { to { transform: translateY(130%); opacity: 0; } }
 @keyframes hub-panel-in { from { opacity: 0; transform: translateY(16px); } }
 @keyframes badge-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 @keyframes badge-pulse { to { opacity: .35; transform: scale(.78); } }

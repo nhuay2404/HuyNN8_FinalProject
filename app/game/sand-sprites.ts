@@ -11,20 +11,20 @@ export type PixelSprite = readonly string[];
 /**
  * The key.
  *
- * A round bow, a neck and a three-prong bit — a silhouette read as "key" on
- * sight instead of a jagged blob the player has to decode. Solid everywhere
- * except the gaps between the teeth, which is the one place a real key has
- * gaps too. Every filled cell is 4-connected to the rest, which matters —
- * `parseSandLevel` groups key cells by connectivity, so a shape with a
- * detached pixel would silently become two keys.
+ * A plain filled disc — solid all the way through, no notch or tooth for a
+ * blown-up pixel to turn into a stray hole. Every filled cell is 4-connected
+ * to the rest, which matters — `parseSandLevel` groups key cells by
+ * connectivity, so a shape with a detached pixel would silently become two
+ * keys.
  */
 export const KEY_SPRITE: PixelSprite = [
+  "..###..",
   ".#####.",
   "#######",
+  "#######",
+  "#######",
   ".#####.",
-  "...#...",
-  ".#####.",
-  ".#.#.#.",
+  "..###..",
 ];
 
 /**

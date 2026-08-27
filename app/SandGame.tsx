@@ -12,7 +12,7 @@ import {
   KEY_LETTER,
   SAND_COLOR_BY_LETTER,
 } from "./game/sand-rules";
-import { SAND_COLORS, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
+import type { SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 
 const COLOR_NAME: Record<SandColor, string> = {
@@ -30,6 +30,12 @@ function hex(color: SandColor) {
 
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
 const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
+
+/** How long the home screen's exit animation runs — the Play button shrinking, the bottom
+ * bar sliding off — before it actually leaves the DOM. Kept in step with the `hub-exit`
+ * keyframes' duration in globals.css; the two are not read from one source because one is
+ * a JS timer and the other a CSS animation-duration. */
+const HOME_EXIT_MS = 480;
 
 /**
  * The home screen's bottom bar, left to right.
@@ -221,12 +227,33 @@ export default function SandGame() {
   // The game opens on the home screen, the way it did before the pivot.
   const [playing, setPlaying] = useState(false);
   const [tab, setTab] = useState<HubTab>("home");
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Lags `playing` on the way in: the home screen stays mounted for one more
+  // beat after Play is tapped so its CSS exit animation (Play button
+  // shrinking, the bottom bar sliding off) actually gets to play instead of
+  // the screen just vanishing the instant `playing` flips.
+  const [homeVisible, setHomeVisible] = useState(true);
+  const homeExitTimer = useRef<number | null>(null);
 
   const pushToast = useCallback((text: string, tone: Toast["tone"]) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), text, tone });
     toastTimer.current = window.setTimeout(() => setToast(null), 1500);
   }, []);
+
+  useEffect(() => {
+    if (!playing) {
+      // Back to the home screen (goHome, a fresh level, a loss/win "Home"
+      // tap): show it again immediately, no entrance animation was asked for.
+      if (homeExitTimer.current) { window.clearTimeout(homeExitTimer.current); homeExitTimer.current = null; }
+      setHomeVisible(true);
+      return;
+    }
+    homeExitTimer.current = window.setTimeout(() => setHomeVisible(false), HOME_EXIT_MS);
+    return () => {
+      if (homeExitTimer.current) window.clearTimeout(homeExitTimer.current);
+    };
+  }, [playing]);
 
   useEffect(() => advanceLoading("mount"), []);
 
@@ -312,6 +339,7 @@ export default function SandGame() {
     setRunId((id) => id + 1);
     setPlaying(false);
     setTab("home");
+    setMenuOpen(false);
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -357,85 +385,81 @@ export default function SandGame() {
    * Order is the canonical palette order rather than the ammo queue's, so a bar
    * never jumps sideways when the wheel drops a finished colour.
    */
-  const startingByColor = useMemo(() => {
-    const counts = new Map<SandColor, number>();
-    for (const row of level.rows) {
-      for (const letter of row) {
-        if (letter === ".") continue;
-        const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
-        if (color) counts.set(color, (counts.get(color) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [level]);
-
-  const colorProgress = useMemo(() => {
-    const left = new Map<SandColor, number>();
-    for (const body of state.bodies) {
-      left.set(body.color, (left.get(body.color) ?? 0) + body.cells.length);
-    }
-    return SAND_COLORS.filter((color) => startingByColor.has(color)).map((color) => {
-      const total = startingByColor.get(color) ?? 0;
-      const remainingCells = left.get(color) ?? 0;
-      return { color, fill: total === 0 ? 1 : (total - remainingCells) / total };
-    });
-  }, [startingByColor, state.bodies]);
-
   return (
     <main className="page-shell">
       <div className="game-frame">
-        {/* §22, top to bottom: ammo, the 3D frame, then the cannon and its aim
-            zone. Hidden on the home screen — none of it is true until a level
-            has actually been started. */}
+        {/* §22: ammo, the 3D frame, then the cannon and its aim zone. Hidden on
+            the home screen — none of it is true until a level has actually
+            been started. A casual-game HUD reads at a glance: the number that
+            changes every shot (SHOTS) sits alone on the left, and everything
+            that is a menu — level pick, home, editor, restart — collapses
+            behind one settings button on the right so it is never in the way
+            of the picture or the cannon underneath it. */}
         <header className="hud-top" hidden={!playing}>
-          <div className="ammo-row">
-            {/* One bar per colour in the picture, filling as that colour leaves
-                the frame. The cannon model itself now carries the bullet in
-                hand and the queue behind it, so the HUD no longer repeats it. */}
-            <div className="color-bars">
-              {colorProgress.map((entry) => (
-                <span
-                  key={entry.color}
-                  className="color-bar"
-                  style={{ "--bullet": hex(entry.color), "--fill": entry.fill } as React.CSSProperties}
-                  title={COLOR_NAME[entry.color]}
-                  role="progressbar"
-                  aria-label={`${COLOR_NAME[entry.color]} cleared`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(entry.fill * 100)}
-                >
-                  <i />
-                </span>
-              ))}
-            </div>
-            <div className="ammo-total">
-              <span className="ammo-label">SHOTS</span>
-              <strong>{remaining}</strong>
-            </div>
-          </div>
-          <div className="board-row">
-            {/* Numbered rather than named: full level names do not fit the row
-                on a phone, and the one that matters is spelled out beside them. */}
-            <span className="level-switch">
-              {playables.map((entry, index) => (
-                <button
-                  key={entry.level.id}
-                  type="button"
-                  className={index === levelIndex ? "is-active" : ""}
-                  onClick={() => openLevel(index)}
-                  aria-label={`Level ${entry.level.id}: ${entry.level.name}`}
-                  aria-current={index === levelIndex ? "true" : undefined}
-                  title={entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name}
-                >
-                  {entry.level.id}
-                </button>
-              ))}
-            </span>
-            <span className="level-name">{level.name}</span>
-            <span>{cleared}% cleared</span>
+          <div className="shots-badge" role="status" aria-label={`${remaining} shots left`}>
+            <span className="shots-icon" aria-hidden="true" />
+            <strong>{remaining}</strong>
           </div>
         </header>
+
+        <div className="settings-wrap" hidden={!playing}>
+          <button
+            type="button"
+            className="icon-button settings-button"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="Menu"
+            aria-haspopup="true"
+            aria-expanded={menuOpen}
+            title="Menu"
+          >
+            ⚙
+          </button>
+          {menuOpen && (
+            <>
+              <button
+                type="button"
+                className="settings-backdrop"
+                onClick={() => setMenuOpen(false)}
+                aria-label="Close menu"
+              />
+              <div className="settings-menu" role="menu">
+                <div className="settings-level">
+                  <span className="level-name">{level.name}</span>
+                  <span className="level-cleared">{cleared}% cleared</span>
+                </div>
+                {/* Numbered rather than named: full level names do not fit this
+                    panel on a phone, and the one that matters is spelled out
+                    just above. */}
+                <div className="settings-levels">
+                  {playables.map((entry, index) => (
+                    <button
+                      key={entry.level.id}
+                      type="button"
+                      className={index === levelIndex ? "is-active" : ""}
+                      onClick={() => { openLevel(index); setMenuOpen(false); }}
+                      aria-label={`Level ${entry.level.id}: ${entry.level.name}`}
+                      aria-current={index === levelIndex ? "true" : undefined}
+                      title={entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name}
+                    >
+                      {entry.level.id}
+                    </button>
+                  ))}
+                </div>
+                <div className="settings-actions">
+                  <button type="button" onClick={goHome}>
+                    <span aria-hidden="true">⌂</span> Home
+                  </button>
+                  <Link href="/editor" onClick={() => setMenuOpen(false)}>
+                    <span aria-hidden="true">✎</span> Level editor
+                  </Link>
+                  <button type="button" onClick={() => { restart(); setMenuOpen(false); }}>
+                    <span aria-hidden="true">⟲</span> Restart
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
@@ -462,23 +486,19 @@ export default function SandGame() {
           )}
         </div>
 
-        <div className="game-tools" hidden={!playing}>
-          <button type="button" className="icon-button" onClick={goHome} aria-label="Back to the home screen" title="Home">
-            ⌂
-          </button>
-          <Link className="icon-button" href="/editor" aria-label="Open the level editor" title="Level editor">
-            ✎
-          </Link>
-          <button type="button" className="icon-button" onClick={restart} aria-label="Restart level" title="Restart">
-            ⟲
-          </button>
-        </div>
-
         {/* The home screen. It does not cover the picture, it frames it: the
             scene underneath is still the level's own pixel painting, sitting
-            idle in its frame, which is what the player is choosing to play. */}
-        {!playing && (
-          <div className="hub-screen" role="group" aria-label="Home screen">
+            idle in its frame, which is what the player is choosing to play.
+            Stays mounted a beat past `playing` turning true so `is-leaving`
+            gets to animate it off instead of the screen just cutting out. */}
+        {homeVisible && (
+          <div
+            className={`hub-screen${playing ? " is-leaving" : ""}`}
+            role="group"
+            aria-label="Home screen"
+            aria-hidden={playing || undefined}
+          >
+
             {tab === "home" ? (
               <button
                 className="hub-tap"
@@ -486,7 +506,7 @@ export default function SandGame() {
                 onClick={() => setPlaying(true)}
                 aria-label={`Play ${level.name}`}
               >
-                <span className="hub-play-hint"><span>TAP TO PLAY</span></span>
+                <span className="hub-play-hint"><span className="hub-play-btn">Play Level {level.id}</span></span>
               </button>
             ) : (
               // Not a click-through backdrop: while a section is open, tapping
@@ -500,7 +520,10 @@ export default function SandGame() {
               />
             )}
 
-            <h2 className="hub-level-name">{level.name}</h2>
+            {/* Kept off the home tab itself — the cannon and the level name
+                would otherwise sit on top of the picture the moment it starts
+                turning, which is the one thing this screen is meant to show off. */}
+            {tab !== "home" && <h2 className="hub-level-name">{level.name}</h2>}
 
             {tab === "gallery" && (
               <div className="hub-panel" role="group" aria-label="Gallery">
@@ -539,9 +562,10 @@ export default function SandGame() {
                   className={entry === tab ? "is-active" : ""}
                   onClick={() => setTab(entry)}
                   aria-current={entry === tab ? "page" : undefined}
+                  aria-label={HUB_TAB_NAME[entry]}
+                  title={HUB_TAB_NAME[entry]}
                 >
                   <HubIcon tab={entry} />
-                  <span>{HUB_TAB_NAME[entry]}</span>
                 </button>
               ))}
             </nav>

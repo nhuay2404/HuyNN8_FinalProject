@@ -24,7 +24,7 @@ import {
   runGrainSettle,
   runWindGust,
 } from "../app/game/sand-rules.ts";
-import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "../app/game/sand-sprites.ts";
+import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells } from "../app/game/sand-sprites.ts";
 import type { CellCoord, SandBody, SandGameState, SandKey } from "../app/game/sand-types.ts";
 
 function keySet(cells: CellCoord[]) {
@@ -208,10 +208,11 @@ test("frozen sand ignores the weather", () => {
 
 test("wind can blow a key into a lock, and that opens it like any other arrival", () => {
   const frame = { width: 14, height: 12 };
-  // Blown three cells right from x=2, `KEY_SPRITE`'s leftmost tooth (local
-  // column 1, from the same bottom row the gravity test reads) lands at
-  // absolute column 6 — swap that one floor cell for a locked one, so the
-  // same fall that carries the key there also opens it.
+  // Blown three cells right from x=2, `KEY_SPRITE`'s leftmost column (from the
+  // same bottom row the gravity test reads) lands at absolute column 7 — swap
+  // that one floor cell for a locked one, so the same fall that carries the
+  // key there also opens it. Starts one row lower than the sprite's own
+  // height would suggest, so its top stays inside this frame's ceiling.
   const originX = 2;
   const bottomLocalX = Math.min(...spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x));
   const lockColumn = originX + bottomLocalX + 3;
@@ -222,7 +223,7 @@ test("wind can blow a key into a lock, and that opens it like any other arrival"
     frame,
     "right",
     3,
-    { locked: [{ x: lockColumn, y: 0 }], keys: [keyAt(originX, 6)] },
+    { locked: [{ x: lockColumn, y: 0 }], keys: [keyAt(originX, 5)] },
   );
   assert.deepEqual(gust.locked, [], "the key's tip landed right on the lock, so it opened");
   assert.deepEqual(gust.keys, [], "and the key was spent doing it");
@@ -237,7 +238,6 @@ test("a gust spends no shot and cannot lose the level", () => {
 });
 
 test("a level with still air is untouched by the wind rule", () => {
-  const state = createSandGameState(lockAndKey);
   assert.ok(!lockAndKey.wind, "this level has no weather at all");
   // Handed a phase it does not own, it still must not invent one for itself:
   // the engine is what decides a level has wind, and it never asks this level.
@@ -380,29 +380,33 @@ test("a key falls under gravity until something stops it", () => {
   );
 });
 
-test("a key is rigid: support under only one of its legs is not enough to hold it", () => {
+test("a key is rigid: support under only one column is not enough to reach the floor", () => {
   const frame = { width: 14, height: 12 };
-  // `KEY_SPRITE`'s bottom row is three separate legs with gaps between them —
-  // a pillar under just the leftmost one leaves the rest of the shape hanging
-  // in open air, so the whole rigid body has to keep falling.
+  // `KEY_SPRITE`'s bottom row is only 3 cells wide against a 7-wide body — a
+  // pillar under just its centre column leaves both flanks hanging in open
+  // air, so the whole rigid body stops there rather than sinking on to the
+  // floor underneath the flanks.
   const originX = 3;
-  const bottomLocalX = Math.min(...spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x));
+  const bottomRow = spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x);
+  const centreLocalX = (Math.min(...bottomRow) + Math.max(...bottomRow)) / 2;
   const pillar: SandBody = {
     id: "green-pillar",
     color: "green",
-    cells: [1, 2, 3, 4].map((y) => ({ x: originX + bottomLocalX, y })),
+    cells: [1, 2, 3, 4].map((y) => ({ x: originX + centreLocalX, y })),
   };
   const settled = runGrainSettle([floorRow(14), pillar], frame, { keys: [keyAt(originX, 6)] });
   assert.equal(settled.keys.length, 1, "a key never breaks up on the way down");
   // It rests on the pillar rather than the floor (y=1 would be the floor) —
   // a real, if modest, perch — but the point is what it does NOT do: teleport,
   // split apart, or hang above where any of its cells could still fall.
-  assert.equal(keyBottomLeft(settled.keys)!.y, 2, "it should have settled onto the one leg the pillar caught");
+  assert.equal(keyBottomLeft(settled.keys)!.y, 3, "it should have settled onto the pillar under its centre");
 });
 
 test("wind carries a key across the frame, and gravity still applies to it", () => {
   const frame = { width: 16, height: 12 };
-  const gust = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)] });
+  // One row lower than a round number, so the sprite's own height still
+  // leaves its top cell inside this frame's ceiling.
+  const gust = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)] });
   const landed = keyBottomLeft(gust.keys)!;
   // Three cells of power, then a straight drop — the gravity test above shows
   // this sprite needs no settle drift of its own, so the gust is the only
@@ -413,8 +417,8 @@ test("wind carries a key across the frame, and gravity still applies to it", () 
 
 test("friction resists a key being blown, without preventing it entirely", () => {
   const frame = { width: 16, height: 12 };
-  const loose = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)], friction: 0 });
-  const sticky = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)], friction: 1 });
+  const loose = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)], friction: 0 });
+  const sticky = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)], friction: 1 });
   const looseX = keyBottomLeft(loose.keys)!.x;
   const stickyX = keyBottomLeft(sticky.keys)!.x;
   assert.ok(stickyX < looseX, "more friction has to carry the key less far in the same gust");
