@@ -20,6 +20,7 @@ import {
 import type {
   CellCoord,
   SandColor,
+  SandPhase,
   WindDirection,
   SandGameState,
   SandLevelConfig,
@@ -92,6 +93,29 @@ const CANNON_RISE_SECONDS = 0.8;
 const TURRET_DROP_HEIGHT = 1.7;
 const TURRET_DROP_SECONDS = 0.5;
 const TURRET_DROP_DELAY_SECONDS = 0.34;
+
+// ---- cannon busy-fade -----------------------------------------------------
+// While the board is doing something the player cannot interrupt — the shot
+// still in the air, sand collapsing, a merge resolving — the gun is not the
+// thing to be looking at. It dims rather than disappears, so it never reads
+// as having been removed, just stepped back from.
+const CANNON_FADE_PHASES = new Set<SandPhase>(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
+const CANNON_BUSY_OPACITY = 0.32;
+const CANNON_FADE_SECONDS = 0.22;
+
+// ---- muzzle smoke -----------------------------------------------------
+// A quick burst of round white puffs at the muzzle the instant a shot leaves
+// it. Solid, not a glow — that's what the recoil flash and chamber halo are
+// for — and built from several overlapping blobs rather than one sphere,
+// since one sphere reads as a ball and several reads as a cloud.
+const MUZZLE_SMOKE_PUFFS = 6;
+const MUZZLE_SMOKE_MIN_LIFE = 0.26;
+const MUZZLE_SMOKE_MAX_LIFE = 0.46;
+const MUZZLE_SMOKE_SPREAD_RADIUS = 0.22;
+const MUZZLE_SMOKE_FORWARD_REACH = 0.5;
+const MUZZLE_SMOKE_MIN_SCALE = 0.16;
+const MUZZLE_SMOKE_MAX_SCALE = 0.46;
+const MUZZLE_SMOKE_OPACITY = 0.92;
 
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
@@ -246,6 +270,17 @@ type Beat =
 
 type BallisticSolution = { start: THREE.Vector3; velocity: THREE.Vector3 };
 
+/** One round white blob in the muzzle smoke pool — see `spawnMuzzleSmoke`. */
+type MuzzleSmokePuff = {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  velocity: THREE.Vector3;
+  age: number;
+  life: number;
+  startScale: number;
+  endScale: number;
+};
+
 export type ControlSensitivity = { aim: number };
 
 /** Overshoots past 1 before settling back — used for the turret dropping onto
@@ -396,6 +431,22 @@ export class SandCannonEngine {
    * time, including the whole time the cannon sits hidden on the home screen. */
   private cannonEntranceStart: number | null = null;
 
+  /** Every material on the cannon rig, and the opacity/transparency each was
+   * built with — `updateCannonFade` scales toward this base rather than a
+   * fixed 1, so parts authored partially see-through (the chamber housing)
+   * stay proportionally more see-through than solid ones while both dim. */
+  private readonly cannonMaterials: Array<{ material: THREE.Material; opacity: number; transparent: boolean }> = [];
+  /** 1 when the gun is fully visible, down to `CANNON_BUSY_OPACITY` while a
+   * phase in `CANNON_FADE_PHASES` has the board busy. Read by `updateAmmoModel`
+   * too, so the chamber's own glow and light dim in step rather than fighting
+   * this fade frame to frame. */
+  private cannonFade = 1;
+
+  /** Pool of round white puffs `spawnMuzzleSmoke` recycles on every shot — see
+   * `buildMuzzleSmoke`. In `this.scene` directly rather than under the cannon
+   * hierarchy: real smoke does not stay glued to the barrel it left. */
+  private readonly muzzleSmokePuffs: MuzzleSmokePuff[] = [];
+
   constructor(
     host: HTMLDivElement,
     aimZone: HTMLDivElement,
@@ -449,6 +500,7 @@ export class SandCannonEngine {
     this.buildSand();
     this.buildCannon();
     this.buildSortRings();
+    this.buildMuzzleSmoke();
     this.bindInput();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -780,6 +832,27 @@ export class SandCannonEngine {
 
     this.buildAmmoFeed(dark);
     this.applyCannonTransform();
+    this.collectCannonMaterials();
+  }
+
+  /** Walks every mesh under `cannonRoot` once, at build time, and records its
+   * material(s) for `updateCannonFade` to dim uniformly. */
+  private collectCannonMaterials() {
+    const seen = new Set<THREE.Material>();
+    this.cannonRoot.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        // The chamber's halo drives its own opacity every frame — its breath
+        // and the flare as a round drops in (`updateAmmoModel`) — which reads
+        // `cannonFade` directly rather than being captured and scaled here,
+        // so the two don't fight over the same property.
+        if (material === this.chamberGlow?.material) continue;
+        if (seen.has(material)) continue;
+        seen.add(material);
+        this.cannonMaterials.push({ material, opacity: material.opacity, transparent: material.transparent });
+      }
+    });
   }
 
   /**
@@ -966,10 +1039,10 @@ export class SandCannonEngine {
     const strength = this.chamberBall?.visible ? 0.34 + 0.16 * breath + 0.5 * eased : 0;
     if (this.chamberGlow) {
       this.chamberGlow.position.copy(this.chamberBall?.position ?? CHAMBER_POSITION);
-      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength;
+      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength * this.cannonFade;
       this.chamberGlow.scale.setScalar((0.86 + 0.1 * breath + 0.2 * eased) * (0.45 + 0.55 * seated));
     }
-    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4;
+    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4 * this.cannonFade;
   }
 
   /**
@@ -1029,6 +1102,72 @@ export class SandCannonEngine {
     this.sortRing.renderOrder = 21;
     this.sortRing.position.z = this.cell * 0.64;
     this.frameRoot.add(this.sortRing);
+  }
+
+  /** Builds the muzzle-smoke pool once. Each puff gets its own material —
+   * cheap at this count — so `updateMuzzleSmoke` can fade them independently
+   * for a puffier, less uniform-looking burst than one shared material would. */
+  private buildMuzzleSmoke() {
+    const geometry = this.track(new THREE.IcosahedronGeometry(1, 1));
+    for (let index = 0; index < MUZZLE_SMOKE_PUFFS; index += 1) {
+      const material = this.track(
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }),
+      ) as THREE.MeshBasicMaterial;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.visible = false;
+      mesh.renderOrder = 6;
+      this.scene.add(mesh);
+      this.muzzleSmokePuffs.push({ mesh, material, velocity: new THREE.Vector3(), age: 0, life: 0, startScale: 0, endScale: 0 });
+    }
+  }
+
+  /**
+   * Fires the whole pool at once from the muzzle: each puff gets a random
+   * sideways offset around the bore, a forward push along the shot's own
+   * direction, and its own lifetime, so the burst reads as one ragged cloud
+   * rather than N identical copies of the same puff.
+   */
+  private spawnMuzzleSmoke(origin: THREE.Vector3, direction: THREE.Vector3) {
+    if (!this.muzzleSmokePuffs.length) return;
+    const forward = direction.clone().normalize();
+    // Any vector not parallel to `forward`, to build a sideways basis from.
+    const helper = Math.abs(forward.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const right = new THREE.Vector3().crossVectors(forward, helper).normalize();
+    const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+    for (const puff of this.muzzleSmokePuffs) {
+      const angle = Math.random() * Math.PI * 2;
+      const spread = Math.random() * MUZZLE_SMOKE_SPREAD_RADIUS;
+      const reach = MUZZLE_SMOKE_FORWARD_REACH * (0.3 + Math.random() * 0.7);
+      const sideways = right.clone().multiplyScalar(Math.cos(angle) * spread)
+        .addScaledVector(up, Math.sin(angle) * spread);
+
+      puff.mesh.position.copy(origin).add(sideways);
+      puff.velocity.copy(forward).multiplyScalar(reach).addScaledVector(sideways, 0.6);
+      puff.age = 0;
+      puff.life = MUZZLE_SMOKE_MIN_LIFE + Math.random() * (MUZZLE_SMOKE_MAX_LIFE - MUZZLE_SMOKE_MIN_LIFE);
+      puff.startScale = MUZZLE_SMOKE_MIN_SCALE * (0.8 + Math.random() * 0.4);
+      puff.endScale = MUZZLE_SMOKE_MAX_SCALE * (0.8 + Math.random() * 0.4);
+      puff.mesh.scale.setScalar(puff.startScale);
+      puff.material.opacity = MUZZLE_SMOKE_OPACITY;
+      puff.mesh.visible = true;
+    }
+  }
+
+  /** Ages and drifts every visible puff, expanding fast at first — like a
+   * real burst of pressurised gas — and fading in over its back half so the
+   * cloud hangs fully visible for a moment before it dissolves. */
+  private updateMuzzleSmoke(deltaSeconds: number) {
+    for (const puff of this.muzzleSmokePuffs) {
+      if (!puff.mesh.visible) continue;
+      puff.age += deltaSeconds;
+      const life = Math.min(1, puff.age / puff.life);
+      puff.mesh.position.addScaledVector(puff.velocity, deltaSeconds);
+      const scaleT = 1 - (1 - life) ** 2;
+      puff.mesh.scale.setScalar(THREE.MathUtils.lerp(puff.startScale, puff.endScale, scaleT));
+      puff.material.opacity = MUZZLE_SMOKE_OPACITY * (1 - life) ** 2;
+      if (life >= 1) puff.mesh.visible = false;
+    }
   }
 
   private cellWorld(x: number, y: number) {
@@ -1406,6 +1545,7 @@ export class SandCannonEngine {
     // The round left the chamber. It stays empty until the shot resolves and
     // the queue hands the next one over.
     this.chamberLoaded = false;
+    this.spawnMuzzleSmoke(launch.start, launch.velocity);
 
     if (!this.projectileMesh) {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
@@ -1812,6 +1952,7 @@ export class SandCannonEngine {
     this.recoil = Math.max(0, this.recoil - FIXED_STEP * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
     this.updateAmmoModel();
+    this.updateMuzzleSmoke(FIXED_STEP);
 
     if (this.impactFlash && this.impactFlash.intensity > 0) {
       this.impactFlashAge += FIXED_STEP;
@@ -1851,6 +1992,7 @@ export class SandCannonEngine {
     this.lastFrame = now;
     this.updateFrameSpin(delta);
     this.updateCannonEntrance();
+    this.updateCannonFade(delta);
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;
@@ -1951,6 +2093,28 @@ export class SandCannonEngine {
       this.cannonRoot.position.y = CANNON_ROOT_POSITION.y;
       this.turret.position.y = TURRET_REST_Y;
       this.cannonEntranceStart = null;
+    }
+  }
+
+  /**
+   * Eases every cannon material's opacity toward `CANNON_BUSY_OPACITY` while
+   * the board is in a phase the player cannot act during, and back to each
+   * material's own built opacity the moment it returns to `READY`. Runs every
+   * rendered frame regardless of `paused`, like the entrance and idle-spin
+   * updaters, so the fade keeps easing even across a pause boundary.
+   */
+  private updateCannonFade(deltaMs: number) {
+    if (!this.cannonMaterials.length) return;
+    const target = CANNON_FADE_PHASES.has(this.state.phase) ? CANNON_BUSY_OPACITY : 1;
+    if (this.cannonFade === target) return;
+    const rate = 1 - Math.exp(-(deltaMs / 1000) / CANNON_FADE_SECONDS);
+    this.cannonFade += (target - this.cannonFade) * rate;
+    if (Math.abs(this.cannonFade - target) < 0.002) this.cannonFade = target;
+
+    const fullyVisible = this.cannonFade >= 1;
+    for (const entry of this.cannonMaterials) {
+      entry.material.opacity = fullyVisible ? entry.opacity : entry.opacity * this.cannonFade;
+      entry.material.transparent = fullyVisible ? entry.transparent : true;
     }
   }
 

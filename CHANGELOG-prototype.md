@@ -3481,3 +3481,407 @@ tất định của hình dạng, cập nhật lại con số mong đợi sau kh
 Key` hiện chìa khoá vàng silhouette lởm chởm (không tròn) với bóng đổ, slab vẫn tối đen đeo icon ổ khoá;
 trong editor đóng dấu ra đúng silhouette đó tại vị trí bấm, nhãn hiện `key 28×12px · ×4` đúng bội số
 nguyên thay vì bán kính.
+
+---
+
+## 47. Ship toàn bộ level từ editor thẳng vào `sand-levels.ts`, không cần copy-paste (27/08)
+
+Trước đây "Export TypeScript" chỉ sinh sẵn một khối code rồi copy vào clipboard — tác giả vẫn phải tự mở
+`sand-levels.ts`, dán, và tự tay thêm tên vào `BUILT_IN_LEVELS`. Yêu cầu: bấm một nút là xong, không cần
+copy-paste, và level trong editor mất đi sau lần ship kế tiếp cũng phải biến mất khỏi file — không được
+tồn đọng như rác.
+
+**Vì sao không thể làm bằng một API route trong `app/`.** Dev/build target của project là Cloudflare
+Workers (`worker/index.ts`, `wrangler.toml`); runtime đó không có filesystem thật, kể cả lúc chạy dev —
+một route ở `app/api/...` gọi `fs.readFile`/`writeFile` sẽ luôn lỗi, không phải vấn đề permission mà là
+API không tồn tại theo đúng nghĩa nó cần. Giải pháp: một server Node thuần chạy **tách riêng**,
+`scripts/level-writer.mjs`, khởi động bằng `npm run level-writer`, song song với `npm run dev`. Editor gọi
+tới nó qua `fetch("http://localhost:4787/ship-levels")`.
+
+**Ghi đè toàn bộ, không cộng dồn.** Bản đầu ship từng level một (mỗi lần chỉ ghi đúng level đang chọn) —
+lỗi lộ ra ngay khi dùng thật: ship xong level A rồi xoá A trong editor, level A vẫn nằm lì trong file mãi
+mãi, vì không có gì để nói "level này không còn nữa". Sửa: nút đổi tên thành **"Ship all levels to
+sand-levels.ts"**, mỗi lần bấm gửi *toàn bộ* danh sách draft đang có trong editor (bỏ qua draft nào còn
+lỗi validate), và server **ghi đè hoàn toàn** một khối riêng trong file thay vì thêm nối đuôi. Khối đó
+được khoanh vùng bằng hai marker `// ==== Editor-shipped levels ====` / `// ==== End editor-shipped
+levels ====`; mọi thứ giữa hai marker bị xoá và viết lại mới từ đầu mỗi lần ship, còn ba level viết tay
+(`sandBloom`, `lockAndKey`, `crosswind`) nằm ngoài khối nên không bị đụng tới. `EDITOR_LEVELS` — mảng các
+const vừa sinh — được spread vào `BUILT_IN_LEVELS: [...sandBloom, lockAndKey, crosswind, ...EDITOR_LEVELS]`,
+nên số level hiện trong game luôn đúng bằng số level đang có trong editor tại thời điểm ship gần nhất.
+
+**Ba lỗi bắt được khi tự tay ship-thử nhiều vòng, trước khi tới tay người dùng:**
+
+- **Line ending.** File giữ CRLF, còn regex/khối chèn ban đầu hard-code `\n` — khiến bước "đã có khai báo
+  này chưa" luôn báo *chưa có* dù thật ra có, sinh ra khai báo trùng tên. Sửa: dò `eol` thật của file
+  (`\r\n` hay `\n`) rồi build toàn bộ khối bằng `\n` thường, chỉ convert sang `eol` đúng **một lần duy
+  nhất** ở bước cuối — convert nhiều lần sẽ biến `\r\n` sẵn có thành `\r\r\n`.
+- **Thứ tự khai báo.** Một bản nháp giữa chừng cập nhật *nội dung* của một `const` đã tồn tại nhưng không
+  *dời vị trí* nó — nếu const đó nằm sau dòng `BUILT_IN_LEVELS` mà mảng lại tham chiếu tới nó thì
+  TypeScript báo "used before its declaration". Ghi đè trọn khối theo marker giải quyết luôn vấn đề này:
+  toàn bộ const editor-ship luôn nằm liền trước `BUILT_IN_LEVELS`.
+- **Trùng tên.** Hai level cùng tên (ví dụ hai lần bấm "+ New" chưa đổi tên) sinh cùng một định danh
+  const — số thứ hai được hậu tố `2`, `3`... (`uniqueExportNames`) để không đè lẫn nhau trong cùng một
+  lần ship.
+
+**Kiểm tra:** làm trực tiếp qua trình duyệt thật với `npm run dev` + `npm run level-writer` chạy song
+song — ship 1 level (khớp), thêm level thứ hai rồi ship lại (2 level, tên tự hậu tố không trùng), xoá một
+level rồi ship lại (file rút đúng về 1 level, level đã xoá biến mất). `npx tsc --noEmit` sạch và
+`npm test` 87/87 pass sau mỗi vòng. File được đưa về trạng thái sạch (`EDITOR_LEVELS: []`) sau khi kiểm
+tra xong, vì các level dùng để test không phải nội dung thật.
+
+---
+
+## 48. Vòng bán kính nổi bật hơn, và khung tranh hết nghiêng về phía sau (27/08)
+
+Hai phản hồi độc lập trong cùng một yêu cầu: vòng tròn báo bán kính đĩa bắn quá mờ, khó thấy; và khung
+tranh 2D nhìn "nghiêng về phía sau" như một tấm bảng bị đổ.
+
+**Vòng bán kính** (`buildSortRings`, `SandCannonEngine.ts`): viền dày từ `cell*0.14` lên `cell*0.26`, độ
+mờ của viền ngắm từ `0.42` lên `0.85`. Thêm một vòng thứ ba — `aimRingGlow`, cùng tâm nhưng bán kính lớn
+hơn, màu vàng ngà ấm (`0xfff2c4`), `THREE.AdditiveBlending` — nằm dưới viền chính để tạo quầng sáng. Một
+viền phẳng đọc giống nhau trên mọi màu cát bên dưới, nhưng chỉ quầng sáng mới thực sự kéo mắt người chơi
+tới nó giữa một bức tranh nhiều màu.
+
+**Khung tranh nghiêng:** không phải bản thân khung bị xoay — `frameRoot` không có `rotation` nào cả. Nguyên
+nhân là góc nhìn camera: `camera.position(0, 4.7, 13.4)` nhìn xuống điểm `(0, 0.45, 0.8)` tạo độ dốc
+xuống khoảng 18,6° lên một mặt phẳng thẳng đứng — hiệu ứng keystone kinh điển (cạnh trên rộng hơn cạnh
+dưới trong ảnh chụp) khiến khung đọc thành "đổ về sau" dù hình học của nó vẫn thẳng. Đổi
+`camera.position(0, 3.3, 13.6)` và `lookAt(0, 1, -0.5)`, hạ độ dốc còn khoảng 9,3° — đo lại bằng chính
+ảnh chụp preview: khung từ hình thang rõ rệt (đỉnh ~311px, đáy ~269px) về gần chữ nhật thật.
+
+**Kiểm tra:** 87/87 test pass, `tsc` sạch. Xác nhận trực tiếp qua browser preview (cả Sand Bloom lẫn Lock
+& Key): khung không còn hình thang, vòng ngắm hiện rõ viền dày + quầng sáng khi kéo aim-zone.
+
+---
+
+## 49. Chìa khoá đổi hình: đầu tròn — cổ — ba răng, thay silhouette lởm chởm của mục 46 (27/08)
+
+Người dùng gửi ảnh chụp trong game hỏi vì sao chìa khoá có "khoảng hở", và yêu cầu vẽ lại shape, chấp
+nhận chìa khoá lớn hơn một chút.
+
+**Nguyên nhân khoảng hở:** không phải bug — `KEY_SPRITE` của mục 46 (`.....##` / `.######` / `..#.##.`)
+có khoảng trống thật giữa "chân đơn" và "chân đôi" theo đúng chủ đích thiết kế. Nhưng ở `pixelScale: 5`,
+mỗi khoảng trống đó phóng thành một mảng 5×5 pixel màu nền — đủ to để đọc thành "lỗ hổng" thay vì "răng
+chìa khoá".
+
+**Thiết kế lại `KEY_SPRITE`** (`sand-sprites.ts`) thành 7×6, tăng từ 7×3: đầu tròn đặc (`.#####.` /
+`#######` / `.#####.`), cổ thon (`...#...`), rồi bệ răng liền khối (`.#####.`) đỡ ba răng tách nhau
+(`.#.#.#.`) — toàn bộ phần đầu và cổ giờ đặc hoàn toàn, khoảng hở duy nhất còn lại nằm đúng chỗ ba răng,
+giống một chiếc chìa khoá thật.
+
+**`LOCK_PICTURE`** (`sand-levels.ts`) vẽ lại quanh hình mới, giữ nguyên nguyên tắc từ mục 46 (bounding
+box tràn ra ngoài plug 1 cột bên trái). Vì sprite cao gấp đôi (6 hàng thay vì 3), `frame.height` của
+level tăng từ 14 lên 17 — chỉ thêm hàng trống ở phía trên chìa khoá, nên toạ độ y (tính từ sàn) của
+plug/slab/floor không đổi, không cần sửa gì ở các test đang ghim toạ độ đó.
+
+**Test vật lý** (rơi tự do, gió thổi, gió đưa chìa vào ổ khoá) được đo lại bằng số liệu thật thay vì suy
+đoán: chạy trực tiếp `runGrainSettle`/`runWindGust` với sprite mới qua một script scratch, lấy toạ độ
+thực tế rồi mới cập nhật giá trị mong đợi trong test — đúng cách làm đã thành lệ của dự án.
+
+**Kiểm tra:** 87/87 test pass, `tsc` sạch. Xác nhận trực tiếp trong game: chìa khoá hiện đầu tròn — cổ —
+ba răng, nhận diện được ngay là hình chìa khoá.
+
+---
+
+## 50. Chìa khoá đổi lại thành đĩa tròn đặc, theo ảnh mẫu người dùng chọn (27/08)
+
+Người dùng gửi ảnh hai shape cạnh nhau — một hình tròn vàng và hình bow-cổ-răng của mục 49 — yêu cầu bỏ
+hình bên phải (bow-cổ-răng), dùng hình bên trái (hình tròn) thay thế.
+
+**`KEY_SPRITE` đổi thành đĩa tròn 7×7 đặc hoàn toàn** (`..###..` / `.#####.` / ba hàng `#######` /
+`.#####.` / `..###..`), không còn khoảng hở nào ngoài viền ngoài của chính hình tròn. `LOCK_PICTURE` vẽ
+lại lần nữa, `frame.height` tăng tiếp 17→18 để chứa hình cao hơn 1 hàng.
+
+**Test vật lý gãy khi đổi shape, và lý do khác mục 49:** hình tròn cao 7 hàng khiến các test dùng khung
+nhỏ (`height: 12`) với điểm bắt đầu cũ (`y: 6`) đặt đỉnh chìa khoá ra ngoài trần khung — gió không di
+chuyển được vật thể ở vị trí không hợp lệ, bắt được qua một script debug riêng đo trực tiếp
+`runWindGust`. Sửa bằng cách hạ điểm bắt đầu trong test xuống `y: 5`. Test "chỉ đỡ một chân" của mục 49
+cũng phải viết lại: đáy hình tròn giờ là một cạnh phẳng 3 ô chứ không phải các chân tách rời, nên đổi
+sang đo "chỉ đỡ đúng cột giữa của đáy" (`centreLocalX`), xác nhận lại bằng số đo thật thay vì suy đoán.
+
+**Kiểm tra:** 87/87 test pass (sau khi sửa 3 test vật lý gãy), `tsc` sạch. Xác nhận trực tiếp trong game
+và qua level switcher: chìa khoá hiện đúng dạng đĩa tròn như ảnh mẫu.
+
+---
+
+## 51. Chìa khoá tròn có animation lăn khi trượt (27/08)
+
+Yêu cầu tiếp theo sau khi chìa khoá đổi thành hình tròn: cho nó quay khi trượt xuống cát, đúng cảm giác
+một vật tròn đang lăn.
+
+Vì chìa khoá được rasterise thẳng lên canvas cát (`redrawSand`) chứ không phải mesh 3D riêng, "lăn" được
+mô phỏng bằng một **điểm sáng (glint) chạy quanh viền** thay vì xoay hình thật. Thêm
+`keyRotation: Map<string, number>` lưu góc quay tích luỹ mỗi chìa khoá; trong `applyStep` (bước
+`KEY_MOVE`), mỗi lần dịch chuyển `(dx, dy)` tính bán kính từ bounding box hiện tại rồi cộng dồn góc quay
+`(dx - dy) / radius` — công thức lăn-không-trượt xấp xỉ trên lưới rời rạc, vẫn cho chìa khoá "quay" cả
+khi rơi thẳng đứng chứ không chỉ khi trượt ngang. `redrawSand` dùng góc đó để tính một điểm trên viền,
+tìm ô thật gần điểm đó nhất trong chính hình chìa khoá và tô màu `KEY_GLINT_RGB` (kem sáng) thay vì
+`KEY_RGB`. Dọn `keyRotation` khi ổ khoá mở (`UNLOCK`) để không rò rỉ state.
+
+**Kiểm tra:** 87/87 test pass, `tsc` sạch. Xác nhận cơ chế bằng cách replay lại đúng vụ rơi thật của level
+`Lock & Key` qua `runGrainSettle` + logic tô glint y hệt engine — góc quay và ô glint đổi đúng sau mỗi
+bước `KEY_MOVE`. Ghi chú: level `Lock & Key` hiện tại chìa khoá chỉ rơi 1 nấc ngắn (thẳng xuống slab ngay
+bên dưới) nên hiệu ứng chỉ xoay nhẹ ~19°/lần — cần một quãng rơi/trượt dài hơn (rơi xa hơn, hoặc bị gió
+thổi) mới thấy điểm sáng chạy rõ nhiều vòng quanh viền.
+
+---
+
+## 52. Bỏ bóng đổ lệch của chìa khoá — sửa khoảng hở ở đáy (27/08)
+
+Người dùng gửi ảnh chụp gần chìa khoá, hỏi vì sao có khoảng hở ở phía dưới, yêu cầu sửa ngay.
+
+**Không phải lỗi ở shape** — `KEY_SPRITE` (đĩa tròn của mục 50) vẫn đối xứng hoàn hảo, đã kiểm lại bằng
+script dựng ASCII từ chính sprite. Nguyên nhân là cách vẽ bóng đổ trong `redrawSand`: mỗi ô chìa khoá
+từng được vẽ hai lớp — một bản sao màu nâu tối (`KEY_SHADOW_RGB`) lệch xuống-phải 1 pixel, rồi lớp vàng
+phẳng đè lên đúng vị trí gốc (không lệch). Với hình khối như icon ổ khoá, cách này cho bóng đổ đẹp; nhưng
+với **hình tròn**, lớp vàng chỉ che đúng phần chồng lấn — phần bóng nâu lệch ra ngoài rìa dưới và rìa
+phải không được che, đọc thành một vệt màu khác thường chạy dọc đáy, giống như bị khuyết một miếng.
+
+**Sửa:** bỏ hẳn lớp đổ bóng lệch cho riêng chìa khoá (icon ổ khoá phía trên vẫn giữ nguyên bóng đổ của
+nó, không đụng tới). Chìa khoá giờ chỉ còn 2 lớp: vàng nền (`KEY_RGB`) + glint xoay từ mục 51. Xoá luôn
+hằng `KEY_SHADOW_RGB` không còn dùng.
+
+**Kiểm tra:** 87/87 test pass, `tsc` sạch. Xác nhận trực tiếp trên preview: viền tròn liền mạch, không
+còn vệt tối bất thường ở đáy hay cạnh phải.
+
+---
+
+## 53. Dọn 3 lỗi lint có sẵn từ trước (27/08)
+
+Ba lỗi `npm run lint` phát hiện được nhưng không phải do các thay đổi trong các mục 48–52 — xác nhận qua
+`git show HEAD:...` trước khi sửa, để chắc là dọn nợ cũ chứ không phải che giấu lỗi mới:
+
+- `LevelEditor.tsx:1321` — dấu nháy đơn trong "this one level's block" chưa escape (`react/no-unescaped-
+  entities`), sửa thành `&apos;`.
+- `tests/sand-mechanics.test.ts:27` — import `spriteHeight`, `spriteWidth` không còn được dùng ở bất kỳ
+  test nào trong file, bỏ khỏi danh sách import.
+- `tests/sand-mechanics.test.ts:241` — biến `state` trong test "a level with still air is untouched by
+  the wind rule" được gán nhưng không đọc lại, bỏ luôn dòng gán.
+
+**Kiểm tra:** `npm run lint` sạch hoàn toàn (0 lỗi, trước đó 4 lỗi). `tsc` sạch, 86/87 test pass (không
+đổi so với trước khi dọn).
+
+---
+
+## 54. Bỏ UI thanh tiến độ theo màu, chỉ giữ SHOTS; scale bức tranh to hơn (27/08)
+
+Hai yêu cầu trong cùng một lượt: bỏ hàng thanh dọc báo tiến độ từng màu (thêm ở mục 38) khỏi HUD, chỉ giữ
+số lượt bắn; và phóng to bức tranh, để vòng bán kính ngắm (mục 48) tự scale theo cho tương xứng.
+
+**Bỏ thanh tiến độ:** xoá `colorProgress`/`startingByColor` (hai `useMemo` tính % từng màu đã sạch) và
+toàn bộ JSX `.color-bars` trong `SandGame.tsx`; dọn theo import `SAND_COLORS` không còn dùng, và xoá CSS
+`.color-bars`/`.color-bar`/`.color-bar i` trong `globals.css`. `.ammo-row` đơn giản còn lại đúng khối
+SHOTS.
+
+**Scale bức tranh:** `FIT_WIDTH`/`FIT_HEIGHT` (`SandCannonEngine.ts`) — kích thước world-space mà bức
+tranh được fit vào, quyết định `this.cell` (kích thước 1 ô lưới) — tăng từ `4.45`/`5.2` lên `6.1`/`7.1`.
+Vòng bán kính ngắm vốn tính theo `this.sortRadius * this.cell` nên tự lớn theo đúng tỉ lệ, không cần sửa
+gì thêm ở `buildSortRings`.
+
+**Kiểm tra:** `tsc` sạch, lint sạch, 86/87 test pass (1 lỗi không liên quan — `BUILT_IN_LEVELS.length`
+đếm cứng bằng 3 nhưng một tiến trình khác vừa ship thêm 1 level qua mục 47 nên giờ là 4; để nguyên, ngoài
+phạm vi mục này). Xác nhận trực tiếp: bức tranh to hơn rõ rệt, không tràn/che HUD hay cannon.
+
+---
+
+## 55. Súng hết bị che, hộp SHOTS thu gọn lại (27/08)
+
+Sau mục 54, ảnh chụp người dùng gửi cho thấy hai vấn đề: súng bị khung tranh che một phần, và súng bị cắt
+cụt ở mép dưới màn hình; đồng thời hộp SHOTS quá to so với nội dung của nó.
+
+**Khung tranh chồng lên súng:** `FIT_WIDTH`/`FIT_HEIGHT` của mục 54 (`6.1`/`7.1`) khiến đáy khung
+(`FRAME_CENTER_Y - FIT_HEIGHT/2 = -2.5`) tụt xuống thấp hơn cả gốc súng (`CANNON_ROOT_POSITION.y =
+-1.78`), nơi trước đó luôn có một khoảng đệm. Hạ bớt độ phóng to xuống `FIT_WIDTH: 5.4`, `FIT_HEIGHT:
+6.15` — vẫn lớn hơn bản gốc trước mục 54, nhưng chừa lại khoảng đệm giữa đáy tranh và súng.
+
+**Súng bị cắt ở mép dưới màn hình:** không phải do khung tranh — đo trực tiếp bằng `getBoundingClientRect`
+thì thấy đây là giới hạn không gian dọc của chính khung nhìn camera trên tỉ lệ khung hình hẹp (điện
+thoại dọc), khiến mô hình súng (đặc biệt phần buồng nạp đạn phía dưới) không đủ chỗ. Tăng
+`camera.fov` cho nhánh `aspect < 0.62` (màn hình dọc) từ `40` lên `44` trong `resize()` — góc nhìn rộng
+hơn kéo thêm không gian dọc vào khung hình, đủ để cả khẩu súng lọt vào mà không cần phóng to thêm khung
+tranh.
+
+**Hộp SHOTS:** `.ammo-row` trước đó `justify-content: flex-end` bên trong một khối kéo dài hết chiều
+ngang HUD — chữ "SHOTS/26" bị dạt sang phải, để lại khoảng trống lớn bên trái. Đổi `align-self: flex-end`
+để hộp co lại vừa đúng nội dung.
+
+**Kiểm tra:** `tsc` sạch, lint sạch, 86/87 test pass (không đổi). Xác nhận trên viewport điện thoại giả
+lập 390×844 lẫn 586×915: toàn bộ súng hiện đầy đủ có khoảng đệm rõ với khung tranh, không còn bị cắt ở
+mép dưới; hộp SHOTS gọn vừa nội dung.
+
+---
+
+## 56. Bức tranh cao hơn, gom điều khiển vào nút Settings, SHOTS chuyển sang trái (27/08)
+
+Ba yêu cầu trong một lượt: đặt bức tranh cao hơn để chừa thêm chỗ hiện súng; gom các nút Home/Editor
+level/Restart/chọn màn vào một nút cài đặt duy nhất ở góc phải trên; và chuyển SHOTS sang rìa trái, thu
+gọn kiểu UI game casual.
+
+**Bức tranh cao hơn:** `FRAME_CENTER_Y` (`SandCannonEngine.ts`) từ `1.05` lên `1.95` — đẩy khung tranh
+lên cao trong world-space, chừa nhiều khoảng trống phía dưới cho súng đọc to và rõ hơn hẳn.
+
+**Gom nút vào Settings** (`SandGame.tsx`, `globals.css`): thêm state `menuOpen`; thay 3 icon rời
+(⌂/✎/⟲, khối `.game-tools` cũ) và hàng nút chọn màn trong `.board-row` bằng một nút `⚙` duy nhất
+(`.settings-wrap`/`.settings-button`). Bấm vào mở `.settings-menu` — tên level + % cleared, hàng nút
+chọn màn dạng vòng tròn, rồi ba hàng hành động Home/Level editor/Restart. Một `.settings-backdrop` trong
+suốt phủ toàn màn hình khi menu mở, bấm ra ngoài là đóng; menu cũng tự đóng khi bấm Home hoặc chọn màn
+khác. Việc đóng menu khi rời màn chơi được đặt thẳng trong `goHome` (gọi `setMenuOpen(false)` cùng lúc
+với `setPlaying(false)`) thay vì một `useEffect` riêng theo dõi `playing` — bản đầu dùng effect bị ESLint
+`react-hooks/set-state-in-effect` chặn vì gọi `setState` đồng bộ ngay trong effect, nên chuyển logic đó
+vào thẳng hàm xử lý sự kiện.
+
+**SHOTS chuyển trái, thu gọn:** `.hud-top`/`.ammo-row` cũ (khối chữ nhật 2 hàng) thay bằng `.shots-badge`
+— một pill nhỏ ghim cố định góc trái trên, gồm một chấm tròn màu vàng (icon viên đạn, gradient tô sáng
+giữa) cạnh số lượt bắn. `--hud-height` giảm từ `106px` xuống `44px` để vùng cảnh 3D bắt đầu sớm hơn, đúng
+bằng chiều cao thật của badge mới.
+
+**Kiểm tra:** `tsc` sạch, lint sạch (sau khi sửa lỗi effect), 86/87 test pass (không đổi). Xác nhận trên
+viewport 390×844: tranh cao hơn rõ, súng to và đầy đủ, SHOTS gọn bên trái, nút ⚙ mở đúng menu với đủ
+chức năng (chọn màn — thử chuyển sang Crosswind thành công, Home, Level editor, Restart) và đóng đúng
+khi bấm ra ngoài hoặc sau khi chọn xong.
+
+---
+
+## 57. Vòng đế súng đổi màu theo đạn sắp bắn (27/08)
+
+Người dùng gửi ảnh chụp cận cảnh súng, chỉ ra vòng vàng ở đế không đổi màu theo đạn như vòng ở miệng nòng
+(`muzzleBand`) đã làm.
+
+**Nguyên nhân:** vòng đế (`ring`, `buildCannon`) dùng chung vật liệu `accent` (vàng cố định) với vòng
+trang trí nhỏ ở đầu nòng — không đổi màu độc lập được. Tách nó ra vật liệu riêng, đổi tên field thành
+`this.baseRing`, rồi trong `syncAmmoModel` — đúng chỗ `muzzleBand` đã đổi màu theo đạn hiện tại — thêm
+một dòng cập nhật `baseRing` theo cùng logic: `SAND_COLOR_HEX[current]` khi còn đạn, xám `0x6a6f8f` khi
+hàng chờ đã hết.
+
+**Kiểm tra:** `tsc` sạch, lint sạch, 86/87 test pass (không đổi). Không chụp được ảnh xác nhận trực quan
+trong lượt này vì browser pane không hiển thị được ở phía người dùng lúc đó — xác minh dựa trên rà soát
+code và việc đây là bản sao chính xác của cơ chế `muzzleBand` đã hoạt động đúng từ trước.
+
+---
+
+## 58. Home Menu: bức tranh xoay vòng lặp, ẩn súng + tên level, nút "Play Level X" bo tròn (27/08)
+
+Ba yêu cầu cho Home Menu: (1) bức tranh pixel xoay vòng lặp trong lúc chờ ở menu, và xoay về đúng vị trí
+mặc định trong khoảng 1 giây khi người chơi bấm vào chơi; (2) che UI cây súng và tên level trên Home; (3)
+bỏ "Tap to play", thay bằng nút "Play Level X" (X là level hiện tại) bo tròn.
+
+**Xoay bức tranh:** `SandCannonEngine.updateFrameSpin` xoay `frameRoot.rotation.y` liên tục khi màn hình
+đang idle (home). Khi `setIdle(false)` được gọi (bấm Play), thay vì bật lại gameplay ngay, engine ghi
+nhận góc xoay hiện tại rồi easing (easeOutCubic) đưa `rotation.y` về 0 trong 1 giây — `paused` chỉ được mở
+khoá **sau khi** xoay xong, vì toàn bộ toán ngắm/bắn giả định `frameRoot` không xoay; bắn giữa lúc đang
+xoay sẽ trúng sai ô.
+
+**Ẩn súng + tên level:** `cannonRoot.visible` mặc định `false` lúc dựng cảnh, chỉ bật `true` khi vào
+gameplay (`setIdle`). Bỏ hẳn `<h2 className="hub-level-name">` khỏi tab home trong `SandGame.tsx` (vẫn
+giữ ở các tab khác).
+
+**Nút Play:** thay `<span>TAP TO PLAY</span>` bằng `<span className="hub-play-btn">Play Level
+{level.id}</span>` — nút pill bo tròn `999px`, nền gradient vàng-cam giống các nút CTA khác trong game
+(`.result-card button`), vẫn nằm trong vùng tap toàn màn hình để giữ target chạm lớn.
+
+**Kiểm tra:** `tsc --noEmit` sạch. Verify qua dev server: text đổi đúng "Play Level 1", DOM không còn tên
+level ở home, bấm nút chuyển đúng sang trạng thái chơi (HUD súng hiện, home screen biến mất), không lỗi
+console. Không chụp được ảnh xoay 3D trực quan vì browser pane trong session không compositing được.
+
+---
+
+## 59. Xoay nhanh hơn, mặt sau khung tranh cũng hiện bức tranh (27/08)
+
+Phản hồi cho mục 58: xoay chậm quá, và khi khung quay ra sau chỉ thấy tấm backing tím trơn thay vì bức
+tranh.
+
+**Tốc độ:** `IDLE_SPIN_SECONDS_PER_TURN` giảm từ 26 xuống 10 giây/vòng.
+
+**Mặt sau:** thêm mesh thứ hai `sandMeshBack`, dùng chung geometry và texture (`sandTexture`) với
+`sandMesh`, nhưng xoay `rotation.y = Math.PI` và đặt ở phía ngoài tấm backing (`BACKING_Z_RATIO -
+BACKING_DEPTH_RATIO / 2 - 0.1`) để không bị tấm backing che khi nhìn từ trước. Xoay nguyên mesh 180° thay
+vì chỉ lật gương tại chỗ — đây là kỹ thuật chuẩn cho vật hai mặt trong three.js: khi người xem đứng ở phía
+sau (bản thân góc nhìn cũng là một phép lật gương), hai phép lật cộng lại triệt tiêu nhau nên hình hiện
+đúng chiều, không bị ngược.
+
+**Kiểm tra:** `tsc --noEmit` sạch, verify qua dev server không lỗi console.
+
+---
+
+## 60. Thanh nav dưới: nút được chọn phình to đẩy nút khác, bỏ text (27/08)
+
+Yêu cầu đầu tư UI cho thanh Shop/Skin/Home/Gallery/Customize: nút đang chọn phình to, đẩy các nút khác
+dịch bớt, icon nút bị đẩy vẫn phải nằm giữa, và bỏ chữ tên tab bên dưới icon.
+
+`.hub-nav` đổi từ CSS grid 5 cột cố định sang flexbox; mỗi nút `flex: 1 1 0%`, nút `.is-active` có
+`flex-grow: 2.15` (transition mượt) nên nó nở ra và các nút khác tự co lại nhường chỗ thay vì đứng yên
+trong ô cố định. Icon luôn canh giữa bằng `display:flex; align-items/justify-content:center` nên dù nút
+rộng hay hẹp, icon không lệch (đã đo `centeredOffset = 0` ở mọi trạng thái). Bỏ `<span>{tên tab}</span>`
+khỏi JSX, chuyển tên tab sang `aria-label`/`title`. Nút active nhận thêm nền gradient vàng-cam cùng
+tông với các nút CTA khác, icon phóng to nhẹ (23px → 27px).
+
+**Kiểm tra:** `tsc --noEmit` sạch; verify qua dev server bằng cách đọc computed style sau khi tắt
+transition (vì transition CSS bị treo giữa chừng trong tab preview không được composite của session này) —
+đúng thiết kế: chỉ nút active có `flex-grow: 2.15`, các nút khác `1`.
+
+---
+
+## 61. Animation chuyển cảnh Home → chơi: UI menu thu nhỏ/trượt ra, súng lắp ráp bay vào (27/08)
+
+Phản hồi: chuyển từ menu sang chơi UI biến mất đột ngột, "gắt". Yêu cầu nút Play thu nhỏ lại, thanh nav
+trượt xuống ra khỏi màn hình như hoạt hình, và súng xuất hiện bằng animation bay từ ngoài vào kèm hiệu ứng
+các bộ phận được lắp ghép.
+
+**UI home thoát mượt:** thêm state `homeVisible` ở `SandGame.tsx`, lag theo `playing` — khi bấm Play, home
+screen vẫn ở lại DOM thêm 480ms (`HOME_EXIT_MS`) với class `is-leaving` để animation kịp chạy trước khi bị
+gỡ khỏi cây React: nút Play co nhỏ lại và mờ dần (`hub-play-btn-exit`: scale → 0.15), overlay tối mờ dần
+(`hub-tap-exit`), thanh nav trượt xuống mất hẳn khỏi màn hình (`hub-nav-exit`: `translateY(130%)`). Toàn
+bộ home screen khoá tương tác (`pointer-events: none`) ngay khi bắt đầu thoát.
+
+**Súng lắp ráp bay vào:** `startCannonEntrance`/`updateCannonEntrance` trong `SandCannonEngine`. Cả cụm
+súng (`cannonRoot`) trồi lên từ phía dưới khung tranh (easeOutCubic, ~0.8s). Riêng tháp pháo + nòng
+(`turret`) rơi từ trên xuống khớp vào đế, bắt đầu trễ hơn một nhịp và có hiệu ứng nảy quá đà rồi ổn định
+(hàm `easeOutBack`, công thức chuẩn overshoot) — tạo cảm giác các bộ phận vừa được lắp ráp khớp vào nhau
+thay vì cả khối trượt vào cùng lúc.
+
+**Kiểm tra:** `tsc --noEmit` sạch. Verify qua dev server: đúng `animation-name` (`hub-play-btn-exit`,
+`hub-tap-exit`, `hub-nav-exit`) khi bấm Play, home screen gỡ khỏi DOM sau ~480ms, không lỗi console suốt
+chuỗi entrance + xoay-về-mặc-định + mở khoá gameplay.
+
+---
+
+## 62. Giai đoạn sand settling: bỏ box+text, chỉ còn 3 chấm; súng mờ dần khi bận (27/08)
+
+Yêu cầu: bỏ khung + chữ "SAND SETTLING" trong lúc cát đang settle, chỉ để dấu 3 chấm có animation; đồng
+thời giảm opacity của súng trong lúc đó.
+
+**Settle badge:** bỏ hẳn border/background/padding và `<span>` chữ, chỉ còn 3 `<i>` tròn nhỏ nảy so le
+theo nhịp (`settle-dot-bounce`). Text mô tả trạng thái vẫn giữ dưới dạng `aria-label` (ẩn khỏi màn hình)
+để không mất khả năng đọc cho screen reader.
+
+**Súng mờ khi bận:** `collectCannonMaterials` quét một lần lúc dựng cảnh qua toàn bộ mesh dưới
+`cannonRoot`, ghi lại opacity/transparent gốc của từng material. Mỗi frame, `updateCannonFade` easing
+opacity của tất cả về ~32% (`CANNON_BUSY_OPACITY`) khi phase đang ở `PROJECTILE_FLYING` / `HIT_RESOLUTION`
+/ `SETTLING` / `MERGING`, và trả lại đúng opacity gốc từng phần khi về `READY` — nhân theo tỉ lệ nên phần
+vốn đã hơi trong suốt (vỏ buồng đạn) vẫn trong suốt hơn phần đặc theo đúng tỉ lệ cũ. Vầng sáng + đèn buồng
+đạn (tự nhấp nháy theo nhịp thở riêng mỗi frame) được nhân thêm hệ số fade này ngay trong công thức của nó
+thay vì bị ghi đè chồng chéo bởi một hệ thống riêng.
+
+**Kiểm tra:** `tsc --noEmit` sạch. Verify CSS/DOM của badge đúng thiết kế qua dev server (không còn
+box/text, 3 chấm với đúng animation). Phần fade súng lúc cát thật sự đang settle không mô phỏng được đầy
+đủ trong session này vì cần raycast 3D thật để bắn đạn.
+
+---
+
+## 63. Khói trắng bùng ở nòng súng khi bắn (27/08)
+
+Yêu cầu: thêm hiệu ứng khói trắng solid, dạng khối tròn, bùng ra ở nòng súng mỗi lần bắn.
+
+Thêm pool 6 khối `IcosahedronGeometry` bọc `MeshBasicMaterial` trắng đục, blending thường (không cộng
+sáng như đèn/glow, để đúng tinh thần "solid" chứ không phải hào quang) — `buildMuzzleSmoke`. Mỗi lần
+`fire()` chạy, `spawnMuzzleSmoke(muzzleWorldPos, hướngĐạn)` bắn cả pool ra cùng lúc: mỗi khối lệch ngẫu
+nhiên quanh trục bắn (toạ độ vuông góc dựng từ hướng đạn), có lực đẩy về phía trước riêng, tuổi thọ
+(0.26–0.46s) và kích thước tối đa riêng — để cả cụm đọc thành một đám khói lởm chởm chứ không phải 6 bản
+sao giống hệt nhau. `updateMuzzleSmoke` mỗi tick nới khối theo easing (giãn nhanh lúc đầu như khí nén xì
+ra), mờ dần về cuối. Pool nằm trực tiếp trong `scene`, không gắn theo `barrelPivot`, vì khói thật không
+dính theo nòng súng giật lùi.
+
+**Kiểm tra:** `tsc --noEmit` sạch. Verify qua dev server (tab trình duyệt sạch, không cache lỗi HMR cũ):
+không lỗi console suốt chuỗi bấm Play → súng lắp ráp → mở khoá gameplay. Không mô phỏng được một phát bắn
+thật (cần raycast 3D đầy đủ) để chụp khói lúc nổ, nên xác nhận chủ yếu qua rà soát code hình học và luồng
+gọi hàm.

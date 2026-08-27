@@ -473,9 +473,14 @@ export default function SandGame() {
           </div>
 
           {busy && (
-            <div className="settle-badge" role="status">
+            <div
+              className="settle-badge"
+              role="status"
+              aria-label={state.phase === "PROJECTILE_FLYING" ? "Shot in flight" : "Sand settling"}
+            >
               <i />
-              <span>{state.phase === "PROJECTILE_FLYING" ? "SHOT IN FLIGHT" : "SAND SETTLING"}</span>
+              <i />
+              <i />
             </div>
           )}
 

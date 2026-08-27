@@ -258,19 +258,19 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 
 /* ---- Locked-input and feedback ---------------------------------------- */
 /* §24 asks for a visible sign that firing is locked while sand is moving.
-   Without it, a settle just looks like the game stopped responding. */
+   No box, no label — the cannon itself dims for that same stretch
+   (SandCannonEngine's `updateCannonFade`), so this is only the three dots
+   saying something is still in motion, not naming what. */
 .settle-badge {
-  position: absolute; z-index: 7; top: 12px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
-  border: 1px solid rgba(255,213,74,.3); border-radius: 999px;
-  background: rgba(28,18,50,.9); pointer-events: none;
-  animation: badge-in .2s ease-out both;
+  position: absolute; z-index: 7; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; pointer-events: none;
 }
 .settle-badge i {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-  animation: badge-pulse .7s ease-in-out infinite alternate;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: settle-dot-bounce 1s ease-in-out infinite both;
 }
-.settle-badge span { color: #ffe9a8; font-size: 9px; font-weight: 900; letter-spacing: .14em; }
+.settle-badge i:nth-child(2) { animation-delay: .15s; }
+.settle-badge i:nth-child(3) { animation-delay: .3s; }
 
 .sand-toast {
   /* In the clear band above the frame. Anywhere lower and it covers the sand
@@ -456,8 +456,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
 @keyframes hub-nav-exit { to { transform: translateY(130%); opacity: 0; } }
 @keyframes hub-panel-in { from { opacity: 0; transform: translateY(16px); } }
-@keyframes badge-in { from { opacity: 0; transform: translate(-50%, -6px); } }
-@keyframes badge-pulse { to { opacity: .35; transform: scale(.78); } }
+@keyframes settle-dot-bounce {
+  0%, 80%, 100% { opacity: .35; transform: translateY(0) scale(.8); }
+  40% { opacity: 1; transform: translateY(-4px) scale(1); }
+}
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
 @keyframes overlay-in { from { opacity: 0; } }
 @keyframes result-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
