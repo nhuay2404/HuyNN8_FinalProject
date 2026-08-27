@@ -543,6 +543,16 @@ body:has(.editor-shell) { overflow: auto; }
   border: 1px solid rgba(255,255,255,.45); background: var(--swatch);
 }
 
+.editor-key-size {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255,213,74,.12);
+}
+.editor-key-size b {
+  font-size: 11px; font-weight: 900; letter-spacing: .05em; color: #ffe9a8;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- Editor: the wind loop --------------------------------------------- */
 /* One card per phase, in the order they play. The order IS the loop, so the
    list is numbered and reorderable rather than a set of named settings. */
@@ -559,6 +569,13 @@ body:has(.editor-shell) { overflow: auto; }
 }
 .editor-phases > li > header { display: flex; align-items: center; gap: 6px; }
 .editor-phases > li > header b { font-size: 12px; letter-spacing: .04em; }
+.editor-phase-pick {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+  padding: 2px 4px; border: 0; border-radius: 8px; background: none;
+  color: inherit; text-align: left;
+}
+.editor-phase-pick:hover { background: rgba(255,255,255,.08); }
+.editor-phase-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .editor-phase-summary {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;

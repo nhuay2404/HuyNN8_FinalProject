@@ -221,6 +221,15 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
   pixelScale: number;
   /** Still air when absent. */
   wind?: WindConfig | null;
+  /**
+   * How strongly a key resists rolling sideways, 0–1. Absent or 0 rolls the
+   * instant a slope or a gust offers it a way down; 1 waits several settle
+   * passes between rolls, which reads as heavier. Only sideways movement is
+   * slowed — a key still falls straight down at full speed, the way real
+   * friction only ever acts along a contact surface, never against gravity
+   * itself.
+   */
+  keyFriction?: number;
   notes?: string;
 };
 

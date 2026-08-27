@@ -3,6 +3,8 @@ import test from "node:test";
 import { sandBloom, BUILT_IN_LEVELS } from "../app/game/sand-levels.ts";
 import { analyseLevel, playCareless, playStrong } from "../app/game/level-analysis.ts";
 import {
+  DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
   MAX_HEIGHT,
   MAX_WIDTH,
   MIN_DIMENSION,
@@ -15,33 +17,72 @@ import {
   draftToLevel,
   draftToTypeScript,
   effectivePixelScale,
+  expandDraftToPixels,
   resizeDraft,
   settleDraft,
   syncQueueToPicture,
   validateDraft,
   type LevelDraft,
 } from "../app/game/level-drafts.ts";
-import { createSandGameState, parseSandLevel, runGrainSettle } from "../app/game/sand-rules.ts";
+import {
+  createSandGameState,
+  expandLevelForPixelBoard,
+  parseSandLevel,
+  runGrainSettle,
+} from "../app/game/sand-rules.ts";
 import { RADIUS_GAMEPLAY } from "../app/game/sand-types.ts";
 
-/** A small, already-at-rest picture: a filled block sitting on the floor. */
+/**
+ * A small, already-at-rest picture: a filled block sitting on the floor.
+ *
+ * `MIN_DIMENSION` is in board pixels now, so the smallest legal board is 12
+ * across — there is no blueprint to draw a six-cell picture on any more.
+ */
 function solidDraft(): LevelDraft {
-  const draft = createDraft("Test", 6, 6);
+  const draft = createDraft("Test", 12, 12);
   return syncQueueToPicture({
     ...draft,
-    rows: ["......", "......", "......", "BBBYYY", "BBBYYY", "GGGYYY"],
+    rows: [
+      "............",
+      "............",
+      "............",
+      "............",
+      "............",
+      "............",
+      "............",
+      "............",
+      "............",
+      "BBBBBBYYYYYY",
+      "BBBBBBYYYYYY",
+      "GGGGGGYYYYYY",
+    ],
   });
 }
 
 // ---- drawing model -------------------------------------------------------
 
 test("a blank draft is empty, and painting is what fills it", () => {
-  const draft = createDraft("Blank", 8, 8);
-  assert.equal(draft.rows.length, 8);
-  for (const row of draft.rows) assert.equal(row, "........");
+  const draft = createDraft("Blank", 16, 16);
+  assert.equal(draft.rows.length, 16);
+  for (const row of draft.rows) assert.equal(row, ".".repeat(16));
   assert.equal(countPaintedCells(draft), 0);
   assert.deepEqual(coloursUsed(draft), []);
   assert.deepEqual(blankRows(3, 2), ["...", "..."]);
+});
+
+test("a new draft is the board itself, at the resolution the game runs", () => {
+  const draft = createDraft("Fresh");
+  assert.deepEqual(
+    { width: draft.width, height: draft.height },
+    { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT },
+    "the default board is the size the shipped levels run at",
+  );
+  // The one thing that must never drift again: no expansion between what the
+  // author draws and what is played.
+  assert.equal(draft.pixelScale, 1);
+  assert.equal(effectivePixelScale(draft), 1);
+  const level = draftToLevel(draft, 1);
+  assert.deepEqual(expandLevelForPixelBoard(level).frame, level.frame, "expansion is a no-op now");
 });
 
 test("two drafts made in the same millisecond still get different ids", () => {
@@ -54,20 +95,21 @@ test("two drafts made in the same millisecond still get different ids", () => {
 test("resizing keeps the picture anchored to the floor", () => {
   // Sand rests on the floor, so rows have to grow and shrink at the top. If
   // resizing trimmed the bottom, the drawing would appear to jump.
+  const blank = ".".repeat(12);
   const draft = {
-    ...createDraft("Anchor", 6, 6),
-    rows: ["......", "......", "......", "......", "RRRRRR", "GGGGGG"],
+    ...createDraft("Anchor", 12, 12),
+    rows: [...Array<string>(10).fill(blank), "RRRRRRRRRRRR", "GGGGGGGGGGGG"],
   };
 
-  const taller = resizeDraft(draft, 6, 8);
-  assert.deepEqual(taller.rows, [
-    "......", "......", "......", "......", "......", "......", "RRRRRR", "GGGGGG",
-  ]);
-  assert.deepEqual(resizeDraft(taller, 6, 6).rows, draft.rows, "growing then shrinking round-trips");
+  const taller = resizeDraft(draft, 12, 14);
+  assert.deepEqual(taller.rows, [...Array<string>(12).fill(blank), "RRRRRRRRRRRR", "GGGGGGGGGGGG"]);
+  assert.deepEqual(resizeDraft(taller, 12, 12).rows, draft.rows, "growing then shrinking round-trips");
 
-  const wider = resizeDraft(draft, 8, 6);
+  const wider = resizeDraft(draft, 14, 12);
   assert.deepEqual(wider.rows, [
-    "........", "........", "........", "........", "RRRRRR..", "GGGGGG..",
+    ...Array<string>(10).fill(".".repeat(14)),
+    "RRRRRRRRRRRR..",
+    "GGGGGGGGGGGG..",
   ]);
 });
 
@@ -102,23 +144,59 @@ test("coloursUsed reports exactly what is painted, in palette order", () => {
 
 // ---- resolution ----------------------------------------------------------
 
-test("auto pixel scale keeps every board inside the measured budget", () => {
+test("auto pixel scale is the biggest whole scale that fits, or 1", () => {
   for (let width = MIN_DIMENSION; width <= MAX_WIDTH; width += 1) {
     for (let height = MIN_DIMENSION; height <= MAX_HEIGHT; height += 1) {
       const scale = autoPixelScale(width, height);
-      assert.ok(scale >= 1, `${width}x${height} produced scale ${scale}`);
       assert.equal(scale, Math.floor(scale), "only whole scales keep the puzzle identical");
-      assert.ok(
-        width * height * scale * scale <= PIXEL_BUDGET,
-        `${width}x${height} at ${scale}x is ${width * height * scale * scale} pixels, over budget`,
-      );
+      assert.ok(scale >= 1, `${width}x${height} produced scale ${scale}`);
+      const pixels = width * height * scale * scale;
+      // A board that is already over budget at 1x cannot be shrunk any
+      // further — the budget is a comfort warning, not a hard cap.
+      if (scale > 1) {
+        assert.ok(pixels <= PIXEL_BUDGET, `${width}x${height} at ${scale}x is ${pixels} pixels, over budget`);
+      }
     }
   }
 });
 
-test("a manual pixel scale overrides the automatic one", () => {
+test("a blueprint-era draft is expanded to the board it was always playing", () => {
+  // The old model: a small picture plus a scale the game applied at load.
+  const legacy: LevelDraft = {
+    ...createDraft("Legacy", 12, 14),
+    width: 12,
+    height: 14,
+    rows: [...Array<string>(13).fill("............"), "OOOOOOOOOOOO"],
+    sortRadius: 2.5,
+    pixelScale: 5,
+  };
+
+  const migrated = expandDraftToPixels(legacy);
+  assert.deepEqual(
+    { width: migrated.width, height: migrated.height },
+    { width: 60, height: 70 },
+    "the picture becomes the board the game was already running",
+  );
+  assert.equal(migrated.pixelScale, 1, "and there is nothing left to expand");
+  assert.equal(migrated.sortRadius, 12.5, "the disc has to grow with the board or the puzzle changes");
+  assert.equal(migrated.rows.length, 70);
+  for (const row of migrated.rows) assert.equal(row.length, 60);
+  assert.equal(
+    countPaintedCells(migrated),
+    countPaintedCells(legacy) * 25,
+    "each authored cell became a 5x5 block of itself",
+  );
+
+  // Idempotent: a draft that is already at pixel resolution is left alone.
+  assert.deepEqual(expandDraftToPixels(migrated), migrated);
+});
+
+test("an explicit pixel scale still overrides the automatic one", () => {
+  // Only reachable through migration now, but that is exactly where it has to
+  // keep working: it is how an old draft's true size is recovered.
   const draft = createDraft("Manual", 12, 14);
-  assert.equal(effectivePixelScale(draft), autoPixelScale(12, 14));
+  assert.equal(effectivePixelScale(draft), 1, "a new draft is the board itself");
+  assert.equal(effectivePixelScale({ ...draft, pixelScale: null }), autoPixelScale(12, 14));
   assert.equal(effectivePixelScale({ ...draft, pixelScale: 3 }), 3);
 });
 
@@ -130,7 +208,7 @@ test("a draft becomes a level that carries the shared gameplay policy", () => {
   assert.equal(level.shotRule, RADIUS_GAMEPLAY.shotRule);
   assert.equal(level.settlePolicy, RADIUS_GAMEPLAY.settlePolicy);
   assert.equal(level.ammoRule, RADIUS_GAMEPLAY.ammoRule);
-  assert.deepEqual(level.frame, { width: 6, height: 6 });
+  assert.deepEqual(level.frame, { width: 12, height: 12 });
   assert.deepEqual(level.rows, solidDraft().rows);
 });
 
@@ -268,7 +346,7 @@ test("an exported level spreads the shared policy instead of restating it", () =
   assert.match(code, /export const myTestLevel: SandLevelConfig = \{/);
   assert.match(code, /id: 4,/);
   assert.match(code, /name: "My Test Level",/);
-  assert.match(code, /frame: \{ width: 6, height: 6 \},/);
+  assert.match(code, /frame: \{ width: 12, height: 12 \},/);
   // None of the policy fields should be written out by hand.
   for (const field of ["shotRule", "settlePolicy", "ammoRule", "adjacencyMode", "cannonConfigRef"]) {
     assert.ok(!code.includes(`${field}:`), `${field} belongs to RADIUS_GAMEPLAY, not to a level`);

@@ -2,10 +2,15 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
+import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColor } from "./sand-color";
+// Only the padlock: the key's shape is whatever cells the level authored, and
+// this file draws them rather than deciding them.
+import { PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./sand-sprites";
 import {
   cellKey,
   createSandGameState,
   currentAmmo,
+  groupCells,
   expandLevelForPixelBoard,
   nextAmmo,
   parseSandLevel,
@@ -109,35 +114,8 @@ const SAND_PLANE_Z = -2.3;
 /** Where the pixel plane sits inside the recess, as a fraction of one pixel's world size. */
 const PLANE_LOCAL_Z_RATIO = 0.5;
 
-/**
- * How far a pixel's colour is nudged from its cell's base colour when it is
- * spawned. Presentation only — it never reaches the grid.
- *
- * Ported from a reference falling-sand renderer (UniSand, MIT): every grain
- * there gets a one-time random nudge to its saturation and value, fixed at
- * spawn rather than animated. That is what turns a field of one flat colour
- * into something that reads as poured grains instead of a painted swatch —
- * real sand looks textured because countless grains catch the light very
- * slightly differently, not because any one grain is shaded. Hue is never
- * touched: a jitter big enough to see would start reading as a different
- * gameplay colour, which a coincidence of tint must never be able to fake.
- *
- * Close to the reference's own ±0.1, at a resolution fine enough that
- * individual pixels disappear into the whole.
- */
-const SATURATION_JITTER = 0.1;
-const LIGHTNESS_JITTER = 0.09;
-
-/** Nudges a colour's saturation and lightness by up to `range`, hue untouched. */
-function jitterColor(hex: number, seed: number, saturationRange: number, lightnessRange: number) {
-  const color = new THREE.Color(hex);
-  if (saturationRange <= 0 && lightnessRange <= 0) return color;
-  const hsl = { h: 0, s: 0, l: 0 };
-  color.getHSL(hsl);
-  const s = THREE.MathUtils.clamp(hsl.s + (seededUnit(seed) - 0.5) * 2 * saturationRange, 0, 1);
-  const l = THREE.MathUtils.clamp(hsl.l + (seededUnit(seed + 3) - 0.5) * 2 * lightnessRange, 0, 1);
-  return color.setHSL(hsl.h, s, l);
-}
+// SAND_SATURATION_JITTER / SAND_LIGHTNESS_JITTER live in ./sand-color, shared
+// with the editor's preview so a level textures the same in both places.
 
 // ---- settle pacing -------------------------------------------------------
 // §24 wants sand that flows without turning into dead time, and Open Decision
@@ -160,13 +138,21 @@ const SORT_RING_SECONDS = 0.5;
 const SHAKE_DRAW_OFFSET_PX = 1.6;
 
 // ---- map mechanics -------------------------------------------------------
-/** Frozen sand is drawn this far toward frost, so a lock reads without a legend. */
-const LOCK_FROST_MIX = 0.52;
-const LOCK_FROST_RGB: readonly [number, number, number] = [198, 226, 255];
-/** Breathing rate of the frost, in cycles per second. Slow — it is ice, not an alarm. */
-const LOCK_SHIMMER_HZ = 0.55;
-/** The key's own colour. Gold, and nothing in the sand palette is gold. */
+/**
+ * How far frozen sand is drawn toward black.
+ *
+ * Darkening rather than tinting: the colour underneath still has to be
+ * readable, because that colour is the bullet the wheel will hand out once the
+ * lock opens. Shading it down says "out of play" while leaving the hue intact,
+ * which a coloured wash would not.
+ */
+const LOCK_DARKEN = 0.62;
+/** The padlock drawn on top of a locked region, and the smallest region worth one. */
+const LOCK_ICON_RGB: readonly [number, number, number] = [236, 243, 255];
+const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
+/** The key's own gold, and a darker gold for its one-pixel drop shadow. */
 const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
+const KEY_SHADOW_RGB: readonly [number, number, number] = [120, 82, 10];
 const THAW_SECONDS = 0.5;
 /** How long the warning shows before a phase of wind starts blowing. */
 const WIND_WARNING_MS = 900;
@@ -236,11 +222,6 @@ type BallisticSolution = { start: THREE.Vector3; velocity: THREE.Vector3 };
 
 export type ControlSensitivity = { aim: number };
 
-function seededUnit(seed: number) {
-  const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
-  return value - Math.floor(value);
-}
-
 export class SandCannonEngine {
   private readonly host: HTMLDivElement;
   private readonly aimZone: HTMLDivElement;
@@ -267,6 +248,7 @@ export class SandCannonEngine {
   private readonly sortRadius: number;
   /** Shows the disc a radius shot would take, under the crosshair and at impact. */
   private aimRing: THREE.Mesh | null = null;
+  private aimRingGlow: THREE.Mesh | null = null;
   private sortRing: THREE.Mesh | null = null;
   private sortRingAge = 0;
 
@@ -295,7 +277,14 @@ export class SandCannonEngine {
   /** Live pixels by "x,y". Rebuilt on every settle step so lookups stay exact. */
   private cells = new Map<string, PixelCell>();
   private dying: PixelCell[] = [];
-  /** The keys on the board, by id, as the cells they currently cover. */
+  /**
+   * The keys on the board, by id, as the cells they currently cover.
+   *
+   * Whatever shape a level authors — a level file draws it as `K` cells like
+   * any other fixture — this is that shape's live footprint, and it is what
+   * `redrawSand` rasterises straight onto the sand canvas: a key is drawn the
+   * same way sand is, not stood in for by a separate object.
+   */
   private keys = new Map<string, CellCoord[]>();
   /** Where the level's wind loop has got to. */
   private windPhase = 0;
@@ -305,7 +294,9 @@ export class SandCannonEngine {
   private windBlowing = false;
   private windSinceGust = 0;
   private windWarned = false;
-  private lockAge = 0;
+  /** Padlock placements, and whether the locked cells have changed under them. */
+  private lockRegionCache: Array<{ icon: CellCoord[] }> = [];
+  private lockRegionsDirty = true;
 
   private state: SandGameState;
   /** The resolved state waiting for its animation to finish before it is published. */
@@ -380,8 +371,8 @@ export class SandCannonEngine {
 
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid", "is-cooling-down");
     this.scene.fog = new THREE.FogExp2(0x2a1c46, 0.02);
-    this.camera.position.set(0, 4.7, 13.4);
-    this.camera.lookAt(0, 0.45, 0.8);
+    this.camera.position.set(0, 3.3, 13.6);
+    this.camera.lookAt(0, 1, -0.5);
     this.renderer = acquireRenderer(this, this.host);
 
     this.buildLighting();
@@ -477,12 +468,7 @@ export class SandCannonEngine {
     for (const body of bodies) {
       for (const cell of body.cells) {
         const seed = cell.x * 733 + cell.y * 197;
-        const jittered = jitterColor(SAND_COLOR_HEX[body.color], seed, SATURATION_JITTER, LIGHTNESS_JITTER);
-        const rgb: readonly [number, number, number] = [
-          Math.round(jittered.r * 255),
-          Math.round(jittered.g * 255),
-          Math.round(jittered.b * 255),
-        ];
+        const rgb = jitterColor(SAND_COLOR_HEX[body.color], seed, SAND_SATURATION_JITTER, SAND_LIGHTNESS_JITTER);
         this.cells.set(cellKey(cell.x, cell.y), {
           x: cell.x,
           y: cell.y,
@@ -536,17 +522,12 @@ export class SandCannonEngine {
       data[index + 3] = alpha;
     };
 
-    // Frost breathes as one sheet rather than per grain, so a locked region
-    // reads as a single frozen thing instead of a field of twinkling pixels.
-    const shimmer = 0.5 + 0.5 * Math.sin(this.lockAge * Math.PI * 2 * LOCK_SHIMMER_HZ);
-    const frostMix = LOCK_FROST_MIX + shimmer * 0.1;
-
     for (const cell of this.cells.values()) {
       let [r, g, b] = cell.rgb;
       if (cell.locked) {
-        r = Math.round(r + (LOCK_FROST_RGB[0] - r) * frostMix);
-        g = Math.round(g + (LOCK_FROST_RGB[1] - g) * frostMix);
-        b = Math.round(b + (LOCK_FROST_RGB[2] - b) * frostMix);
+        r = Math.round(r * (1 - LOCK_DARKEN));
+        g = Math.round(g * (1 - LOCK_DARKEN));
+        b = Math.round(b * (1 - LOCK_DARKEN));
       } else if (cell.thaw > 0) {
         // Just came free: flare white and fall back to its own colour.
         const flare = cell.thaw;
@@ -568,16 +549,77 @@ export class SandCannonEngine {
       writePixel(cell.x, height - 1 - cell.y, cell.rgb[0], cell.rgb[1], cell.rgb[2], alpha);
     }
 
-    // Keys last, so a key resting in a hollow is never buried by the sand it is
-    // sitting against. It is the one thing on the board the player is tracking.
-    for (const cells of this.keys.values()) {
-      for (const cell of cells) {
-        writePixel(cell.x, height - 1 - cell.y, KEY_RGB[0], KEY_RGB[1], KEY_RGB[2], 255);
+    // A padlock on each locked region, so what the darkened sand *is* has a
+    // name. Drawn after the sand and before the keys — the key is the thing
+    // that answers this icon, and it should never be hidden behind one.
+    for (const region of this.lockRegions()) {
+      for (const cell of region.icon) {
+        // A one-pixel shadow, because the icon sits on sand whose colour is not
+        // ours to choose and a bare white shape can vanish into a pale one.
+        writePixel(cell.x + 1, height - 1 - cell.y + 1, ...LOCK_ICON_SHADOW_RGB, 210);
       }
+      for (const cell of region.icon) {
+        writePixel(cell.x, height - 1 - cell.y, ...LOCK_ICON_RGB, 255);
+      }
+    }
+
+    // Keys last, so a key resting in a hollow is never buried by the sand it
+    // sits against — it is the one thing on the board the player is tracking.
+    // One-pixel drop shadow, then the flat gold shape over it: the silhouette
+    // is the whole point of an authored shape, so nothing here shades it into
+    // looking like something rounder than it is.
+    for (const cells of this.keys.values()) {
+      for (const cell of cells) writePixel(cell.x + 1, height - 1 - cell.y + 1, ...KEY_SHADOW_RGB, 210);
+    }
+    for (const cells of this.keys.values()) {
+      for (const cell of cells) writePixel(cell.x, height - 1 - cell.y, ...KEY_RGB, 255);
     }
 
     this.sandContext.putImageData(this.sandImage, 0, 0);
     this.sandTexture.needsUpdate = true;
+  }
+
+  /**
+   * Where to stamp a padlock, one per connected region of frozen sand.
+   *
+   * Recomputed only when the set of locked cells actually changes — which is
+   * once at load and once per lock opened, not once per frame. The icon is
+   * scaled to the region and dropped entirely when the region is too small to
+   * hold one: a padlock spilling over the sand it labels would read as debris.
+   */
+  private lockRegions() {
+    if (!this.lockRegionsDirty) return this.lockRegionCache;
+    this.lockRegionsDirty = false;
+
+    const frozen = [...this.cells.values()].filter((cell) => cell.locked);
+    this.lockRegionCache = groupCells(frozen.map((cell) => ({ x: cell.x, y: cell.y })))
+      .map((region) => {
+        const xs = region.map((cell) => cell.x);
+        const ys = region.map((cell) => cell.y);
+        const left = Math.min(...xs);
+        const bottom = Math.min(...ys);
+        const width = Math.max(...xs) - left + 1;
+        const height = Math.max(...ys) - bottom + 1;
+        const scale = Math.floor(Math.min(
+          width / (spriteWidth(PADLOCK_SPRITE) + 2),
+          height / (spriteHeight(PADLOCK_SPRITE) + 2),
+        ));
+        if (scale < 1) return { icon: [] as CellCoord[] };
+
+        const iconWidth = spriteWidth(PADLOCK_SPRITE) * scale;
+        const iconHeight = spriteHeight(PADLOCK_SPRITE) * scale;
+        const originX = left + Math.floor((width - iconWidth) / 2);
+        const originY = bottom + Math.floor((height - iconHeight) / 2);
+        // Only the parts of the icon that land on frozen sand. A region is not
+        // always a rectangle, and the label belongs on the thing it labels.
+        const inside = new Set(region.map((cell) => cellKey(cell.x, cell.y)));
+        const icon = spriteCells(PADLOCK_SPRITE, scale)
+          .map((cell) => ({ x: originX + cell.x, y: originY + cell.y }))
+          .filter((cell) => inside.has(cellKey(cell.x, cell.y)));
+        return { icon };
+      })
+      .filter((region) => region.icon.length > 0);
+    return this.lockRegionCache;
   }
 
   private buildCannon() {
@@ -829,13 +871,40 @@ export class SandCannonEngine {
   private buildSortRings() {
     if (this.sortRadius <= 0) return;
     const outer = this.sortRadius * this.cell + this.cell * 0.5;
-    const geometry = this.track(new THREE.RingGeometry(outer - this.cell * 0.14, outer, 56));
+    // A thicker rim than the old 0.14-cell hairline: the ring is the only
+    // thing telling the player where a shot reaches, so it has to survive
+    // being glanced at, not just looked for.
+    const rimThickness = this.cell * 0.26;
+    const geometry = this.track(new THREE.RingGeometry(outer - rimThickness, outer, 64));
+    const glowGeometry = this.track(
+      new THREE.RingGeometry(Math.max(0, outer - rimThickness * 2.2), outer + this.cell * 0.18, 64),
+    );
     const aimMaterial = this.track(
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.42, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    // Additive halo behind the rim: a flat-opacity ring reads the same over
+    // every sand colour, but a soft glow is what actually pulls the eye to
+    // it against a busy multi-colour picture.
+    const aimGlowMaterial = this.track(
+      new THREE.MeshBasicMaterial({
+        color: 0xfff2c4,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }),
     );
     const hitMaterial = this.track(
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
     );
+
+    this.aimRingGlow = new THREE.Mesh(glowGeometry, aimGlowMaterial);
+    this.aimRingGlow.visible = false;
+    this.aimRingGlow.renderOrder = 19;
+    this.aimRingGlow.position.z = this.cell * 0.6;
+    this.frameRoot.add(this.aimRingGlow);
+
     this.aimRing = new THREE.Mesh(geometry, aimMaterial);
     this.aimRing.visible = false;
     this.aimRing.renderOrder = 20;
@@ -1177,6 +1246,7 @@ export class SandCannonEngine {
     this.crosshair.style.removeProperty("--aim-color");
     this.crosshair.classList.toggle("is-visible", this.canInteract());
     if (this.aimRing) this.aimRing.visible = false;
+    if (this.aimRingGlow) this.aimRingGlow.visible = false;
   }
 
   private updateAimPreview() {
@@ -1205,6 +1275,10 @@ export class SandCannonEngine {
     if (this.aimRing) {
       this.aimRing.visible = Boolean(solved?.grid);
       if (solved?.grid) this.moveRingToCell(this.aimRing, solved.grid.x, solved.grid.y);
+    }
+    if (this.aimRingGlow) {
+      this.aimRingGlow.visible = Boolean(solved?.grid);
+      if (solved?.grid) this.moveRingToCell(this.aimRingGlow, solved.grid.x, solved.grid.y);
     }
     this.aimPreviewDirty = false;
   }
@@ -1455,6 +1529,7 @@ export class SandCannonEngine {
         cell.locked = false;
         cell.thaw = 1;
       }
+      this.lockRegionsDirty = true;
       this.keys.delete(step.keyId);
       haptic("bodyCleared");
       this.callbacks.onEvent?.({ type: "UNLOCKED", cells: step.cells.length });
@@ -1601,7 +1676,6 @@ export class SandCannonEngine {
     if (this.projectile) this.updateProjectile(this.projectile);
     else this.advanceBeats(deltaMs);
 
-    this.lockAge += FIXED_STEP;
     this.updateWind(deltaMs);
     for (const cell of this.cells.values()) {
       if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);

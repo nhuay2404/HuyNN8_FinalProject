@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "vinext dev",
+    "level-writer": "node scripts/level-writer.mjs",
     "build": "vinext build",
     "start": "vinext start",
     "test": "node --test tests/sand-radius.test.ts tests/sand-pixel-board.test.ts tests/level-editor.test.ts tests/sand-mechanics.test.ts",

@@ -192,6 +192,9 @@ let reached = LOADING_START;
 
 export function advanceLoading(step: LoadingStep) {
   if (typeof document === "undefined") return;
+  // A page that mounts after loading has already finished must not start
+  // filling a bar again — there is nothing left to wait for.
+  if (finished) return;
   const element = document.getElementById(LOADING_ELEMENT_ID);
   if (!element) return;
   const next = LOADING_STEPS[step];
@@ -200,13 +203,49 @@ export function advanceLoading(step: LoadingStep) {
   element.style.setProperty("--loading-progress", `${next * 100}%`);
 }
 
-export function finishLoading() {
-  if (typeof document === "undefined") return;
-  const element = document.getElementById(LOADING_ELEMENT_ID);
-  if (!element) return;
-  advanceLoading("ready");
+/**
+ * True once any page has finished loading in this document.
+ *
+ * From that moment on, a loading screen is stale by definition — see
+ * `watchForStaleScreen`.
+ */
+let finished = false;
+let observer: MutationObserver | null = null;
+
+function dismiss(element: HTMLElement) {
   element.classList.add("is-done");
   // Taken out of the document after the fade rather than left transparent on
   // top of the game, where it would still swallow the first tap.
   window.setTimeout(() => element.remove(), 420);
+}
+
+/**
+ * Remove any loading screen that turns up after loading is already done.
+ *
+ * The screen is server-rendered in the root layout so that it is in the very
+ * first HTML the browser paints. The cost of that is that a client-side
+ * navigation re-renders the layout and puts a *fresh* one into the document —
+ * after the page it is covering has already mounted and called
+ * `finishLoading`. Nothing would ever dismiss that one, and the player would
+ * be left looking at a loading bar over a page that had finished loading.
+ */
+function watchForStaleScreen() {
+  if (observer || typeof MutationObserver === "undefined") return;
+  observer = new MutationObserver(() => {
+    const element = document.getElementById(LOADING_ELEMENT_ID);
+    if (element && !element.classList.contains("is-done")) dismiss(element);
+  });
+  observer.observe(document.body, { childList: true });
+}
+
+export function finishLoading() {
+  if (typeof document === "undefined") return;
+  const element = document.getElementById(LOADING_ELEMENT_ID);
+  if (element) {
+    // Filled to the end before it fades, so the bar is never seen to stop short.
+    advanceLoading("ready");
+    dismiss(element);
+  }
+  finished = true;
+  watchForStaleScreen();
 }

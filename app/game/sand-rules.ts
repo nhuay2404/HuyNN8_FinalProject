@@ -277,7 +277,7 @@ function parseCellKey(key: string): CellCoord {
 }
 
 /** Split a loose set of cells into its ORTHOGONAL_4 connected groups. */
-function groupCells(cells: CellCoord[]): CellCoord[][] {
+export function groupCells(cells: CellCoord[]): CellCoord[][] {
   const remaining = new Map(cells.map((cell) => [cellKey(cell.x, cell.y), cell]));
   const groups: CellCoord[][] = [];
   // Highest y first, then leftmost, so a group's identity comes from a corner
@@ -375,7 +375,14 @@ function inZone(zone: WindZone | null, x: number, y: number) {
 // work on, so a grain, a key and a lock can never disagree about what is where.
 
 /** The parts of the board that are not plain falling sand. */
-export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[] };
+export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: number };
+
+/**
+ * How many settle passes a key waits at `friction: 1` before a sideways roll
+ * it could take is actually taken. `friction: 0` waits none — it rolls the
+ * instant a slope or a gust offers it one, same as before friction existed.
+ */
+const FRICTION_MAX_WAIT_PASSES = 4;
 
 type World = {
   /** Every sand cell, frozen ones included — locked sand still fills its cell. */
@@ -384,6 +391,16 @@ type World = {
   keys: Map<string, CellCoord[]>;
   /** Reverse index of `keys`, so occupancy is one lookup rather than a scan. */
   keyAt: Map<string, string>;
+  /**
+   * Passes a key has already waited toward its next sideways roll.
+   *
+   * Shared between the natural roll (`keyPass`) and being blown (`windPass`) on
+   * purpose: both are "sliding sideways", and a key's resistance to one is its
+   * resistance to the other. Reset the moment the key actually moves sideways,
+   * or falls straight down instead of rolling.
+   */
+  keyRollWait: Map<string, number>;
+  friction: number;
 };
 
 function buildWorld(bodies: SandBody[], fixtures: Fixtures): World {
@@ -403,7 +420,7 @@ function buildWorld(bodies: SandBody[], fixtures: Fixtures): World {
     keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
     for (const cell of key.cells) keyAt.set(cellKey(cell.x, cell.y), key.id);
   }
-  return { grid, locked, keys, keyAt };
+  return { grid, locked, keys, keyAt, keyRollWait: new Map(), friction: fixtures.friction ?? 0 };
 }
 
 function occupied(world: World, frame: SandFrame, x: number, y: number) {
@@ -443,23 +460,49 @@ function sandPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   return true;
 }
 
-/** Try to shift one whole key by (dx, dy). Returns whether it went. */
-function moveKey(world: World, frame: SandFrame, id: string, dx: number, dy: number, steps: SettleStep[]) {
+/** Whether every cell of key `id` would land somewhere legal at (dx, dy). */
+function keyCanMove(world: World, frame: SandFrame, id: string, dx: number, dy: number) {
   const cells = world.keys.get(id);
   if (!cells) return false;
   const own = new Set(cells.map((cell) => cellKey(cell.x, cell.y)));
-  for (const cell of cells) {
+  return cells.every((cell) => {
     const tx = cell.x + dx;
     const ty = cell.y + dy;
     // The key sliding into its own trailing cell is not a collision.
-    if (own.has(cellKey(tx, ty))) continue;
-    if (occupied(world, frame, tx, ty)) return false;
-  }
+    return own.has(cellKey(tx, ty)) || !occupied(world, frame, tx, ty);
+  });
+}
+
+/** Shift one whole key by (dx, dy), unconditionally — the caller has already checked it fits. */
+function moveKey(world: World, frame: SandFrame, id: string, dx: number, dy: number, steps: SettleStep[]) {
+  if (!keyCanMove(world, frame, id, dx, dy)) return false;
+  const cells = world.keys.get(id)!;
   for (const cell of cells) world.keyAt.delete(cellKey(cell.x, cell.y));
   const moved = cells.map((cell) => ({ x: cell.x + dx, y: cell.y + dy }));
   world.keys.set(id, moved);
   for (const cell of moved) world.keyAt.set(cellKey(cell.x, cell.y), id);
   steps.push({ kind: "KEY_MOVE", keyId: id, dx, dy });
+  return true;
+}
+
+/**
+ * A sideways move a key is allowed to take, throttled by `world.friction`.
+ *
+ * Free fall is never gated — only this, the sideways case, waits. Returns
+ * `true` for both an actual move and a tick spent waiting, because either one
+ * is "this key is still doing something" as far as `settleWorld` is concerned;
+ * only a move that was never possible at all returns `false`.
+ */
+function rollKey(world: World, frame: SandFrame, id: string, dx: number, dy: number, steps: SettleStep[]) {
+  if (!keyCanMove(world, frame, id, dx, dy)) return false;
+  const wait = Math.round(world.friction * FRICTION_MAX_WAIT_PASSES);
+  const soFar = (world.keyRollWait.get(id) ?? 0) + 1;
+  if (soFar <= wait) {
+    world.keyRollWait.set(id, soFar);
+    return true;
+  }
+  world.keyRollWait.set(id, 0);
+  moveKey(world, frame, id, dx, dy, steps);
   return true;
 }
 
@@ -470,11 +513,13 @@ function keyPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   const order = [...world.keys.keys()].sort((a, b) => lowestY(world, a) - lowestY(world, b));
   for (const id of order) {
     if (moveKey(world, frame, id, 0, -1, steps)) {
+      // Free fall, not a roll — friction never gated it, so it owes no wait.
+      world.keyRollWait.set(id, 0);
       moved = true;
       continue;
     }
     for (const dx of SLIDE_ORDER) {
-      if (moveKey(world, frame, id, dx, -1, steps)) {
+      if (rollKey(world, frame, id, dx, -1, steps)) {
         moved = true;
         break;
       }
@@ -561,10 +606,12 @@ function windPass(
   // Keys are blown too — a key parked on a ledge would otherwise be the one
   // thing in the frame the weather could not reach. A key counts as inside the
   // zone if any part of it is: half a key in the wind still catches it.
+  // Gated by the same friction a natural roll is: a heavier key resists wind
+  // exactly as much as it resists a slope, because both are sideways.
   let keysMoved = false;
   for (const [id, cells] of [...world.keys]) {
     if (!cells.some((cell) => inZone(zone, cell.x, cell.y))) continue;
-    if (moveKey(world, frame, id, step, 0, steps)) keysMoved = true;
+    if (rollKey(world, frame, id, step, 0, steps)) keysMoved = true;
   }
   if (moves.length) steps.push({ kind: "GRAIN_PASS", moves });
   return moves.length > 0 || keysMoved;
@@ -681,8 +728,8 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
 }
 
 /** The board's non-sand furniture, in the shape the solver wants it. */
-export function fixturesOf(state: SandGameState): Fixtures {
-  return { locked: state.locked, keys: state.keys };
+export function fixturesOf(level: SandLevelConfig, state: SandGameState): Fixtures {
+  return { locked: state.locked, keys: state.keys, friction: level.keyFriction ?? 0 };
 }
 
 /** Cell keys of everything frozen, for the lookups a shot and a redraw need. */
@@ -850,7 +897,7 @@ export function resolveShot(
   const left = state.bodies
     .map((body) => ({ ...body, cells: body.cells.filter((cell) => !taken.has(cellKey(cell.x, cell.y))) }))
     .filter((body) => body.cells.length);
-  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(state));
+  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(level, state));
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
   const sorted: SandGameState = {
     ...state,
@@ -891,7 +938,7 @@ export function resolveWind(
     level.frame,
     phase.direction,
     phase.power,
-    fixturesOf(state),
+    fixturesOf(level, state),
     phase.zone,
   );
   if (!settle.steps.some((step) => step.kind !== "REINDEX")) return idle;

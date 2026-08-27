@@ -7,7 +7,7 @@
 // single place the two are joined, so a level tested in the editor and a level
 // pasted into `sand-levels.ts` cannot drift apart.
 
-import { KEY_LETTER, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
+import { KEY_LETTER, expandLevelForPixelBoard, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
 import {
   RADIUS_GAMEPLAY,
   SAND_COLORS,
@@ -19,17 +19,31 @@ import {
 
 const STORAGE_KEY = "sand-cannon:v1:level-drafts";
 
-/** Blueprint bounds. Wide enough to draw with, small enough to stay readable. */
-export const MIN_DIMENSION = 6;
-export const MAX_WIDTH = 24;
-export const MAX_HEIGHT = 28;
+/**
+ * Board bounds, in **simulated pixels**.
+ *
+ * The editor draws the real board now, not a small blueprint that gets blown up
+ * at load. A blueprint was a lie the author had to keep in their head: they
+ * placed a 12-cell picture and the game ran a 60-pixel one, so nothing they
+ * drew was quite the thing that would be played. Painting at the true
+ * resolution costs a brush-size control and buys an editor that shows the
+ * level.
+ *
+ * `DEFAULT_WIDTH`/`DEFAULT_HEIGHT` are what the shipped levels run at.
+ */
+export const MIN_DIMENSION = 12;
+export const MAX_WIDTH = 90;
+export const MAX_HEIGHT = 100;
+export const DEFAULT_WIDTH = 60;
+export const DEFAULT_HEIGHT = 70;
 
 /**
  * How many simulated pixels a board may cost.
  *
- * Settling is the expensive part and it grows with the pixel count, so this is
- * the ceiling `autoPixelScale` fits a board under. 4,500 is the size the
- * shipped level runs at (60x70), measured at well under 40ms a settle.
+ * Settling is the expensive part and it grows with the pixel count. 4,500 is
+ * the size the shipped levels run at (60x70), measured at well under 40ms a
+ * settle. Past it the editor warns rather than refuses — it is a comfort
+ * budget, not a rule.
  */
 export const PIXEL_BUDGET = 4500;
 export const MAX_PIXEL_SCALE = 6;
@@ -75,8 +89,14 @@ export type LevelDraft = {
   pixelScale: number | null;
   /** null is still air. */
   wind?: WindConfig | null;
+  /** 0–1, how strongly a key resists rolling sideways. Absent is the same as 0. */
+  keyFriction?: number;
   updatedAt: number;
 };
+
+/** Bounds the friction slider is allowed to reach. */
+export const MIN_KEY_FRICTION = 0;
+export const MAX_KEY_FRICTION = 1;
 
 /**
  * The biggest whole-number scale that keeps a board inside the pixel budget.
@@ -141,7 +161,11 @@ export function countPaintedCells(draft: LevelDraft) {
 
 let draftCounter = 0;
 
-export function createDraft(name: string, requestedWidth = 12, requestedHeight = 14): LevelDraft {
+export function createDraft(
+  name: string,
+  requestedWidth = DEFAULT_WIDTH,
+  requestedHeight = DEFAULT_HEIGHT,
+): LevelDraft {
   draftCounter += 1;
   const { width, height } = clampDimensions(requestedWidth, requestedHeight);
   return {
@@ -153,9 +177,11 @@ export function createDraft(name: string, requestedWidth = 12, requestedHeight =
     height,
     rows: blankRows(width, height),
     ammoQueue: [],
-    sortRadius: 2.5,
+    // In pixels, like everything else the editor now measures.
+    sortRadius: 12,
     shotLimit: 26,
-    pixelScale: null,
+    // Always 1: what the editor holds IS the board the game runs.
+    pixelScale: 1,
     updatedAt: Date.now(),
   };
 }
@@ -192,6 +218,7 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     shotLimit: draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
     wind: draft.wind ? { ...draft.wind } : null,
+    keyFriction: draft.keyFriction ?? 0,
   };
 }
 
@@ -421,6 +448,31 @@ function normaliseWind(wind: unknown): WindConfig | null {
   };
 }
 
+/**
+ * Blow a blueprint-era draft up to the resolution it was always going to run at.
+ *
+ * Drafts used to be small pictures with a `pixelScale` the game applied at
+ * load. The editor authors the real board now, so an old draft is translated
+ * rather than dropped: it is expanded by exactly the factor the game would have
+ * expanded it by, which is the same picture the author was already playing.
+ * `sortRadius` and the wind come along, because `expandLevelForPixelBoard`
+ * scales those too.
+ */
+export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
+  const scale = effectivePixelScale(draft);
+  if (scale <= 1) return { ...draft, pixelScale: 1 };
+  const expanded = expandLevelForPixelBoard(draftToLevel(draft, 0));
+  return {
+    ...draft,
+    width: expanded.frame.width,
+    height: expanded.frame.height,
+    rows: expanded.rows,
+    sortRadius: expanded.sortRadius,
+    wind: expanded.wind ?? null,
+    pixelScale: 1,
+  };
+}
+
 export function loadDrafts(): LevelDraft[] {
   if (typeof window === "undefined") return [];
   try {
@@ -430,7 +482,9 @@ export function loadDrafts(): LevelDraft[] {
     // Anything that does not round-trip is dropped rather than crashing the
     // editor: a half-written draft must never make the tool unopenable.
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isDraft).map((draft) => ({ ...draft, wind: normaliseWind(draft.wind) }));
+    return parsed
+      .filter(isDraft)
+      .map((draft) => expandDraftToPixels({ ...draft, wind: normaliseWind(draft.wind) }));
   } catch {
     return [];
   }
@@ -459,15 +513,20 @@ function quoted(value: string) {
  * so an exported level stays as short as the thing it actually describes — and
  * a later change to a shared rule reaches it.
  */
-export function draftToTypeScript(draft: LevelDraft, id: number) {
-  const scale = effectivePixelScale(draft);
-  const pixels = draft.width * draft.height * scale * scale;
-  const constName = (draft.name.trim() || "untitled")
+/** The identifier an exported draft's `SandLevelConfig` const is written under. */
+export function levelExportName(draft: LevelDraft) {
+  return (draft.name.trim() || "untitled")
     .replace(/[^a-zA-Z0-9]+/g, " ")
     .trim()
     .split(" ")
     .map((word, index) => (index === 0 ? word.toLowerCase() : word[0].toUpperCase() + word.slice(1).toLowerCase()))
     .join("") || "untitled";
+}
+
+export function draftToTypeScript(draft: LevelDraft, id: number) {
+  const scale = effectivePixelScale(draft);
+  const pixels = draft.width * draft.height * scale * scale;
+  const constName = levelExportName(draft);
 
   const rows = draft.rows.map((row) => `    ${quoted(row)},`).join("\n");
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
@@ -483,6 +542,9 @@ export function draftToTypeScript(draft: LevelDraft, id: number) {
   const wind = draft.wind
     ? `\n  wind: {\n    phases: [\n${phaseLines}\n    ],\n  },\n`
     : "";
+  // Omitted when there is nothing for it to act on, or when it is 0 — the
+  // default already means "no resistance".
+  const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -504,6 +566,6 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-${wind}};
+${wind}${friction}};
 `;
 }

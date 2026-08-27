@@ -4,15 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import Link from "next/link";
 import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
+import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColorHex } from "./game/sand-color";
 import {
   EMPTY_CELL,
   KEY_LETTER,
   LETTER_BY_SAND_COLOR,
   MAX_HEIGHT,
-  MAX_PIXEL_SCALE,
+  MAX_KEY_FRICTION,
   MAX_WIDTH,
   MIN_DIMENSION,
-  autoPixelScale,
+  MIN_KEY_FRICTION,
   blankRows,
   coloursUsed,
   countPaintedCells,
@@ -32,6 +33,8 @@ import {
   validateDraft,
   type LevelDraft,
 } from "./game/level-drafts";
+import { groupCells } from "./game/sand-rules";
+import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./game/sand-sprites";
 import { SAND_COLORS, type SandColor, type WindConfig, type WindPhase } from "./game/sand-types";
 import { finishLoading } from "./loading-screen";
 
@@ -52,6 +55,162 @@ function hex(color: SandColor) {
 
 /** The key's gold, matching what the engine paints on the board. */
 const KEY_HEX = "#ffd654";
+/**
+ * Key size, as an integer multiple of `KEY_SPRITE`'s own pixels.
+ *
+ * The sprite is a fixed hand-drawn silhouette, not a formula like a circle's —
+ * there is no "one pixel bigger" version of a jagged shape that still reads as
+ * the same shape. Whole-number scaling is what `spriteCells` already does for
+ * the padlock, and it is the only way to grow this key that cannot warp it.
+ */
+const DEFAULT_KEY_SCALE = 4;
+const MAX_KEY_SCALE = 16;
+
+/** Brush nib width in board pixels, and its bounds. */
+const DEFAULT_BRUSH_SIZE = 5;
+const MAX_BRUSH_SIZE = 24;
+
+/**
+ * Below this many screen pixels per board pixel, the per-cell grid stops being
+ * a guide and becomes a grey wash — at that point only the coarse guide is
+ * drawn.
+ */
+const FINE_GRID_MIN_PX = 9;
+/** How many board pixels between the heavier guide lines. */
+const GUIDE_GRID_STEP = 10;
+
+/**
+ * The biggest key scale that actually fits this board.
+ *
+ * Offering a size the frame cannot hold would stamp a key with an edge quietly
+ * cut off — and a clipped silhouette is a different shape, not a bigger one.
+ */
+function maxKeyScale(draft: LevelDraft) {
+  return Math.max(1, Math.min(
+    MAX_KEY_SCALE,
+    Math.floor(draft.width / spriteWidth(KEY_SPRITE)),
+    Math.floor(draft.height / spriteHeight(KEY_SPRITE)),
+  ));
+}
+/** Matches `LOCK_DARKEN` in the engine — the same sand should look the same. */
+const LOCK_DARKEN = 0.62;
+
+/**
+ * Padlock placements for the editor's preview, one per frozen region.
+ *
+ * Computed at the **board's real resolution**, not at blueprint size, and then
+ * divided back down for drawing. The game stamps this icon onto the expanded
+ * pixel board, so sizing it against the small blueprint here would put a
+ * padlock in the editor where the game shows none — or, more often, none in
+ * the editor where the game shows one. The whole point of the preview is that
+ * it is not a diagram of the level.
+ *
+ * Returned in units of *one blueprint cell*, so a value of 0.2 is a fifth of a
+ * cell across at `pixelScale: 5`.
+ */
+function lockedRegions(draft: LevelDraft) {
+  const scale = effectivePixelScale(draft);
+  const frozen: Array<{ x: number; y: number }> = [];
+  for (let y = 0; y < draft.height; y += 1) {
+    for (let x = 0; x < draft.width; x += 1) {
+      const cell = readCell(letterAt(draft.rows, x, y, draft.height));
+      if (cell.kind === "sand" && cell.locked) frozen.push({ x, y });
+    }
+  }
+
+  const iconWide = spriteWidth(PADLOCK_SPRITE);
+  const iconTall = spriteHeight(PADLOCK_SPRITE);
+  return groupCells(frozen).map((region) => {
+    const inside = new Set(region.map((cell) => `${cell.x},${cell.y}`));
+    const left = Math.min(...region.map((cell) => cell.x)) * scale;
+    const bottom = Math.min(...region.map((cell) => cell.y)) * scale;
+    const width = (Math.max(...region.map((cell) => cell.x)) + 1) * scale - left;
+    const height = (Math.max(...region.map((cell) => cell.y)) + 1) * scale - bottom;
+
+    // The same margin the engine leaves, so the two agree on "too small".
+    const iconScale = Math.floor(Math.min(width / (iconWide + 2), height / (iconTall + 2)));
+    if (iconScale < 1) return [];
+    const originX = left + Math.floor((width - iconWide * iconScale) / 2);
+    const originY = bottom + Math.floor((height - iconTall * iconScale) / 2);
+    return spriteCells(PADLOCK_SPRITE, iconScale)
+      .map((cell) => ({ x: originX + cell.x, y: originY + cell.y }))
+      .filter((cell) => inside.has(`${Math.floor(cell.x / scale)},${Math.floor(cell.y / scale)}`))
+      // Back into blueprint units, which is what the canvas is drawn in.
+      .map((cell) => ({ x: cell.x / scale, y: cell.y / scale, size: 1 / scale }));
+  }).filter((region) => region.length > 0);
+}
+
+/**
+ * Where a key of this scale lands when the author clicks (x, y).
+ *
+ * Centred on the click and then pushed back inside the frame, so a key stamped
+ * near an edge arrives whole rather than clipped. Being nudged is much easier
+ * to understand than half a key appearing.
+ */
+function keyCellsAt(draft: LevelDraft, x: number, y: number, scale: number) {
+  const cells = spriteCells(KEY_SPRITE, scale);
+  const width = spriteWidth(KEY_SPRITE) * scale;
+  const height = spriteHeight(KEY_SPRITE) * scale;
+  const originX = clamp(x - Math.floor(width / 2), 0, Math.max(0, draft.width - width));
+  const originY = clamp(y - Math.floor(height / 2), 0, Math.max(0, draft.height - height));
+  return cells
+    .map((cell) => ({ x: originX + cell.x, y: originY + cell.y }))
+    .filter((cell) => cell.x < draft.width && cell.y < draft.height);
+}
+
+function clamp(value: number, low: number, high: number) {
+  return Math.max(low, Math.min(high, value));
+}
+
+/**
+ * The cells one dab of the brush covers.
+ *
+ * A square nib, centred on the cursor and biased up-left on even sizes so the
+ * cursor always sits inside its own brush. Clipped to the frame rather than
+ * wrapped, so painting along an edge does not spray the opposite one.
+ */
+function brushCells(draft: LevelDraft, x: number, y: number, size: number) {
+  const nib = Math.max(1, Math.round(size));
+  const back = Math.floor((nib - 1) / 2);
+  const cells: Array<{ x: number; y: number }> = [];
+  for (let dy = 0; dy < nib; dy += 1) {
+    for (let dx = 0; dx < nib; dx += 1) {
+      const cell = { x: x - back + dx, y: y - back + dy };
+      if (cell.x < 0 || cell.x >= draft.width || cell.y < 0 || cell.y >= draft.height) continue;
+      cells.push(cell);
+    }
+  }
+  return cells;
+}
+
+/** The whole connected group of key cells under (x, y), or null. */
+function keyGroupAt(draft: LevelDraft, x: number, y: number) {
+  if (letterAt(draft.rows, x, y, draft.height) !== KEY_LETTER) return null;
+  const found: Array<{ x: number; y: number }> = [];
+  const seen = new Set<string>([`${x},${y}`]);
+  const queue = [{ x, y }];
+  while (queue.length) {
+    const cell = queue.pop()!;
+    found.push(cell);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const next = { x: cell.x + dx, y: cell.y + dy };
+      const at = `${next.x},${next.y}`;
+      if (seen.has(at)) continue;
+      if (letterAt(draft.rows, next.x, next.y, draft.height) !== KEY_LETTER) continue;
+      seen.add(at);
+      queue.push(next);
+    }
+  }
+  return found;
+}
+
+function stampCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
+  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, KEY_LETTER), draft.rows);
+}
+
+function clearCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
+  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, EMPTY_CELL), draft.rows);
+}
 
 /** Replace one phase of a wind loop, leaving the rest of the list alone. */
 function editWindPhase(wind: WindConfig | null | undefined, index: number, patch: Partial<WindPhase>) {
@@ -147,11 +306,16 @@ export default function LevelEditor() {
   const [locking, setLocking] = useState(false);
   /** Which wind phase's zone is drawn over the picture. */
   const [phaseIndex, setPhaseIndex] = useState(0);
+  /** The key tool's radius, in board pixels. */
+  const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
+  /** Width of the square brush nib, in board pixels. */
+  const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [color, setColor] = useState<SandColor>("blue");
   const [analysis, setAnalysis] = useState<LevelAnalysis | null>(null);
   const [analysing, setAnalysing] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [shipping, setShipping] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const painting = useRef(false);
@@ -251,18 +415,40 @@ export default function LevelEditor() {
   }, [draft]);
 
   const paintAt = useCallback((x: number, y: number, record: boolean) => {
+    // The key is stamped, not painted. A key is a *shape* — the game groups
+    // connected `K` cells into one object, so a freehand smear would be a key
+    // whose silhouette the author never chose. Stamping on top of an existing
+    // key lifts it instead, which is how you resize one: lift, change the size,
+    // put it back down.
+    if (tool === "key") {
+      update((current) => {
+        const existing = keyGroupAt(current, x, y);
+        // Clamped against the draft being edited, not against whatever the
+        // board was when the size was chosen — a board can shrink afterwards.
+        const scale = Math.min(keyScale, maxKeyScale(current));
+        const rows = existing
+          ? clearCells(current, existing)
+          : stampCells(current, keyCellsAt(current, x, y, scale));
+        return rows === current.rows ? current : { ...current, rows };
+      }, true);
+      return;
+    }
+
     const letter = tool === "eraser"
       ? EMPTY_CELL
-      : tool === "key"
-        ? KEY_LETTER
-        : locking ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
+      : locking ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
     update((current) => {
-      const rows = tool === "bucket"
-        ? bucketFill(current.rows, current.width, current.height, x, y, letter)
-        : withCell(current.rows, x, y, current.height, letter);
+      if (tool === "bucket") {
+        const rows = bucketFill(current.rows, current.width, current.height, x, y, letter);
+        return rows === current.rows ? current : { ...current, rows };
+      }
+      // A square nib centred on the cursor. The board is pixels now, so a
+      // one-cell brush would make painting a hillside a thousand clicks.
+      const rows = brushCells(current, x, y, brushSize)
+        .reduce((acc, cell) => withCell(acc, cell.x, cell.y, current.height, letter), current.rows);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, locking, update]);
+  }, [tool, color, locking, keyScale, brushSize, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
@@ -319,39 +505,66 @@ export default function LevelEditor() {
           continue;
         }
 
-        context.fillStyle = hex(cell.color);
+        // The same per-grain jitter the game paints, from the same seed
+        // formula — a flat swatch here would read as fewer, bigger blocks
+        // than the same picture does once it is actually poured as sand.
+        const y = draft.height - 1 - row;
+        const seed = x * 733 + y * 197;
+        context.fillStyle = jitterColorHex(
+          SAND_COLOR_HEX[cell.color],
+          seed,
+          SAND_SATURATION_JITTER,
+          SAND_LIGHTNESS_JITTER,
+        );
         context.fillRect(left, top, cellPx, cellPx);
         if (!cell.locked) continue;
-        // Frost over the colour, so a locked cell still says which colour it
-        // will be once it thaws — that is what the wheel has to cover.
-        context.fillStyle = "rgba(198,226,255,.5)";
+        // Shaded down rather than tinted, exactly as the engine does it: the
+        // colour underneath still has to be readable, because it is the bullet
+        // the wheel hands out once the lock opens.
+        context.fillStyle = `rgba(0,0,0,${LOCK_DARKEN})`;
         context.fillRect(left, top, cellPx, cellPx);
-        context.strokeStyle = "rgba(255,255,255,.85)";
-        context.lineWidth = Math.max(1, cellPx * 0.08);
-        context.beginPath();
-        context.moveTo(left + cellPx * 0.28, top + cellPx * 0.28);
-        context.lineTo(left + cellPx * 0.72, top + cellPx * 0.72);
-        context.moveTo(left + cellPx * 0.72, top + cellPx * 0.28);
-        context.lineTo(left + cellPx * 0.28, top + cellPx * 0.72);
-        context.stroke();
       }
     }
 
-    // Grid lines last, so they sit over the paint rather than under it.
-    context.strokeStyle = "rgba(255,255,255,.10)";
-    context.lineWidth = 1;
-    for (let x = 0; x <= draft.width; x += 1) {
-      context.beginPath();
-      context.moveTo(x * cellPx + 0.5, 0);
-      context.lineTo(x * cellPx + 0.5, canvas.height);
-      context.stroke();
+    // A padlock per locked region, the same icon the game draws, so the editor
+    // is showing the level rather than a diagram of it.
+    context.fillStyle = "rgba(236,243,255,.94)";
+    for (const region of lockedRegions(draft)) {
+      for (const cell of region) {
+        const size = cell.size * cellPx;
+        // +1 on the size so neighbouring icon pixels never leave a hairline gap
+        // between them at fractional sizes.
+        context.fillRect(
+          cell.x * cellPx,
+          (draft.height - cell.y - cell.size) * cellPx,
+          size + 1,
+          size + 1,
+        );
+      }
     }
-    for (let row = 0; row <= draft.height; row += 1) {
-      context.beginPath();
-      context.moveTo(0, row * cellPx + 0.5);
-      context.lineTo(canvas.width, row * cellPx + 0.5);
-      context.stroke();
-    }
+
+    // Grid lines last, so they sit over the paint rather than under it. At the
+    // board's real resolution a line per pixel is not a grid, it is a grey
+    // wash — so the fine grid only appears once cells are big enough to be
+    // aimed at, and a coarser guide is always drawn to count along.
+    const rule = (step: number, style: string) => {
+      context.strokeStyle = style;
+      context.lineWidth = 1;
+      for (let x = 0; x <= draft.width; x += step) {
+        context.beginPath();
+        context.moveTo(x * cellPx + 0.5, 0);
+        context.lineTo(x * cellPx + 0.5, canvas.height);
+        context.stroke();
+      }
+      for (let row = 0; row <= draft.height; row += step) {
+        context.beginPath();
+        context.moveTo(0, row * cellPx + 0.5);
+        context.lineTo(canvas.width, row * cellPx + 0.5);
+        context.stroke();
+      }
+    };
+    if (cellPx >= FINE_GRID_MIN_PX) rule(1, "rgba(255,255,255,.10)");
+    rule(GUIDE_GRID_STEP, "rgba(255,255,255,.16)");
 
     // The selected wind phase's reach, over everything. Four numbers in a
     // sidebar are impossible to picture; the rectangle on the drawing is not.
@@ -378,12 +591,15 @@ export default function LevelEditor() {
   const used = draft ? coloursUsed(draft) : [];
   const painted = draft ? countPaintedCells(draft) : 0;
   const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0 };
+  // Resizing the board can leave the chosen key size too big for it, so the
+  // limit is applied on the way out rather than only when the button is pressed.
+  const keyScaleLimit = draft ? maxKeyScale(draft) : 1;
   const scale = draft ? effectivePixelScale(draft) : 1;
   const pixels = draft ? draft.width * draft.height * scale * scale : 0;
 
   const flash = (message: string) => {
     setStatus(message);
-    window.setTimeout(() => setStatus(null), 2200);
+    window.setTimeout(() => setStatus(null), 4000);
   };
 
   const runAnalysis = () => {
@@ -529,8 +745,64 @@ export default function LevelEditor() {
                 }}
                 title="Paint this colour frozen: it hangs in the frame and cannot be shot until a key reaches it"
               >
-                ❄ Locked
+                🔒 Locked
               </button>
+              {/* Each tool's size dial, shown only while that tool is up — a
+                  dial for a tool nobody is holding is a control with nothing
+                  to do. */}
+              {(tool === "brush" || tool === "eraser") && (
+                <span className="editor-key-size">
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setBrushSize((value) => Math.max(1, value - 1))}
+                    disabled={brushSize <= 1}
+                    aria-label="Smaller brush"
+                  >
+                    −
+                  </button>
+                  <b title={`${brushSize}×${brushSize} board pixels`}>brush {brushSize}px</b>
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setBrushSize((value) => Math.min(MAX_BRUSH_SIZE, value + 1))}
+                    disabled={brushSize >= MAX_BRUSH_SIZE}
+                    aria-label="Bigger brush"
+                  >
+                    +
+                  </button>
+                </span>
+              )}
+              {tool === "key" && (
+                <span className="editor-key-size">
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setKeyScale((value) => Math.max(1, value - 1))}
+                    disabled={keyScale <= 1}
+                    aria-label="Smaller key"
+                  >
+                    −
+                  </button>
+                  {/* Both numbers: the ratio is what the control changes, the
+                      pixel size is what the author is actually picturing. */}
+                  <b title={`ratio ×${Math.min(keyScale, keyScaleLimit)} of the ${spriteWidth(KEY_SPRITE)}×${spriteHeight(KEY_SPRITE)} key sprite`}>
+                    key {spriteWidth(KEY_SPRITE) * Math.min(keyScale, keyScaleLimit)}×
+                    {spriteHeight(KEY_SPRITE) * Math.min(keyScale, keyScaleLimit)}px
+                    {" "}·{" "}×{Math.min(keyScale, keyScaleLimit)}
+                  </b>
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setKeyScale((value) => Math.min(keyScaleLimit, value + 1))}
+                    disabled={keyScale >= keyScaleLimit}
+                    aria-label="Bigger key"
+                    title={keyScale >= keyScaleLimit ? "A bigger key would not fit this frame" : undefined}
+                  >
+                    +
+                  </button>
+                </span>
+              )}
               <button type="button" className="editor-button" onClick={undo}>Undo</button>
               <button type="button" className="editor-button" onClick={redo}>Redo</button>
               <button
@@ -554,8 +826,8 @@ export default function LevelEditor() {
           />
 
           <p className="editor-hint">
-            {painted} grains painted · {draft.width}×{draft.height} blueprint →{" "}
-            {draft.width * scale}×{draft.height * scale} simulated pixels ({pixels.toLocaleString()})
+            {painted.toLocaleString()} grains painted · {draft.width}×{draft.height} pixels
+            ({pixels.toLocaleString()} simulated) · guide grid every {GUIDE_GRID_STEP}
           </p>
         </section>
 
@@ -618,17 +890,29 @@ export default function LevelEditor() {
                   className={index === phaseIndex ? "is-active" : ""}
                   // Selecting a phase is what puts its zone on the canvas, so
                   // the rectangle being edited is the one being looked at.
+                  // Focus, not click: touching any field in the card selects
+                  // it, by mouse or by keyboard, and a click handler on the
+                  // card itself would be a control that only a mouse can reach.
                   onFocusCapture={() => setPhaseIndex(index)}
-                  onClick={() => setPhaseIndex(index)}
                 >
                   <header>
-                    <b>Phase {index + 1}</b>
-                    <span className="editor-phase-summary">
-                      {phase.direction === "right" ? "→" : "←"} {(phase.durationMs / 1000).toFixed(1)}s
-                      {" · "}rest {(phase.cooldownMs / 1000).toFixed(1)}s
-                      {" · "}power {phase.power}
-                      {phase.zone ? " · zoned" : ""}
-                    </span>
+                    {/* A real button, so showing a phase's zone on the picture
+                        is something a keyboard can do too. */}
+                    <button
+                      type="button"
+                      className="editor-phase-pick"
+                      onClick={() => setPhaseIndex(index)}
+                      aria-pressed={index === phaseIndex}
+                      title="Show this phase's zone on the picture"
+                    >
+                      <b>Phase {index + 1}</b>
+                      <span className="editor-phase-summary">
+                        {phase.direction === "right" ? "→" : "←"} {(phase.durationMs / 1000).toFixed(1)}s
+                        {" · "}rest {(phase.cooldownMs / 1000).toFixed(1)}s
+                        {" · "}power {phase.power}
+                        {phase.zone ? " · zoned" : ""}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       className="editor-mini"
@@ -784,6 +1068,24 @@ export default function LevelEditor() {
             </ol>
           )}
 
+          <h2>Key friction</h2>
+          <p className="editor-note">
+            How much a key resists rolling sideways — down a slope or in the wind. Low friction
+            rolls the instant a slope offers it; high friction waits, so it reads as heavier. It
+            never slows a straight drop, only a sideways one.
+          </p>
+          <label className="editor-field">
+            <span>Friction {(draft.keyFriction ?? 0).toFixed(1)}</span>
+            <input
+              type="range"
+              min={MIN_KEY_FRICTION}
+              max={MAX_KEY_FRICTION}
+              step={0.1}
+              value={draft.keyFriction ?? 0}
+              onChange={(event) => update((current) => ({ ...current, keyFriction: Number(event.target.value) }))}
+            />
+          </label>
+
           <h2>Ammo wheel</h2>
           <p className="editor-note">
             Only colours you have painted can be loaded, and every painted colour has to be here —
@@ -873,21 +1175,9 @@ export default function LevelEditor() {
             </label>
           </div>
 
-          <label className="editor-field">
-            <span>Pixel scale</span>
-            <select
-              value={draft.pixelScale ?? "auto"}
-              onChange={(event) => update((current) => ({
-                ...current,
-                pixelScale: event.target.value === "auto" ? null : Number(event.target.value),
-              }))}
-            >
-              <option value="auto">Auto ({autoPixelScale(draft.width, draft.height)}×)</option>
-              {Array.from({ length: MAX_PIXEL_SCALE }, (_, at) => at + 1).map((entry) => (
-                <option key={entry} value={entry}>{entry}×</option>
-              ))}
-            </select>
-          </label>
+          {/* No pixel-scale control any more: the picture IS the board, so
+              there is no factor left to choose between what is drawn and what
+              is played. */}
 
           {/* ---- validation ---- */}
           {issues.length > 0 && (
@@ -974,6 +1264,33 @@ export default function LevelEditor() {
             )}
             <button
               type="button"
+              className="editor-button is-primary"
+              disabled={shipping || errors.length > 0}
+              onClick={async () => {
+                setShipping(true);
+                try {
+                  const response = await fetch("http://localhost:4787/export-level", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ draft }),
+                  });
+                  const payload = await response.json().catch(() => null);
+                  if (!response.ok) {
+                    throw new Error(payload?.error || "The level writer could not write the file.");
+                  }
+                  flash(payload.updated
+                    ? `Updated ${payload.name} in sand-levels.ts`
+                    : `Added ${payload.name} to sand-levels.ts`);
+                } catch {
+                  flash("Couldn't reach the level writer — run `npm run level-writer` in a terminal, then try again.");
+                }
+                setShipping(false);
+              }}
+            >
+              {shipping ? "Writing…" : "Ship to sand-levels.ts"}
+            </button>
+            <button
+              type="button"
               className="editor-button"
               onClick={() => {
                 const code = draftToTypeScript(draft, index + 2);
@@ -984,12 +1301,16 @@ export default function LevelEditor() {
                 );
               }}
             >
-              Export TypeScript
+              Copy TypeScript
             </button>
           </div>
           <p className="editor-note">
-            Saved levels show up in the game&apos;s level switcher automatically. Exporting is for
-            committing one to the source, where it survives clearing your browser.
+            Saved levels already show up in the game&apos;s level switcher, and stay in this editor,
+            because they live in your browser. &quot;Ship to sand-levels.ts&quot; writes the level
+            straight into the source file — run <code>npm run level-writer</code> once in a terminal
+            alongside the dev server, then this button needs no copy-paste and survives clearing your
+            browser or a fresh checkout. &quot;Copy TypeScript&quot; is the manual fallback if that
+            terminal isn&apos;t running.
           </p>
           {status && <p className="editor-ok">{status}</p>}
           {exported && (
@@ -1001,11 +1322,15 @@ export default function LevelEditor() {
   );
 }
 
-/** A small filled block on the floor — legal from the first frame, and obvious to paint over. */
+/**
+ * A filled bed on the floor — legal from the first frame, and obvious to paint
+ * over. At the board's own resolution, so a new draft never needs converting.
+ */
 function starterDraft(name = "New level"): LevelDraft {
-  const draft = createDraft(name, 12, 14);
+  const draft = createDraft(name);
   const rows = blankRows(draft.width, draft.height);
-  for (let row = draft.height - 4; row < draft.height; row += 1) {
+  const bed = Math.max(1, Math.round(draft.height * 0.28));
+  for (let row = draft.height - bed; row < draft.height; row += 1) {
     rows[row] = "B".repeat(draft.width);
   }
   return { ...draft, rows, shotLimit: 20 };

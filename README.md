@@ -48,7 +48,7 @@ Mở ở `/editor` (hoặc bấm nút ✎ trong game).
 | Số lượt bắn | Ô `Shots`, kèm nút **Measure difficulty** đo thật (xem dưới) |
 | Nhiều level | Danh sách bên trái: New / Duplicate / Delete. Lưu tự động vào trình duyệt |
 | Thử trong game | Nút **Test in game** mở thẳng level đó. Mọi draft hợp lệ cũng hiện trong level switcher |
-| Đưa vào source | Nút **Export TypeScript** sinh sẵn khối code, copy vào clipboard |
+| Đưa vào source | Nút **Ship to sand-levels.ts** ghi thẳng level vào source, không cần copy-paste (xem bên dưới) |
 
 ### Hai lỗi editor bắt buộc phải chặn
 
@@ -86,9 +86,22 @@ vì vài nghìn là thứ khiến nút này bấm xong có kết quả ngay.
 
 ### Đưa một level vào source
 
-Level lưu trong trình duyệt là đủ để chơi và thử. Muốn nó sống qua việc xoá cache trình duyệt thì
-bấm **Export TypeScript**, dán khối vừa copy vào `app/game/sand-levels.ts`, rồi thêm tên nó vào
-mảng `BUILT_IN_LEVELS`.
+Level lưu trong trình duyệt (`localStorage`) là đủ để chơi và thử — mở lại `/editor` sau này, level
+vẫn còn nguyên ở đó. Muốn nó sống qua việc xoá cache trình duyệt hoặc một checkout mới thì bấm
+**Ship to sand-levels.ts**: nút này ghi thẳng khối `SandLevelConfig` vào `app/game/sand-levels.ts`
+và thêm nó vào mảng `BUILT_IN_LEVELS`, không cần copy-paste tay. Ship lại cùng một level (cùng tên)
+sẽ cập nhật đúng khối đó tại chỗ thay vì tạo bản trùng.
+
+Nút này gọi tới một server Node nhỏ chạy riêng, vì dev/build target của project này là Cloudflare
+Workers (`worker/index.ts`) — runtime đó không có filesystem thật, nên một route trong `app/` không
+bao giờ ghi được file. Chạy server đó một lần, để song song với `npm run dev`:
+
+```bash
+npm run level-writer
+```
+
+Nếu server chưa chạy, nút sẽ báo lỗi và gợi ý lệnh trên; **Copy TypeScript** vẫn còn đó làm phương
+án thủ công.
 
 
 ## Chạy source
@@ -253,24 +266,106 @@ lơ lửng giữa khung. Chữ `K` là **chìa khoá**, một sprite pixel cứn
 đi, vì một chìa khoá vỡ thành từng hạt ở lần rơi đầu tiên thì không còn là một vật thể. Chìa khoá chạm
 vào ô khoá nào thì **cả vùng khoá liền kề đó** tan băng cùng lúc, và chìa khoá mất đi.
 
+**Chìa khoá là một silhouette lởm chởm vẽ tay (`KEY_SPRITE`, `sand-sprites.ts`), không phải hình tròn —
+nó trượt trên cát, không lăn.** Vật lý của chìa khoá là vật lý của cát, áp cho cả khối: rơi thẳng khi
+dưới trống, trượt chéo khi không, và bị gió thổi ngang. Khác biệt duy nhất là tính cứng — một nước đi chỉ
+xảy ra khi *mọi* ô đích đều hợp lệ cùng lúc, nên một chìa khoá có ô nằm ngoài khung thì không nhúc nhích
+được (editor chặn không cho đặt như vậy). Engine vẽ nó thẳng lên canvas cát — phẳng màu vàng cộng một
+bóng đổ 1px — y hệt cách một hạt cát hay icon ổ khoá được vẽ, không phải một đối tượng 3D riêng.
+
+Vì là một sprite vẽ tay cố định chứ không phải công thức hình học, cỡ chỉnh theo **bội số nguyên** của
+chính sprite đó (`spriteCells(KEY_SPRITE, scale)`, giống hệt cách `PADLOCK_SPRITE` đã làm) — không có
+khái niệm "to thêm một pixel" cho một hình lởm chởm, vì phóng to 1 pixel không giữ được silhouette; mỗi
+pixel của sprite trở thành một khối `scale×scale`.
+
+**Friction** (`keyFriction`, 0–1, mục "Key friction" trong editor) quyết định độ trơn trượt — 0 là trơn
+tối đa (trượt ngay khi có đường đi), 1 là ì (chờ vài pass mới trượt). Chỉ cản **chuyển động ngang** — rơi
+thẳng đứng không bao giờ bị chậm lại, đúng như ma sát thật chỉ tác động dọc theo bề mặt tiếp xúc, không
+bao giờ chống lại trọng lực. Cơ chế: mỗi lần chìa khoá có cơ hội trượt/bị gió thổi mà chưa đi, nó "chờ"
+thêm một pass; đủ `round(friction × 4)` pass thì mới thực sự di chuyển. Level `Lock & Key` không khai
+`keyFriction`, mặc định 0 — trơn trượt cao nhất.
+
+Hai hình vẽ nằm chung ở `sand-sprites.ts` vì cả hai đều được vẽ hai lần — engine vẽ lên board pixel
+thật, editor vẽ lên canvas preview. `KEY_SPRITE` là một notch + một thanh ngang bắc cầu + hai "chân" thõng
+xuống (mọi ô liền nhau 4-hướng, nếu không `parseSandLevel` sẽ tách nó thành nhiều chìa khoá). `PADLOCK_SPRITE`
+không bao giờ được author và không nằm trong lưới — nó là **nhãn** renderer dán lên mỗi vùng khoá.
+
+Cát khoá vẽ **tối đi** chứ không nhuộm màu: màu bên dưới vẫn phải đọc được, vì đó chính là viên đạn bánh
+xe sẽ phát khi khoá mở. Ổ khoá được scale vừa vùng và **bỏ hẳn** khi vùng quá nhỏ — một ổ khoá tràn ra
+ngoài chỗ nó đang chú thích thì đọc thành rác.
+
 Một màu bị khoá **toàn bộ** sẽ không được bánh xe phát ra (`shootableColors`) — phát viên đạn đó ra thì
 đúng là dead bullet mà `deadBulletPolicy` sinh ra để cấm — và nó quay lại bánh xe ngay khi khoá mở.
 
-**Wind.** `wind: { everyMs, direction, strength }` trong level. Cứ `everyMs` một lần, gió đẩy mọi hạt
-cát rời sang ngang `strength` ô rồi trả board về đúng solver rơi cũ — nên cát bị thổi khỏi mép vẫn rơi
-y như cát vẫn rơi. Cát khoá không nhúc nhích; chìa khoá thì có, nên gió tự nó có thể mở một ổ khoá.
-Gió **không tiêu lượt** và không bao giờ làm thua, vì ngân sách chỉ động khi người chơi bắn.
+**Wind.** `wind: { phases: [...] }` trong level — một **vòng lặp các pha**, chạy hết rồi quay lại từ
+đầu. Mỗi pha khai báo năm thứ:
+
+| Trường | Nghĩa |
+| --- | --- |
+| `direction` | `"left"` / `"right"` — đặt tên theo *cát đi đâu*, không phải gió đến từ đâu |
+| `durationMs` | thổi trong bao lâu |
+| `cooldownMs` | lặng gió bao lâu sau đó, trước khi pha kế tiếp bắt đầu |
+| `power` | một cơn đẩy cát bao nhiêu ô (đơn vị blueprint cell) |
+| `zone` | hình chữ nhật gió với tới, `null` là cả khung |
+
+Một pha là **một quãng thời tiết**, không phải một cú đẩy: nó gust liên tục suốt `durationMs`. Nhờ tách
+"thổi bao lâu" khỏi "đẩy mạnh bao nhiêu" mà "gió nhẹ kéo dài" và "một cú tát" là hai thứ khác nhau viết
+được. Một pha thì là level lúc nào cũng thổi một hướng; nhiều pha thì là một pattern người chơi học
+được.
+
+Gió đẩy cát rồi trả board về **đúng solver rơi cũ**, nên cát bị thổi khỏi mép vẫn rơi y như cát vẫn rơi.
+Lưu ý phần rơi đó **không bị giới hạn bởi zone**: gió với tới đâu là chuyện của gió, còn trọng lực là
+của cả khung — cát bị thổi ra rìa zone vẫn rơi xuyên qua ranh giới đó. Cát khoá không nhúc nhích; chìa
+khoá thì có, nên gió tự nó có thể mở một ổ khoá. Gió **không tiêu lượt** và không bao giờ làm thua, vì
+ngân sách chỉ động khi người chơi bắn.
+
+`power` và `zone` tính bằng blueprint cell nên được `expandLevelForPixelBoard` scale cùng board;
+`durationMs`/`cooldownMs` là thời gian thật nên **không** scale.
 
 Đồng hồ nằm ở engine chứ không ở rules — `sand-rules.ts` vẫn không có đồng hồ. Engine cũng không bao
-giờ cho gió nổi giữa lúc đạn đang bay: board người chơi ngắm phải là board viên đạn hạ xuống (§21).
+giờ cho gió nổi giữa lúc đạn đang bay hay cát đang rơi: board người chơi ngắm phải là board viên đạn hạ
+xuống (§21). Đồng hồ pha vẫn chạy trong lúc đó, nên cơn gió bị hoãn đến ngay khi board thuộc về người
+chơi trở lại.
 
 Một lưu ý khi tự vẽ level có khoá: cát chỉ đứng yên khi mỗi cột mép cao hơn cột bên cạnh **tối đa 1 ô**,
 nên một khối vuông đặt trên một slab hẹp sẽ lăn khỏi sườn của chính nó ở frame đầu. Nút chặn của
 `Lock & Key` thụt vào một ô mỗi tầng vì lý do đó, không phải để cho đẹp.
 
-Hai level thử: `Lock & Key` và `Crosswind` trong `sand-levels.ts`. Editor vẽ được cả hai — nút
-`❄ Locked` là *modifier của cọ* (khoá là một trạng thái của màu, nên phải vẽ bằng một màu), nút `Key`
-là một tool riêng, và mục **Wind** ở panel settings.
+### Editor vẽ ở đúng độ phân giải board
+
+Trước đây editor vẽ một **blueprint** nhỏ (12×14) rồi game phóng lên bằng `pixelScale` lúc load. Đó là
+một lời nói dối tác giả phải tự giữ trong đầu: họ đặt một bức tranh 12 ô còn game chạy một bức 60 pixel,
+nên không thứ gì họ vẽ ra đúng là thứ sẽ được chơi. Giờ **lưới trong editor chính là board pixel thật**
+(mặc định 60×70, đúng cỡ level đang ship), `pixelScale` luôn là `1` và ô chọn scale đã bị bỏ.
+
+Cái giá là phải có **cỡ cọ**: `− brush Npx +` cạnh tool Brush/Eraser, nib vuông canh giữa con trỏ. Cái
+được là một editor hiển thị đúng level. Lưới mảnh chỉ vẽ khi mỗi ô đủ lớn để nhắm được (≥ 9px màn hình),
+còn lưới guide mỗi 10 pixel thì luôn có để đếm.
+
+`expandLevelForPixelBoard` vẫn còn cho level viết tay (`sand-levels.ts` vẫn dùng `pixelScale: 5`) và cho
+**migration**: draft cũ trong localStorage được phóng đúng bằng hệ số game vốn sẽ phóng, kèm `sortRadius`
+và gió, rồi đặt `pixelScale: 1`.
+
+### Cả hai đều vẽ được trong editor
+
+Hai level thử: `Lock & Key` và `Crosswind` trong `sand-levels.ts`. Editor vẽ được cả hai:
+
+- Nút `🔒 Locked` là *modifier của cọ*, không phải tool riêng — khoá là một **trạng thái của một màu**,
+  nên phải vẽ bằng một màu.
+- Nút `Key` **đóng dấu** cả hình chìa khoá lởm chởm, không phải quét từng ô: chìa khoá là một *shape*,
+  và game gom các ô `K` liền nhau thành một vật thể, nên vẽ tay sẽ ra một chìa khoá mà tác giả chưa từng
+  chọn silhouette. Cạnh nút là `− key 28×12px · ×4 +`: hiện cả cỡ pixel lẫn tỉ lệ, vì sprite là một hình
+  vẽ tay cố định — phóng to đi theo **bội số nguyên** (`×N`), không có khái niệm "to thêm một pixel" cho
+  một silhouette lởm chởm. Bấm lại lên một chìa khoá đã có thì **nhấc nó lên**, nên đổi cỡ = nhấc, chỉnh,
+  đặt lại. Cỡ tối đa bị chặn theo kích thước khung, vì một chìa khoá bị cắt cụt là một silhouette khác,
+  không phải một chìa khoá to.
+- Mục **Wind** dựng cả vòng lặp: thêm/xoá/đảo thứ tự pha, và bấm tiêu đề một pha thì **zone của nó vẽ
+  đè lên tranh** — bốn con số trong sidebar thì không hình dung được, hình chữ nhật trên chính bức
+  tranh thì có.
+
+Preview của editor tính cỡ ổ khoá ở **độ phân giải board thật** rồi thu lại để vẽ, chứ không tính ở cỡ
+blueprint: game dán icon lên board đã mở rộng, nên tính ở cỡ blueprint sẽ cho editor và game bất đồng về
+chỗ nào đủ to để có ổ khoá.
 
 ## Policy tạm — Open Decision chưa chốt
 

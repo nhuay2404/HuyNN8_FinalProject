@@ -3186,3 +3186,298 @@ trước: capture ném lỗi với con trỏ trình duyệt không theo dõi, v�
 chặn vàng → chìa khoá rơi → slab tan băng → tím đổ xuống sàn **và viên đạn tím xuất hiện trên ray**;
 `Crosswind` — cảnh báo "Gust incoming →", đống cát dịch dần sang phải qua từng cơn, `SHOTS` không đổi;
 home screen của cả hai đứng yên hoàn toàn.
+
+---
+
+## 41. Gió thành một vòng lặp pha, dựng được trong editor (26/08)
+
+Mục 40 chốt gió ở dạng một cơn đơn lẻ: `{ everyMs, direction, strength }`. Nó chỉ tả được "cứ X giây
+lại thổi một hướng", không tả được một *pattern*. Thay bằng một **vòng lặp các pha**, `wind: { phases }`,
+chạy hết danh sách rồi quay lại đầu. Mỗi pha khai báo năm thứ đúng như yêu cầu: `direction`,
+`durationMs`, `cooldownMs`, `power`, `zone`.
+
+Điểm thiết kế đáng ghi: một pha là **một quãng thời tiết**, không phải một cú đẩy. Nó gust lặp lại suốt
+`durationMs` (cách nhau tối thiểu `WIND_GUST_INTERVAL_MS`, và luôn chờ board đứng yên). Tách "thổi bao
+lâu" khỏi "đẩy mạnh bao nhiêu" là lý do "gió nhẹ kéo dài" và "một cú tát" trở thành hai thứ khác nhau
+viết được; nếu chỉ có một con số `strength` thì cả hai là cùng một thứ.
+
+`zone` là hình chữ nhật tính bằng blueprint cell, `null` là cả khung. Một hạt được thổi khi nó **bắt
+đầu** trong zone — bị mang thêm một ô ra ngoài mép chính là hình ảnh đúng của một ranh giới gió; nếu
+chặn lại thì đó là một bức tường, không phải thời tiết. Và phần **rơi thì không bị zone giới hạn**: gió
+với tới đâu là chuyện của gió, còn trọng lực là của cả khung. Có test riêng cho điều này trên một board
+6×3 dựng tay, vì trên level thật cát bị thổi dọc đỉnh đồi rồi rơi *xuyên qua* đáy zone — đúng nhưng làm
+nhiễu hẳn thứ đang cần đo (test đầu tiên mình viết đã chết vì đúng chuyện đó).
+
+`power` và `zone` được `expandLevelForPixelBoard` scale cùng board; `durationMs`/`cooldownMs` là thời
+gian thật nên **không** scale — có test khoá cả ba.
+
+`Crosswind` viết lại thành ba pha để thấy vòng lặp dùng để làm gì: đẩy phải dài trên cả khung → một cú
+tát trái ngắn và mạnh **chỉ ở nửa trên**, nên đỉnh đồi bị hất về còn chân đồi thì không → rồi trôi phải
+nhẹ. Sự kiện engine tách thành `WIND_INCOMING` / `WIND_START` / `WIND` / `WIND_END`, HUD báo "Wind
+picking up →" trước và "The air is still" khi pha kết thúc.
+
+**Editor** dựng cả vòng lặp: mỗi pha là một thẻ có thêm/xoá/đảo thứ tự (thứ tự *chính là* vòng lặp, nên
+danh sách được đánh số và sắp xếp được, không phải một nhúm setting rời), năm trường ở trên, và bấm tiêu
+đề pha thì **zone của nó vẽ đè lên tranh** — bốn con số trong sidebar thì không hình dung được, hình chữ
+nhật trên chính bức tranh thì có. Validate thêm luật cho từng pha (power ≥ 1, thổi ≥ 0,2s, cảnh báo khi
+nghỉ < 0,6s hoặc zone tràn ra ngoài khung). Draft cũ trong localStorage được **migrate** chứ không bị
+bỏ: một cơn `everyMs` cũ dịch thành vòng lặp một pha thổi 0,8s rồi nghỉ nốt phần còn lại của chu kỳ —
+đúng thứ nó vẫn luôn làm. Export TypeScript in ra khối `wind.phases` dán thẳng được.
+
+**Một lỗi thật, không thuộc phần gió, sửa luôn vì nó chặn chính việc kiểm chứng.** Điều hướng client
+sang `/editor` để lại một màn loading **mới** đè lên trang đã mount xong: màn loading được server-render
+trong root layout (chủ đích, để nó nằm trong HTML đầu tiên trình duyệt vẽ), nhưng cái giá là một lần
+điều hướng client sẽ dựng lại layout và chèn một cái mới — sau khi trang bên dưới đã gọi `finishLoading`.
+Không gì gỡ nó nữa. `loading-screen.ts` nay ghi nhớ rằng loading đã xong, và từ đó bất kỳ màn loading nào
+xuất hiện thêm đều là đồ cũ: một `MutationObserver` gỡ nó ngay. `advanceLoading` cũng thành no-op sau
+khi đã xong — một trang mount sau đó không được bắt đầu đổ đầy lại một thanh chẳng còn gì để chờ.
+
+**Kiểm tra:** 76/76 test pass (thêm 5 test cho vòng lặp, zone và scale); lint sạch; `npx tsc` không lỗi
+mới. Xác nhận trực tiếp trên editor: bật gió → hai thẻ pha với đủ năm trường, đổi hướng/bật zone cập
+nhật đúng summary (`← 2.0s · rest 3.5s · power 1 · zoned`), chọn pha thì zone vẽ lên canvas (đo pixel:
+trong zone bị nhuộm xanh, ngoài zone giữ nguyên màu cát), draft cũ migrate thành `0.8s · rest 4.2s`, và
+Export TypeScript in ra đúng khối `phases`.
+
+---
+
+## 42. Chìa khoá có hình chìa khoá thật, cát khoá tối đi và đeo ổ khoá (26/08)
+
+Hai thứ đến giờ mới chỉ là *quy ước màu*: chìa khoá là mấy ô vàng tuỳ tác giả quét ra, cát khoá là một
+lớp sương xanh nhạt. Cả hai giờ là hình vẽ thật.
+
+**`app/game/sand-sprites.ts` — một chỗ duy nhất cho cả hai hình.** Chúng được vẽ hai lần (engine lên
+board pixel thật, editor lên canvas preview), nên để hai bản sao là mở đường cho việc editor đặt được
+một chìa khoá mà game vẽ ra hình khác. `KEY_SPRITE` là vòng khuyên rỗng + thân + ngạnh, 3×5 — nhỏ nhất
+mà vẫn đọc ra là chìa khoá thay vì một cục. Vòng khuyên rỗng có chủ đích: cái lỗ chính là thứ làm
+silhouette đọc được, và cát cứ việc nằm trong đó. Mọi ô đều liền nhau 4-hướng, và **điều đó bắt buộc** —
+`parseSandLevel` gom ô `K` theo connectivity, nên một sprite có pixel rời sẽ âm thầm biến thành hai chìa
+khoá. Có test khoá đúng tính chất này cho cả hai sprite.
+
+**Tool Key thành công cụ đóng dấu, có chỉnh cỡ.** Chìa khoá là một *shape*, nên quét tay là sai từ gốc:
+tác giả sẽ có một chìa khoá mà mình chưa từng chọn silhouette. Nút `Key` giờ đóng dấu cả hình; cạnh nó
+là `− key ×N +`, chỉ hiện khi đang cầm tool đó. Bấm lại lên một chìa khoá đã có thì **nhấc nguyên khối
+lên** — đó chính là cách đổi cỡ: nhấc, chỉnh, đặt lại. Dấu được canh giữa điểm bấm rồi đẩy ngược vào
+trong khung, nên đặt sát mép vẫn ra nguyên con.
+
+Trong lúc test phát hiện ×3 trên board 12×14 bị **cắt cụt âm thầm** (chìa khoá cao 15 ô, khung cao 14).
+Cỡ tối đa nay bị chặn theo kích thước khung — một chìa khoá bị cắt là một silhouette *khác*, không phải
+một chìa khoá to — và giới hạn được áp lại lúc đóng dấu chứ không chỉ lúc bấm nút, vì khung có thể bị
+thu nhỏ sau khi đã chọn cỡ.
+
+**Cát khoá: tối đi, không nhuộm màu.** `LOCK_DARKEN = 0.62` nhân thẳng vào màu hạt thay cho lớp sương
+xanh cũ. Lý do không dùng một lớp nhuộm màu: màu bên dưới vẫn phải đọc được, vì nó chính là viên đạn
+bánh xe sẽ phát khi khoá mở — làm tối thì nói được "ngoài cuộc chơi" mà vẫn giữ nguyên hue. Bỏ luôn nhịp
+"thở" của lớp sương: người dùng yêu cầu một cái nhìn cụ thể, và icon ổ khoá gánh phần ý nghĩa rồi.
+
+**Ổ khoá vẽ giữa mỗi vùng khoá.** Scale vừa vùng, có chừa lề, và **bỏ hẳn** khi vùng quá nhỏ — một ổ
+khoá tràn ra ngoài chỗ nó đang chú thích thì đọc thành rác. Chỉ vẽ phần rơi trúng ô đang khoá, vì một
+vùng không nhất thiết là hình chữ nhật. Có bóng đổ 1 pixel dưới cả ổ khoá lẫn chìa khoá, vì cả hai nằm
+trên nền cát mà renderer không được chọn màu. Vùng khoá chỉ tính lại khi tập ô khoá thay đổi (một lần
+lúc load, một lần mỗi ổ khoá mở), không phải mỗi frame.
+
+Level `Lock & Key` vẽ lại quanh sprite: chìa khoá là `KEY_SPRITE` scale 1, slab dày 3 ô thay vì 2 để ổ
+khoá có chỗ hiện, và plug rộng 6 ô để chìa khoá — vốn cứng — bị chặn cả ba hướng xuống, xuống-trái và
+xuống-phải.
+
+**Một chỗ lệch nữa tự tìm ra khi so hai bên:** editor tính cỡ ổ khoá ở độ phân giải *blueprint* còn game
+tính ở độ phân giải *pixel*. Với slab 8×3 ở `pixelScale: 5`, game hiện ổ khoá còn editor thì không. Nay
+editor tính ở đúng độ phân giải board thật rồi thu lại để vẽ (toạ độ icon trả về theo đơn vị "một ô
+blueprint", nên vẽ được ở cỡ nhỏ hơn một ô). Đó chính là loại drift mà module sprite dùng chung sinh ra
+để chặn.
+
+**Kiểm tra:** 79/79 test pass (thêm 3 test: hai sprite liền khối, scale không đổi hình, và ổ khoá vừa
+slab của level đang ship). Lint sạch, `npx tsc` không lỗi mới. Xác nhận trực tiếp: trong game `Lock &
+Key` hiện chìa khoá vàng có vòng khuyên rỗng và slab tối đen đeo ổ khoá trắng ở giữa, bắn xong slab tan
+băng thành tím sáng bình thường và đạn tím vào buồng; trong editor đóng dấu được chìa khoá ×1 và ×2 đúng
+silhouette, `+` bị chặn ở ×2 trên board 12×14, bấm lại nhấc nguyên chìa khoá, và vùng khoá hiện ổ khoá ở
+độ phân giải khớp game.
+
+---
+
+## 43. Editor vẽ ở đúng độ phân giải board, cọ chỉnh cỡ được (26/08)
+
+Cho tới giờ editor vẽ một **blueprint** nhỏ — mặc định 12×14 — rồi game phóng nó lên bằng `pixelScale`
+lúc load. Đó là một lời nói dối tác giả phải tự giữ trong đầu: họ đặt một bức tranh 12 ô còn game chạy
+một bức 60 pixel, nên **không thứ gì họ vẽ ra đúng là thứ sẽ được chơi** — một ô trong tool là một khối
+5×5 trong game, và mọi thứ tinh hơn thế đơn giản là không vẽ được.
+
+Lưới trong editor giờ **chính là board pixel thật**. Mặc định 60×70 (đúng cỡ level đang ship),
+`pixelScale` luôn `1`, và ô chọn scale trong panel settings đã bị bỏ — không còn hệ số nào nằm giữa cái
+được vẽ và cái được chơi để mà chọn. Bounds đổi từ 6–24 / 6–28 sang **12–90 / 12–100 pixel**;
+`PIXEL_BUDGET` vẫn là 4.500 nhưng giờ đúng nghĩa là ngân sách *cảnh báo*, vì một board 90×100 vượt nó mà
+vẫn hợp lệ.
+
+Cái giá phải trả là **cỡ cọ**, và đó chính là thứ được yêu cầu: `− brush Npx +` cạnh tool Brush/Eraser,
+nib vuông canh giữa con trỏ (lệch lên-trái ở cỡ chẵn để con trỏ luôn nằm trong nét của chính nó), cắt
+theo biên khung chứ không cuộn vòng. Mặc định 5px — đúng bằng một ô blueprint cũ, nên một nét cọ vẫn là
+đơn vị mà tác giả đã quen.
+
+Lưới cũng phải đổi: một đường kẻ mỗi pixel không còn là lưới mà là một lớp xám phủ. Lưới mảnh chỉ vẽ khi
+mỗi ô ≥ 9px màn hình, còn lưới guide mỗi 10 pixel thì luôn có để đếm.
+
+**Draft cũ được migrate, không bị bỏ.** `expandDraftToPixels` phóng một draft blueprint đúng bằng hệ số
+game vốn sẽ phóng nó — cùng `sortRadius` và cùng gió — rồi đặt `pixelScale: 1`. Nghĩa là nó cho ra chính
+bức tranh tác giả vẫn đang chơi, không phải một bức khác. Hàm này idempotent, và `loadDrafts` chạy nó
+cho mọi draft đọc lên. `expandLevelForPixelBoard` vẫn còn nguyên cho level viết tay — `sand-levels.ts`
+vẫn dùng `pixelScale: 5`.
+
+### Chìa khoá: cỡ tính bằng pixel, vật lý được chứng minh
+
+Cỡ chìa khoá giờ tính bằng **board pixel**: mặc định ×5 → `key 15×25px · ×5`, đúng cỡ chìa khoá của
+level đang ship. Nhãn hiện **cả hai con số** vì tỉ lệ là thứ nút đang chỉnh còn cỡ pixel là thứ tác giả
+đang hình dung. Trần tỉ lệ nâng từ 4 lên 16 (ở độ phân giải pixel, ×1 là một chấm 3 pixel), vẫn bị chặn
+theo kích thước khung.
+
+Phần vật lý — gravity, rơi, trượt, bay theo gió — thực ra **đã chạy từ mục 40**; cái thiếu là bằng chứng
+nó chạy. Thêm 5 test trên board nhỏ đủ để phát biểu đáp án chính xác thay vì mô tả:
+
+- rơi tự do tới khi có thứ chặn, và **rơi từng ô một** (≥ 7 bước `KEY_MOVE`, không teleport)
+- trượt khỏi mép thay vì cân bằng trên góc, và tới nơi với đủ từng pixel nó xuất phát
+- gió mang nó đi đúng `power` ô rồi trọng lực vẫn kéo nó xuống
+- **tính cứng**: bắc ngang một khe rộng 1 ô mà cát sẽ lọt qua
+- đổi tỉ lệ ra cùng một vật thể, chỉ to hơn — không vỡ thành nhiều mảnh
+
+Test cuối tìm ra một tính chất đáng biết: **một chìa khoá có ô nằm ngoài khung thì không nhúc nhích
+được**, vì một nước đi cứng đòi *mọi* ô đích hợp lệ và ngoài biên tính là bị chặn. Editor đã chặn không
+cho đặt như vậy (`maxKeyScale` + clamp gốc), nhưng level viết tay thì cần biết.
+
+**Kiểm tra:** 86/86 test pass (5 test vật lý chìa khoá, 1 test migration, và cập nhật loạt test editor
+sang bounds pixel). Lint sạch, `npx tsc` không lỗi mới. Xác nhận trực tiếp trên editor: draft mới là
+60×70 với guide grid mỗi 10; cọ 15px vẽ đúng 225 ô; đóng dấu chìa khoá ×5 ra đúng 275 ô (11 pixel sprite
+× 25) và hiện đúng silhouette. Migration: nạp một draft 12×14 `pixelScale: 5` kiểu cũ → editor mở ra
+60×70, 300 hạt (12 × 25), `sortRadius` 2,5 → 12,5, gió `everyMs: 5000` → pha `0.8s · rest 4.2s ·
+power 5`; và level đó chơi được trong game.
+
+---
+
+## 44. Chìa khoá thành viên tròn lăn được, có friction chỉnh trong editor (26/08)
+
+Bỏ hẳn silhouette chìa khoá cũ (vòng khuyên + thân + ngạnh). `sand-sprites.ts` thêm `circleCells(radius)`
+— sinh trực tiếp một đĩa đặc bán kính tính bằng **board pixel**, không còn qua bước "sprite nhỏ cố định
+rồi nhân bội số nguyên" như trước. Đó cũng là câu trả lời cho câu hỏi "sao không chỉnh được từng pixel
+như grain cát": bản cũ chỉ nhảy theo bội số của một sprite 3×5, giờ bán kính tăng 1 là đĩa to thêm đúng
+1 pixel mọi hướng — đúng đơn vị một hạt cát vốn đã là. Ngưỡng khoảng cách dùng `r² + r×0.4` thay vì `r²`
+thuần, vì phép thử tâm-pixel ở đúng `r²` làm rụng 4 ô đầu trục và để đĩa chỉ còn liền 8-hướng ở vòng eo
+— `parseSandLevel` cần liền 4-hướng để đọc cả đĩa là một chìa khoá.
+
+**Vật lý lăn** không phải xây mới — solver rơi/trượt chéo cho cả khối đã có từ mục 40, chỉ đổi hình dạng
+cầm trên tay. Cái thêm thật sự là **friction**: `keyFriction` (0–1) trên level, chỉnh bằng slider trong
+mục mới "Key friction" của editor. Cơ chế: tách `moveKey` (di chuyển vô điều kiện) khỏi `keyCanMove`
+(kiểm tra thuần), rồi thêm `rollKey` — mỗi lần một nước đi **ngang** khả thi mà chưa được đi, nó tăng bộ
+đếm chờ `world.keyRollWait`; đủ `round(friction × 4)` lần chờ mới thực sự di chuyển và reset bộ đếm. Rơi
+thẳng đứng (`dx=0`) không bao giờ qua cổng này — friction chỉ cản cái ngang, giống ma sát thật không bao
+giờ chống lại trọng lực. Bộ đếm dùng chung giữa lăn tự nhiên (`keyPass`) và bị gió thổi (`windPass`), vì
+cả hai đều là "đi ngang" và một chìa khoá nặng phải cưỡng cả hai như nhau.
+
+Một tính chất hay: vì vòng settle có ngân sách pass rất lớn (`frame.width * frame.height`), friction chỉ
+**làm chậm nhịp lăn** — không đổi vị trí nghỉ cuối cùng một khi có đủ thời gian để hoàn tất. Có test
+khoá đúng điều đó (cùng kịch bản, friction 0 và 1, vị trí nghỉ cuối giống hệt nhau); friction chỉ thật
+sự cắt bớt quãng đường trong một cửa sổ *giới hạn* như một cơn gió (`strength` cố định), nên bài test
+đo tác dụng thật của nó ở đó.
+
+**Editor:** cỡ chìa khoá đổi từ "ratio ×N của sprite" sang "bán kính, ±1px mỗi lần bấm" — trực tiếp trả
+lời câu hỏi thứ hai. Nhãn hiện đường kính (`key ⌀17px`). Đóng dấu/nhấc vẫn hoạt động y hệt (generic trên
+danh sách ô, không quan tâm hình gì).
+
+**Renderer:** chìa khoá vẽ như một quả cầu thật — sáng ở giữa (`KEY_HIGHLIGHT_RGB`), tối dần ra mép
+(`KEY_EDGE_RGB`), cộng một **chấm đánh dấu đỏ xoay theo rìa** để "đang lăn" nhìn thấy được chứ không chỉ
+là dịch chuyển. Góc xoay tích luỹ trong `keyRotation` (một `Map<id, radians>`), cập nhật mỗi bước
+`KEY_MOVE` có `dx≠0` bằng `dx / radius` — rơi thẳng đứng không làm nó xoay, đúng vật lý một quả bóng thả
+rơi không tự quay.
+
+Level `Lock & Key` vẽ lại: `K` giờ là `circleCells(1)` (một dấu cộng 5 ô, bounding box 3×3) đặt ở
+rows2-4 thay vì rows0-4 cũ, nghỉ đúng trên nút chặn vàng như trước.
+
+**Kiểm tra:** 88/88 test pass (thêm 9 test: rơi/trượt/gió/tính cứng cho hình tròn, 2 test friction, và
+đổi bộ test sprite cũ sang kiểm circleCells liền khối + tăng dần theo bán kính); lint sạch; `npx tsc`
+không lỗi mới. Xác nhận trực tiếp: trong game, `Lock & Key` hiện chìa khoá tròn có shading cầu và chấm
+đỏ, slab tối vẫn đeo icon khoá; bắn nút chặn thấy hạt vàng giảm đúng tỉ lệ. Trong editor: đóng dấu chìa
+khoá tròn (không phải chữ K) tại đúng vị trí bấm, nút `−` đổi bán kính đúng 1px mỗi lần (17→15), slider
+friction đồng bộ đúng với draft (`Friction 0.7`), và Export TypeScript in đúng dòng `keyFriction: 0.7,`.
+
+---
+
+## 45. Chìa khoá thành sprite tròn 2D thật, không còn rasterize thành pixel (26/08)
+
+Mục 44 vẽ chìa khoá tròn bằng cách tô từng ô lưới của canvas cát theo đúng shading một quả cầu — đọc ra
+là tròn, nhưng dưới đáy vẫn là các ô vuông rời rạc ghép lại (mosaic), không phải một vật thể mượt. Yêu
+cầu lần này: chìa khoá không còn là pixel nữa.
+
+Vật lý và dữ liệu **không đổi** — `circleCells(radius)` vẫn sinh footprint đĩa cho solver rơi/trượt/va
+chạm, editor vẫn vẽ theo lưới để canh vị trí. Cái đổi chỉ là **cách vẽ trong game thật**: chìa khoá giờ
+là một `THREE.Mesh` riêng (`THREE.CircleGeometry(1, 40)`, đơn vị, scale theo bán kính từng key), không
+còn đi qua `writePixel` vào canvas cát. Toàn bộ khối vẽ pixel cũ (~35 dòng shading theo rim + rotation
+mark) bị xoá khỏi `redrawSand`.
+
+Texture bake **một lần, dùng chung cho mọi key**: gradient vàng sáng-giữa/tối-mép vẽ bằng
+`createRadialGradient` trên một canvas 128×128 riêng, cộng một chấm đỏ đánh dấu ở rìa. Chỉ transform
+(`position`/`scale`/`rotation.z`) khác nhau giữa các key — không có gì cần nhân bản theo instance.
+
+`updateKeyMeshes()` chạy mỗi tick: đọc lại `this.keys` (vẫn là nguồn sự thật từ solver, không đổi) và
+đặt lại vị trí/scale/góc xoay của mesh tương ứng. Vật lý vẫn rời rạc theo lưới — solver không biết gì về
+"sprite" — nhưng hình ảnh giờ liên tục và mượt, không giật theo từng ô khi lăn.
+
+Dọn kèm: bỏ 4 hằng màu pixel (`KEY_RGB`, `KEY_EDGE_RGB`, `KEY_HIGHLIGHT_RGB`, `KEY_MARK_RGB`) không còn
+dùng; texture không nằm trong danh sách `track()` (chỉ nhận geometry/material) nên được dispose riêng;
+mesh của mỗi key được gỡ khỏi scene ngay khi `UNLOCK` xảy ra và khi engine `dispose()`.
+
+**Kiểm tra:** 88/88 test pass (không đổi — bộ test nằm ở tầng rules, không phụ thuộc cách renderer vẽ);
+lint sạch; `npx tsc` không lỗi mới. Xác nhận trực tiếp: `Lock & Key` hiện chìa khoá là một hình tròn
+mượt thật (không còn cạnh răng cưa của pixel), gradient sáng-tối rõ và chấm đánh dấu; bắn nút chặn vàng
+thấy sprite vẫn đứng đúng vị trí trong lúc cát bên dưới bị bào mỏng. Editor không đổi hành vi — vẫn vẽ
+lưới để canh vị trí lúc thiết kế.
+
+---
+
+## 46. Chìa khoá quay lại thành một silhouette lởm chởm, không tròn không lăn (26/08)
+
+Người dùng gửi một ảnh tham chiếu — một hình pixel gồ ghề (một notch, một thanh ngang bắc cầu, hai
+"chân" thõng xuống) — và yêu cầu bỏ hẳn hình tròn của mục 44/45, thay bằng đúng shape đó, cùng độ trơn
+trượt cao trên cát.
+
+**Gỡ toàn bộ hệ thống mesh tròn của mục 45.** `SandCannonEngine.ts` từng có một `THREE.Mesh` riêng cho
+mỗi chìa khoá (`keyGeometry`/`keyMaterial`/`keyTexture` dùng chung, texture bake gradient + chấm đánh
+dấu, đồng bộ vị trí/scale/góc xoay mỗi tick qua `layoutKeyMesh`/`updateKeyMeshes`) — toàn bộ khối đó bị
+xoá (`buildKeys`, `buildKeyTexture`, `keyWorldRadius`, `spawnKeyMesh`, `layoutKeyMesh`, `updateKeyMeshes`,
+`disposeKeyMesh`, và field `keyRotation`/`keyMeshes`/`keyMeshRadius`/`keyGeometry`/`keyMaterial`/
+`keyTexture`). Một mesh tròn tham số hoá không có cách nào đại diện một silhouette lởm chởm — cách đúng
+là quay lại vẽ thẳng các ô của chìa khoá lên canvas cát, y hệt cách một hạt cát hay icon ổ khoá đã được
+vẽ: một lớp bóng đổ 1px (`KEY_SHADOW_RGB`) rồi lớp vàng phẳng (`KEY_RGB`) đè lên, không tô cầu, không
+đánh dấu góc xoay — một hình lởm chởm trượt thì không có "góc quay" nào để vẽ.
+
+**`sand-sprites.ts`: `circleCells`/`circleDiameter` bị xoá, `KEY_SPRITE` trở lại** — nhưng là một hình
+mới, không phải bản vòng-khuyên-thân-ngạnh của mục 42. Ba hàng: `.....##` (notch trên) / `.######` (thanh
+ngang bắc cầu toàn bộ) / `..#.##.` (hai chân, một chân đơn và một chân đôi). Thanh giữa bắt buộc phải nối
+liền mọi phần — nếu không notch trên và hai chân dưới sẽ tách rời nhau, phá vỡ yêu cầu liền-khối-4-hướng
+mà `parseSandLevel` cần để đọc cả hình là một chìa khoá (đã tự kiểm bằng tay lúc thiết kế và bắt được lỗi
+này ở bản nháp đầu).
+
+**Editor quay lại mô hình sprite + bội số nguyên**, y hệt cách `PADLOCK_SPRITE` đã scale từ mục 42: nút
+`− key 28×12px · ×4 +`. Không còn khái niệm "bán kính +1px" của mục 44 — phóng to một silhouette vẽ tay
+theo từng pixel sẽ phá hình, chỉ phóng theo khối `scale×scale` mới giữ nguyên được silhouette.
+
+**Level `Lock & Key` vẽ lại quanh sprite mới**, và đây là chỗ tốn công nhất: đặt sai plug/slab hai lần
+trước khi ổn định. Lần đầu nới plug bằng đúng bề rộng slab (8 ô, khớp hoàn toàn) tưởng là an toàn hơn —
+sai: cạnh ngoài của plug khi đó có đường chéo-xuống mở ra khoảng không hoàn toàn trống (không còn slab
+đỡ bên dưới nữa), nên hai hạt vàng ở mép trượt chéo ra ngoài ngay từ frame đầu (`frozen sand hangs in
+mid-air` báo 5 bước non-REINDEX thay vì 0). Plug hẹp hơn slab — thụt vào ít nhất 1 cột mỗi bên, đúng
+thiết kế gốc của mục 40 — mới giữ an toàn: đường chéo từ mép plug vẫn rơi trúng slab bên dưới, không rơi
+ra khoảng trống. Chìa khoá 7 ô rộng cũng theo đó **tràn ra ngoài plug 1 cột bên trái** — chủ đích để lại,
+vì một vật rắn có ô không được đỡ vẫn hợp lệ (không giống cát), và test xác nhận nó vẫn nằm yên.
+
+**Friction giữ nguyên nghĩa từ mục 45**, không đổi cơ chế — chỉ đổi tên gọi trong tài liệu từ "lăn" sang
+"trượt" cho khớp shape mới. Level không khai `keyFriction` nên mặc định 0 — trơn trượt cao nhất, đúng
+yêu cầu.
+
+**Test:** thay hẳn bộ test dựa trên `circleCells` bằng bộ dựa trên `KEY_SPRITE`. Một lỗi test tự phát
+hiện: so sánh hình chìa khoá đã đặt trên level với `spriteCells(KEY_SPRITE,1)` thô — nhưng sprite tự vẽ
+tay có các hàng lùi vào khác nhau (không hàng nào bắt đầu ở cột 0), nên toạ độ thô của `spriteCells`
+không tự động quy về gốc `(0,0)` như ô đã đặt trên level vẫn được; phải chuẩn hoá cả hai theo đúng gốc
+riêng của chúng trước khi so. Ba test vật lý khác (rơi tự do, gió thổi, tựa trên một chân) đo được số
+liệu khác con số cũ do shape bất đối xứng mới trôi lệch một cột khi rơi/trượt — không phải lỗi, là hệ quả
+tất định của hình dạng, cập nhật lại con số mong đợi sau khi chạy thực tế xác nhận.
+
+**Kiểm tra:** 87/87 test pass; lint sạch; `npx tsc` không lỗi mới. Xác nhận trực tiếp: trong game `Lock &
+Key` hiện chìa khoá vàng silhouette lởm chởm (không tròn) với bóng đổ, slab vẫn tối đen đeo icon ổ khoá;
+trong editor đóng dấu ra đúng silhouette đó tại vị trí bấm, nhãn hiện `key 28×12px · ×4` đúng bội số
+nguyên thay vì bán kính.

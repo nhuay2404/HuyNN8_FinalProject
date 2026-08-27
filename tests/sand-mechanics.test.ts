@@ -17,13 +17,15 @@ import {
   expandLevelForPixelBoard,
   fixturesOf,
   frozenSet,
+  isConnected,
   parseSandLevel,
   resolveShot,
   resolveWind,
   runGrainSettle,
   runWindGust,
 } from "../app/game/sand-rules.ts";
-import type { CellCoord, SandBody, SandGameState } from "../app/game/sand-types.ts";
+import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "../app/game/sand-sprites.ts";
+import type { CellCoord, SandBody, SandGameState, SandKey } from "../app/game/sand-types.ts";
 
 function keySet(cells: CellCoord[]) {
   return new Set(cells.map((cell) => cellKey(cell.x, cell.y)));
@@ -42,14 +44,30 @@ function colorAt(state: SandGameState, x: number, y: number) {
 test("the picture's lower-case letters become frozen sand, and `K` becomes one key", () => {
   const { bodies, locked, keys } = parseSandLevel(lockAndKey);
 
-  assert.equal(keys.length, 1, "the two K cells are one key, not two");
+  assert.equal(keys.length, 1, "the whole silhouette is one key, not a scatter of them");
+  // The authored cells are exactly the shared sprite, so the shape the editor
+  // stamps and the shape the level ships cannot drift apart.
+  const sprite = spriteCells(KEY_SPRITE, 1);
+  assert.equal(keys[0].cells.length, sprite.length, "the key is KEY_SPRITE at scale 1");
+  // Both normalised to their own bottom-left corner: `KEY_SPRITE`'s own rows
+  // do not all start at column 0 (that is what makes it read as jagged rather
+  // than a padded rectangle), so the raw cells from `spriteCells` are not
+  // already (0,0)-based the way a level's placed cells are.
+  const origin = {
+    x: Math.min(...keys[0].cells.map((cell) => cell.x)),
+    y: Math.min(...keys[0].cells.map((cell) => cell.y)),
+  };
+  const spriteOrigin = {
+    x: Math.min(...sprite.map((cell) => cell.x)),
+    y: Math.min(...sprite.map((cell) => cell.y)),
+  };
   assert.deepEqual(
-    keys[0].cells.map((cell) => `${cell.x},${cell.y}`).sort(),
-    ["5,10", "6,10"],
+    keys[0].cells.map((cell) => `${cell.x - origin.x},${cell.y - origin.y}`).sort(),
+    sprite.map((cell) => `${cell.x - spriteOrigin.x},${cell.y - spriteOrigin.y}`).sort(),
   );
 
   // Locked sand is still sand: it has a colour, and it is in a body.
-  assert.equal(locked.length, 12, "six wide by two tall");
+  assert.equal(locked.length, 24, "eight wide by three tall");
   for (const cell of locked) {
     const owner = ownerOf(bodies, cell.x, cell.y);
     assert.ok(owner, `nothing owns the locked cell ${cell.x},${cell.y}`);
@@ -69,8 +87,8 @@ test("frozen sand hangs in mid-air — the settle solver will not move it", () =
   assert.deepEqual(keySet(settled.locked), keySet(locked), "nothing thawed on its own");
   // The slab has empty space under it and stays there anyway.
   const grid = keySet(settled.bodies.flatMap((body) => body.cells));
-  assert.ok(grid.has("4,6"), "the slab is still where it was drawn");
-  assert.ok(!grid.has("4,5"), "and nothing has fallen out of it");
+  assert.ok(grid.has("2,5"), "the slab is still where it was drawn");
+  assert.ok(!grid.has("2,4"), "and nothing has fallen out of it");
 });
 
 test("a locked colour is not handed out as ammo until a key frees it", () => {
@@ -95,8 +113,8 @@ test("clearing the plug drops the key onto the slab, which opens on contact", ()
   const state = createSandGameState(lockAndKey);
   assert.equal(currentAmmo(lockAndKey, state), "yellow");
 
-  const plug = ownerOf(state.bodies, 5, 9)!;
-  const resolution = resolveShot(lockAndKey, state, { bodyId: plug.id, x: 5, y: 9 });
+  const plug = ownerOf(state.bodies, 5, 8)!;
+  const resolution = resolveShot(lockAndKey, state, { bodyId: plug.id, x: 5, y: 8 });
   assert.equal(resolution.outcome, "SORTED");
 
   const after = resolution.state;
@@ -126,8 +144,8 @@ test("clearing the plug drops the key onto the slab, which opens on contact", ()
 
 test("the freed colour rejoins the wheel the moment the lock opens", () => {
   const state = createSandGameState(lockAndKey);
-  const plug = ownerOf(state.bodies, 5, 9)!;
-  const after = resolveShot(lockAndKey, state, { bodyId: plug.id, x: 5, y: 9 }).state;
+  const plug = ownerOf(state.bodies, 5, 8)!;
+  const after = resolveShot(lockAndKey, state, { bodyId: plug.id, x: 5, y: 8 }).state;
   assert.ok(after.queue.includes("purple"), "purple is shootable now, so it has to be offered");
 });
 
@@ -136,7 +154,7 @@ test("a lock the key never reaches stays shut, and the level stays unwinnable by
   // Shoot the floor instead. The key never moves, so nothing opens.
   const floor = ownerOf(state.bodies, 0, 0)!;
   const after = resolveShot(lockAndKey, state, { bodyId: floor.id, x: 0, y: 0 }).state;
-  assert.equal(after.locked.length, 12, "the slab is untouched");
+  assert.equal(after.locked.length, 24, "the slab is untouched");
   assert.equal(after.keys.length, 1, "and the key is still waiting on its plug");
 });
 
@@ -189,9 +207,24 @@ test("frozen sand ignores the weather", () => {
 });
 
 test("wind can blow a key into a lock, and that opens it like any other arrival", () => {
-  const { bodies, locked, keys } = parseSandLevel(lockAndKey);
-  const gust = runWindGust(bodies, lockAndKey.frame, "right", 3, { locked, keys });
-  assert.deepEqual(gust.locked, [], "the key reached the slab, so the slab opened");
+  const frame = { width: 14, height: 12 };
+  // Blown three cells right from x=2, `KEY_SPRITE`'s leftmost tooth (local
+  // column 1, from the same bottom row the gravity test reads) lands at
+  // absolute column 6 — swap that one floor cell for a locked one, so the
+  // same fall that carries the key there also opens it.
+  const originX = 2;
+  const bottomLocalX = Math.min(...spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x));
+  const lockColumn = originX + bottomLocalX + 3;
+  const floor = floorRow(14).cells.filter((cell) => cell.x !== lockColumn);
+  const lock: SandBody = { id: "purple-lock", color: "purple", cells: [{ x: lockColumn, y: 0 }] };
+  const gust = runWindGust(
+    [{ ...floorRow(14), cells: floor }, lock],
+    frame,
+    "right",
+    3,
+    { locked: [{ x: lockColumn, y: 0 }], keys: [keyAt(originX, 6)] },
+  );
+  assert.deepEqual(gust.locked, [], "the key's tip landed right on the lock, so it opened");
   assert.deepEqual(gust.keys, [], "and the key was spent doing it");
 });
 
@@ -310,9 +343,154 @@ test("both mechanic levels are already at rest as drawn", () => {
   }
 });
 
-test("the state carries its fixtures, so a shot resolved from state alone sees them", () => {
+// ---- what a key does ------------------------------------------------------
+// Gravity, sliding and being blown around, each on a board small enough that
+// the answer can be stated exactly rather than described.
+
+/** A key at (x, y) — the sprite's bottom-left corner — at the given scale. */
+function keyAt(x: number, y: number, scale = 1): SandKey {
+  return {
+    id: `key-${x}-${y}`,
+    cells: spriteCells(KEY_SPRITE, scale).map((cell) => ({ x: x + cell.x, y: y + cell.y })),
+  };
+}
+
+function keyBottomLeft(keys: SandKey[]) {
+  if (!keys.length) return null;
+  return {
+    x: Math.min(...keys[0].cells.map((cell) => cell.x)),
+    y: Math.min(...keys[0].cells.map((cell) => cell.y)),
+  };
+}
+
+function floorRow(width: number, y = 0): SandBody {
+  return { id: `orange-0-${y}`, color: "orange", cells: Array.from({ length: width }, (_, x) => ({ x, y })) };
+}
+
+test("a key falls under gravity until something stops it", () => {
+  const frame = { width: 12, height: 12 };
+  const settled = runGrainSettle([floorRow(12)], frame, { keys: [keyAt(2, 8)] });
+  // The sprite's three teeth sit at the same row, evenly spaced either side of
+  // the neck, so a dead drop onto a flat floor lands all three at once with no
+  // sideways nudge — unlike the old lopsided silhouette this replaced.
+  assert.deepEqual(keyBottomLeft(settled.keys), { x: 2, y: 1 }, "it should be resting on the floor");
+  assert.ok(
+    settled.steps.filter((step) => step.kind === "KEY_MOVE").length >= 7,
+    "and it should have been seen falling, one cell per step, not teleported",
+  );
+});
+
+test("a key is rigid: support under only one of its legs is not enough to hold it", () => {
+  const frame = { width: 14, height: 12 };
+  // `KEY_SPRITE`'s bottom row is three separate legs with gaps between them —
+  // a pillar under just the leftmost one leaves the rest of the shape hanging
+  // in open air, so the whole rigid body has to keep falling.
+  const originX = 3;
+  const bottomLocalX = Math.min(...spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x));
+  const pillar: SandBody = {
+    id: "green-pillar",
+    color: "green",
+    cells: [1, 2, 3, 4].map((y) => ({ x: originX + bottomLocalX, y })),
+  };
+  const settled = runGrainSettle([floorRow(14), pillar], frame, { keys: [keyAt(originX, 6)] });
+  assert.equal(settled.keys.length, 1, "a key never breaks up on the way down");
+  // It rests on the pillar rather than the floor (y=1 would be the floor) —
+  // a real, if modest, perch — but the point is what it does NOT do: teleport,
+  // split apart, or hang above where any of its cells could still fall.
+  assert.equal(keyBottomLeft(settled.keys)!.y, 2, "it should have settled onto the one leg the pillar caught");
+});
+
+test("wind carries a key across the frame, and gravity still applies to it", () => {
+  const frame = { width: 16, height: 12 };
+  const gust = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)] });
+  const landed = keyBottomLeft(gust.keys)!;
+  // Three cells of power, then a straight drop — the gravity test above shows
+  // this sprite needs no settle drift of its own, so the gust is the only
+  // horizontal move here.
+  assert.equal(landed.x, 5, "power carried it downwind, and gravity settled it the rest of the way");
+  assert.equal(landed.y, 1, "and it fell to the floor in the same resolution");
+});
+
+test("friction resists a key being blown, without preventing it entirely", () => {
+  const frame = { width: 16, height: 12 };
+  const loose = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)], friction: 0 });
+  const sticky = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 6)], friction: 1 });
+  const looseX = keyBottomLeft(loose.keys)!.x;
+  const stickyX = keyBottomLeft(sticky.keys)!.x;
+  assert.ok(stickyX < looseX, "more friction has to carry the key less far in the same gust");
+  assert.equal(loose.keys.length, 1, "friction never breaks a key apart");
+  assert.equal(sticky.keys.length, 1);
+});
+
+test("friction paces a slide but does not change where it ends up at rest", () => {
+  const frame = { width: 14, height: 12 };
+  const shelf: SandBody = { id: "green-shelf", color: "green", cells: Array.from({ length: 8 }, (_, x) => ({ x, y: 1 })) };
+  const eager = runGrainSettle([floorRow(14), shelf], frame, { keys: [keyAt(0, 3)], friction: 0 });
+  const patient = runGrainSettle([floorRow(14), shelf], frame, { keys: [keyAt(0, 3)], friction: 1 });
+  assert.deepEqual(keyBottomLeft(eager.keys), keyBottomLeft(patient.keys));
+});
+
+test("a bigger key is the same object, exactly scaled, and it still lands safely", () => {
+  const frame = { width: 30, height: 24 };
+  // Both start clear of the ceiling: a key with cells outside the frame cannot
+  // move at all, because every target of a rigid move has to be legal.
+  const small = runGrainSettle([floorRow(30)], frame, { keys: [keyAt(4, 16, 1)] });
+  const big = runGrainSettle([floorRow(30)], frame, { keys: [keyAt(4, 8, 3)] });
+
+  assert.equal(small.keys.length, 1);
+  assert.equal(big.keys.length, 1, "scaling must not split it into pieces");
+  assert.equal(big.keys[0].cells.length, small.keys[0].cells.length * 9, "each pixel becomes a 3x3 block");
+  assert.equal(keyBottomLeft(small.keys)!.y, 1, "both land on the floor");
+  assert.equal(keyBottomLeft(big.keys)!.y, 1);
+});
+
+// ---- the sprites ---------------------------------------------------------
+
+test("both sprites are one connected shape, which is what makes each one a single object", () => {
+  for (const [name, sprite] of [["key", KEY_SPRITE], ["padlock", PADLOCK_SPRITE]] as const) {
+    const cells = spriteCells(sprite, 1);
+    assert.ok(cells.length > 0, `${name} is empty`);
+    // `parseSandLevel` groups key cells by connectivity: a sprite with a
+    // detached pixel would silently become two keys on the board.
+    assert.ok(isConnected(cells), `${name} has a detached pixel`);
+  }
+});
+
+test("scaling a sprite blows it up without changing its shape", () => {
+  const one = spriteCells(KEY_SPRITE, 1);
+  const three = spriteCells(KEY_SPRITE, 3);
+  assert.equal(three.length, one.length * 9, "each cell becomes a 3x3 block");
+  assert.ok(isConnected(three), "and the blown-up shape is still one object");
+
+  // Every scaled cell maps back to a filled cell of the original, so a bigger
+  // key is the same key rather than a different silhouette.
+  const filled = new Set(one.map((cell) => `${cell.x},${cell.y}`));
+  for (const cell of three) {
+    assert.ok(
+      filled.has(`${Math.floor(cell.x / 3)},${Math.floor(cell.y / 3)}`),
+      `scaled cell ${cell.x},${cell.y} is not part of the original shape`,
+    );
+  }
+});
+
+test("the padlock fits the slab it labels, and is dropped when it cannot", () => {
+  const { locked } = parseSandLevel(lockAndKey);
+  const xs = locked.map((cell) => cell.x);
+  const ys = locked.map((cell) => cell.y);
+  const width = Math.max(...xs) - Math.min(...xs) + 1;
+  const height = Math.max(...ys) - Math.min(...ys) + 1;
+
+  // At the board's real resolution, not at blueprint size — the icon is drawn
+  // on the expanded pixel board, which is the only place it exists.
+  const scale = lockAndKey.pixelScale;
+  const fits = Math.floor(Math.min((width * scale) / 7, (height * scale) / 7));
+  assert.ok(fits >= 1, `a ${width}x${height} slab at ${scale}x has no room for a padlock`);
+});
+
+test("the state and level together carry the fixtures a shot needs to see", () => {
   const state = createSandGameState(lockAndKey);
-  const fixtures = fixturesOf(state);
-  assert.equal(fixtures.locked?.length, 12);
+  const fixtures = fixturesOf(lockAndKey, state);
+  assert.equal(fixtures.locked?.length, 24);
   assert.equal(fixtures.keys?.length, 1);
+  assert.equal(fixtures.friction, 0, "this level authored no friction");
 });

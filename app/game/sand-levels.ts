@@ -78,31 +78,37 @@ export const sandBloom: SandLevelConfig = {
  * A slab of purple hangs in mid-air, frozen: those are the lower-case letters
  * in the picture. Nothing can shoot it and it does not fall, so it is the one
  * fixed point in the frame. Above it sits a plug of yellow with the key resting
- * on top; take the yellow out and the key drops two cells onto the slab, which
- * opens on contact and lets the purple pour to the floor.
+ * on top; take the yellow out and the key drops onto the slab, which opens on
+ * contact and lets the purple pour to the floor.
  *
- * The plug steps in by one cell per layer, and the slab is two cells wider than
- * it. That is not decoration: falling sand only holds still where each edge
- * column is at most one higher than its neighbour, so a square plug on a narrow
- * slab would roll off its own sides on the first frame.
+ * The `K` cells are `KEY_SPRITE` at scale 1 — a round bow, a neck and a
+ * three-prong bit, because this key does not roll: it slides, and a flat
+ * silhouette is what reads as skidding across sand instead of tumbling over
+ * it. It never authors `keyFriction`, so it is maximally slippery by default —
+ * it moves the instant a slope or a gust offers it a way down.
  *
- * Purple is in the wheel from the start because it is in the picture, but the
- * wheel will not hand it out while every purple grain is frozen — see
- * `shootableColors`. It arrives the moment the lock opens.
+ * The plug (cols3-8, 6 cells) sits a column in from the slab on each side
+ * (cols2-9, 8 cells) — no partial overhang for the teeth to reason about by
+ * hand, and the key's own bow overflows the plug by one column on the left,
+ * same as before: a rigid body cell without support is still valid, it just
+ * cannot be sand.
  */
 const LOCK_PICTURE = [
   "............",
   "............",
+  "...KKKKK....",
+  "..KKKKKKK...",
+  "...KKKKK....",
+  ".....K......",
+  "...KKKKK....",
+  "...K.K.K....",
+  "...YYYYYY...",
+  "..pppppppp..",
+  "..pppppppp..",
+  "..pppppppp..",
   "............",
-  ".....KK.....",
-  ".....YY.....",
-  "....YYYY....",
-  "...pppppp...",
-  "...pppppp...",
   "............",
-  "............",
-  "GG........GG",
-  "GGGG....GGGG",
+  "GGGGGGGGGGGG",
   "OOOOOOOOOOOO",
   "OOOOOOOOOOOO",
 ];
@@ -113,7 +119,7 @@ export const lockAndKey: SandLevelConfig = {
   id: 2,
   name: "Lock & Key",
 
-  frame: { width: 12, height: 14 },
+  frame: { width: 12, height: 17 },
   rows: LOCK_PICTURE,
 
   ammoQueue: ["yellow", "green", "orange", "purple"],
