@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import Link from "next/link";
 import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
+import { computeDifficulty, type DifficultyResult } from "./game/level-difficulty";
 import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColorHex } from "./game/sand-color";
 import {
   EMPTY_CELL,
@@ -47,11 +48,35 @@ const COLOR_NAME: Record<SandColor, string> = {
   blue: "Blue",
   purple: "Purple",
   orange: "Orange",
+  cyan: "Cyan",
+  pink: "Pink",
+  lime: "Lime",
+  brown: "Brown",
 };
 
 function hex(color: SandColor) {
   return `#${SAND_COLOR_HEX[color].toString(16).padStart(6, "0")}`;
 }
+
+const DIFFICULTY_NAME: Record<DifficultyResult["label"], string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+  "very-hard": "Very hard",
+};
+
+/**
+ * One colour per difficulty tier, borrowed straight from the sand palette
+ * rather than invented — green through red already reads as "fine → careful"
+ * everywhere else on the web, and reusing the gameplay colours means no new
+ * hue has to be introduced just for a chart.
+ */
+const DIFFICULTY_HEX: Record<DifficultyResult["label"], SandColor> = {
+  easy: "green",
+  medium: "yellow",
+  hard: "orange",
+  "very-hard": "red",
+};
 
 /** The key's gold, matching what the engine paints on the board. */
 const KEY_HEX = "#ffd654";
@@ -244,6 +269,68 @@ function withCell(rows: string[], x: number, y: number, height: number, letter: 
   return next;
 }
 
+/** The palette colour whose RGB is closest to a pixel, by plain squared distance. */
+function nearestSandColor(r: number, g: number, b: number): SandColor {
+  let best: SandColor = SAND_COLORS[0];
+  let bestDistance = Infinity;
+  for (const candidate of SAND_COLORS) {
+    const rgb = SAND_COLOR_HEX[candidate];
+    const cr = (rgb >> 16) & 0xff;
+    const cg = (rgb >> 8) & 0xff;
+    const cb = rgb & 0xff;
+    const distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+/**
+ * Rasterise a bitmap onto the board, one board pixel at a time.
+ *
+ * The image is scaled to *cover* the frame — fill it completely, cropping
+ * whatever spills past the shorter axis — the same as CSS `background-size:
+ * cover`. Fitting it inside the frame instead would leave empty bars an
+ * author has to notice and paint over by hand, and covering never does.
+ *
+ * Every opaque pixel is matched to the nearest palette colour by RGB
+ * distance — the same "which colour is this closest to" a human eye does,
+ * just run once per pixel instead of by hand. A pixel counts as background,
+ * and is left empty, when it is transparent or (with `trimWhite`) nearly
+ * white — an imported picture almost always has one of those two, and either
+ * one filled in solid would bury the picture under a slab of one colour.
+ */
+function imageToRows(img: HTMLImageElement, width: number, height: number, trimWhite: boolean): string[] {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return blankRows(width, height);
+  const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+  const drawWidth = img.naturalWidth * scale;
+  const drawHeight = img.naturalHeight * scale;
+  context.drawImage(img, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+
+  const { data } = context.getImageData(0, 0, width, height);
+  const rows: string[] = [];
+  for (let row = 0; row < height; row += 1) {
+    let line = "";
+    for (let x = 0; x < width; x += 1) {
+      const at = (row * width + x) * 4;
+      const r = data[at];
+      const g = data[at + 1];
+      const b = data[at + 2];
+      const a = data[at + 3];
+      const isBackground = a < 24 || (trimWhite && r > 240 && g > 240 && b > 240);
+      line += isBackground ? EMPTY_CELL : LETTER_BY_SAND_COLOR[nearestSandColor(r, g, b)];
+    }
+    rows.push(line);
+  }
+  return rows;
+}
+
 /** Flood fill over cells of the same starting letter, four-connected. */
 function bucketFill(rows: string[], width: number, height: number, x: number, y: number, letter: string) {
   const target = letterAt(rows, x, y, height);
@@ -294,6 +381,18 @@ function readStoredDrafts(): LevelDraft[] {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
+/** Scores by draft object identity — see the comment on `difficultyById` below. */
+const DIFFICULTY_CACHE = new WeakMap<LevelDraft, DifficultyResult>();
+
+function difficultyFor(draft: LevelDraft): DifficultyResult {
+  let result = DIFFICULTY_CACHE.get(draft);
+  if (!result) {
+    result = computeDifficulty(draft);
+    DIFFICULTY_CACHE.set(draft, result);
+  }
+  return result;
+}
+
 export default function LevelEditor() {
   const stored = useSyncExternalStore(noopSubscribe, readStoredDrafts, () => SERVER_DRAFTS);
   // null until the first edit, so the stored list is what shows until then.
@@ -316,8 +415,12 @@ export default function LevelEditor() {
   const [exported, setExported] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [shipping, setShipping] = useState(false);
+  const [importing, setImporting] = useState(false);
+  /** Whether a near-white pixel imports as empty rather than as sand. */
+  const [trimWhite, setTrimWhite] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const painting = useRef(false);
   const history = useRef<{ past: LevelDraft[]; future: LevelDraft[] }>({ past: [], future: [] });
 
@@ -330,6 +433,22 @@ export default function LevelEditor() {
   const draft = useMemo(
     () => drafts.find((entry) => entry.id === selectedId) ?? null,
     [drafts, selectedId],
+  );
+
+  /**
+   * The whole roster's difficulty, for the overview chart in the Levels
+   * panel — cached per draft *object* in `DIFFICULTY_CACHE` (module scope,
+   * same pattern as `cachedDrafts` above), not just recomputed whenever the
+   * list changes. Editing one level replaces only that one entry in `drafts`
+   * (see `update`); every other draft keeps its old object identity, so this
+   * reuses their scores instead of re-walking every other level's picture on
+   * every stroke of the one actually being painted. A `WeakMap` rather than a
+   * `Map` so a deleted or edited-away draft's entry is reclaimed on its own,
+   * with nothing here having to notice and evict it.
+   */
+  const difficultyById = useMemo(
+    () => new Map(drafts.map((entry) => [entry.id, difficultyFor(entry)] as const)),
+    [drafts],
   );
 
   const persist = useCallback((next: LevelDraft[]) => {
@@ -613,6 +732,41 @@ export default function LevelEditor() {
     }, 16);
   };
 
+  /**
+   * Replace the picture with a pixelated version of an imported PNG/JPEG.
+   *
+   * The image loads asynchronously, so the board it is rasterised onto is
+   * whatever the draft's width/height are *when the image finishes loading*
+   * — read inside `update`'s callback, not captured up front — in case the
+   * author changes the size while the file is still decoding.
+   */
+  const importImageFile = (file: File) => {
+    if (!/^image\/(png|jpe?g)$/.test(file.type)) {
+      flash("Only PNG or JPEG images can be imported.");
+      return;
+    }
+    setImporting(true);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      setImporting(false);
+    };
+    img.onload = () => {
+      update((current) => {
+        const rows = imageToRows(img, current.width, current.height, trimWhite);
+        return syncQueueToPicture({ ...current, rows });
+      }, true);
+      flash(`Imported ${file.name} as the picture`);
+      cleanup();
+    };
+    img.onerror = () => {
+      flash("Couldn't read that image file.");
+      cleanup();
+    };
+    img.src = url;
+  };
+
   if (!draft) {
     return (
       <main className="editor-shell">
@@ -701,6 +855,49 @@ export default function LevelEditor() {
               Delete
             </button>
           </div>
+
+          {/* ---- difficulty overview ---- */}
+          <h2>Difficulty overview</h2>
+          <p className="editor-note">
+            A quick read on every level&apos;s shape — board size, colour count, how mixed those
+            colours are, and how tight the shot budget and radius are against all of it. Not the
+            solver: that lives below as &quot;Measure difficulty&quot; and only runs one level at a time.
+          </p>
+          <ol className="editor-difficulty-list">
+            {drafts.map((entry) => {
+              const result = difficultyById.get(entry.id);
+              if (!result) return null;
+              return (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    className={entry.id === draft.id ? "is-active" : ""}
+                    onClick={() => {
+                      setPickedId(entry.id);
+                      setAnalysis(null);
+                      history.current = { past: [], future: [] };
+                    }}
+                    title={[
+                      `Board ${Math.round(result.breakdown.size * 100)}%`,
+                      `Colours ${Math.round(result.breakdown.colors * 100)}%`,
+                      `Mixing ${Math.round(result.breakdown.interleaving * 100)}%`,
+                      `Ammo ${Math.round(result.breakdown.ammo * 100)}%`,
+                      `Radius ${Math.round(result.breakdown.radius * 100)}%`,
+                    ].join(" · ")}
+                  >
+                    <span className="editor-difficulty-name">{entry.name || "Untitled"}</span>
+                    <span className="editor-difficulty-bar">
+                      <i style={{ width: `${result.score}%`, "--swatch": hex(DIFFICULTY_HEX[result.label]) } as React.CSSProperties} />
+                    </span>
+                    <span className="editor-difficulty-score">
+                      {result.score}
+                      <small>{DIFFICULTY_NAME[result.label]}</small>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
         </aside>
 
         {/* ---- canvas ---- */}
@@ -812,6 +1009,38 @@ export default function LevelEditor() {
               >
                 Clear
               </button>
+            </div>
+            <div className="editor-row">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                className="editor-file-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Cleared even on a cancelled picker, so re-choosing the
+                  // exact same file still fires a change event.
+                  event.target.value = "";
+                  if (file) importImageFile(file);
+                }}
+              />
+              <button
+                type="button"
+                className="editor-button"
+                disabled={importing}
+                onClick={() => fileInputRef.current?.click()}
+                title="Pixelate a PNG or JPEG onto this level's picture, matching each pixel to the nearest palette colour"
+              >
+                {importing ? "Importing…" : "🖼️ Import image"}
+              </button>
+              <label className="editor-check editor-import-check">
+                <input
+                  type="checkbox"
+                  checked={trimWhite}
+                  onChange={(event) => setTrimWhite(event.target.checked)}
+                />
+                <span>Skip white background</span>
+              </label>
             </div>
           </div>
 

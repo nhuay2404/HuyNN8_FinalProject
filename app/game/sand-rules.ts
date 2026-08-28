@@ -32,13 +32,17 @@ export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
   B: "blue",
   P: "purple",
   O: "orange",
+  C: "cyan",
+  M: "pink",
+  L: "lime",
+  N: "brown",
 };
 
 /**
  * The key's letter. Not a colour, so it never collides with the palette.
  *
- * `K` was free: the sand palette is R G Y B P O, and lower case is spoken for
- * by locked sand.
+ * `K` was free: the sand palette is R G Y B P O C M L N, and lower case is
+ * spoken for by locked sand.
  */
 export const KEY_LETTER = "K";
 

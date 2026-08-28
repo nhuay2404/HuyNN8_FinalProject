@@ -56,6 +56,13 @@ export const SAND_COLOR_HEX: Record<SandColor, number> = {
   blue: 0x3aa0f5,
   purple: 0x9a5cf0,
   orange: 0xff8a33,
+  cyan: 0x2fd9c7,
+  // Pulled lighter, softer and further toward magenta than a straight "hot
+  // pink" would sit — a hue that close to red needs the lightness/saturation
+  // gap to do the work of telling them apart once jitter is added to both.
+  pink: 0xe689d6,
+  lime: 0xa8e63e,
+  brown: 0x9a6b3a,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -69,7 +76,6 @@ const SHOT_COOLDOWN_MS = 400;
 const JOYSTICK_RADIUS = 64;
 const JOYSTICK_RESPONSE_DEAD_ZONE = 14;
 const JOYSTICK_ARM_RADIUS = 18;
-const JOYSTICK_CANCEL_RADIUS = 14;
 const MIN_CONTROL_SENSITIVITY = 0.5;
 const MAX_CONTROL_SENSITIVITY = 2;
 const CANNON_NEUTRAL_YAW = 0;
@@ -1437,9 +1443,12 @@ export class SandCannonEngine {
     const dy = clientY - this.aimStart.y;
     this.aimDistance = Math.hypot(dx, dy);
 
-    if (this.aimArmed) {
-      if (this.aimDistance <= JOYSTICK_CANCEL_RADIUS) this.aimArmed = false;
-    } else if (this.aimDistance >= JOYSTICK_ARM_RADIUS) {
+    // Sticky once armed: once the stick has been dragged out past the arm
+    // radius, drifting back toward the centre — even all the way to it — no
+    // longer un-arms the shot. Only letting go of the pointer does (see
+    // `onAimPointerUp`/`clearAimGesture`), so a hand that overshoots back
+    // through the middle mid-gesture does not lose the aim it already built.
+    if (!this.aimArmed && this.aimDistance >= JOYSTICK_ARM_RADIUS) {
       this.aimArmed = true;
     }
 
@@ -1471,11 +1480,12 @@ export class SandCannonEngine {
 
   private onAimPointerUp = (event: PointerEvent) => {
     if (event.pointerId !== this.aimPointer) return;
-    const releaseDistance = Math.hypot(event.clientX - this.aimStart.x, event.clientY - this.aimStart.y);
+    // Letting go near the centre no longer cancels by itself — `aimArmed` is
+    // sticky (see `updateAimGesture`), so once the drag has crossed the arm
+    // radius at any point, releasing anywhere still fires.
     const shouldFire = this.canInteract()
       && this.aimArmed
       && this.displayedAimArmed
-      && releaseDistance > JOYSTICK_CANCEL_RADIUS
       && this.displayedLaunch !== null
       && this.projectile === null
       && performance.now() >= this.nextShotAt;

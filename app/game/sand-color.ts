@@ -10,16 +10,21 @@
  * How far a pixel's colour is nudged from its cell's base colour when it is
  * spawned. Presentation only — it never reaches the grid.
  *
- * Ported from a reference falling-sand renderer (UniSand, MIT): every grain
- * there gets a one-time random nudge to its saturation and lightness, fixed at
- * spawn rather than animated. Close to the reference's own ±0.1, at a
- * resolution fine enough that individual pixels disappear into the whole.
+ * Ported from a reference falling-sand renderer (UniSand, MIT), which nudges
+ * every grain by up to ±0.1. Turned down well below that reference value:
+ * with ten palette colours now instead of six, a couple of them sit close
+ * enough in hue (e.g. red and pink) that a wide swing could drift one
+ * colour's grains into the other's saturation/lightness band and blur the
+ * two together — and player feedback was that even the first cut of this
+ * (±0.06/±0.05) still read as too noisy at a glance. A smaller nudge still
+ * reads as poured grains rather than a flat swatch, without eating into the
+ * room between neighbouring colours.
  *
  * The one pair of numbers both renderers draw from — the game canvas and the
  * editor's preview — so a level looks the same texture in both places.
  */
-export const SAND_SATURATION_JITTER = 0.1;
-export const SAND_LIGHTNESS_JITTER = 0.09;
+export const SAND_SATURATION_JITTER = 0.03;
+export const SAND_LIGHTNESS_JITTER = 0.025;
 
 /** Deterministic pseudo-random unit value from a seed — no `Math.random`. */
 export function seededUnit(seed: number) {

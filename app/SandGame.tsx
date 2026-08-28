@@ -12,6 +12,7 @@ import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
 import {
   ammoRemaining,
   createSandGameState,
+  currentAmmo,
   expandLevelForPixelBoard,
   KEY_LETTER,
   SAND_COLOR_BY_LETTER,
@@ -26,6 +27,10 @@ const COLOR_NAME: Record<SandColor, string> = {
   blue: "BLUE",
   purple: "PURPLE",
   orange: "ORANGE",
+  cyan: "CYAN",
+  pink: "PINK",
+  lime: "LIME",
+  brown: "BROWN",
 };
 
 function hex(color: SandColor) {
@@ -172,6 +177,20 @@ function BoosterIcon({ type }: { type: BoosterType }) {
   );
 }
 
+/** A plain coin: a ringed disc with a face-value line, drawn in currentColor
+ * like the other line-art icons here so `.coin-icon`'s colour (var(--gold))
+ * is the only place the tint lives. */
+function CoinIcon() {
+  return (
+    <svg className="coin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9" fill="currentColor" />
+      <circle cx="12" cy="12" r="9" fill="none" stroke="#c98a1c" strokeWidth="1.4" />
+      <circle cx="12" cy="12" r="6.2" fill="none" stroke="#c98a1c" strokeWidth="1.2" />
+      <path d="M12 8.4v7.2M10.2 9.9c0-.9.8-1.5 1.8-1.5s1.8.5 1.8 1.3-.7 1.1-1.8 1.3-1.8.5-1.8 1.3.8 1.3 1.8 1.3 1.8-.6 1.8-1.5" stroke="#c98a1c" strokeWidth="1" fill="none" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /**
  * A level's picture at postage-stamp size.
  *
@@ -183,7 +202,7 @@ function PixelThumb({ level }: { level: SandLevelConfig }) {
   return (
     <span
       className="pixel-thumb"
-      style={{ "--cols": level.frame.width } as React.CSSProperties}
+      style={{ "--cols": level.frame.width, "--rows": level.frame.height } as React.CSSProperties}
       aria-hidden="true"
     >
       {level.rows.flatMap((row, y) =>
@@ -283,6 +302,10 @@ function markTutorialSeen(id: number) {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
+/** Placeholder balance until a real coin economy (shop purchases, level
+ * rewards, ...) exists to back it. */
+const PLACEHOLDER_COINS = 100;
+
 export default function SandGame() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const aimZoneRef = useRef<HTMLDivElement | null>(null);
@@ -319,6 +342,11 @@ export default function SandGame() {
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
   const [state, setState] = useState<SandGameState>(() => createSandGameState(level));
+  // The shots-badge dot's colour, kept one step behind `state.queue`: see the
+  // comment on `loadedAmmo` below for why.
+  const [ammoAnim, setAmmoAnim] = useState<{ color: SandColor | null; bump: number }>(
+    () => ({ color: currentAmmo(level, state), bump: 0 }),
+  );
   const [toast, setToast] = useState<Toast | null>(null);
   // Mirrors `SandCannonEngine`'s own `armedBooster` — null means neither
   // booster is armed. The engine is the source of truth (it is what enforces
@@ -484,6 +512,23 @@ export default function SandGame() {
 
   const remaining = ammoRemaining(level, state);
   const busy = BUSY_PHASES.has(state.phase);
+  /**
+   * What the badge's dot shows — one step behind `state.queue` on purpose.
+   *
+   * `state.queue` itself advances the instant a shot resolves, but the
+   * cannon's own chamber only takes on the new colour once the settle that
+   * shot triggered has finished playing (`SandCannonEngine.advanceBeats`
+   * only assigns its internal `state` — what the 3D chamber ball reads —
+   * after the last settle beat). Reading `state.queue` straight through here
+   * would flip the badge to the next colour while the barrel on screen is
+   * still visibly loaded with the last one. Held at the last colour for
+   * every busy phase and only let through once play is idle again, so the
+   * two changes land in the same frame.
+   */
+  const loadedAmmo = busy ? ammoAnim.color : currentAmmo(level, state);
+  if (loadedAmmo !== ammoAnim.color) {
+    setAmmoAnim({ color: loadedAmmo, bump: ammoAnim.bump + 1 });
+  }
   // Measured against the sand this level actually started with, not the area of
   // the frame. A picture that does not fill its frame — which an editor level
   // need not — would otherwise open at "69% cleared" before a shot was fired.
@@ -514,19 +559,47 @@ export default function SandGame() {
   return (
     <main className="page-shell">
       <div className="game-frame">
-        {/* §22: ammo, the 3D frame, then the cannon and its aim zone. Hidden on
-            the home screen — none of it is true until a level has actually
-            been started. A casual-game HUD reads at a glance: the number that
+        {/* Top-left HUD stack: the coin balance sits above the ammo row and,
+            unlike it, is not gated on `playing` — a balance is true on the
+            home screen too, not just mid-level. §22/§23: ammo, the 3D frame,
+            then the cannon and its aim zone. The ammo row is hidden on the
+            home screen — none of it is true until a level has actually been
+            started. A casual-game HUD reads at a glance: the number that
             changes every shot (SHOTS) sits alone on the left, and everything
             that is a menu — level pick, home, editor, restart, help — collapses
             behind one settings button on the right so it is never in the way
             of the picture or the cannon underneath it. */}
-        <header className="hud-top" hidden={!playing}>
-          <div className="shots-badge" role="status" aria-label={`${remaining} shots left`}>
-            <span className="shots-icon" aria-hidden="true" />
-            <strong>{remaining}</strong>
+        <div className="hud-top-left">
+          <div className="coin-badge" role="status" aria-label={`${PLACEHOLDER_COINS} coins`}>
+            <CoinIcon />
+            <strong>{PLACEHOLDER_COINS}</strong>
           </div>
-        </header>
+          <header className="hud-top" hidden={!playing}>
+            {/* The dot is the bullet in the chamber, not a generic "ammo" icon —
+                it takes the loaded colour so the badge answers "what am I about
+                to fire" at a glance, the same colour the chamber ball and the
+                crosshair already show. Falls back to the badge's gold when the
+                queue is empty (win/fail), which is the only time there is no
+                colour to show. */}
+            <div
+              className="shots-badge"
+              role="status"
+              aria-label={loadedAmmo ? `${remaining} ${COLOR_NAME[loadedAmmo]} shots left` : `${remaining} shots left`}
+            >
+              <span
+                // Keyed on the change counter, not the colour: the wheel can
+                // cycle back to a colour it just showed, and a remount is what
+                // gets the pop to play again rather than being a no-op className
+                // change.
+                key={ammoAnim.bump}
+                className="shots-icon"
+                aria-hidden="true"
+                style={loadedAmmo ? { background: hex(loadedAmmo) } : undefined}
+              />
+              <strong>{remaining}</strong>
+            </div>
+          </header>
+        </div>
 
         <div className="settings-wrap" hidden={!playing}>
           {level.tutorial && (

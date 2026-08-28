@@ -4070,3 +4070,167 @@ không còn đè.
 sạch. Verify vị trí khay bằng `getBoundingClientRect()` thật trên dev server, khớp tính toán. Phần súng thu
 nhỏ và hành vi kéo nòng lên không verify được bằng ảnh chụp trong phiên này — cần người dùng tự kiểm tra
 trực quan.
+
+---
+
+## 71. Level editor: mở rộng bảng màu cát (6→10 màu) và thêm import ảnh PNG/JPEG (28/08)
+
+Yêu cầu: "hoàn thiện level editor — thêm option input ảnh PNG/JPEG vào rồi tự động xuất ra thành hình ảnh
+cho level, ngoài ra thêm nhiều màu vào phần pick màu".
+
+**Mở rộng bảng màu** (`sand-types.ts`, `SandCannonEngine.ts`, `sand-rules.ts`, `level-drafts.ts`,
+`LevelEditor.tsx`, `SandGame.tsx`): từ 6 màu (`red green yellow blue purple orange`) lên 10, thêm
+`cyan pink lime brown`. Mỗi màu một chữ cái riêng trong bảng chữ cái tranh vẽ (`C M L N`, không đụng `K` đã
+dành cho key). Grep toàn repo xác nhận đúng 4 chỗ định nghĩa `Record<SandColor, ...>` exhaustive phải sửa
+(`SAND_COLOR_HEX`, `LETTER_BY_SAND_COLOR`, `SAND_COLOR_BY_LETTER`, hai bản `COLOR_NAME` ở editor và game) —
+không có chỗ nào khác trong codebase giả định cứng 6 màu.
+
+**Import ảnh** (`LevelEditor.tsx`): nút "🖼️ Import image" cạnh canvas, input file ẩn
+(`accept="image/png,image/jpeg"`). Khi chọn file: vẽ ảnh lên canvas ẩn đúng kích thước board, scale kiểu
+*cover* (lấp đầy khung, cắt phần thừa — như CSS `background-size:cover`, tránh để lại viền trống người
+dùng phải tự tô), rồi map từng pixel sang màu bảng gần nhất bằng khoảng cách RGB bình phương
+(`nearestSandColor`). Pixel trong suốt hoặc gần trắng (checkbox "Skip white background", mặc định bật)
+thành ô trống thay vì bị tô đặc. Sau khi import, tự chạy `syncQueueToPicture` để bánh xe đạn khớp ngay với
+màu vừa import — cả việc import gộp thành một bước undo.
+
+**Kiểm tra:** 96 test pass, `eslint` sạch trên các file sửa. Verify trực tiếp trên dev server: dựng một
+ảnh PNG tổng hợp (nửa đỏ nửa xanh dương) rồi dispatch qua `<input type="file">` bằng `DataTransfer` thật,
+đọc lại "grains painted"/ammo wheel sau khi import — khớp đúng logic (wheel tự thêm cả Purple/Brown do viền
+ảnh bị làm mờ khi trình duyệt scale). Paint thử cả 10 swatch màu mới lên canvas không lỗi.
+
+---
+
+## 72. Giảm jitter texture cát (2 lượt), đổi màu pink cho dễ phân biệt với đỏ (28/08)
+
+Phản hồi 2 lượt liên tiếp: "texture cát quá jitter, đôi lúc không nhìn được — ví dụ jitter đỏ na ná jitter
+hồng", sau đó "giảm hơn nữa".
+
+`sand-color.ts` — `SAND_SATURATION_JITTER`/`SAND_LIGHTNESS_JITTER` (hằng số dùng chung bởi game canvas và
+editor preview) giảm 2 lượt: `0.1/0.09` (gốc, port từ UniSand) → `0.06/0.05` → `0.03/0.025`.
+
+Riêng cặp đỏ/hồng: giảm jitter một mình không đủ vì hai màu gốc đã gần nhau cả về hue (352° vs 326°, cách
+26°) lẫn lightness (65% vs 68%, cách 3 điểm) — jitter không đụng tới hue nên không thể tự tách hai màu ra
+xa hơn. `SandCannonEngine.ts` đổi `pink` từ `0xff5cb8` sang `0xe689d6`: nhạt hơn, bớt bão hoà, ngả tím
+nhiều hơn (hue ~310°, cách đỏ 42° thay vì 26°), để độ sáng/bão hoà làm việc thay hue.
+
+**Kiểm tra:** 96 test pass. Verify bằng cách tô thật một mảng đỏ + một mảng hồng trên canvas editor, đọc
+`getImageData` thật rồi so dải giá trị: kênh xanh dương (B) của đỏ nằm trong `[78,161]`, của hồng nằm trong
+`[204,232]` — hai dải không chồng nhau, tách biệt dưới mọi mức jitter chứ không chỉ tách biệt "trung bình".
+
+---
+
+## 73. Joystick: bỏ hành vi huỷ khi kéo về giữa (28/08)
+
+Phản hồi: "bỏ chức năng joystick sẽ huỷ khi drag về chính giữa".
+
+`SandCannonEngine.ts` — trước đây joystick đã "armed" (đủ xa để tính là một cú ngắm thật) sẽ tự un-arm nếu
+kéo ngược lại vào trong bán kính `JOYSTICK_CANCEL_RADIUS` (14px) quanh điểm bắt đầu, và thả tay gần tâm
+cũng bị chặn bắn bởi cùng bán kính đó ở `onAimPointerUp`. Sửa: bỏ hẳn logic un-arm giữa chừng —
+`aimArmed` giờ "dính" (sticky), một khi vượt `JOYSTICK_ARM_RADIUS` (18px) một lần thì giữ nguyên tới khi
+thả tay bất kể có kéo ngược về gần tâm hay không; bỏ luôn điều kiện `releaseDistance > JOYSTICK_CANCEL_RADIUS`
+ở `onAimPointerUp`. Hằng số `JOYSTICK_CANCEL_RADIUS` xoá hẳn vì hết chỗ dùng. Việc "chưa kéo đủ xa thì thả
+tay không bắn" vẫn giữ nguyên (an toàn khỏi bắn nhầm khi chạm nhẹ) — chỉ bỏ đúng phần "đã ngắm rồi kéo về
+giữa = huỷ".
+
+**Kiểm tra:** 96 test pass, `eslint` sạch. Không verify được bằng thao tác kéo-bắn thật trong phiên này:
+pointer event tổng hợp cần vòng lặp `requestAnimationFrame` của engine chạy để cập nhật
+`displayedAimArmed`, nhưng tab Browser pane ở trạng thái `document.hidden=true` (pane không hiển thị phía
+người dùng trong phiên làm việc) khiến trình duyệt tự tạm dừng RAF — xác nhận qua `document.hidden` và một
+test đối chứng (một cú kéo-bắn bình thường, không liên quan gì tới thay đổi, cũng không bắn được trong
+cùng điều kiện). Đã trace tay logic mới khớp đúng ý đồ; cần người dùng tự bắn thử để xác nhận cuối.
+
+---
+
+## 74. Sửa lỗi Gallery: thumbnail level lưu từ editor bị cắt chỉ còn một dải nhỏ (28/08)
+
+Phản hồi kèm ảnh chụp: thumbnail "Level 2" (một level lưu từ editor) trong Gallery chỉ hiện vài pixel màu
+ở mép trên, phần còn lại mất hẳn.
+
+Nguyên nhân: `.pixel-thumb` (`globals.css`) tính `aspect-ratio: var(--cols, 12) / 14` — số `14` hard-code
+khớp riêng level mẫu cũ (Sand Bloom, 12×14). Level lưu từ editor vẽ ở đúng độ phân giải board thật (vd
+60×70) chứ không phải blueprint nhỏ, nên tỉ lệ sai bét: khung thumbnail bị bóp xuống cao bằng khung tính
+cho 14 hàng trong khi nội dung có 70 hàng, `overflow:hidden` cắt mất khoảng 80% phía dưới.
+
+Sửa: `PixelThumb` (`SandGame.tsx`) truyền thêm biến CSS `--rows: level.frame.height` cạnh `--cols` sẵn có;
+CSS đổi thành `aspect-ratio: var(--cols,12) / var(--rows,14)`.
+
+**Kiểm tra:** 96 test pass. Verify bằng cách tiêm một draft tổng hợp 60×70 (đúng hình dạng level lỗi) vào
+`localStorage`, đọc `getComputedStyle`/`getBoundingClientRect` thật của thumbnail trước/sau: trước khi sửa
+container cao chỉ ~22.7px (tỉ lệ sai `60/14`) trong khi cần ~113.5px mới đủ chứa 70 hàng; sau khi sửa
+container đúng 113.5px, chứa đủ cả 4.200 ô.
+
+---
+
+## 75. Thêm vạch chia giữa các nút bottom nav (28/08)
+
+Yêu cầu kèm ảnh: thêm vạch kẻ mảnh giữa các nút (Shop/Skin/Home/Gallery/Customize) ở thanh nav dưới cùng.
+
+`globals.css` — `.hub-nav button:not(:last-child)::after`: vạch dọc 1px, cao 44% chiều cao nút, mờ dần ở
+hai đầu (gradient), đặt ngay trong khoảng `gap` sẵn có giữa các nút chứ không phải border trên chính nút —
+nên không cộng thêm bề rộng và không cần tắt riêng cho nút đang active (nút active chỉ phóng to bubble bên
+trong, khung nút không đổi vị trí).
+
+**Kiểm tra:** 96 test pass. Verify bằng `getComputedStyle(button, '::after')` thật trên dev server: đúng
+4/5 nút có vạch (không có sau nút cuối), kích thước/gradient khớp CSS.
+
+---
+
+## 76. Đồng bộ màu quả bóng đếm đạn theo màu súng, thêm anim cartoon khi đổi màu (28/08)
+
+Yêu cầu kèm ảnh, chia làm 2 lượt phản hồi.
+
+**Lượt 1 — tô màu theo đạn đang nạp:** `SandGame.tsx` đọc `currentAmmo(level, state)` (đầu hàng đợi
+`state.queue`), tô nền `.shots-icon` (chấm tròn trong badge đếm đạn) theo màu đó, `aria-label` nói rõ tên
+màu.
+
+**Lượt 2 — "đổi màu cùng lúc với lúc súng đổi màu, thêm anim cartoon":** phát hiện badge đổi màu SỚM hơn
+súng thật. `state.queue` (React state) cập nhật ngay khi `resolveShot` chạy xong (gọi `onState` ngay lúc va
+chạm), còn quả bóng buồng nạp 3D (`chamberBall`) chỉ đổi màu sau khi *toàn bộ animation lắng cát chạy
+xong* — `SandCannonEngine.advanceBeats` chỉ gán `this.state = resolved` (thứ `syncAmmoModel` đọc để tô màu
+buồng nạp) ở bước cuối, sau khi hết các "beat" rơi/lắng. Sửa bằng state phái sinh `ammoAnim`: giữ nguyên
+màu cũ suốt các phase bận (`PROJECTILE_FLYING/HIT_RESOLUTION/SETTLING/MERGING` — đúng tập `BUSY_PHASES` sẵn
+có), chỉ cho màu mới đi qua khi game rảnh lại — khớp đúng thời điểm engine tự cập nhật buồng nạp.
+
+**Anim cartoon:** `@keyframes shots-icon-pop` (`globals.css`) — squash nhỏ + xoay lệch, overshoot phóng to,
+rồi lắc nhẹ về đúng tỉ lệ (kiểu "exaggerate rồi settle" hoạt hình cổ điển, cùng tinh thần với
+`hub-bubble-pop` đã có). Gắn qua React `key={ammoAnim.bump}` (biến đếm tăng mỗi lần màu thật sự đổi) để
+remount `<span>` — bảo đảm anim chạy lại mỗi lần đổi màu kể cả khi bánh xe quay vòng về đúng màu vừa hiện
+(className không đổi sẽ không tự replay animation CSS).
+
+**Kiểm tra:** 96 test pass, `eslint` sạch (mẫu "set state trong lúc render" hợp lệ theo React docs, không
+bị rule `react-hooks/set-state-in-effect` gắn cờ vì không nằm trong effect). Verify trên dev server: không
+có warning "Maximum update depth" trong console (loại trừ vòng lặp render), màu ban đầu đúng blue khớp
+`SAND_COLOR_HEX.blue` và `aria-label`, `animationName` đọc được đúng là `shots-icon-pop`.
+
+---
+
+## 77. Level editor: đồ thị tổng quan độ khó tất cả màn chơi (28/08)
+
+Yêu cầu: "trong level editor để đồ thị tổng quan độ khó các màn chơi, chấm theo tiêu chí: độ rộng board,
+số lượng màu, màu có xen kẽ nhiều không, số lượng đạn, radius phát bắn".
+
+**`level-difficulty.ts`** (file mới) — `computeDifficulty(draft)`: 5 tiêu chí quy về `[0,1]` rồi lấy trung
+bình × 100, trọng số bằng nhau (đúng 5 tiêu chí người dùng liệt kê, không thiên vị cái nào):
+- `size` — số pixel board / (MAX_WIDTH × MAX_HEIGHT)
+- `colors` — số màu dùng / 10 màu bảng (mục 71)
+- `interleaving` — số vùng liên thông cùng màu (`parseSandLevel` — đúng thuật toán 4-connected game dùng để
+  chia thân/body) chia cho số màu; 1 vùng/màu (khối liền một mảng) = 0 điểm, càng nhiều vùng rời rạc/màu
+  càng tiến về 1 (trần ở 6 vùng/màu)
+- `ammo` — `shotLimit` so với số vùng cần dọn; ≤1 đạn/vùng là chật nhất (1 điểm), ≥4 đạn/vùng là rộng rãi
+  (0 điểm)
+- `radius` — `sortRadius` so với cạnh ngắn của board; ≥35% cạnh ngắn là rộng rãi (0 điểm)
+
+Điểm quy ra nhãn: Easy (<25) / Medium (<50) / Hard (<75) / Very hard.
+
+**`LevelEditor.tsx`/`globals.css`** — mục "Difficulty overview" trong panel Levels, mỗi màn một hàng: tên,
+thanh ngang dài theo điểm và tô màu theo bậc (tái dùng đúng 4 màu bảng cát xanh lá→vàng→cam→đỏ thay vì bịa
+màu mới), điểm số + nhãn; hover ra tooltip breakdown 5 tiêu chí; bấm vào hàng chọn màn đó (giống list level
+bên trên, cùng logic). Điểm cache theo *object identity* của draft (`WeakMap` module-level, cùng kiểu với
+`cachedDrafts` sẵn có trong file) — sửa một màn chỉ thay đúng entry đó trong mảng `drafts`, các màn khác
+giữ nguyên tham chiếu nên không phải tính lại cả danh sách mỗi nét vẽ.
+
+**Kiểm tra:** 96 test pass, `tsc --noEmit` và `eslint` sạch (bản đầu dùng `useRef` làm cache bị rule mới
+`react-hooks/refs` chặn — "không được đọc ref lúc render" — nên đổi sang `WeakMap` module-level, cùng mẫu
+`cachedDrafts` đã có sẵn trong file). Verify trên dev server: màn khởi tạo mặc định ra điểm 47/10/0/0/43 →
+Easy; tiêm một màn tổng hợp 10 màu xen kẽ dày đặc, 8 đạn, radius 1 ra đúng 47/100/100/100/95 → Very hard;
+bấm vào hàng "Very hard" chuyển đúng màn đang chọn ở cả list level bên trên và ô Name.

@@ -55,6 +55,10 @@ export const LETTER_BY_SAND_COLOR: Record<SandColor, string> = {
   blue: "B",
   purple: "P",
   orange: "O",
+  cyan: "C",
+  pink: "M",
+  lime: "L",
+  brown: "N",
 };
 
 export const EMPTY_CELL = ".";
