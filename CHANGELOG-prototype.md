@@ -3885,3 +3885,75 @@ dính theo nòng súng giật lùi.
 không lỗi console suốt chuỗi bấm Play → súng lắp ráp → mở khoá gameplay. Không mô phỏng được một phát bắn
 thật (cần raycast 3D đầy đủ) để chụp khói lúc nổ, nên xác nhận chủ yếu qua rà soát code hình học và luồng
 gọi hàm.
+
+---
+
+## 64. Sửa tốc độ cát rơi lúc nhanh lúc "bị delay" (27/08)
+
+Phản hồi: quan sát thấy animation cát rơi khi settle đôi lúc nhanh, đôi lúc như bị khựng/delay, không đều.
+
+**Nguyên nhân:** `perStep` (thời lượng mỗi bước settle) được tính bằng cách chia đều một ngân sách cố định
+(`SETTLE_BUDGET_MS = 1350ms`) cho số bước `timed`, rồi kẹp trong khoảng `[SETTLE_STEP_MIN_MS,
+SETTLE_STEP_MAX_MS]` = `[15, 58]`ms. Sàn 15ms/bước chỉ đúng ý đồ khi số bước vừa phải — với cascade lớn
+(sập một mảng to, hàng trăm bước `GRAIN_PASS`), sàn này không có trần chặn tổng thời gian: 300 bước × 15ms
+= 4.5 giây, đúng cảm giác "delay" người dùng thấy. Ngược lại cascade rất nhỏ (vài bước) bị kẹp lên trần
+58ms/bước, tổng chỉ còn 60–300ms, cảm giác "quá nhanh".
+
+**Sửa:** thêm hằng số `SETTLE_TOTAL_MAX_MS = 1900` và gom logic tính `perStep` (trước đó lặp lại y hệt ở
+cả `handleImpact` lẫn `updateWind`) vào một hàm dùng chung `settleStepMs(timed)`: lấy giá trị nhỏ hơn giữa
+công thức ngân sách/kẹp cũ và `SETTLE_TOTAL_MAX_MS / timed`. Với cascade siêu lớn, `perStep` tự động giảm
+xuống dưới sàn 15ms để tổng thời gian không bao giờ vượt ~1.9 giây, thay vì chạy lì tới nhiều giây.
+
+**Kiểm tra:** `tsc --noEmit` sạch, `npm test` không có test nào pin cứng các hằng số thời gian này nên
+không ảnh hưởng. Verify qua dev server không lỗi console.
+
+---
+
+## 65. UI/UX pastel chill theo ảnh tham chiếu; tăng saturation, bỏ pulse nút Play, đổi font Super Pandora (28/08)
+
+Yêu cầu ban đầu: dựa trên loạt ảnh reference (game xếp bóng theo màu kiểu casual, nền pastel, card bo
+tròn, nút phẳng không gradient/shadow), làm lại toàn bộ UI/UX theo hướng đó — màu pastel, trơn láng, bo
+tròn nhẹ nhàng "chill", được phép chỉnh sửa thêm và đổi màu cát/súng nếu hợp tông.
+
+**Đổi toàn bộ palette** (`globals.css` `:root`): `--ink`, `--muted`, `--panel`, `--line`, `--accent`
+(xanh lá "go"), `--danger` (đỏ san hô "quit"), `--gold` (coin), `--locked`, `--bg` (nền xanh ngọc pastel).
+Xoá sạch `gradient(`/`box-shadow` khỏi toàn bộ UI game (nút Play, nút kết quả next/quit, settings menu,
+thanh nav dưới, toast, HUD...) — thay bằng fill phẳng + border đậm hơn một tông kiểu "sticker outline".
+Bo tròn tăng nhẹ ở card/panel/nút (18→20, 22→24, 14→16px...). Level Editor được tách token riêng
+(`--ink`/`--panel`/... khai báo lại ngay trong `.editor-shell`) để giữ nguyên theme tối cũ, không bị vỡ
+layout do dùng chung biến với game.
+
+**Đổi màu cát + súng cho hợp tông** (`SandCannonEngine.ts`): 6 màu cát (`SAND_COLOR_HEX`) chuyển sang tông
+pastel-candy; súng đổi thân xanh dương pastel, phần tối tím-navy nhạt, accent vàng khớp `--gold`; khung
+tranh từ xám/gỗ sang trắng phẳng + backing xanh ngọc nhạt; fog + ánh sáng chỉnh lại khớp nền mới.
+
+**Phản hồi ngay sau đó, xử lý trong cùng đợt:**
+- *"Màu nhợt/tái hơn ảnh reference, mất độ tươi rực"* — tăng saturation toàn bộ: token CSS, 6 màu cát,
+  màu súng/khung tranh/fog, kể cả loading screen (nền + thanh progress) cho đồng bộ.
+- *"Nút Play Level X không có hiệu ứng Pulse"* — xoá animation + keyframe `hub-play-pulse` không dùng
+  nữa, nút đứng yên tới khi chạm vào.
+- *"Dùng font [Super Pandora]"* — copy file font người dùng gửi vào `public/fonts/SuperPandora.ttf`,
+  khai báo `@font-face`, đặt làm font chính cho `body` (toàn game, fallback Arial nếu lỗi load). Level
+  Editor giữ font hệ thống vì là công cụ nhập liệu dày đặc số/chữ nhỏ, không hợp font display.
+
+**Kiểm tra:** `tsc --noEmit` sạch, `npm test` không phát sinh lỗi mới (1 fail còn lại từ trước, không liên
+quan). Verify bằng screenshot thật qua dev server (home screen, trong game, settings menu, gallery) — màu
+sắc tươi rực rõ rệt, `document.fonts` xác nhận font load thành công, computed style xác nhận hết
+animation trên nút Play, và grep xác nhận không còn `gradient`/`box-shadow` nào trong UI game (chỉ còn
+trong `.editor-*` đã cô lập riêng).
+
+---
+
+## 66. Bỏ hiệu ứng giảm opacity của súng khi sand settling (28/08)
+
+Phản hồi: yêu cầu bỏ hẳn tính năng cannon busy-fade đã thêm trước đó (mục 62) — súng không còn mờ đi lúc
+game đang bận (bắn/settling/merge) nữa.
+
+Xoá toàn bộ: hằng số `CANNON_FADE_PHASES`/`CANNON_BUSY_OPACITY`/`CANNON_FADE_SECONDS`, field
+`cannonMaterials`/`cannonFade`, method `collectCannonMaterials()` và `updateCannonFade()`, lệnh gọi trong
+`animate()`. Vầng sáng + đèn buồng đạn (vốn bị nhân thêm hệ số fade) trả về đúng công thức gốc. Súng giờ
+giữ nguyên độ hiển thị 100% xuyên suốt mọi phase. Dấu 3 chấm báo "đang bận" (mục 62) không đổi, vẫn giữ
+nguyên.
+
+**Kiểm tra:** `tsc --noEmit` sạch, `npm test` không có lỗi mới. Verify qua dev server: không lỗi console
+suốt chuỗi bấm Play → súng lắp ráp → mở khoá gameplay.
