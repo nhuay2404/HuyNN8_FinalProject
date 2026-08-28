@@ -42,13 +42,18 @@ import type {
 // radius disc, win/lose — runs directly on those pixels. Nothing here fakes a
 // finer look on top of a coarser truth.
 
+// Candy, not pastel-washed — the first pass at these leaned too far toward
+// desaturated and read as faded next to the reference. Punched back up in
+// saturation, in the same chill hue family as the chrome around them (see
+// :root in globals.css), while staying far enough apart in hue that the
+// colour-matching rule never gets ambiguous.
 export const SAND_COLOR_HEX: Record<SandColor, number> = {
-  red: 0xff3d4d,
-  green: 0x24e07f,
-  yellow: 0xffd21f,
-  blue: 0x2f9dff,
-  purple: 0x9d5cff,
-  orange: 0xff8a1f,
+  red: 0xff4d64,
+  green: 0x3ecc5e,
+  yellow: 0xffc233,
+  blue: 0x3aa0f5,
+  purple: 0x9a5cf0,
+  orange: 0xff8a33,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -174,6 +179,15 @@ const SPIN_RETURN_SECONDS = 1;
 const SETTLE_BUDGET_MS = 1350;
 const SETTLE_STEP_MIN_MS = 15;
 const SETTLE_STEP_MAX_MS = 58;
+// SETTLE_STEP_MIN_MS is a floor on each step, not on the total — for a big
+// enough cascade (SETTLE_BUDGET_MS / SETTLE_STEP_MIN_MS ≈ 90 steps and up)
+// that floor forces the total past the budget instead of holding it there,
+// and the total keeps climbing the more steps a cascade has (a 300-step
+// collapse would run 4.5s at the floor alone). This is the actual "how long
+// is too long" ceiling Open Decision 17 asks for: it wins over the per-step
+// floor once the two disagree, so nothing ever settles for that long no
+// matter how big the cascade is — see `settleStepMs`.
+const SETTLE_TOTAL_MAX_MS = 1900;
 const CLEAR_DURATION_MS = 300;
 const NO_MATCH_SHAKE_MS = 360;
 /** A beat of stillness after the last grain lands, so the new board can be read. */
@@ -490,7 +504,12 @@ export class SandCannonEngine {
     this.sandMeshBack.rotation.y = Math.PI;
 
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid", "is-cooling-down");
-    this.scene.fog = new THREE.FogExp2(0x2a1c46, 0.02);
+    // Matching --bg in globals.css — the canvas is transparent wherever
+    // nothing is drawn, so the frame and cannon need to fade into that same
+    // pastel sky as they recede, not into a colour of their own, for the two
+    // to blend seamlessly into one continuous "wall" the picture and the
+    // cannon stand out against.
+    this.scene.fog = new THREE.FogExp2(0x7fdde1, 0.02);
     this.camera.position.set(0, 3.3, 13.6);
     this.camera.lookAt(0, 1, -0.5);
     this.renderer = acquireRenderer(this, this.host);
@@ -514,12 +533,16 @@ export class SandCannonEngine {
 
   // ---- scene ------------------------------------------------------------
 
+  /** Neutral on purpose: a warm key or a blue rim would tint every lit
+   * material toward that hue, and the whole point of this pass is that
+   * nothing lit — the frame, the cannon's own grey and gold — carries a cast
+   * that competes with the sand picture's actual colours. */
   private buildLighting() {
-    this.scene.add(new THREE.HemisphereLight(0xfff0d8, 0x3a2a66, 1.5));
-    const key = new THREE.DirectionalLight(0xfff3dd, 2.1);
+    this.scene.add(new THREE.HemisphereLight(0xf2f2f2, 0x8fa8ab, 1.5));
+    const key = new THREE.DirectionalLight(0xffffff, 2.1);
     key.position.set(-4, 7.5, 6.5);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x89b7ff, 0.85);
+    const rim = new THREE.DirectionalLight(0xababab, 0.85);
     rim.position.set(5, 2.5, -5);
     this.scene.add(rim);
   }
@@ -548,13 +571,18 @@ export class SandCannonEngine {
     const backing = this.track(
       new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
-    const backingMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0x241a3d }));
+    // Pastel, not neutral grey: a shade of the same sky-blue behind the frame
+    // (--bg in globals.css) so the recess reads as depth in one continuous
+    // colour rather than a border competing with the picture it sets off.
+    const backingMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0x6fcdd1 }));
     const back = new THREE.Mesh(backing, backingMaterial);
     back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
 
-    const railMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xc99a5b, emissive: 0x3a2410, emissiveIntensity: 0.35 }));
-    const innerMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0x8a6438 }));
+    // Flat white, no emissive glow — the "sticker" outline the rest of the
+    // chrome uses instead of a lit highlight.
+    const railMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xffffff }));
+    const innerMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xc4e8ea }));
     const horizontal = this.track(new RoundedBoxGeometry(openWidth + border * 2, border, depth, 2, border * 0.22));
     const vertical = this.track(new RoundedBoxGeometry(border, openHeight, depth, 2, border * 0.22));
 
@@ -790,9 +818,12 @@ export class SandCannonEngine {
     this.muzzleAnchor.position.z = MUZZLE_Z;
     this.barrelPivot.add(this.muzzleAnchor);
 
-    const body = this.track(new THREE.MeshLambertMaterial({ color: 0xa2b6ec }));
-    const dark = this.track(new THREE.MeshLambertMaterial({ color: 0x3d4680 }));
-    const accent = this.track(new THREE.MeshLambertMaterial({ color: 0xffd54a }));
+    // Pastel, matching the chrome around it now: a soft powder-blue hull, a
+    // muted lavender-navy for the shadowed parts, and the same candy gold the
+    // CSS uses for coins and the "go" buttons (--gold).
+    const body = this.track(new THREE.MeshLambertMaterial({ color: 0x8fc0f0 }));
+    const dark = this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0 }));
+    const accent = this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 }));
 
     const base = new THREE.Mesh(this.track(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40)), dark);
     this.cannonRoot.add(base);
@@ -800,7 +831,7 @@ export class SandCannonEngine {
     // repaint independently of the muzzle ring once ammo starts cycling.
     this.baseRing = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
-      this.track(new THREE.MeshLambertMaterial({ color: 0xffd54a })),
+      this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 })),
     );
     this.baseRing.rotation.x = Math.PI / 2;
     this.baseRing.position.y = 0.27;
@@ -903,7 +934,7 @@ export class SandCannonEngine {
     // the bore rather than parked on top of it.
     const throat = new THREE.Mesh(
       this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 0.8, CHAMBER_BALL_RADIUS * 0.95, 0.3, 16, 1, true)),
-      this.track(new THREE.MeshLambertMaterial({ color: 0x3d4680, side: THREE.DoubleSide })),
+      this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0, side: THREE.DoubleSide })),
     );
     throat.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y - 0.2, CHAMBER_POSITION.z);
     this.barrelPivot.add(throat);
@@ -989,10 +1020,10 @@ export class SandCannonEngine {
     if (this.muzzleBand) {
       // Grey once the wheel is spent: an empty cannon must not still be
       // advertising a colour it can no longer fire.
-      (this.muzzleBand.material as THREE.MeshBasicMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x6a6f8f);
+      (this.muzzleBand.material as THREE.MeshBasicMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x9fb3bb);
     }
     if (this.baseRing) {
-      (this.baseRing.material as THREE.MeshLambertMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x6a6f8f);
+      (this.baseRing.material as THREE.MeshLambertMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x9fb3bb);
     }
     this.feedBalls.forEach((ball, index) => {
       const color = upcoming[index];
@@ -1073,7 +1104,7 @@ export class SandCannonEngine {
     // it against a busy multi-colour picture.
     const aimGlowMaterial = this.track(
       new THREE.MeshBasicMaterial({
-        color: 0xfff2c4,
+        color: 0xffffff,
         transparent: true,
         opacity: 0.4,
         depthWrite: false,
@@ -1692,9 +1723,7 @@ export class SandCannonEngine {
     // REINDEX only relabels, so it does not belong in the division that decides
     // how fast the pouring plays.
     const timed = steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
-    const perStep = timed
-      ? THREE.MathUtils.clamp(SETTLE_BUDGET_MS / timed, SETTLE_STEP_MIN_MS, SETTLE_STEP_MAX_MS)
-      : 0;
+    const perStep = this.settleStepMs(timed);
     this.beats = [
       { kind: "CLEAR", cells: doomed, ms: CLEAR_DURATION_MS },
       ...steps.map((step): Beat => ({
@@ -1714,6 +1743,16 @@ export class SandCannonEngine {
   }
 
   // ---- settle playback ---------------------------------------------------
+
+  /**
+   * How long each non-REINDEX settle step gets, given how many of them a
+   * shot (or gust) produced — see the comment on `SETTLE_TOTAL_MAX_MS`.
+   */
+  private settleStepMs(timed: number): number {
+    if (!timed) return 0;
+    const budgeted = THREE.MathUtils.clamp(SETTLE_BUDGET_MS / timed, SETTLE_STEP_MIN_MS, SETTLE_STEP_MAX_MS);
+    return Math.min(budgeted, SETTLE_TOTAL_MAX_MS / timed);
+  }
 
   private startBeat(beat: Beat) {
     switch (beat.kind) {
@@ -1880,9 +1919,7 @@ export class SandCannonEngine {
     this.callbacks.onEvent?.({ type: "WIND", direction: phase.direction });
 
     const timed = resolution.steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
-    const perStep = timed
-      ? THREE.MathUtils.clamp(SETTLE_BUDGET_MS / timed, SETTLE_STEP_MIN_MS, SETTLE_STEP_MAX_MS)
-      : 0;
+    const perStep = this.settleStepMs(timed);
     this.beats = [
       ...resolution.steps.map((step): Beat => ({
         kind: "STEP",

@@ -144,34 +144,23 @@ function streaks() {
 function cannon() {
   return [
     `<g transform="rotate(-36 118 596)">`,
-    `<rect x="86" y="386" width="64" height="226" rx="32" fill="#cfc9f2"/>`,
-    `<ellipse cx="118" cy="392" rx="32" ry="13" fill="#a79ce0"/>`,
-    `<rect x="86" y="424" width="64" height="15" rx="7" fill="#6f5fc0" opacity=".55"/>`,
+    `<rect x="86" y="386" width="64" height="226" rx="32" fill="#dce6f5"/>`,
+    `<ellipse cx="118" cy="392" rx="32" ry="13" fill="#b9c9e8"/>`,
+    `<rect x="86" y="424" width="64" height="15" rx="7" fill="#8fa3cf" opacity=".55"/>`,
     `</g>`,
-    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="#4b3a7d"/>`,
-    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="none" stroke="#ffd21f" stroke-width="15" stroke-dasharray="96 400" stroke-dashoffset="-24"/>`,
-    `<circle cx="118" cy="676" r="26" fill="#ffd21f" opacity=".92"/>`,
+    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="#6f7fa8"/>`,
+    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="none" stroke="#ffcf5c" stroke-width="15" stroke-dasharray="96 400" stroke-dashoffset="-24"/>`,
+    `<circle cx="118" cy="676" r="26" fill="#ffcf5c" opacity=".92"/>`,
   ].join("");
 }
 
 const ART = `<svg class="loading-art" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
 <defs>
-<linearGradient id="loadSky" x1="1" y1="0" x2="0" y2="1">
-<stop offset="0" stop-color="#7a45e0"/><stop offset=".52" stop-color="#3a2b9e"/><stop offset="1" stop-color="#152f7a"/>
-</linearGradient>
-<radialGradient id="loadGlowTop" cx=".78" cy=".08" r=".6">
-<stop offset="0" stop-color="#a678ff" stop-opacity=".55"/><stop offset="1" stop-color="#a678ff" stop-opacity="0"/>
-</radialGradient>
-<radialGradient id="loadGlowFoot" cx=".12" cy="1" r=".7">
-<stop offset="0" stop-color="#2bd6cd" stop-opacity=".3"/><stop offset="1" stop-color="#2bd6cd" stop-opacity="0"/>
-</radialGradient>
 <linearGradient id="loadStreak" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0" stop-color="#ffffff" stop-opacity="0"/><stop offset=".5" stop-color="#ffffff" stop-opacity=".3"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
 </linearGradient>
 </defs>
-<rect width="390" height="700" fill="url(#loadSky)"/>
-<rect width="390" height="700" fill="url(#loadGlowTop)"/>
-<rect width="390" height="700" fill="url(#loadGlowFoot)"/>
+<rect width="390" height="700" fill="#7fdde1"/>
 ${streaks()}
 ${specks()}
 ${cluster()}

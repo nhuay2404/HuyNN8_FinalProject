@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import Link from "next/link";
 import { SandCannonEngine, SAND_COLOR_HEX, type SandEngineEvent } from "./game/SandCannonEngine";
 import { BUILT_IN_LEVELS } from "./game/sand-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
@@ -449,9 +448,9 @@ export default function SandGame() {
                   <button type="button" onClick={goHome}>
                     <span aria-hidden="true">⌂</span> Home
                   </button>
-                  <Link href="/editor" onClick={() => setMenuOpen(false)}>
+                  <a href="/editor" onClick={() => setMenuOpen(false)}>
                     <span aria-hidden="true">✎</span> Level editor
-                  </Link>
+                  </a>
                   <button type="button" onClick={() => { restart(); setMenuOpen(false); }}>
                     <span aria-hidden="true">⟲</span> Restart
                   </button>
@@ -565,12 +564,15 @@ export default function SandGame() {
                   key={entry}
                   type="button"
                   className={entry === tab ? "is-active" : ""}
+                  data-tab={entry}
                   onClick={() => setTab(entry)}
                   aria-current={entry === tab ? "page" : undefined}
                   aria-label={HUB_TAB_NAME[entry]}
                   title={HUB_TAB_NAME[entry]}
                 >
-                  <HubIcon tab={entry} />
+                  <span className="hub-nav-bubble">
+                    <HubIcon tab={entry} />
+                  </span>
                 </button>
               ))}
             </nav>
