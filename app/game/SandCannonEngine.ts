@@ -10,6 +10,8 @@ import {
   cellKey,
   createSandGameState,
   currentAmmo,
+  effectiveSortRadius,
+  getBoosterCharges,
   groupCells,
   expandLevelForPixelBoard,
   nextAmmo,
@@ -18,6 +20,7 @@ import {
   resolveWind,
 } from "./sand-rules";
 import type {
+  BoosterType,
   CellCoord,
   SandColor,
   WindDirection,
@@ -81,8 +84,30 @@ const AIM_CURSOR_HORIZONTAL_RATIO = 0.39;
 const AIM_CURSOR_UP_RATIO = 0.4;
 const AIM_CURSOR_DOWN_RATIO = 0.15;
 const RECOIL_TRAVEL = 0.23;
+/**
+ * The picture frame's own flinch on impact — a light, quick kick, not the
+ * barrel's recoil. `frameRecoil` decays at this rate per second (same shape
+ * as `recoil` above); `FRAME_RECOIL_TILT` is the peak tilt in radians, and
+ * `FRAME_RECOIL_PUSH` the peak backward nudge along Z, both scaled by how far
+ * off-centre the hit landed — a dead-centre hit still nudges straight back,
+ * an edge hit rocks the frame toward that edge as well.
+ */
+const FRAME_RECOIL_DECAY_PER_SECOND = 7.5;
+const FRAME_RECOIL_TILT = 0.05;
+const FRAME_RECOIL_PUSH = 0.05;
 const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
 const MUZZLE_Z = -2.18;
+/**
+ * Uniform shrink applied to the whole rig, base to muzzle.
+ *
+ * At full elevation the barrel used to swing high enough to cover
+ * `.booster-hud` sitting above it — the whole model reads smaller purely so
+ * that raised reach stays clear of the tray, not because "full size" ever
+ * looked wrong. Scaled around `cannonRoot`'s own local origin (roughly the
+ * base's vertical centre), so the model shrinks toward that point from both
+ * ends rather than just getting shorter at the top.
+ */
+const CANNON_MODEL_SCALE = 0.8;
 
 // ---- cannon entrance (home screen -> gameplay) ---------------------------
 // The gun is hidden entirely on the home screen (`buildCannon`) so the
@@ -138,11 +163,45 @@ const CHAMBER_GLOW_HZ = 1.5;
 /** Wider than the bore at that point, or the band is buried inside the barrel. */
 const MUZZLE_BAND_RADIUS = 0.42;
 
+// ---- booster overlay ------------------------------------------------------
+// booster-radius-prism-spec.md §6: a ring layered outside the chamber round
+// and the muzzle band while a booster is armed, so the two colour systems —
+// "what ammo is loaded" and "what buff is riding on it" — read as stacked
+// rather than as one replacing the other.
+/** Blue, per spec §6, for Radius Overcharge's overlay ring. Exported so the
+ * HUD button drawn in `SandGame.tsx` uses this exact hue rather than a second
+ * guess at "the blue". */
+export const BOOSTER_RADIUS_RING_HEX = 0x4fc3ff;
+/**
+ * Seven bands for Prism Shot's overlay ring — spec §6's "quang phổ" (spectrum)
+ * language, reused from the retired Rainbow Target/Weak Point asset. The game's
+ * own wheel only has six colours, so an indigo is inserted between blue and
+ * purple to make a seventh band, rather than repeating one of the six.
+ * Exported for the same reason as `BOOSTER_RADIUS_RING_HEX` above — one HUD
+ * button reuses these colours too.
+ */
+export const PRISM_SPECTRUM_HEX = [0xff4d64, 0xff8a33, 0xffc233, 0x3ecc5e, 0x3aa0f5, 0x5b6ee8, 0x9a5cf0];
+/** Gap between spectrum bands, as a fraction of one band's arc — enough that
+ * seven flat-coloured wedges actually read as seven, not as one ring. */
+const PRISM_BAND_GAP_RATIO = 0.08;
+/** How large the projectile reads while Radius Overcharge is riding on it —
+ * spec §6 asks the bullet itself to look different, not just the chamber. */
+const BOOSTER_PROJECTILE_SCALE = 1.6;
+/** Full hue cycles per second for a Prism Shot bullet in flight. */
+const PRISM_PROJECTILE_HUE_HZ = 1.4;
+
 // ---- board presentation --------------------------------------------------
 /** The painting is fitted into this opening whatever the authored grid is. */
 const FIT_WIDTH = 5.4;
 const FIT_HEIGHT = 6.15;
-const FRAME_CENTER_Y = 1.95;
+/** Raised from the pivot's original 1.95: leaves a band of open sky between
+ * the frame's bottom edge and the cannon (CANNON_ROOT_POSITION, unmoved) for
+ * `.booster-hud` to sit in. Pushed as high as it safely goes — past ~2.6 the
+ * frame's own top edge starts clipping out of the camera's vertical FOV on
+ * the narrowest aspect the resize() logic ever produces (portrait capped at
+ * FIT_WIDTH-driven 430px wide against the 680px min-height, i.e. the FOV-37
+ * branch), since the camera/lookAt below are fixed and never compensate. */
+const FRAME_CENTER_Y = 2.6;
 const SAND_PLANE_Z = -2.3;
 /** Where the pixel plane sits inside the recess, as a fraction of one pixel's world size. */
 const PLANE_LOCAL_Z_RATIO = 0.5;
@@ -232,12 +291,17 @@ export type SandEngineEvent =
   | { type: "WIND_END" }
   /** One gust inside a blowing phase. */
   | { type: "WIND"; direction: WindDirection }
-  | { type: "SETTLE_END" };
+  | { type: "SETTLE_END" }
+  /** A booster was just armed — waiting on the next shot to spend it. */
+  | { type: "BOOSTER_ARMED"; booster: BoosterType };
 
 export type SandEngineCallbacks = {
   onState: (state: SandGameState) => void;
   onEvent?: (event: SandEngineEvent) => void;
   onFirstFrame?: () => void;
+  /** Fires whenever the armed booster changes — armed, or spent the instant
+   * a shot leaves the barrel. `null` means neither is armed. */
+  onBoosterChange?: (armed: BoosterType | null) => void;
 };
 
 /** One simulated grain — one pixel of the board's canvas, one cell of the grid. */
@@ -264,6 +328,10 @@ type Projectile = {
   previous: THREE.Vector3;
   time: number;
   color: SandColor;
+  /** Whichever booster was armed when this round left the barrel — already
+   * spent (spec §7.1), just riding along so `handleImpact` can hand it to
+   * `resolveShot` once the flight ends. */
+  booster: BoosterType | null;
 };
 
 type Beat =
@@ -326,6 +394,20 @@ export class SandCannonEngine {
   private aimRingGlow: THREE.Mesh | null = null;
   private sortRing: THREE.Mesh | null = null;
   private sortRingAge = 0;
+  /** How much bigger than its base geometry the current sortRing flash is
+   * drawn — 2x (clamped) for a shot that resolved under Radius Overcharge, so
+   * the flash marking what a boosted shot actually swept isn't sized for the
+   * un-boosted disc. Applied on top of the settle-in animation each frame. */
+  private sortRingScale = 1;
+
+  /** Which booster, if any, is armed for the next shot — spec §3: at most one. */
+  private armedBooster: BoosterType | null = null;
+  /** Outer ring around the chambered round / muzzle band for each booster —
+   * only one pair is ever visible at once, matching `armedBooster`. */
+  private boosterChamberRadiusRing: THREE.Mesh | null = null;
+  private boosterChamberPrismRing: THREE.Group | null = null;
+  private boosterMuzzleRadiusRing: THREE.Mesh | null = null;
+  private boosterMuzzlePrismRing: THREE.Group | null = null;
 
   /** The live round in the breech, its halo, and the light it throws. */
   private chamberBall: THREE.Mesh | null = null;
@@ -404,6 +486,16 @@ export class SandCannonEngine {
   private yaw = CANNON_NEUTRAL_YAW;
   private elevation = CANNON_NEUTRAL_ELEVATION;
   private recoil = 0;
+  /**
+   * The frame's own flinch: 0..1, decaying every step (see `step`).
+   * `frameRecoilOffsetX/Y` are the impact point's position within the frame,
+   * each -1..1 from centre, captured once at the moment of impact and held
+   * fixed while `frameRecoil` decays back to 0 — that pair is what makes the
+   * kick lean toward wherever the shot actually landed.
+   */
+  private frameRecoil = 0;
+  private frameRecoilOffsetX = 0;
+  private frameRecoilOffsetY = 0;
   private nextShotAt = 0;
   private aimPointer: number | null = null;
   private readonly aimStart = new THREE.Vector2();
@@ -788,6 +880,7 @@ export class SandCannonEngine {
     // off the picture, not the gun it will be shot with. `setIdle` toggles this.
     this.cannonRoot.visible = false;
     this.cannonRoot.position.copy(CANNON_ROOT_POSITION);
+    this.cannonRoot.scale.setScalar(CANNON_MODEL_SCALE);
     this.scene.add(this.cannonRoot);
     this.turret.position.y = TURRET_REST_Y;
     this.cannonRoot.add(this.turret);
@@ -841,6 +934,7 @@ export class SandCannonEngine {
     this.barrelVisual.add(this.muzzleBand);
 
     this.buildAmmoFeed(dark);
+    this.buildBoosterOverlay();
     this.applyCannonTransform();
   }
 
@@ -938,6 +1032,102 @@ export class SandCannonEngine {
     this.syncAmmoModel(false);
   }
 
+  /**
+   * A ring built from `PRISM_SPECTRUM_HEX.length` flat-coloured wedges rather
+   * than one mesh, so it needs no shader to show several colours at once —
+   * every other coloured surface on this cannon is a single flat
+   * `MeshBasicMaterial`, and a wedge ring stays exactly that.
+   */
+  private buildSpectrumRing(innerRadius: number, outerRadius: number): THREE.Group {
+    const group = new THREE.Group();
+    const bandCount = PRISM_SPECTRUM_HEX.length;
+    const arc = (Math.PI * 2) / bandCount;
+    const gap = arc * PRISM_BAND_GAP_RATIO;
+    PRISM_SPECTRUM_HEX.forEach((hex, index) => {
+      const geometry = this.track(
+        new THREE.RingGeometry(innerRadius, outerRadius, 10, 1, index * arc + gap / 2, arc - gap),
+      );
+      const material = this.track(
+        new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide, transparent: true, opacity: 0.95 }),
+      );
+      group.add(new THREE.Mesh(geometry, material));
+    });
+    return group;
+  }
+
+  /**
+   * The booster overlay: a ring just outside the chambered round, and another
+   * just outside the muzzle band, one pair per booster. Both start hidden —
+   * `syncBoosterOverlay` shows whichever pair matches `armedBooster`.
+   */
+  private buildBoosterOverlay() {
+    const chamberInner = CHAMBER_BALL_RADIUS * 2.05;
+    const chamberOuter = chamberInner + 0.05;
+    this.boosterChamberRadiusRing = new THREE.Mesh(
+      this.track(new THREE.TorusGeometry((chamberInner + chamberOuter) / 2, 0.045, 10, 28)),
+      this.track(new THREE.MeshBasicMaterial({ color: BOOSTER_RADIUS_RING_HEX, transparent: true, opacity: 0.8 })),
+    );
+    this.boosterChamberRadiusRing.position.copy(CHAMBER_POSITION);
+    this.boosterChamberRadiusRing.visible = false;
+    this.barrelPivot.add(this.boosterChamberRadiusRing);
+
+    this.boosterChamberPrismRing = this.buildSpectrumRing(chamberInner, chamberOuter);
+    this.boosterChamberPrismRing.position.copy(CHAMBER_POSITION);
+    this.boosterChamberPrismRing.visible = false;
+    this.barrelPivot.add(this.boosterChamberPrismRing);
+
+    // The muzzle pair sits just outside the existing colour band, on
+    // `barrelVisual` like that band — it has to recoil with the barrel, not
+    // hang in the air where the barrel used to be.
+    const muzzleInner = MUZZLE_BAND_RADIUS + 0.06;
+    const muzzleOuter = muzzleInner + 0.05;
+    this.boosterMuzzleRadiusRing = new THREE.Mesh(
+      this.track(new THREE.TorusGeometry((muzzleInner + muzzleOuter) / 2, 0.045, 10, 32)),
+      this.track(new THREE.MeshBasicMaterial({ color: BOOSTER_RADIUS_RING_HEX, transparent: true, opacity: 0.8 })),
+    );
+    this.boosterMuzzleRadiusRing.position.z = MUZZLE_Z + 0.2;
+    this.boosterMuzzleRadiusRing.visible = false;
+    this.barrelVisual.add(this.boosterMuzzleRadiusRing);
+
+    this.boosterMuzzlePrismRing = this.buildSpectrumRing(muzzleInner, muzzleOuter);
+    this.boosterMuzzlePrismRing.position.z = MUZZLE_Z + 0.2;
+    this.boosterMuzzlePrismRing.visible = false;
+    this.barrelVisual.add(this.boosterMuzzlePrismRing);
+  }
+
+  /** Shows whichever overlay ring pair matches `armedBooster`, hides the rest. */
+  private syncBoosterOverlay() {
+    const isRadius = this.armedBooster === "radiusOvercharge";
+    const isPrism = this.armedBooster === "prismShot";
+    if (this.boosterChamberRadiusRing) this.boosterChamberRadiusRing.visible = isRadius;
+    if (this.boosterMuzzleRadiusRing) this.boosterMuzzleRadiusRing.visible = isRadius;
+    if (this.boosterChamberPrismRing) this.boosterChamberPrismRing.visible = isPrism;
+    if (this.boosterMuzzlePrismRing) this.boosterMuzzlePrismRing.visible = isPrism;
+  }
+
+  /** How much bigger than the level's base `sortRadius` a shot armed with
+   * `booster` reaches, as a scale factor — 1 for no booster. Shared by the
+   * aim-ring preview and the sortRing flash so neither ever shows a reach the
+   * shot itself does not have. */
+  private boosterRadiusScale(booster: BoosterType | null): number {
+    if (this.sortRadius <= 0) return 1;
+    return effectiveSortRadius(this.level, booster) / this.sortRadius;
+  }
+
+  /**
+   * Arms `type` for the next shot. A no-op whenever a booster — this one or
+   * the other — is already armed: spec §3 gives boosters no cancel and no
+   * swap, so the only way out of an armed state is to fire it.
+   */
+  armBooster(type: BoosterType) {
+    if (!this.canInteract() || this.armedBooster !== null) return;
+    if (getBoosterCharges(type) <= 0) return;
+    this.armedBooster = type;
+    this.syncBoosterOverlay();
+    this.callbacks.onBoosterChange?.(this.armedBooster);
+    this.callbacks.onEvent?.({ type: "BOOSTER_ARMED", booster: type });
+  }
+
   /** Where the queued round `slot` places along the rail — 0 is the chamber. */
   private feedSlotPosition(slot: number) {
     return new THREE.Vector3(
@@ -1032,6 +1222,20 @@ export class SandCannonEngine {
       this.chamberGlow.scale.setScalar((0.86 + 0.1 * breath + 0.2 * eased) * (0.45 + 0.55 * seated));
     }
     if (this.chamberLight) this.chamberLight.intensity = strength * 3.4;
+
+    // The overlay rings breathe and spin so an armed booster never looks like
+    // a static sticker slapped on the gun — same idle-never-frozen intent as
+    // the chamber halo just above, reusing its `breath` sine.
+    if (this.armedBooster === "radiusOvercharge") {
+      const pulse = 0.55 + 0.35 * breath;
+      const chamberMat = this.boosterChamberRadiusRing?.material as THREE.MeshBasicMaterial | undefined;
+      if (chamberMat) chamberMat.opacity = pulse;
+      const muzzleMat = this.boosterMuzzleRadiusRing?.material as THREE.MeshBasicMaterial | undefined;
+      if (muzzleMat) muzzleMat.opacity = pulse;
+    } else if (this.armedBooster === "prismShot") {
+      this.boosterChamberPrismRing?.rotation.set(0, 0, (this.boosterChamberPrismRing.rotation.z + FIXED_STEP * 0.7) % (Math.PI * 2));
+      this.boosterMuzzlePrismRing?.rotation.set(0, 0, (this.boosterMuzzlePrismRing.rotation.z + FIXED_STEP * 0.7) % (Math.PI * 2));
+    }
   }
 
   /**
@@ -1172,11 +1376,12 @@ export class SandCannonEngine {
     ring.position.y = worldY;
   }
 
-  private spawnSortRing(x: number, y: number) {
+  private spawnSortRing(x: number, y: number, scale = 1) {
     if (!this.sortRing) return;
     this.moveRingToCell(this.sortRing, x, y);
     this.sortRing.visible = true;
-    this.sortRing.scale.setScalar(0.72);
+    this.sortRingScale = scale;
+    this.sortRing.scale.setScalar(0.72 * scale);
     (this.sortRing.material as THREE.MeshBasicMaterial).opacity = 0.9;
     this.sortRingAge = 0;
   }
@@ -1513,13 +1718,24 @@ export class SandCannonEngine {
     } else {
       this.crosshair.style.removeProperty("--aim-color");
     }
+    // Radius Overcharge's reach is shown before it is spent: the same ring
+    // the player already reads the un-boosted disc from just scales up,
+    // rather than a second ring competing for attention (spec §6's reuse of
+    // the aim-ring language for Radius's icon, carried into the ring itself).
+    const armedScale = this.boosterRadiusScale(this.armedBooster);
     if (this.aimRing) {
       this.aimRing.visible = Boolean(solved?.grid);
-      if (solved?.grid) this.moveRingToCell(this.aimRing, solved.grid.x, solved.grid.y);
+      if (solved?.grid) {
+        this.moveRingToCell(this.aimRing, solved.grid.x, solved.grid.y);
+        this.aimRing.scale.setScalar(armedScale);
+      }
     }
     if (this.aimRingGlow) {
       this.aimRingGlow.visible = Boolean(solved?.grid);
-      if (solved?.grid) this.moveRingToCell(this.aimRingGlow, solved.grid.x, solved.grid.y);
+      if (solved?.grid) {
+        this.moveRingToCell(this.aimRingGlow, solved.grid.x, solved.grid.y);
+        this.aimRingGlow.scale.setScalar(armedScale);
+      }
     }
     this.aimPreviewDirty = false;
   }
@@ -1536,6 +1752,14 @@ export class SandCannonEngine {
     this.chamberLoaded = false;
     this.spawnMuzzleSmoke(launch.start, launch.velocity);
 
+    // Consumed the instant it leaves the barrel (spec §7.1), whether this
+    // shot goes on to hit or miss — the overlay rings come down with it, since
+    // whatever chambers next carries no buff.
+    const booster = this.armedBooster;
+    this.armedBooster = null;
+    this.syncBoosterOverlay();
+    this.callbacks.onBoosterChange?.(null);
+
     if (!this.projectileMesh) {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
       const material = this.track(new THREE.MeshBasicMaterial({ color: 0xffffff }));
@@ -1546,6 +1770,10 @@ export class SandCannonEngine {
     material.color.setHex(SAND_COLOR_HEX[color]);
     this.projectileMesh.visible = true;
     this.projectileMesh.position.copy(launch.start);
+    // Spec §6: the bullet itself has to look different, not just the chamber
+    // it left — bigger for Radius Overcharge; Prism Shot's hue-cycle is
+    // applied per frame in `updateProjectile` instead, since it moves in time.
+    this.projectileMesh.scale.setScalar(booster === "radiusOvercharge" ? BOOSTER_PROJECTILE_SCALE : 1);
 
     this.projectile = {
       mesh: this.projectileMesh,
@@ -1554,6 +1782,7 @@ export class SandCannonEngine {
       previous: launch.start.clone(),
       time: 0,
       color,
+      booster,
     };
     this.setPhase("PROJECTILE_FLYING");
     // Published, not just recorded: the flight is the first stretch of the
@@ -1565,6 +1794,14 @@ export class SandCannonEngine {
 
   private updateProjectile(projectile: Projectile) {
     projectile.time += FIXED_STEP;
+    // Spec §6's "vệt cầu vồng": a full trail of lingering particles is more
+    // than one bullet's flight needs, so the bullet's own colour cycles
+    // through the spectrum instead — still unmistakably not a normal round,
+    // for as long as it is in the air.
+    if (projectile.booster === "prismShot") {
+      const hue = (projectile.time * PRISM_PROJECTILE_HUE_HZ) % 1;
+      (projectile.mesh.material as THREE.MeshBasicMaterial).color.setHSL(hue, 0.85, 0.6);
+    }
     const next = this.positionAt(projectile.start, projectile.velocity, projectile.time);
 
     const hit = this.planeHit(projectile.previous, next.clone().sub(projectile.previous).normalize(), true);
@@ -1587,7 +1824,11 @@ export class SandCannonEngine {
     // feedback, never the ammo: MISS_IS_FREE_TEMP covers both (Open Decisions 6 and 7).
     const passedPlane = next.z <= this.frameRoot.position.z + this.sandMesh.position.z;
     if (passedPlane || projectile.time > 3 || next.y < -4 || Math.abs(next.x) > 14) {
-      this.handleMiss(this.hitFrameStructure(next));
+      const hitFrame = this.hitFrameStructure(next);
+      // A graze off the frame's own border is still the frame getting hit —
+      // it flinches the same as a shot that actually lands inside it.
+      if (hitFrame) this.triggerFrameRecoil(next);
+      this.handleMiss(hitFrame);
     }
   }
 
@@ -1598,6 +1839,24 @@ export class SandCannonEngine {
     const dx = Math.abs(point.x - this.frameRoot.position.x);
     const dy = Math.abs(point.y - this.frameRoot.position.y);
     return dx <= halfWidth && dy <= halfHeight;
+  }
+
+  /**
+   * A light flinch every time a shot actually reaches the frame — see the
+   * constants above `frameRecoil`. Off-centre hits lean the kick toward
+   * whichever edge they landed nearest, on top of the same straight-back
+   * push every impact gets; `step` is what plays it out and decays it.
+   */
+  private triggerFrameRecoil(point: THREE.Vector3) {
+    const halfWidth = (this.level.frame.width * this.cell) / 2;
+    const halfHeight = (this.level.frame.height * this.cell) / 2;
+    this.frameRecoilOffsetX = halfWidth > 0
+      ? THREE.MathUtils.clamp((point.x - this.frameRoot.position.x) / halfWidth, -1, 1)
+      : 0;
+    this.frameRecoilOffsetY = halfHeight > 0
+      ? THREE.MathUtils.clamp((point.y - this.frameRoot.position.y) / halfHeight, -1, 1)
+      : 0;
+    this.frameRecoil = 1;
   }
 
   private spawnImpactFlash(point: THREE.Vector3, color: SandColor) {
@@ -1625,22 +1884,28 @@ export class SandCannonEngine {
 
   private handleImpact(cell: PixelCell | null, grid: CellCoord, contact: THREE.Vector3) {
     const ammo = this.projectile?.color ?? null;
+    const booster = this.projectile?.booster ?? null;
     this.clearProjectile();
     if (!ammo) return;
     this.spawnImpactFlash(contact, ammo);
+    this.triggerFrameRecoil(contact);
     haptic("impact");
 
     // Sand under the impact centres the disc on that grain; empty air centres it
     // on the square the shot came down in. Either way the disc has a centre and
     // sorts from it.
     const center = cell ? { x: cell.x, y: cell.y } : grid;
-    const resolution = resolveShot(this.level, this.state, {
-      bodyId: cell?.bodyId ?? null,
-      x: center.x,
-      y: center.y,
-    });
+    const resolution = resolveShot(
+      this.level,
+      this.state,
+      { bodyId: cell?.bodyId ?? null, x: center.x, y: center.y },
+      booster,
+    );
     this.setPhase("HIT_RESOLUTION");
-    this.spawnSortRing(center.x, center.y);
+    // Sized to what this specific shot actually reached — the flash for a
+    // Radius Overcharge hit has to be the bigger disc, not the level's base one.
+    const radiusUsed = effectiveSortRadius(this.level, booster);
+    this.spawnSortRing(center.x, center.y, this.boosterRadiusScale(booster));
 
     // The disc landed on sand but found none of its own colour in reach. The
     // shot is still spent and the board is untouched, so the only thing left to
@@ -1653,7 +1918,7 @@ export class SandCannonEngine {
       this.pendingState = resolution.state;
       this.callbacks.onState({ ...resolution.state, phase: "HIT_RESOLUTION" });
       this.beats = [
-        { kind: "SHAKE_AREA", center, radius: this.sortRadius, ms: NO_MATCH_SHAKE_MS },
+        { kind: "SHAKE_AREA", center, radius: radiusUsed, ms: NO_MATCH_SHAKE_MS },
       ];
       this.beatElapsed = 0;
       this.beatStarted = false;
@@ -1946,6 +2211,15 @@ export class SandCannonEngine {
 
     this.recoil = Math.max(0, this.recoil - FIXED_STEP * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
+
+    // The frame's own flinch — see the constants above `frameRecoil`. Tilt
+    // leans toward whichever side the shot actually landed on; the straight
+    // push back is the same for every hit regardless of where it landed.
+    this.frameRecoil = Math.max(0, this.frameRecoil - FIXED_STEP * FRAME_RECOIL_DECAY_PER_SECOND);
+    this.frameRoot.rotation.x = -this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetY;
+    this.frameRoot.rotation.z = this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetX;
+    this.frameRoot.position.z = SAND_PLANE_Z - this.frameRecoil * FRAME_RECOIL_PUSH;
+
     this.updateAmmoModel();
     this.updateMuzzleSmoke(FIXED_STEP);
 
@@ -1958,7 +2232,7 @@ export class SandCannonEngine {
     if (this.sortRing?.visible) {
       this.sortRingAge += FIXED_STEP;
       const life = Math.min(1, this.sortRingAge / SORT_RING_SECONDS);
-      this.sortRing.scale.setScalar(0.72 + life * 0.42);
+      this.sortRing.scale.setScalar((0.72 + life * 0.42) * this.sortRingScale);
       (this.sortRing.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - life);
       if (life >= 1) this.sortRing.visible = false;
     }

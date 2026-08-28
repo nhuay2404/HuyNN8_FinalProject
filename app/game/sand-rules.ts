@@ -6,6 +6,7 @@
 // rather than something the animation happens to do.
 
 import type {
+  BoosterType,
   CellCoord,
   SandBody,
   SandColor,
@@ -684,6 +685,11 @@ function finishWorld(world: World, frame: SandFrame, steps: SettleStep[]): Settl
  * `frozen` is left out of the answer entirely: locked sand is not a hard
  * target the disc fails against, it is sand the disc cannot see. A shot aimed
  * into a lock still takes every loose grain of its colour around it.
+ *
+ * `matchColor: false` is Prism Shot (booster-radius-prism-spec.md §2): the
+ * disc takes every loose grain in reach regardless of colour, reusing this
+ * same `frozen` exclusion rather than a second filter — a lock is still
+ * invisible to the disc, prism or not.
  */
 export function cellsInRadius(
   bodies: SandBody[],
@@ -691,11 +697,13 @@ export function cellsInRadius(
   radius: number,
   color: SandColor,
   frozen?: ReadonlySet<string>,
+  options?: { matchColor?: boolean },
 ) {
+  const matchColor = options?.matchColor ?? true;
   const found: CellCoord[] = [];
   const limit = radius * radius;
   for (const body of bodies) {
-    if (body.color !== color) continue;
+    if (matchColor && body.color !== color) continue;
     for (const cell of body.cells) {
       if (frozen?.has(cellKey(cell.x, cell.y))) continue;
       const dx = cell.x - center.x;
@@ -704,6 +712,41 @@ export function cellsInRadius(
     }
   }
   return sortCells(found);
+}
+
+/**
+ * How far a shot reaches once `booster` is folded in.
+ *
+ * Radius Overcharge doubles `sortRadius` (spec §1) but is capped at the
+ * frame's own diagonal (spec §7.3's open question, resolved conservatively):
+ * past that, a bigger number buys nothing since no cell in the frame is
+ * farther than that from any centre, so there is no reason to let a small
+ * level's radius balloon into a number that only looks wrong in a debugger.
+ * Shared between `resolveShot` and the renderer, so the ring drawn before a
+ * shot and the disc the shot actually resolves against never disagree.
+ */
+export function effectiveSortRadius(level: SandLevelConfig, booster?: BoosterType | null): number {
+  if (booster !== "radiusOvercharge") return level.sortRadius;
+  const frameDiagonal = Math.hypot(level.frame.width, level.frame.height);
+  return Math.min(level.sortRadius * 2, frameDiagonal);
+}
+
+/**
+ * Unlimited for the whole current test phase (spec §4): every level in this
+ * build can be replayed as many times as a hard level needs while boosters
+ * are being tuned. A `Record` rather than one flat `Infinity` so the day this
+ * becomes finite (spent from a currency or a level grant), each booster gets
+ * its own real number here without touching `getBoosterCharges` or any of
+ * its callers, which already treat the answer as a count that can run out.
+ */
+const BOOSTER_CHARGES_TEMP: Record<BoosterType, number> = {
+  radiusOvercharge: Infinity,
+  prismShot: Infinity,
+};
+
+/** How many charges of `type` are left — spec §4. */
+export function getBoosterCharges(type: BoosterType): number {
+  return BOOSTER_CHARGES_TEMP[type];
 }
 
 // ---- Game state ---------------------------------------------------------
@@ -855,11 +898,18 @@ function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures
  * Under MISS_IS_FREE_TEMP that costs nothing, so a level can never be lost to a
  * slip of the thumb — §39.9, and reversible the day aiming is meant to carry
  * risk.
+ *
+ * `booster` is whichever of Radius Overcharge / Prism Shot was armed for this
+ * shot, already consumed by the caller the instant it left the barrel (spec
+ * §7.1: a boosted shot spends its buff whether it hits or misses) — this
+ * function only has to fold its effect into the one disc it resolves, never
+ * track whether it is still active afterward.
  */
 export function resolveShot(
   level: SandLevelConfig,
   state: SandGameState,
   hit: ShotHit | null,
+  booster?: BoosterType | null,
 ): ShotResolution {
   const idle: ShotResolution = {
     state,
@@ -888,7 +938,10 @@ export function resolveShot(
   // — the disc still reaches down from it. A shot that finds none of its colour
   // in reach is not a special case; NO_MATCH covers it.
   const frozen = frozenSet(state);
-  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, level.sortRadius, ammo, frozen);
+  const radius = effectiveSortRadius(level, booster);
+  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozen, {
+    matchColor: booster !== "prismShot",
+  });
   if (!removed.length) {
     const missed = { ...state, ...spend(state.bodies, frozen) };
     return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody };

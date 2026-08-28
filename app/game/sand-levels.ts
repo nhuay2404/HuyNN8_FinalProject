@@ -1,11 +1,66 @@
 import { RADIUS_GAMEPLAY, type SandLevelConfig } from "./sand-types.ts";
 
-// Every level that ships in the build. The level editor at `/editor` writes
-// drafts to the browser instead; exporting one from there produces a block in
-// exactly the shape below, to paste in and add to `BUILT_IN_LEVELS`.
+// Everything below `BUILT_IN_LEVELS` used to be the shipped level roster.
+// That roster has been cleared down to a single default level on purpose —
+// the level editor at `/editor` is where levels are authored and shipped
+// from now on; this file just needs one valid level for the game to boot
+// into and for a fresh editor session to have something to build on top of.
 //
-// A level carries only its own content — picture, wheel of colours, disc reach,
-// budget, resolution. Every rule it plays under lives in `RADIUS_GAMEPLAY`.
+// `sandBloom`, `lockAndKey` and `crosswind` are NOT part of that roster any
+// more (see `BUILT_IN_LEVELS` below) — they stay exported because the test
+// suite exercises the radius/lock-key/wind mechanics against their exact,
+// hand-tuned geometry (tests/sand-radius.test.ts, sand-mechanics.test.ts,
+// sand-boosters.test.ts, sand-pixel-board.test.ts). Treat them as fixtures,
+// not as levels a player can reach; do not add them back to the roster
+// without checking what those tests assume about their shape first.
+
+/**
+ * The single default level. A small, deliberately easy mound-and-floor
+ * picture — enough to demonstrate aim, fire and the radius disc without
+ * asking anything else of a first shot.
+ */
+const DEFAULT_LEVEL_PICTURE = [
+  "..........",
+  "...BBBB...",
+  "..BBBBBB..",
+  ".BBBBBBBB.",
+  ".BBBBBBBB.",
+  "BBBBBBBBBB",
+  "BBBBBBBBBB",
+  "OOOOOOOOOO",
+  "OOOOOOOOOO",
+  "OOOOOOOOOO",
+];
+
+export const defaultLevel: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 1,
+  name: "Level 1",
+
+  frame: { width: 10, height: 10 },
+  rows: DEFAULT_LEVEL_PICTURE,
+
+  ammoQueue: ["blue", "orange"],
+
+  sortRadius: 2,
+  shotLimit: 16,
+  pixelScale: 5,
+
+  tutorial: {
+    title: "Aim & Fire",
+    steps: [
+      "Drag anywhere on the board to aim the cannon.",
+      "Release to fire — matching-colour sand disappears in a circle around the hit.",
+      "The disc only ever takes your colour, so sand in the way is never a problem.",
+      "Clear every grain in the frame before your shots run out.",
+    ],
+  },
+
+  notes: "The default level: a board that is almost impossible to fail.",
+};
+
+// ---- mechanic-test fixtures (not shipped levels) --------------------------
 
 /** Drawn top row first, one letter per cell. R G Y B P O, `.` for empty. */
 const BLOOM_PICTURE = [
@@ -26,7 +81,8 @@ const BLOOM_PICTURE = [
 ];
 
 /**
- * The reference level: fine sand, radius sorting, and a shot budget.
+ * Sand Bloom — the reference radius-sort fixture: four colours, a cycling
+ * wheel, and a budget that is measured, not guessed.
  *
  * A blue bloom rimmed in green, resting on an orange bed, in a field of yellow
  * sand. Four colours, drawn as organic masses rather than a mosaic — under the
@@ -34,8 +90,7 @@ const BLOOM_PICTURE = [
  * changes what falls.
  *
  * The picture fills the frame on purpose: an uneven skyline slumps on the very
- * first frame, and the player would never see what was authored. The editor
- * warns about this and can settle a drawing in place to fix it.
+ * first frame, and the player would never see what was authored.
  *
  * The budget is measured, not guessed. Two play models run against the real
  * solver (see `analyseLevel`):
@@ -45,11 +100,16 @@ const BLOOM_PICTURE = [
  *
  * 26 leaves a good player six shots of slack and still fails a lazy line a
  * third of the time.
+ *
+ * `tests/sand-radius.test.ts` and `tests/sand-pixel-board.test.ts` assert on
+ * this exact picture (four colours, specific cells like the Blue centre at
+ * (5, 8) and the Orange corner at (0, 0)) — do not edit the rows without
+ * checking those tests.
  */
 export const sandBloom: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
 
-  id: 1,
+  id: 2,
   name: "Sand Bloom",
 
   frame: { width: 12, height: 14 },
@@ -69,11 +129,11 @@ export const sandBloom: SandLevelConfig = {
   // pixels) while giving a real fine-sand canvas.
   pixelScale: 5,
 
-  notes: "Radius sorting with a recycling queue; difficulty is the shot budget alone.",
+  notes: "Radius-sort fixture: recycling queue, difficulty is the shot budget alone.",
 };
 
 /**
- * Lock & Key — the first of two levels that exist to try a mechanic out.
+ * Lock & Key — the frozen-sand-and-key mechanic fixture.
  *
  * A slab of purple hangs in mid-air, frozen: those are the lower-case letters
  * in the picture. Nothing can shoot it and it does not fall, so it is the one
@@ -90,6 +150,10 @@ export const sandBloom: SandLevelConfig = {
  * (cols2-9, 8 cells) — no partial overhang to reason about by hand, and the
  * key's own disc overflows the plug by one column on each side: a rigid body
  * cell without support is still valid, it just cannot be sand.
+ *
+ * `tests/sand-mechanics.test.ts` and `tests/sand-boosters.test.ts` assert on
+ * this exact picture (e.g. shooting the plug at (5, 8), the floor at (0, 0))
+ * — do not edit the rows without checking those tests.
  */
 const LOCK_PICTURE = [
   "............",
@@ -115,7 +179,7 @@ const LOCK_PICTURE = [
 export const lockAndKey: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
 
-  id: 2,
+  id: 3,
   name: "Lock & Key",
 
   frame: { width: 12, height: 18 },
@@ -127,11 +191,11 @@ export const lockAndKey: SandLevelConfig = {
   shotLimit: 24,
   pixelScale: 5,
 
-  notes: "Mechanic test: frozen sand hanging in the frame, opened by a falling key.",
+  notes: "Mechanic fixture: frozen sand hanging in the frame, opened by a falling key.",
 };
 
 /**
- * Crosswind — the second mechanic level.
+ * Crosswind — the wind mechanic fixture.
  *
  * A mound built of one-cell steps, which is the only shape falling sand holds
  * still in, so every gust has somewhere to push grains and the change is
@@ -148,6 +212,9 @@ export const lockAndKey: SandLevelConfig = {
  * `power` and `zone` are in blueprint cells like `sortRadius`, and are scaled
  * with the board by `expandLevelForPixelBoard`. The durations are real time and
  * are not scaled.
+ *
+ * `tests/sand-mechanics.test.ts` asserts on this exact picture and these
+ * exact wind phases — do not edit either without checking that test.
  */
 const CROSSWIND_PICTURE = [
   "............",
@@ -169,7 +236,7 @@ const CROSSWIND_PICTURE = [
 export const crosswind: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
 
-  id: 3,
+  id: 4,
   name: "Crosswind",
 
   frame: { width: 12, height: 14 },
@@ -190,7 +257,7 @@ export const crosswind: SandLevelConfig = {
     ],
   },
 
-  notes: "Mechanic test: a looping wind pattern that reshapes the board between shots.",
+  notes: "Mechanic fixture: a looping wind pattern that reshapes the board between shots.",
 };
 
 // ==== Editor-shipped levels ====
@@ -201,133 +268,11 @@ export const crosswind: SandLevelConfig = {
 // in the editor disappears from here on the next ship rather than lingering.
 // Hand edits inside this block are overwritten on the next ship; edit the
 // level in the editor instead.
-export const level2: SandLevelConfig = {
-  ...RADIUS_GAMEPLAY,
-
-  id: 4,
-  name: "Level 2",
-
-  frame: { width: 60, height: 70 },
-  rows: [
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKPPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKPPP",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
-    "PPPPPPrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
-    "rrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKKKPP",
-    "rrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKKKPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPKKKPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
-    "rrrrrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
-    "PPrrrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPrrrrrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPrrrrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPrrrrrrrrrrrPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBOOOOOOBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  ],
-
-  // The starting rotation only — under the cycling rule this is a wheel, not a
-  // budget: colours come round again until they are gone.
-  ammoQueue: ["blue", "red", "purple", "orange"],
-
-  sortRadius: 12,
-  shotLimit: 20,
-
-  // 60 x 70 blueprint at 1x = 4,200 simulated pixels.
-  pixelScale: 1,
-};
-
-export const EDITOR_LEVELS: SandLevelConfig[] = [level2];
+export const EDITOR_LEVELS: SandLevelConfig[] = [];
 // ==== End editor-shipped levels ====
 
-export const BUILT_IN_LEVELS: SandLevelConfig[] = [sandBloom, lockAndKey, crosswind, ...EDITOR_LEVELS];
-
-export const newLevel: SandLevelConfig = {
-  ...RADIUS_GAMEPLAY,
-
-  id: 2,
-  name: "New level",
-
-  frame: { width: 12, height: 14 },
-  rows: [
-    "PPPPPPPPPPPP",
-    "PPPOOOOOPPPP",
-    "POOPPPPOOPPP",
-    "POPPPPPPOOPP",
-    "POPPPPPPOOPP",
-    "POPPPPPPOPPP",
-    "POPPPPPOOPPP",
-    "POOPPPOOPPPP",
-    "PPOOOOOPPPPP",
-    "PPPOOBBPPPPP",
-    "BBBBBBBBBBBB",
-    "BBBBBBBBBBBB",
-    "YYYYYYYYYYYY",
-    "BBBBBBBBBBBB",
-  ],
-
-  // The starting rotation only — under the cycling rule this is a wheel, not a
-  // budget: colours come round again until they are gone.
-  ammoQueue: ["blue", "purple", "yellow", "orange"],
-
-  sortRadius: 2.5,
-  shotLimit: 20,
-
-  // 12 x 14 blueprint at 5x = 4,200 simulated pixels.
-  pixelScale: 5,
-};
+/**
+ * What the game and the level editor both start from. Cleared down to the
+ * one default level on purpose — everything else lives in the editor now.
+ */
+export const BUILT_IN_LEVELS: SandLevelConfig[] = [defaultLevel, ...EDITOR_LEVELS];

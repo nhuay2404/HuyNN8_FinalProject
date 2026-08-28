@@ -136,14 +136,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* ---- Settings menu ------------------------------------------------------ */
 /* Everything that is a menu rather than a live number — level pick, home,
-   editor, restart — collapses behind one button so the HUD reads as "one
-   number, one menu" instead of a row of icons competing with the picture. */
+   restart — collapses behind one button so the HUD reads as "one number, one
+   menu" instead of a row of icons competing with the picture. The "?" help
+   button sits beside it rather than inside the menu: it is not a menu item,
+   it is the one thing worth reaching without a tap-then-tap. */
 .settings-wrap {
-  position: absolute; z-index: 12;
+  position: absolute; z-index: 12; display: flex; gap: 8px;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
 }
-.settings-button {
+.settings-button, .help-button {
   width: 42px; height: 42px; font-size: 19px; line-height: 1;
   display: grid; place-items: center;
 }
@@ -210,8 +212,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 
 /* ---- Scene and controls ------------------------------------------------ */
+/* The picture frame sits higher in this box than the raw geometry alone
+   would suggest (FRAME_CENTER_Y in SandCannonEngine.ts was raised from the
+   pivot's original 1.95), on purpose: it opens a band of clear sky between
+   the frame's bottom edge and the cannon below, and that band is where
+   `.booster-hud` sits (see the "Booster HUD" block below). */
 .scene-wrap {
   --aim-touch-height: 40%;
+  /* Where the booster tray sits, vertically — see `.booster-hud` below. */
+  --booster-hud-y: 65%;
   position: absolute;
   inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0;
   overflow: hidden;
@@ -276,12 +285,66 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255,255,255,.16); }
 .aim-zone.is-cancelled .aim-joystick-knob::after { content: "×"; }
 
+/* ---- Booster HUD --------------------------------------------------------- */
+/* One pill-shaped tray, not two loose buttons — the reserved band between the
+   picture and the cannon (see the comment on `.scene-wrap` above) holds a
+   single HUD box, both booster buttons sitting inside it side by side. z-index
+   sits above `.aim-zone` (4) and `.settle-badge` (7) so a tap always reaches
+   the tray, never the drag surface behind it. `--booster-hud-y` is a
+   best-effort estimate, not a measured value (the cannon is a 3D object with
+   no DOM box to anchor to) — nudge it if the tray reads as off the model. */
+.booster-hud {
+  position: absolute; z-index: 9; left: 50%; top: var(--booster-hud-y, 65%);
+  transform: translate(-50%, -50%);
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  width: min(64%, 240px); padding: 5px 18px;
+  border-radius: 999px; border: 2px solid var(--line); background: var(--panel);
+}
+.booster-btn {
+  width: 36px; height: 36px; border-radius: 50%; flex: none;
+  border: 2px solid var(--line); background: var(--locked); color: var(--ink);
+  display: grid; place-items: center; padding: 0; cursor: pointer; position: relative;
+  transition: background .18s, border-color .18s, opacity .18s, transform .18s;
+}
+.booster-btn:active:not(:disabled) { transform: scale(.9); }
+.booster-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+/* Spec §3: locked, not hidden — the other booster is armed and this one
+   cannot respond until it is fired. `disabled` already blocks the tap. */
+.booster-btn:disabled { opacity: .38; cursor: default; }
+.booster-icon { display: block; width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Radius Overcharge armed: the same blue as the chamber/muzzle overlay ring
+   (BOOSTER_RADIUS_RING_HEX in SandCannonEngine.ts — kept in sync by hand,
+   there is no shared source between a hex number and a CSS colour). */
+.booster-btn.is-radius.is-armed {
+  border-color: #2a93cc; color: #1c6a94;
+  background: color-mix(in srgb, #4fc3ff 24%, var(--panel));
+  animation: booster-armed-pulse 1s ease-in-out infinite;
+}
+/* Prism Shot armed: a spinning seven-band ring behind the button, echoing
+   PRISM_SPECTRUM_HEX — same hand-kept-in-sync caveat as above. */
+.booster-btn.is-prism.is-armed {
+  border-color: #9a5cf0; color: #6a3ec2;
+  animation: booster-armed-pulse 1s ease-in-out infinite;
+}
+.booster-btn.is-prism.is-armed::before {
+  content: ""; position: absolute; inset: -4px; z-index: -1; border-radius: 50%;
+  background: conic-gradient(from 0deg, #ff4d64, #ff8a33, #ffc233, #3ecc5e, #3aa0f5, #5b6ee8, #9a5cf0, #ff4d64);
+  animation: booster-prism-spin 2.4s linear infinite;
+}
+/* Reserved for a future charge-count number (spec §4) — no fill, no border,
+   nothing drawn while boosters stay unlimited. Position only. */
+.booster-badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; border-radius: 50%; }
+
 /* ---- Locked-input and feedback ---------------------------------------- */
 /* §24 asks for a visible sign that firing is locked while sand is moving.
    No box, no label — just the three dots saying something is still in
    motion, not naming what. */
 .settle-badge {
-  position: absolute; z-index: 7; top: 16px; left: 50%; transform: translateX(-50%);
+  /* Tracks the frame's own move up (FRAME_CENTER_Y in SandCannonEngine.ts) so
+     the two shift together instead of the dots staying pinned to the old
+     gap — see the reserved band note on .scene-wrap below. */
+  position: absolute; z-index: 7; top: 6px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px; pointer-events: none;
 }
 .settle-badge i {
@@ -336,6 +399,18 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: var(--danger); color: var(--danger-ink);
   border: 2px solid var(--danger-line); font-weight: 800;
 }
+
+/* ---- Tutorial overlay ---------------------------------------------------- */
+/* Reuses `.result-screen`/`.result-card` for the backdrop and pop-in — it is
+   the same "one card, centred, everything else locked out" shape — with its
+   own body: a short numbered read instead of a one-line result. */
+.tutorial-card { max-width: 320px; text-align: left; }
+.tutorial-card h2 { text-align: center; }
+.tutorial-steps {
+  margin: 0 0 20px; padding-left: 22px; display: grid; gap: 10px;
+  color: var(--ink); font-size: 13px; line-height: 1.5;
+}
+.tutorial-steps li::marker { color: var(--muted); font-weight: 800; }
 
 /* ---- Home screen ------------------------------------------------------- */
 /* Carried over in shape from the pre-pivot menu hub, with one thing changed:
@@ -519,6 +594,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
 @keyframes overlay-in { from { opacity: 0; } }
 @keyframes result-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
+@keyframes booster-armed-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@keyframes booster-prism-spin { to { transform: rotate(360deg); } }
 
 /* ---- Level editor ------------------------------------------------------ */
 /* A desktop tool, unlike the game: authoring wants a mouse, a keyboard and

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sandBloom, BUILT_IN_LEVELS } from "../app/game/sand-levels.ts";
+import { defaultLevel, sandBloom, BUILT_IN_LEVELS } from "../app/game/sand-levels.ts";
 import { analyseLevel, playCareless, playStrong } from "../app/game/level-analysis.ts";
 import {
   DEFAULT_HEIGHT,
@@ -374,9 +374,9 @@ test("a name with a quote cannot break out of the generated string", () => {
 // ---- the shipped level stays a valid draft target -------------------------
 
 test("the built-in level list is what the game and editor both start from", () => {
-  assert.ok(BUILT_IN_LEVELS.includes(sandBloom));
-  // The reference level plus the two mechanic boards. All three play under the
-  // same RADIUS_GAMEPLAY policy — a mechanic is level data, not a second game.
-  assert.equal(BUILT_IN_LEVELS.length, 3);
-  assert.deepEqual(BUILT_IN_LEVELS.map((level) => level.id), [1, 2, 3], "ids are what the HUD shows");
+  // Cleared down to the one default level — everything else is authored and
+  // shipped from the editor now.
+  assert.ok(BUILT_IN_LEVELS.includes(defaultLevel));
+  assert.equal(BUILT_IN_LEVELS.length, 1);
+  assert.deepEqual(BUILT_IN_LEVELS.map((level) => level.id), [1], "ids are what the HUD shows");
 });

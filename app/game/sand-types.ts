@@ -101,6 +101,19 @@ export type WindConfig = {
   phases: WindPhase[];
 };
 
+// ---- boosters -------------------------------------------------------------
+// See booster-radius-prism-spec.md. Two one-shot buffs the player arms ahead
+// of a shot; the shot itself is unaware of them beyond the extra argument
+// `resolveShot` takes — everything else about a boosted shot is normal.
+
+/**
+ * The two booster kinds. Mutually exclusive by design (spec §3): a session
+ * only ever has at most one of these armed at a time, never both.
+ */
+export type BoosterType = "radiusOvercharge" | "prismShot";
+
+export const BOOSTER_TYPES: readonly BoosterType[] = ["radiusOvercharge", "prismShot"];
+
 /**
  * A key, as the rigid pixel sprite it is drawn as.
  *
@@ -230,7 +243,33 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * itself.
    */
   keyFriction?: number;
+  /**
+   * Boosters this level cannot be cleared without — spec §5. A hard level
+   * (chương 4–5) may need a shot with `radiusOvercharge` or `prismShot` armed
+   * as the load-bearing move, not just as help.
+   *
+   * Nothing reads this yet: this build has no brute-force solvability check
+   * to exempt (see CHANGELOG-prototype.md §16 for the rule this would have
+   * overridden) — it is a data flag only, ready for a future solver/validator
+   * to widen its search with rather than misreport the level as unsolvable.
+   */
+  requiresBooster?: BoosterType[];
   notes?: string;
+  /**
+   * The first-time-user overlay shown once, the first time this level is
+   * opened from the home screen. `title` is the one-line lesson the level
+   * teaches; `steps` are read top to bottom as short, concrete instructions
+   * rather than lore. Absent on a level that introduces nothing new.
+   *
+   * Seen-state lives in the browser (`sand-cannon:v1:tutorials-seen`), keyed
+   * by `id`, so it is shown again if the level's id ever changes — which is
+   * the right failure mode: a renumbered level is, as far as a returning
+   * player's local storage is concerned, a level they have not opened yet.
+   */
+  tutorial?: {
+    title: string;
+    steps: string[];
+  };
 };
 
 export type SandPhase =

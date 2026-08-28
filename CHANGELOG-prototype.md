@@ -3957,3 +3957,116 @@ nguyên.
 
 **Kiểm tra:** `tsc --noEmit` sạch, `npm test` không có lỗi mới. Verify qua dev server: không lỗi console
 suốt chuỗi bấm Play → súng lắp ráp → mở khoá gameplay.
+
+---
+
+## 67. Đẩy khung tranh + dấu 3 chấm lên, chừa dải trống cho Booster HUD (28/08)
+
+Yêu cầu: dịch khung tranh pixel cát (và vị trí dấu 3 chấm "sand settling") lên trên, để chừa một khoảng
+trống đặt Booster HUD sau này, ở giữa ụ súng và bức tranh.
+
+`FRAME_CENTER_Y` (`SandCannonEngine.ts`) — toạ độ Y trong world space của khung tranh — tăng từ `1.95` lên
+`2.5` (súng giữ nguyên `CANNON_ROOT_POSITION`, nên khoảng cách hai bên tự nới ra đúng phần khung nhường).
+`.settle-badge` (`globals.css`) dịch theo, `top: 16px` → `6px`, để bám sát mép trên khung tranh mới thay vì
+lơ lửng ở chỗ cũ.
+
+Trần `2.5` không phải số tuỳ ý: camera cố định (`camera.position`/`lookAt` không đổi theo `FRAME_CENTER_Y`),
+nên đẩy khung lên quá cao sẽ khiến mép trên bức tranh bị cắt khỏi khung nhìn (FOV) ở tỉ lệ khung hình hẹp
+nhất mà `resize()` tạo ra (khung game rộng cố định 430px, cao tối thiểu 680px → tỉ lệ ~0.63, rơi vào nhánh
+FOV 37° hẹp hơn). Tính bằng lượng giác (góc lệch so với trục nhìn của camera, so với nửa FOV) rồi verify
+lại bằng cách dựng dev server, ép đúng tỉ lệ khung hình rủi ro đó, và đọc trực tiếp giá trị alpha từng pixel
+của canvas (không chụp ảnh được — pane preview không hiển thị trong phiên làm việc): mép trên bức tranh còn
+cách viền khung hình ~15px, chưa bị cắt.
+
+**Kiểm tra:** không đổi logic gameplay, không có test bộ nào pin cứng các hằng số 3D này nên `npm test`
+không ảnh hưởng. Verify hình học bằng công thức tay + đo canvas pixel thật trên dev server, không verify
+được bằng mắt do giới hạn của Browser pane trong phiên này.
+
+---
+
+## 68. Thêm 2 booster: Radius Overcharge & Prism Shot (28/08)
+
+Theo `booster-radius-prism-spec.md`: hai buff một-lượt-bắn, loại trừ lẫn nhau, chưa giới hạn số lần dùng
+(giai đoạn test).
+
+**Rules layer** (`sand-types.ts`, `sand-rules.ts`):
+- `BoosterType` (`"radiusOvercharge" | "prismShot"`) và `requiresBooster?: BoosterType[]` trên
+  `SandLevelConfig` — cờ dữ liệu cho màn khó cần booster mới giải được (mục 5 spec); chưa có solver nào
+  trong repo để phải sửa, nên chỉ là placeholder sẵn sàng cho sau này.
+- `cellsInRadius(..., options?: { matchColor })` — `matchColor: false` là Prism Shot, tái dùng đúng tham số
+  `frozen` sẵn có (Lock & Key), không thêm điều kiện lọc mới.
+- `effectiveSortRadius(level, booster)` — nhân đôi bán kính cho Radius Overcharge, **chặn trần ở đường chéo
+  khung tranh** (trả lời câu hỏi mở §7.3 của spec).
+- `resolveShot(level, state, hit, booster?)` — tham số thứ 4, optional nên không phá test cũ.
+- `getBoosterCharges(type)` → `Infinity` cho cả hai loại (đặt trong `Record` để sau đổi số hữu hạn không
+  phải sửa chỗ gọi).
+
+**Engine** (`SandCannonEngine.ts`):
+- `armBooster(type)` public: khoá lẫn nhau đúng theo spec §3 (giả định đã duyệt) — bấm nút còn lại hoặc bấm
+  lại nút đang chờ đều là no-op, không có cách huỷ giữa chừng.
+- Buff tiêu ngay khi đạn rời nòng (giả định §7.1 đã duyệt), bất kể phát đó trúng hay trượt.
+- Hiệu ứng: vòng viền ngoài buồng nạp + họng súng (xanh dương cho Radius, dải 7 màu quang phổ dựng từ 7
+  mesh hình quạt cho Prism — tái dùng đúng ý tưởng asset Rainbow Target/Weak Point cũ đã bỏ); viên đạn to
+  hơn 1.6x cho Radius, đổi màu theo thời gian (hue-cycle) cho Prism thay vì để lại vệt hạt đầy đủ (đơn giản
+  hoá so với "vệt cầu vồng" nêu trong spec); vòng ngắm (`aimRing`) tự phóng to đúng tỉ lệ khi Radius đang
+  armed, tái dùng ngôn ngữ hình ảnh có sẵn thay vì vẽ thêm ring mới.
+
+**UI** (`SandGame.tsx`, `globals.css`): 2 nút tròn không chữ, icon SVG vẽ tay (vòng nét đứt + mũi tên 4 góc
+cho Radius; viên đạn bọc 7 dải màu cho Prism, dùng chung mảng màu `PRISM_SPECTRUM_HEX` export từ engine để
+nút và súng luôn khớp màu), disable khi buff kia đang armed hoặc khi input đang khoá (busy). Toast "armed —
+next shot" khi bấm. Chỗ trống dành cho badge số lượng sau này (chưa hiển thị số, đúng spec §4).
+
+**Test:** thêm `tests/sand-boosters.test.ts` (9 test: matchColor, effectiveSortRadius có/không trần,
+getBoosterCharges, resolveShot với/không booster — dựng oracle bằng chính `cellsInRadius`/
+`effectiveSortRadius` rồi so khớp, cùng phong cách các file test cũ), gắn vào script `npm test`.
+
+**Kiểm tra:** 96 test tổng (95 pass, 1 fail — lỗi đếm số level có sẵn từ trước, xác nhận bằng `git stash`
+là không liên quan), `tsc --noEmit` và `eslint` sạch trên mọi file đã sửa. Phần hiệu ứng 3D (ring buồng
+nạp, đạn boost) không verify được bằng ảnh chụp trong phiên này.
+
+---
+
+## 69. Booster HUD: từ 2 nút rời hai bên súng sang 1 khay hình viên thuốc (28/08)
+
+Phản hồi: vị trí 2 nút booster đặt hai bên hông súng (mục 68) không đúng ý — người dùng minh hoạ lại bằng
+ảnh: một khay HUD hình viên thuốc nằm gọn trong khoảng trống giữa bức tranh và súng (khoảng trống đã chừa ở
+mục 67), hai nút xếp cạnh nhau bên trong.
+
+`.booster-hud` (`globals.css`) — khay bo tròn `border-radius:999px`, viền + nền kiểu "sticker" giống
+`.shots-badge`/`.settings-menu` sẵn có, rộng `min(74%, 300px)`, canh giữa theo chiều ngang, đặt ở
+`top: var(--booster-hud-y, 63%)` bên trong `.scene-wrap` — đúng dải đã chừa. Hai nút bên trong đổi từ tự
+định vị `position:absolute` từng cái (mục 68) sang layout `flex` bên trong khay; class đổi tên
+`is-left`/`is-right` → `is-radius`/`is-prism` (không còn ý nghĩa vị trí). `SandGame.tsx` bọc 2 nút trong
+`<div className="booster-hud">`.
+
+Tỉ lệ `63%` không phải đoán mò — dịch ngược từ đúng tấm ảnh minh hoạ người dùng gửi (đo tỉ lệ khay trong
+ảnh so với khung cảnh), sau đó verify bằng `getBoundingClientRect()` thật trên dev server: khay lên đúng
+kích thước/vị trí tính toán.
+
+**Kiểm tra:** `tsc --noEmit`, `eslint`, `npm test` (96 test, 95 pass — vẫn 1 fail có sẵn không liên quan)
+đều sạch. Verify layout bằng DOM rect thật trên dev server, không verify được bằng ảnh chụp.
+
+---
+
+## 70. Sửa HUD đè lên khung tranh; thu nhỏ súng để không che HUD khi kéo nòng lên (28/08)
+
+Phản hồi: sau mục 69, khay Booster HUD đè lên một phần đáy bức tranh; súng khi kéo nòng lên hết cỡ (tăng
+elevation) cũng vươn tới che khay HUD.
+
+- **Đẩy khung tranh lên thêm:** `FRAME_CENTER_Y` (`SandCannonEngine.ts`) từ `2.5` → `2.6` — mức trần an
+  toàn tối đa đã tính ở mục 67 (quá mức này mép trên bức tranh bắt đầu bị cắt ở tỉ lệ khung hình hẹp nhất).
+- **Thu nhỏ khay HUD:** `.booster-hud`/`.booster-btn`/`.booster-icon` (`globals.css`) — khay từ
+  `min(74%,300px)` xuống `min(64%,240px)`, nút từ 42px xuống 36px, icon 24px xuống 21px, padding/gap giảm
+  theo tỉ lệ; `--booster-hud-y` giữ `65%` (mép trên khay lùi xuống đáng kể vì khay đã nhỏ lại).
+- **Thu nhỏ mô hình súng:** thêm hằng số `CANNON_MODEL_SCALE = 0.8`, áp vào `cannonRoot.scale` trong
+  `buildCannon()` — toàn bộ súng (đế, tháp pháo, nòng) co lại 20% quanh đúng gốc toạ độ cục bộ của nó, nên
+  khi kéo nòng lên hết cỡ, đầu nòng vươn tới thấp hơn trước, chừa khoảng cách với khay HUD phía trên.
+
+Tính lại bằng công thức hình học đã dùng ở mục 67: trước khi sửa, mép dưới bức tranh và mép trên khay HUD
+đè lên nhau ~10px (đúng như phản hồi); sau khi sửa, mép dưới bức tranh cao hơn mép trên khay HUD ~13px,
+không còn đè.
+
+**Kiểm tra:** `tsc --noEmit`, `eslint`, `npm test` (96 test, 95 pass, 1 fail có sẵn không liên quan) đều
+sạch. Verify vị trí khay bằng `getBoundingClientRect()` thật trên dev server, khớp tính toán. Phần súng thu
+nhỏ và hành vi kéo nòng lên không verify được bằng ảnh chụp trong phiên này — cần người dùng tự kiểm tra
+trực quan.
