@@ -278,9 +278,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 
 /* ---- Locked-input and feedback ---------------------------------------- */
 /* §24 asks for a visible sign that firing is locked while sand is moving.
-   No box, no label — the cannon itself dims for that same stretch
-   (SandCannonEngine's `updateCannonFade`), so this is only the three dots
-   saying something is still in motion, not naming what. */
+   No box, no label — just the three dots saying something is still in
+   motion, not naming what. */
 .settle-badge {
   position: absolute; z-index: 7; top: 16px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px; pointer-events: none;

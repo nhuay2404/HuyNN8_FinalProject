@@ -20,7 +20,6 @@ import {
 import type {
   CellCoord,
   SandColor,
-  SandPhase,
   WindDirection,
   SandGameState,
   SandLevelConfig,
@@ -98,15 +97,6 @@ const CANNON_RISE_SECONDS = 0.8;
 const TURRET_DROP_HEIGHT = 1.7;
 const TURRET_DROP_SECONDS = 0.5;
 const TURRET_DROP_DELAY_SECONDS = 0.34;
-
-// ---- cannon busy-fade -----------------------------------------------------
-// While the board is doing something the player cannot interrupt — the shot
-// still in the air, sand collapsing, a merge resolving — the gun is not the
-// thing to be looking at. It dims rather than disappears, so it never reads
-// as having been removed, just stepped back from.
-const CANNON_FADE_PHASES = new Set<SandPhase>(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
-const CANNON_BUSY_OPACITY = 0.32;
-const CANNON_FADE_SECONDS = 0.22;
 
 // ---- muzzle smoke -----------------------------------------------------
 // A quick burst of round white puffs at the muzzle the instant a shot leaves
@@ -444,17 +434,6 @@ export class SandCannonEngine {
    * once the cannon has finished rising into place. Null the rest of the
    * time, including the whole time the cannon sits hidden on the home screen. */
   private cannonEntranceStart: number | null = null;
-
-  /** Every material on the cannon rig, and the opacity/transparency each was
-   * built with — `updateCannonFade` scales toward this base rather than a
-   * fixed 1, so parts authored partially see-through (the chamber housing)
-   * stay proportionally more see-through than solid ones while both dim. */
-  private readonly cannonMaterials: Array<{ material: THREE.Material; opacity: number; transparent: boolean }> = [];
-  /** 1 when the gun is fully visible, down to `CANNON_BUSY_OPACITY` while a
-   * phase in `CANNON_FADE_PHASES` has the board busy. Read by `updateAmmoModel`
-   * too, so the chamber's own glow and light dim in step rather than fighting
-   * this fade frame to frame. */
-  private cannonFade = 1;
 
   /** Pool of round white puffs `spawnMuzzleSmoke` recycles on every shot — see
    * `buildMuzzleSmoke`. In `this.scene` directly rather than under the cannon
@@ -863,27 +842,6 @@ export class SandCannonEngine {
 
     this.buildAmmoFeed(dark);
     this.applyCannonTransform();
-    this.collectCannonMaterials();
-  }
-
-  /** Walks every mesh under `cannonRoot` once, at build time, and records its
-   * material(s) for `updateCannonFade` to dim uniformly. */
-  private collectCannonMaterials() {
-    const seen = new Set<THREE.Material>();
-    this.cannonRoot.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return;
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) {
-        // The chamber's halo drives its own opacity every frame — its breath
-        // and the flare as a round drops in (`updateAmmoModel`) — which reads
-        // `cannonFade` directly rather than being captured and scaled here,
-        // so the two don't fight over the same property.
-        if (material === this.chamberGlow?.material) continue;
-        if (seen.has(material)) continue;
-        seen.add(material);
-        this.cannonMaterials.push({ material, opacity: material.opacity, transparent: material.transparent });
-      }
-    });
   }
 
   /**
@@ -1070,10 +1028,10 @@ export class SandCannonEngine {
     const strength = this.chamberBall?.visible ? 0.34 + 0.16 * breath + 0.5 * eased : 0;
     if (this.chamberGlow) {
       this.chamberGlow.position.copy(this.chamberBall?.position ?? CHAMBER_POSITION);
-      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength * this.cannonFade;
+      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength;
       this.chamberGlow.scale.setScalar((0.86 + 0.1 * breath + 0.2 * eased) * (0.45 + 0.55 * seated));
     }
-    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4 * this.cannonFade;
+    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4;
   }
 
   /**
@@ -2029,7 +1987,6 @@ export class SandCannonEngine {
     this.lastFrame = now;
     this.updateFrameSpin(delta);
     this.updateCannonEntrance();
-    this.updateCannonFade(delta);
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;
@@ -2130,28 +2087,6 @@ export class SandCannonEngine {
       this.cannonRoot.position.y = CANNON_ROOT_POSITION.y;
       this.turret.position.y = TURRET_REST_Y;
       this.cannonEntranceStart = null;
-    }
-  }
-
-  /**
-   * Eases every cannon material's opacity toward `CANNON_BUSY_OPACITY` while
-   * the board is in a phase the player cannot act during, and back to each
-   * material's own built opacity the moment it returns to `READY`. Runs every
-   * rendered frame regardless of `paused`, like the entrance and idle-spin
-   * updaters, so the fade keeps easing even across a pause boundary.
-   */
-  private updateCannonFade(deltaMs: number) {
-    if (!this.cannonMaterials.length) return;
-    const target = CANNON_FADE_PHASES.has(this.state.phase) ? CANNON_BUSY_OPACITY : 1;
-    if (this.cannonFade === target) return;
-    const rate = 1 - Math.exp(-(deltaMs / 1000) / CANNON_FADE_SECONDS);
-    this.cannonFade += (target - this.cannonFade) * rate;
-    if (Math.abs(this.cannonFade - target) < 0.002) this.cannonFade = target;
-
-    const fullyVisible = this.cannonFade >= 1;
-    for (const entry of this.cannonMaterials) {
-      entry.material.opacity = fullyVisible ? entry.opacity : entry.opacity * this.cannonFade;
-      entry.material.transparent = fullyVisible ? entry.transparent : true;
     }
   }
 
