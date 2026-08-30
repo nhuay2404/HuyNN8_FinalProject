@@ -6,10 +6,10 @@ import { RADIUS_GAMEPLAY, type SandLevelConfig } from "./sand-types.ts";
 // from now on; this file just needs one valid level for the game to boot
 // into and for a fresh editor session to have something to build on top of.
 //
-// `sandBloom`, `lockAndKey` and `crosswind` are NOT part of that roster any
-// more (see `BUILT_IN_LEVELS` below) — they stay exported because the test
-// suite exercises the radius/lock-key/wind mechanics against their exact,
-// hand-tuned geometry (tests/sand-radius.test.ts, sand-mechanics.test.ts,
+// `sandBloom` and `lockAndKey` are NOT part of that roster any more (see
+// `BUILT_IN_LEVELS` below) — they stay exported because the test suite
+// exercises the radius/lock-key mechanics against their exact, hand-tuned
+// geometry (tests/sand-radius.test.ts, sand-mechanics.test.ts,
 // sand-boosters.test.ts, sand-pixel-board.test.ts). Treat them as fixtures,
 // not as levels a player can reach; do not add them back to the roster
 // without checking what those tests assume about their shape first.
@@ -192,72 +192,6 @@ export const lockAndKey: SandLevelConfig = {
   pixelScale: 5,
 
   notes: "Mechanic fixture: frozen sand hanging in the frame, opened by a falling key.",
-};
-
-/**
- * Crosswind — the wind mechanic fixture.
- *
- * A mound built of one-cell steps, which is the only shape falling sand holds
- * still in, so every gust has somewhere to push grains and the change is
- * visible rather than theoretical.
- *
- * The weather is a three-phase loop, written to show what the loop is for
- * rather than to be the fairest possible level:
- *
- *   1. a long push right across the whole frame — the mound walks downwind
- *   2. a short, hard shove back left, but only through the upper half, so the
- *      peak is knocked back while the base it stands on is not
- *   3. a soft right-hand drift, again everywhere
- *
- * `power` and `zone` are in blueprint cells like `sortRadius`, and are scaled
- * with the board by `expandLevelForPixelBoard`. The durations are real time and
- * are not scaled.
- *
- * `tests/sand-mechanics.test.ts` asserts on this exact picture and these
- * exact wind phases — do not edit either without checking that test.
- */
-const CROSSWIND_PICTURE = [
-  "............",
-  "............",
-  "............",
-  "............",
-  "............",
-  "............",
-  ".....BB.....",
-  "....GGGG....",
-  "...GGGGGG...",
-  "..YYYYYYYY..",
-  ".YYYYYYYYYY.",
-  "OOOOOOOOOOOO",
-  "OOOOOOOOOOOO",
-  "OOOOOOOOOOOO",
-];
-
-export const crosswind: SandLevelConfig = {
-  ...RADIUS_GAMEPLAY,
-
-  id: 4,
-  name: "Crosswind",
-
-  frame: { width: 12, height: 14 },
-  rows: CROSSWIND_PICTURE,
-
-  ammoQueue: ["blue", "green", "yellow", "orange"],
-
-  sortRadius: 2.5,
-  shotLimit: 30,
-  pixelScale: 5,
-
-  wind: {
-    phases: [
-      { direction: "right", durationMs: 2600, cooldownMs: 3600, power: 1, zone: null },
-      // Upper half only: y counts up from the floor, so this starts at row 7.
-      { direction: "left", durationMs: 1400, cooldownMs: 3000, power: 2, zone: { x: 0, y: 7, width: 12, height: 7 } },
-      { direction: "right", durationMs: 1800, cooldownMs: 4200, power: 1, zone: null },
-    ],
-  },
-
-  notes: "Mechanic fixture: a looping wind pattern that reshapes the board between shots.",
 };
 
 // ==== Editor-shipped levels ====

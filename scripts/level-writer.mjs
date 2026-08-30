@@ -53,16 +53,6 @@ function draftToTypeScript(draft, id, constName) {
 
   const rows = draft.rows.map((row) => `    ${quoted(row)},`).join("\n");
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
-  const phaseLines = (draft.wind?.phases ?? []).map((phase) => {
-    const zone = phase.zone
-      ? `{ x: ${phase.zone.x}, y: ${phase.zone.y}, width: ${phase.zone.width}, height: ${phase.zone.height} }`
-      : "null";
-    return `      { direction: ${quoted(phase.direction)}, durationMs: ${phase.durationMs}, `
-      + `cooldownMs: ${phase.cooldownMs}, power: ${phase.power}, zone: ${zone} },`;
-  }).join("\n");
-  const wind = draft.wind
-    ? `\n  wind: {\n    phases: [\n${phaseLines}\n    ],\n  },\n`
-    : "";
   const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
 
   return `export const ${constName}: SandLevelConfig = {
@@ -85,7 +75,7 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-${wind}${friction}};`;
+${friction}};`;
 }
 
 function isDraft(value) {

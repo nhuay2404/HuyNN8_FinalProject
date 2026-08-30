@@ -13,8 +13,6 @@ import {
   SAND_COLORS,
   type SandColor,
   type SandLevelConfig,
-  type WindConfig,
-  type WindPhase,
 } from "./sand-types.ts";
 
 const STORAGE_KEY = "sand-cannon:v1:level-drafts";
@@ -91,8 +89,6 @@ export type LevelDraft = {
   shotLimit: number;
   /** null means "fit it to the pixel budget for me". */
   pixelScale: number | null;
-  /** null is still air. */
-  wind?: WindConfig | null;
   /** 0–1, how strongly a key resists rolling sideways. Absent is the same as 0. */
   keyFriction?: number;
   updatedAt: number;
@@ -117,11 +113,6 @@ export function autoPixelScale(width: number, height: number) {
 
 export function effectivePixelScale(draft: LevelDraft) {
   return draft.pixelScale ?? autoPixelScale(draft.width, draft.height);
-}
-
-/** A sensible phase to add when the author asks for one. Blows right, gently. */
-export function defaultWindPhase(): WindPhase {
-  return { direction: "right", durationMs: 2000, cooldownMs: 3500, power: 1, zone: null };
 }
 
 /** The editor's bounds, applied wherever a dimension enters the model. */
@@ -221,7 +212,6 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     sortRadius: draft.sortRadius,
     shotLimit: draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
-    wind: draft.wind ? { ...draft.wind } : null,
     keyFriction: draft.keyFriction ?? 0,
   };
 }
@@ -316,38 +306,6 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
     });
   }
 
-  if (draft.wind && !draft.wind.phases.length) {
-    issues.push({
-      severity: "error",
-      message: "Wind is on but has no phases. Add one, or turn wind off.",
-    });
-  }
-  draft.wind?.phases.forEach((phase, index) => {
-    const label = `Wind phase ${index + 1}`;
-    if (phase.power < 1) {
-      issues.push({ severity: "error", message: `${label}: power has to be at least 1 cell, or its gusts move nothing.` });
-    }
-    if (phase.durationMs < 200) {
-      issues.push({ severity: "error", message: `${label}: it has to blow for at least 0.2s to do anything.` });
-    }
-    if (phase.cooldownMs < 600) {
-      issues.push({
-        severity: "warning",
-        message: `${label}: less than 0.6s of still air leaves the player almost no settled board to aim at.`,
-      });
-    }
-    const zone = phase.zone;
-    if (!zone) return;
-    const clipped = zone.x < 0 || zone.y < 0
-      || zone.x + zone.width > draft.width || zone.y + zone.height > draft.height;
-    if (clipped) {
-      issues.push({ severity: "warning", message: `${label}: its zone reaches outside the frame, so part of it does nothing.` });
-    }
-    if (zone.width < 1 || zone.height < 1) {
-      issues.push({ severity: "error", message: `${label}: an empty zone means the phase can never move anything.` });
-    }
-  });
-
   const pixels = draft.width * draft.height * effectivePixelScale(draft) ** 2;
   if (pixels > PIXEL_BUDGET * 1.6) {
     issues.push({
@@ -426,41 +384,13 @@ function isDraft(value: unknown): value is LevelDraft {
 }
 
 /**
- * Bring a stored draft's wind up to the current shape.
- *
- * Wind was once a single `{ everyMs, direction, strength }` gust. A draft
- * written then is still a real level someone drew, so it is translated rather
- * than dropped: the old gust becomes a one-phase loop that blows for a moment
- * and then waits out the rest of the interval, which is what it always did.
- */
-function normaliseWind(wind: unknown): WindConfig | null {
-  if (!wind || typeof wind !== "object") return null;
-  const current = wind as Partial<WindConfig>;
-  if (Array.isArray(current.phases)) return { phases: current.phases };
-
-  const legacy = wind as { everyMs?: unknown; direction?: unknown; strength?: unknown };
-  if (typeof legacy.everyMs !== "number") return null;
-  const everyMs = Math.max(1000, legacy.everyMs);
-  return {
-    phases: [{
-      direction: legacy.direction === "left" ? "left" : "right",
-      durationMs: 800,
-      cooldownMs: Math.max(600, everyMs - 800),
-      power: typeof legacy.strength === "number" ? Math.max(1, legacy.strength) : 1,
-      zone: null,
-    }],
-  };
-}
-
-/**
  * Blow a blueprint-era draft up to the resolution it was always going to run at.
  *
  * Drafts used to be small pictures with a `pixelScale` the game applied at
  * load. The editor authors the real board now, so an old draft is translated
  * rather than dropped: it is expanded by exactly the factor the game would have
  * expanded it by, which is the same picture the author was already playing.
- * `sortRadius` and the wind come along, because `expandLevelForPixelBoard`
- * scales those too.
+ * `sortRadius` comes along too, because `expandLevelForPixelBoard` scales that.
  */
 export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
   const scale = effectivePixelScale(draft);
@@ -472,7 +402,6 @@ export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
     height: expanded.frame.height,
     rows: expanded.rows,
     sortRadius: expanded.sortRadius,
-    wind: expanded.wind ?? null,
     pixelScale: 1,
   };
 }
@@ -486,9 +415,9 @@ export function loadDrafts(): LevelDraft[] {
     // Anything that does not round-trip is dropped rather than crashing the
     // editor: a half-written draft must never make the tool unopenable.
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(isDraft)
-      .map((draft) => expandDraftToPixels({ ...draft, wind: normaliseWind(draft.wind) }));
+    // A draft saved before wind was removed may still carry a stray `wind`
+    // property in storage — harmless, since nothing here reads it any more.
+    return parsed.filter(isDraft).map(expandDraftToPixels);
   } catch {
     return [];
   }
@@ -534,18 +463,6 @@ export function draftToTypeScript(draft: LevelDraft, id: number) {
 
   const rows = draft.rows.map((row) => `    ${quoted(row)},`).join("\n");
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
-  // Omitted entirely on a still level, so a level that has no weather does not
-  // carry a line saying so.
-  const phaseLines = (draft.wind?.phases ?? []).map((phase) => {
-    const zone = phase.zone
-      ? `{ x: ${phase.zone.x}, y: ${phase.zone.y}, width: ${phase.zone.width}, height: ${phase.zone.height} }`
-      : "null";
-    return `      { direction: ${quoted(phase.direction)}, durationMs: ${phase.durationMs}, `
-      + `cooldownMs: ${phase.cooldownMs}, power: ${phase.power}, zone: ${zone} },`;
-  }).join("\n");
-  const wind = draft.wind
-    ? `\n  wind: {\n    phases: [\n${phaseLines}\n    ],\n  },\n`
-    : "";
   // Omitted when there is nothing for it to act on, or when it is 0 — the
   // default already means "no resistance".
   const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
@@ -570,6 +487,6 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-${wind}${friction}};
+${friction}};
 `;
 }

@@ -21,7 +21,6 @@ import {
   createDraft,
   draftToLevel,
   draftToTypeScript,
-  defaultWindPhase,
   effectivePixelScale,
   fixtureCounts,
   loadDrafts,
@@ -36,7 +35,7 @@ import {
 } from "./game/level-drafts";
 import { groupCells } from "./game/sand-rules";
 import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./game/sand-sprites";
-import { SAND_COLORS, type SandColor, type WindConfig, type WindPhase } from "./game/sand-types";
+import { SAND_COLORS, type SandColor } from "./game/sand-types";
 import { finishLoading } from "./loading-screen";
 
 type Tool = "brush" | "eraser" | "bucket" | "key";
@@ -237,22 +236,6 @@ function clearCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
   return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, EMPTY_CELL), draft.rows);
 }
 
-/** Replace one phase of a wind loop, leaving the rest of the list alone. */
-function editWindPhase(wind: WindConfig | null | undefined, index: number, patch: Partial<WindPhase>) {
-  if (!wind) return wind ?? null;
-  return { phases: wind.phases.map((phase, at) => (at === index ? { ...phase, ...patch } : phase)) };
-}
-
-/** Move one phase up or down the loop. Order is the whole point of a loop. */
-function moveWindPhase(wind: WindConfig | null | undefined, index: number, delta: number) {
-  if (!wind) return wind ?? null;
-  const target = index + delta;
-  if (target < 0 || target >= wind.phases.length) return wind;
-  const phases = [...wind.phases];
-  [phases[index], phases[target]] = [phases[target], phases[index]];
-  return { phases };
-}
-
 /** Reading a cell out of the row strings, and writing one back. */
 function letterAt(rows: string[], x: number, y: number, height: number) {
   const row = rows[height - 1 - y];
@@ -403,8 +386,6 @@ export default function LevelEditor() {
   const [tool, setTool] = useState<Tool>("brush");
   /** Whether the brush lays sand down frozen. A modifier, not a tool. */
   const [locking, setLocking] = useState(false);
-  /** Which wind phase's zone is drawn over the picture. */
-  const [phaseIndex, setPhaseIndex] = useState(0);
   /** The key tool's radius, in board pixels. */
   const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
   /** Width of the square brush nib, in board pixels. */
@@ -684,24 +665,7 @@ export default function LevelEditor() {
     };
     if (cellPx >= FINE_GRID_MIN_PX) rule(1, "rgba(255,255,255,.10)");
     rule(GUIDE_GRID_STEP, "rgba(255,255,255,.16)");
-
-    // The selected wind phase's reach, over everything. Four numbers in a
-    // sidebar are impossible to picture; the rectangle on the drawing is not.
-    const zone = draft.wind?.phases[phaseIndex]?.zone;
-    if (!zone) return;
-    // Grid y counts up from the floor, canvas rows count down from the top.
-    const top = (draft.height - (zone.y + zone.height)) * cellPx;
-    const left = zone.x * cellPx;
-    const width = zone.width * cellPx;
-    const height = zone.height * cellPx;
-    context.fillStyle = "rgba(120,200,255,.14)";
-    context.fillRect(left, top, width, height);
-    context.strokeStyle = "rgba(150,215,255,.95)";
-    context.lineWidth = 2;
-    context.setLineDash([6, 4]);
-    context.strokeRect(left + 1, top + 1, width - 2, height - 2);
-    context.setLineDash([]);
-  }, [draft, phaseIndex]);
+  }, [draft]);
 
   // ---- derived -----------------------------------------------------------
 
@@ -1093,215 +1057,11 @@ export default function LevelEditor() {
             </label>
           </div>
 
-          <h2>Wind</h2>
-          <p className="editor-note">
-            A loop of phases. Each one blows one way for a while, then leaves the air still, then
-            hands over to the next — and the list starts again. Frozen sand never moves; a key does,
-            so wind can open a lock on its own.
-          </p>
-          <label className="editor-check">
-            <input
-              type="checkbox"
-              checked={Boolean(draft.wind)}
-              onChange={(event) => update((current) => ({
-                ...current,
-                wind: event.target.checked ? { phases: [defaultWindPhase()] } : null,
-              }))}
-            />
-            <span>This level has wind</span>
-          </label>
-
-          {draft.wind && (
-            <ol className="editor-phases">
-              {draft.wind.phases.map((phase, index) => (
-                <li
-                  key={index}
-                  className={index === phaseIndex ? "is-active" : ""}
-                  // Selecting a phase is what puts its zone on the canvas, so
-                  // the rectangle being edited is the one being looked at.
-                  // Focus, not click: touching any field in the card selects
-                  // it, by mouse or by keyboard, and a click handler on the
-                  // card itself would be a control that only a mouse can reach.
-                  onFocusCapture={() => setPhaseIndex(index)}
-                >
-                  <header>
-                    {/* A real button, so showing a phase's zone on the picture
-                        is something a keyboard can do too. */}
-                    <button
-                      type="button"
-                      className="editor-phase-pick"
-                      onClick={() => setPhaseIndex(index)}
-                      aria-pressed={index === phaseIndex}
-                      title="Show this phase's zone on the picture"
-                    >
-                      <b>Phase {index + 1}</b>
-                      <span className="editor-phase-summary">
-                        {phase.direction === "right" ? "→" : "←"} {(phase.durationMs / 1000).toFixed(1)}s
-                        {" · "}rest {(phase.cooldownMs / 1000).toFixed(1)}s
-                        {" · "}power {phase.power}
-                        {phase.zone ? " · zoned" : ""}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="editor-mini"
-                      disabled={index === 0}
-                      onClick={() => update((current) => ({ ...current, wind: moveWindPhase(current.wind, index, -1) }))}
-                      aria-label={`Move phase ${index + 1} earlier`}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      className="editor-mini"
-                      disabled={index === (draft.wind?.phases.length ?? 0) - 1}
-                      onClick={() => update((current) => ({ ...current, wind: moveWindPhase(current.wind, index, 1) }))}
-                      aria-label={`Move phase ${index + 1} later`}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      className="editor-mini"
-                      onClick={() => update((current) => ({
-                        ...current,
-                        wind: current.wind
-                          ? { phases: current.wind.phases.filter((_, at) => at !== index) }
-                          : current.wind,
-                      }))}
-                      aria-label={`Remove phase ${index + 1}`}
-                    >
-                      ✕
-                    </button>
-                  </header>
-
-                  <div className="editor-field-row">
-                    <label className="editor-field">
-                      <span>Blows</span>
-                      <select
-                        value={phase.direction}
-                        onChange={(event) => update((current) => ({
-                          ...current,
-                          wind: editWindPhase(current.wind, index, {
-                            direction: event.target.value === "left" ? "left" : "right",
-                          }),
-                        }))}
-                      >
-                        {/* Named for where the sand goes, which is what the
-                            field stores — labelling it by where the wind comes
-                            from would read as the opposite of the value. */}
-                        <option value="right">right →</option>
-                        <option value="left">← left</option>
-                      </select>
-                    </label>
-                    <label className="editor-field">
-                      <span>For (s)</span>
-                      <input
-                        type="number"
-                        min={0.2}
-                        max={30}
-                        step={0.2}
-                        value={phase.durationMs / 1000}
-                        onChange={(event) => update((current) => ({
-                          ...current,
-                          wind: editWindPhase(current.wind, index, {
-                            durationMs: Math.round(Number(event.target.value) * 1000),
-                          }),
-                        }))}
-                      />
-                    </label>
-                    <label className="editor-field">
-                      <span>Rest (s)</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={60}
-                        step={0.2}
-                        value={phase.cooldownMs / 1000}
-                        onChange={(event) => update((current) => ({
-                          ...current,
-                          wind: editWindPhase(current.wind, index, {
-                            cooldownMs: Math.round(Number(event.target.value) * 1000),
-                          }),
-                        }))}
-                      />
-                    </label>
-                    <label className="editor-field">
-                      <span>Power</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={6}
-                        value={phase.power}
-                        onChange={(event) => update((current) => ({
-                          ...current,
-                          wind: editWindPhase(current.wind, index, {
-                            power: Math.max(1, Math.round(Number(event.target.value))),
-                          }),
-                        }))}
-                      />
-                    </label>
-                  </div>
-
-                  <label className="editor-check">
-                    <input
-                      type="checkbox"
-                      checked={phase.zone !== null}
-                      onChange={(event) => update((current) => ({
-                        ...current,
-                        wind: editWindPhase(current.wind, index, {
-                          zone: event.target.checked
-                            ? { x: 0, y: Math.floor(current.height / 2), width: current.width, height: Math.ceil(current.height / 2) }
-                            : null,
-                        }),
-                      }))}
-                    />
-                    <span>Only part of the frame</span>
-                  </label>
-
-                  {phase.zone && (
-                    <div className="editor-field-row">
-                      {(["x", "y", "width", "height"] as const).map((field) => (
-                        <label className="editor-field" key={field}>
-                          <span>{field === "x" ? "Left" : field === "y" ? "Bottom" : field === "width" ? "Wide" : "Tall"}</span>
-                          <input
-                            type="number"
-                            min={field === "x" || field === "y" ? 0 : 1}
-                            max={field === "x" || field === "width" ? draft.width : draft.height}
-                            value={phase.zone![field]}
-                            onChange={(event) => update((current) => ({
-                              ...current,
-                              wind: editWindPhase(current.wind, index, {
-                                zone: { ...phase.zone!, [field]: Math.max(0, Math.round(Number(event.target.value))) },
-                              }),
-                            }))}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </li>
-              ))}
-              <li className="editor-phase-add">
-                <button
-                  type="button"
-                  className="editor-button"
-                  onClick={() => update((current) => ({
-                    ...current,
-                    wind: { phases: [...(current.wind?.phases ?? []), defaultWindPhase()] },
-                  }))}
-                >
-                  + Add phase
-                </button>
-              </li>
-            </ol>
-          )}
-
           <h2>Key friction</h2>
           <p className="editor-note">
-            How much a key resists rolling sideways — down a slope or in the wind. Low friction
-            rolls the instant a slope offers it; high friction waits, so it reads as heavier. It
-            never slows a straight drop, only a sideways one.
+            How much a key resists rolling sideways down a slope. Low friction rolls the instant
+            a slope offers it; high friction waits, so it reads as heavier. It never slows a
+            straight drop, only a sideways one.
           </p>
           <label className="editor-field">
             <span>Friction {(draft.keyFriction ?? 0).toFixed(1)}</span>
