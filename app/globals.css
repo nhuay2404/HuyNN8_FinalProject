@@ -106,10 +106,22 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes loading-dot { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
 
 /* ---- Frame ------------------------------------------------------------- */
-.page-shell { min-height: 100dvh; display: grid; place-items: center; padding: 18px; }
+/* `100vh` first, `100dvh` second on purpose: a WebView old enough not to
+   recognise `dvh` (some in-app browsers — Facebook's among them — run a
+   noticeably older engine than the system browser) treats the whole
+   declaration as invalid and drops it entirely, rather than falling back to
+   anything. With no `height` left to apply at all, `.game-frame` shrinks to
+   its content's size instead of filling the screen, and `place-items:
+   center` on `.page-shell` then centres that shrunken island — which is
+   exactly the "everything indented, coloured margin all round" bug this is
+   fixing. The `vh` line always parses, so there is always a real height even
+   where `dvh` is unsupported; where it IS supported, the later `dvh` line
+   simply wins and corrects for the mobile toolbar `vh` gets wrong. */
+.page-shell { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 18px; }
 .game-frame {
   position: relative;
   width: min(100%, 430px);
+  height: min(900px, calc(100vh - 56px));
   height: min(900px, calc(100dvh - 56px));
   min-height: 680px;
   overflow: hidden;
@@ -145,9 +157,17 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   top: max(var(--hud-inset), env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
 }
-.settings-button, .help-button {
+.settings-button, .help-button, .gift-button {
   width: 42px; height: 42px; font-size: 19px; line-height: 1;
   display: grid; place-items: center;
+}
+/* The hub's top-right, above `.hub-screen` (z-index 30) rather than
+   `.settings-wrap`'s 12 — see the JSX comment on why this is a separate
+   class instead of reusing that one. */
+.hub-gift-wrap {
+  position: absolute; z-index: 31; display: flex; gap: 8px;
+  top: max(var(--hud-inset), env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
 }
 .settings-backdrop {
   position: fixed; z-index: 11; inset: 0; border: 0; padding: 0;
@@ -217,6 +237,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; align-items: center; gap: 6px;
   padding: 6px 14px 6px 8px; border: 2px solid var(--line); border-radius: 999px;
   background: var(--panel);
+  /* Remounted (via a React `key`) the instant a shot leaves the barrel
+     (`SHOT_FIRED`), same technique as `.shots-icon`'s own pop just below —
+     so the whole badge gets a little jolt on every shot, not just when the
+     number or the loaded colour changes. */
+  animation: shots-badge-shake .3s ease-out;
 }
 .shots-icon {
   width: 14px; height: 14px; flex: none; border-radius: 50%;
@@ -351,9 +376,17 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: conic-gradient(from 0deg, #ff4d64, #ff8a33, #ffc233, #3ecc5e, #3aa0f5, #5b6ee8, #9a5cf0, #ff4d64);
   animation: booster-prism-spin 2.4s linear infinite;
 }
-/* Reserved for a future charge-count number (spec §4) — no fill, no border,
-   nothing drawn while boosters stay unlimited. Position only. */
-.booster-badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; border-radius: 50%; }
+/* Spec §4's charge-count badge, for real now the wallet is finite
+   (`economy.ts`) — a small filled pill rather than the bare dot other
+   badges in this HUD use, because a naked number needs a background to read
+   against whatever is behind the booster tray. */
+.booster-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 999px; border: 1.5px solid var(--panel);
+  background: var(--gold); color: var(--gold-ink);
+  font-size: 10px; font-weight: 900; line-height: 15px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---- Locked-input and feedback ---------------------------------------- */
 /* §24 asks for a visible sign that firing is locked while sand is moving.
@@ -405,6 +438,19 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .result-card h2 { margin: 0 0 10px; font-size: 21px; letter-spacing: .02em; color: var(--ink); }
 .result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+/* The gold a WIN just paid — sits between the result line and the buttons,
+   its own row rather than folded into the `<p>` above so the number reads
+   like a receipt line, not prose. */
+.result-reward {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: -8px 0 18px; font-size: 15px; color: var(--ink);
+}
+.result-reward .coin-icon { width: 18px; height: 18px; color: #e0a512; }
+.result-reward strong { font-variant-numeric: tabular-nums; color: var(--accent-line); }
+/* A replayed win: no number to show, said outright instead of just omitting
+   the row (see the comment at the call site). Smaller and muted — a note,
+   not a receipt. */
+.result-reward.is-replay { font-size: 12px; color: var(--muted); }
 .result-card button {
   width: 100%; padding: 13px; border: 2px solid var(--accent-line); border-radius: 16px;
   background: var(--accent); color: var(--accent-ink);
@@ -430,6 +476,32 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   color: var(--ink); font-size: 13px; line-height: 1.5;
 }
 .tutorial-steps li::marker { color: var(--muted); font-weight: 800; }
+
+/* ---- Daily login overlay ------------------------------------------------- */
+/* Also `.result-screen`/`.result-card` underneath, same reasoning as the
+   tutorial overlay above — a seven-chip strip standing in for the numbered
+   steps. */
+.daily-login-card { max-width: 320px; }
+.daily-login-strip {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
+  margin: 0 0 16px;
+}
+.daily-login-day {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 7px 2px; border-radius: 12px; border: 2px solid var(--line); background: var(--locked);
+}
+.daily-login-day .coin-icon { width: 14px; height: 14px; color: #e0a512; }
+.daily-login-day strong { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.daily-login-label { font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+/* Already claimed this cycle — flattened and quieted rather than removed, so
+   the strip still reads as one continuous week. */
+.daily-login-day.is-past { opacity: .55; }
+/* The day the modal opened for — the one chip that can still be claimed. */
+.daily-login-day.is-today {
+  border-color: var(--accent-line); background: #e2f6e1;
+  animation: booster-armed-pulse 1.6s ease-in-out infinite;
+}
+.daily-login-day.is-today.is-past { animation: none; }
 
 /* ---- Home screen ------------------------------------------------------- */
 /* Carried over in shape from the pre-pivot menu hub, with one thing changed:
@@ -519,6 +591,47 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-gallery button.is-active { border-color: var(--accent-line); background: #e2f6e1; }
 .hub-gallery button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .hub-gallery b { font-size: 11px; font-weight: 800; text-align: center; line-height: 1.25; }
+
+/* ---- Shop ---------------------------------------------------------------- */
+/* One row per booster: icon, name/blurb/owned-count, and a price button —
+   the same three-part row shape `.settings-actions` already uses for its
+   menu items, widened into a card since a price needs more room than a
+   label. */
+.shop-balance {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 0 0 14px; font-size: 16px; font-weight: 900; color: var(--ink);
+}
+.shop-balance .coin-icon { width: 18px; height: 18px; color: #e0a512; }
+.shop-list { display: flex; flex-direction: column; gap: 10px; }
+.shop-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border: 2px solid var(--line); border-radius: 18px; background: var(--locked);
+}
+.shop-item-icon {
+  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--panel); border: 2px solid var(--line);
+}
+.shop-item-icon .booster-icon { width: 21px; height: 21px; }
+/* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
+   here is recognisably the same thing armed in the HUD tray. */
+.shop-item-icon.is-radius { color: #1c6a94; border-color: #2a93cc; }
+.shop-item-icon.is-prism { color: #6a3ec2; border-color: #9a5cf0; }
+.shop-item-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.shop-item-info b { font-size: 14px; color: var(--ink); }
+.shop-item-desc { font-size: 11px; color: var(--muted); line-height: 1.35; }
+.shop-item-owned { font-size: 11px; font-weight: 800; color: var(--accent-line); }
+.shop-buy-btn {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  padding: 9px 14px; border-radius: 14px; border: 2px solid var(--accent-line);
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 13px; font-weight: 900; cursor: pointer; transition: transform .16s, opacity .16s;
+}
+.shop-buy-btn .coin-icon { width: 15px; height: 15px; color: inherit; }
+.shop-buy-btn:active:not(:disabled) { transform: scale(.95); }
+.shop-buy-btn:disabled {
+  border-color: var(--line); background: var(--panel); color: var(--muted);
+  opacity: .7; cursor: default;
+}
 
 /* The picture itself, one grid cell per authored cell. `image-rendering` is not
    involved: these are real boxes, so they stay square at any size.
@@ -631,6 +744,17 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   85% { transform: scale(1.08) rotate(2deg); }
   100% { transform: scale(1) rotate(0deg); }
 }
+/* A quick side-to-side rattle for the whole shots-badge, fired at the moment
+   a shot leaves the barrel — small and fast (recoil-sized, not the drama
+   `shots-icon-pop` gets for an actual colour change), settling back to rest
+   rather than ending on an offset. */
+@keyframes shots-badge-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px) rotate(-2deg); }
+  40% { transform: translateX(3px) rotate(2deg); }
+  60% { transform: translateX(-2px) rotate(-1deg); }
+  80% { transform: translateX(2px) rotate(1deg); }
+}
 @keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
 @keyframes hub-tap-exit { to { opacity: 0; } }
 @keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
@@ -666,6 +790,7 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   --panel: rgba(20, 20, 23, 0.74);
   --line: rgba(255, 255, 255, 0.16);
   --accent: #ffffff;
+  min-height: 100vh;
   min-height: 100dvh;
   padding: 18px clamp(12px, 3vw, 32px) 40px;
   color: var(--ink);

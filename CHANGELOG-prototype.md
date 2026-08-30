@@ -4234,3 +4234,397 @@ giữ nguyên tham chiếu nên không phải tính lại cả danh sách mỗi 
 `cachedDrafts` đã có sẵn trong file). Verify trên dev server: màn khởi tạo mặc định ra điểm 47/10/0/0/43 →
 Easy; tiêm một màn tổng hợp 10 màu xen kẽ dày đặc, 8 đạn, radius 1 ra đúng 47/100/100/100/95 → Very hard;
 bấm vào hàng "Very hard" chuyển đúng màn đang chọn ở cả list level bên trên và ô Name.
+
+---
+
+## 78. Coin HUD: đổi màu nền vàng nhạt, icon vàng đậm hơn (28/08)
+
+Tiếp theo coin badge góc trên-trái đã có sẵn từ trước (mục HUD tiền, `.hud-top-left`/`.coin-badge` trong
+`SandGame.tsx`/`globals.css`). Yêu cầu: "Background HUD tiền phải màu vàng nhạt, còn icon đồng xu có thể
+có màu vàng đậm hơn".
+
+`globals.css` — `.coin-badge`: nền đổi từ `var(--panel)` (trắng) sang `#fff3c4` (vàng nhạt). `.coin-icon`
+(màu đĩa xu, `fill="currentColor"` trong `CoinIcon`, `SandGame.tsx`): đổi từ `var(--gold)` (#ffc233) sang
+`#e0a512` (vàng đậm hơn) để nổi bật trên nền mới; viền và các chi tiết bên trong ring vẫn giữ nguyên màu
+hard-code sẵn trong SVG (#c98a1c), không đổi.
+
+**Kiểm tra:** không verify được trên dev server thật lần này — một phiên chat khác đang chạy `vinext dev`
+trên đúng thư mục này (cổng 3000), và vinext tự chặn chạy 2 instance song song trên cùng project dù đổi
+sang cổng khác (`autoPort`), nên tab trình duyệt của phiên này không mở lại được server để chụp màn hình.
+Xuất một file HTML mock tái tạo đúng CSS/markup của `.hud-top-left` + `.coin-badge` + `CoinIcon` (cùng giá
+trị màu, viền, bo góc, kích thước) để xem trước kết quả, gửi kèm cho người dùng; cần người dùng tự refresh
+dev server đang chạy sẵn (HMR) để xác nhận cuối trên trang thật.
+
+---
+
+## 79. Kinh tế vàng: thưởng theo màn, Shop mua booster giới hạn số lượng, Daily login (29/08)
+
+Yêu cầu lớn: người chơi nhận vàng sau khi thắng 1 màn (kèm UI báo số vàng nhận được), vàng dùng mua
+booster ở Shop (booster giờ giới hạn số lượng, cần UI mua thật), tự cân bằng số vàng/màn + giá booster
+cho roadmap 50 level, và tính toán + lập luận cho Daily login.
+
+**Phát hiện trước khi viết dòng nào:** `sand-rules.ts` đã có sẵn đúng cái móc cho việc này — `armBooster`
+trong `SandCannonEngine.ts` đã gọi `getBoosterCharges(type) <= 0` để chặn, và `BOOSTER_CHARGES_TEMP` (khi
+đó `Infinity` cho cả hai) có comment để sẵn: "the day this becomes finite (spent from a currency or a level
+grant), each booster gets its own real number here". Cũng đã có `SandLevelConfig.requiresBooster` (chưa ai
+đọc) và comment ở `PLACEHOLDER_COINS`: "Placeholder balance until a real coin economy... exists to back
+it." Tức là kiến trúc đã chờ sẵn tính năng này từ trước — chỉ cần lắp vào đúng chỗ.
+
+### `app/game/economy.ts` (file mới) — ví tiền người chơi
+
+Toàn bộ kinh tế gói trong 1 module: `gold` + `boosters: Record<BoosterType, number>`, lưu localStorage
+(`sand-cannon:v1:wallet`), cùng kiểu SSR-guard `typeof window === "undefined"` như `level-drafts.ts` đã
+dùng. Expose qua `getWallet`/`subscribeWallet` (dùng với `useSyncExternalStore`, giống hệt mẫu
+`readBoot`/`SERVER_BOOT` sẵn có trong `SandGame.tsx`) nên UI tự re-render mỗi khi ví đổi — thắng màn, mua
+Shop, hay claim daily login đều chỉ cần gọi hàm, không cần truyền state qua props.
+
+`sand-rules.ts`'s `getBoosterCharges` giờ delegate sang `economy.ts` thay vì đọc hằng số — giữ nguyên chữ
+ký hàm nên `SandCannonEngine.ts` và test cũ không phải đổi import. Thêm `spendBoosterCharge`, gọi đúng 1
+chỗ trong `SandCannonEngine.fire()` (spec §7.1: "consumed the instant it leaves the barrel") — KHÔNG trừ
+lúc arm, để lỡ arm xong rồi bấm Restart trước khi bắn thì không mất viên đó (engine cũ bị huỷ toàn bộ, engine
+mới luôn arm=null).
+
+### Vàng nhận được khi thắng — công thức, không phải số tay
+
+Tái dùng `level-difficulty.ts`'s `computeDifficulty` (điểm 0-100, 5 tiêu chí — board rộng, số màu, độ xen
+kẽ, độ chật đạn, bán kính — mục 77 đã có sẵn). Tách `computeLevelDifficulty(level: SandLevelConfig)` ra khỏi
+`computeDifficulty(draft)` để dùng được cho cả level đã ship (không chỉ draft đang vẽ).
+
+`levelGoldReward(score) = round5(20 + score)` — 20 vàng ở score 0, 120 vàng ở score 100. Vì sao tuyến tính
+1:1 rồi làm tròn 5 thay vì tay chọn số cho từng bậc: 50 level chưa tồn tại, không có gì để "tay chọn" —
+công thức tự chấm điểm đúng theo cùng thước đo editor đã dùng, level nào khó hơn tự động trả nhiều hơn,
+không cần ai ngồi cân lại mỗi khi thêm level mới.
+
+**Chỉ trả 1 lần - thắng lại (replay) không có vàng** (theo lựa chọn của bạn): `markLevelCleared(id)` - Set
+id đã thắng lưu localStorage (`sand-cannon:v1:cleared-levels`, cùng khuôn với `TUTORIALS_SEEN_KEY` sẵn có),
+trả về `true` đúng 1 lần duy nhất. Lý do chọn nhánh chặt nhất trong 3 lựa chọn: nếu trả full mỗi lần thắng
+lại, người chơi cày đi cày lại đúng 1 level dễ nhất (score thấp, nhưng vẫn ra vàng) là có vàng vô hạn - toàn
+bộ ý nghĩa "khó hơn trả nhiều hơn" sụp đổ vì không còn gắn với việc chơi qua nội dung mới. Đánh đổi: người
+chơi luyện tập lại 1 màn để né không được thưởng thêm - chấp nhận được vì mục đích của Shop là hỗ trợ level
+MỚI khó hơn, không phải một vòng lặp cày vàng.
+
+Ước tính (không phải số đo thật vì 50 level chưa được vẽ): độ khó tăng dần tuyến tính từ level 1 (score
+~10) tới level 50 (score ~90) -> điểm trung bình ~50 -> thưởng trung bình `round5(70) = 70` vàng/màn -> chơi
+hết 50 màn 1 lượt (mỗi màn chỉ tính 1 lần) ra khoảng 3.000-3.500 vàng tổng đời - con số này TỰ ĐỘNG cập nhật
+đúng theo độ khó thật khi 50 level thật được vẽ trong editor, không cần tính lại tay.
+
+### Giá booster ở Shop
+
+| Booster | Giá | Vì sao |
+|---|---|---|
+| Radius Overcharge | 60 vàng | Nhân đôi bán kính disc (`effectiveSortRadius`) |
+| Prism Shot | 100 vàng | Bỏ hẳn luật khớp màu (`matchColor: false` trong `cellsInRadius`) - 1 phát ăn MỌI màu trong tầm, mạnh hơn hẳn một cái vòng to cùng luật khớp màu cũ |
+
+Prism đắt hơn ~67% vì nó không "cùng loại buff, to hơn" - nó bỏ hẳn một luật chơi, tiềm năng dọn nhiều màu
+cùng lúc trong 1 phát. Cả hai đều tặng free 1 viên lúc cài đặt lần đầu (`STARTER_BOOSTER_CHARGES`) để người
+chơi thấy nó hoạt động trước khi phải trả tiền, khớp tinh thần "Shop là chỗ khám phá khi hết viên, không
+phải rào chắn trước một cơ chế chưa từng thấy".
+
+Vàng khởi điểm giữ nguyên **100** (đúng số `PLACEHOLDER_COINS` cũ) - đủ mua ngay 1 Radius Overcharge hoặc
+góp một phần Prism Shot ngay từ đầu.
+
+**Rủi ro cần lưu ý khi vẽ 50 level thật:** `SandLevelConfig.requiresBooster` (mục đánh dấu "màn này cần
+đúng booster X mới dọn nổi") đã có sẵn nhưng chưa nơi nào đọc. Một khi booster giới hạn số lượng, một người
+chơi tiêu hết sạch viên ở màn trước có thể bị kẹt ở màn `requiresBooster` mà không đủ vàng mua thêm ngay -
+đây là rủi ro thiết kế nội dung (thứ tự level, không phải công thức), nên khi ai đó vẽ những màn bắt buộc
+booster, cần đảm bảo tổng vàng tích luỹ tới đó đủ mua ít nhất 1 viên loại cần, hoặc cân nhắc thêm cơ chế
+"tặng 1 viên miễn phí nếu vào màn cần mà đang có 0 viên" sau này.
+
+### Daily login - 7 ngày, lặp lại, không lấn át gameplay
+
+`DAILY_LOGIN_REWARDS = [10, 15, 20, 25, 30, 40, 80]` - tăng dần trong tuần (thưởng quay lại hôm sau), lặp
+vòng chứ không tăng vô hạn (chặn việc chỉ đăng nhập ăn vàng mãi mãi thay vì chơi). Trung bình tuần
+`220/7 = 31,4` vàng/ngày - CHỦ Ý thấp hơn cả một màn Dễ (~20-45 vàng), vì daily login là phần thưởng "có
+mặt", không phải nguồn thu chính; nguồn thu chính vẫn là chơi qua level. Ngày 7 (80 vàng, gần bằng 1 màn
+Very hard) là "phần thưởng hoàn thành tuần", đúng mẫu game thưởng streak phổ biến.
+
+Đứt streak (bỏ lỡ từ 2 ngày trở lên) reset về ngày 1 - chọn nhánh đơn giản nhất trong các phương án, tránh
+logic ân hạn (grace period) phức tạp không cần thiết cho một tính năng phụ trợ. Ngày tính theo giờ máy
+người chơi (`YYYY-MM-DD` local), không theo UTC, để không đứt streak lúc nửa đêm UTC ở múi giờ khác.
+
+Tách riêng `computeDailyLoginState(record, now)` (hàm thuần, không đụng `localStorage`) khỏi
+`getDailyLoginState()` (wrapper đọc storage thật) - để test được logic ngày/streak (gap 0/1/từ 2 trở lên,
+wrap từ ngày 7 về ngày 1) bằng `node --test` mà không cần `window`, giống cách `level-drafts.ts` chưa từng
+test được phần localStorage của nó nhưng phần logic thuần thì test được.
+
+### UI
+
+- **HUD/Result card** (`SandGame.tsx`): thắng lần đầu hiện `+N` kèm icon xu (`.result-reward`); thắng lại
+  (replay) hiện "Already cleared - no coins this time" thay vì im lặng - nói rõ lý do thay vì để người chơi
+  tưởng bị lỗi.
+- **Shop** (tab có sẵn, trước đây chỉ là "Not built yet"): danh sách 2 booster, icon + mô tả 1 dòng + số
+  đang sở hữu + nút mua giá bao nhiêu, disable khi không đủ vàng, toast báo kết quả mua.
+- **Booster HUD trong màn**: nút giờ disable thêm khi hết viên (ngoài các điều kiện cũ), và badge số viên
+  còn lại hiện thật (`spec §4` đã chừa sẵn chỗ này từ lâu, trước giờ luôn rỗng vì booster vô hạn).
+- **Daily login modal**: dải 7 ô ngày (đã qua mờ đi, hôm nay nhấp nháy nhẹ), nút Claim hoặc thông báo
+  "come back tomorrow"; tự mở đúng 1 lần khi vào hub nếu chưa claim hôm nay, mở lại bất cứ lúc nào qua nút
+  🎁 góc trên-phải của hub (chỗ `.settings-wrap` dùng lúc đang chơi, tách class riêng vì hub có z-index 30 -
+  dùng lại `.settings-wrap` (z-index 12) sẽ bị chìm dưới màn hub).
+
+Không dùng `useEffect` + `setState` cho cả hai chỗ đọc trạng thái ban đầu (daily login lúc mount, vàng lúc
+thắng): daily login dùng đúng mẫu `useSyncExternalStore`/`readBoot`/`SERVER_BOOT` sẵn có; vàng-khi-thắng
+dùng đúng mẫu "set state trong lúc render" mà `ammoAnim` đã dùng (mục 76 giải thích rule
+`react-hooks/set-state-in-effect` không gắn cờ vì không nằm trong effect) - cả hai đều được canh bằng so
+sánh identity nên khối side-effect (`markLevelCleared`/`addGold`) chỉ chạy đúng 1 lần mỗi lần chuyển trạng
+thái thật.
+
+**Kiểm tra:** 111 test pass (`tests/sand-economy.test.ts` - file mới, 15 test cho công thức thưởng, cộng/trừ
+vàng, mua booster, và toàn bộ nhánh logic streak; `tests/sand-boosters.test.ts` cập nhật bài test
+`getBoosterCharges` cho ví thật thay vì `Infinity`), `tsc --noEmit` và `eslint` sạch trên mọi file đụng tới
+(1 lỗi `react-hooks/set-state-in-effect` có sẵn từ trước ở `homeVisible`/`HOME_EXIT_MS`, không phải do đợt
+này - đã xác nhận bằng `git stash` rồi lint lại bản gốc).
+
+Verify thật trên dev server (`localhost:3000`, không phải mock): mở app -> Daily Login tự bật, bấm Claim ->
+100->110 vàng, ô "Day 1" chuyển "claimed", đóng modal không tự bật lại (đã claim). Mở Shop -> mua Radius
+Overcharge -> 110->50 vàng, "Owned: 1"->"Owned: 2", toast "Bought Radius Overcharge - 2 owned". Vào màn chơi
+-> badge nút booster hiện đúng "2 left"/"1 left". Ép ví về 0 viên qua `localStorage` rồi reload -> cả hai
+nút booster disable đúng, nhãn "0 left". Không có lỗi console ở bất kỳ bước nào.
+
+Chưa verify được bằng thao tác thật: bắn trúng để thắng 1 màn và xem dòng "+N" trên result card - công cụ
+trình duyệt của phiên này giả lập kéo-thả bằng PointerEvent tổng hợp nhưng không tái tạo đúng góc bắn 3D
+(không có ảnh chụp màn hình để nhắm), nên không chắc phát bắn có trúng cát hay không. Đường dẫn này được
+tin cậy qua unit test (`levelGoldReward`, `markLevelCleared`, cả hai đã pass) + review code (nối đúng 1
+chỗ, 1 lần) chứ chưa qua mắt người chơi thật - nhờ bạn tự chơi thắng 1 màn để xác nhận cuối dòng "+N" hiện
+đúng.
+
+---
+
+## 80. Sửa lỗi UI bị thụt vào giữa màn hình khi mở file HTML standalone trên điện thoại (29/08)
+
+Phản hồi kèm ảnh chụp: mở file `outputs/3d-cannon-sort.html` (bản export 1 file duy nhất, mục 71-72 trong
+lịch sử dự án) trong trình duyệt trong-app của Facebook (`content://com.facebook...`) trên điện thoại —
+toàn bộ UI bị thu nhỏ, nằm lọt thỏm giữa màn hình, chừa một viền màu nền (`--bg`) lớn xung quanh thay vì
+lấp đầy màn hình.
+
+**Nguyên nhân:** `.page-shell`/`.game-frame` (`globals.css`) đặt chiều cao bằng đơn vị `dvh`
+(`min-height: 100dvh`, `height: min(900px, calc(100dvh - 56px))`). Đơn vị `dvh` khá mới (Chrome ~cuối 2022,
+Safari 15.4) — một WebView cũ hơn (trình duyệt trong-app của Facebook thường chạy engine cũ hơn Chrome hệ
+thống) không nhận ra `dvh` sẽ coi CẢ khai báo `height`/`min-height` đó là không hợp lệ và **bỏ qua toàn bộ**
+dòng đó, chứ không lùi về giá trị nào khác. Kết quả: `.game-frame` không còn `height` nào để áp dụng, tự co
+lại theo kích thước nội dung; `.page-shell` dùng `place-items: center` nên căn giữa luôn cái khối đã co nhỏ
+đó — đúng hiện tượng "thụt vào trong, chừa rìa" trong ảnh.
+
+**Sửa:** thêm dòng `vh` đứng TRƯỚC dòng `dvh` ở cả 3 chỗ dùng (`globals.css` — `.page-shell`, `.game-frame`,
+và `.editor-shell` dù ít liên quan mobile hơn nhưng sửa luôn cho nhất quán). CSS luôn lấy khai báo hợp lệ
+**cuối cùng** cho cùng một thuộc tính: trình duyệt không hiểu `dvh` sẽ dùng dòng `vh` (luôn hợp lệ) làm giá
+trị thật; trình duyệt hiểu `dvh` sẽ để dòng `dvh` đứng sau ghi đè, đúng bằng lý do khiến `dvh` được chọn ban
+đầu (trừ đúng chiều cao thanh công cụ trình duyệt di động, cái `vh` hay tính sai). Thuần cộng thêm, không
+đổi hành vi ở trình duyệt đã hỗ trợ `dvh` — không có gì để mất khi sửa.
+
+**Kiểm tra:** 111 test pass (thay đổi thuần CSS, không đụng logic). Verify trên dev server thật
+(`localhost:3000`, Chromium hiện đại có hỗ trợ `dvh`): đọc `getComputedStyle` thật của `.page-shell`/
+`.game-frame` — `min-height`/`width`/`height` tính đúng theo viewport (`634px`/`243px`/`680px` khớp
+`innerHeight`/`innerWidth` 279x634 của khung xem trước), xác nhận việc thêm dòng `vh` không phá layout ở
+nơi `dvh` vốn đã chạy đúng. Build lại `outputs/3d-cannon-sort.html` (`node work/build-standalone.mjs`),
+`grep` xác nhận dòng `min-height: 100vh; min-height: 100dvh` đã có trong file xuất ra, gửi lại cho người
+dùng. Không tái tạo được đúng WebView của Facebook trong phiên này để xác nhận trực quan trên chính môi
+trường lỗi — nhờ người dùng tự mở lại file mới trên điện thoại để xác nhận cuối.
+
+---
+
+## 81. Sửa lỗi lint có sẵn từ trước: setState trực tiếp trong effect của homeVisible (29/08)
+
+Việc tách riêng (task được gắn cờ từ mục 79): `npx eslint app/SandGame.tsx` báo lỗi
+`react-hooks/set-state-in-effect` ở effect canh `homeExitTimer`/`HOME_EXIT_MS` — gọi thẳng
+`setHomeVisible(true)` trong thân effect khi `playing` chuyển về `false`. Xác nhận bằng `git stash` rằng lỗi
+này có từ trước, không liên quan đợt kinh tế vàng (mục 79).
+
+**Sửa:** tách phần "về home thì hiện lại NGAY, không animation" ra khỏi effect, chuyển sang đúng khuôn "set
+state trong lúc render" mà `ammoAnim` (và `rewardFor`/`dailyLoginOverride` ở mục 79) đã dùng — canh bằng so
+sánh `!playing && !homeVisible` nên hội tụ (chạy 1 lần rồi tự tắt điều kiện) chứ không lặp vô hạn. Effect
+còn lại chỉ còn việc dọn timer thật (`clearTimeout`) khi `playing` đổi và lên lịch ẩn trễ
+(`window.setTimeout(() => setHomeVisible(false), HOME_EXIT_MS)`) khi vào chơi — cả hai đều không phải
+`setState` gọi trực tiếp trong thân effect nên không bị rule này gắn cờ.
+
+**Kiểm tra:** 111 test pass, `tsc --noEmit` sạch, `npx eslint app/SandGame.tsx` giờ **0 lỗi** (trước đó 1
+lỗi). Verify trên dev server thật: bấm Play → hub biến mất đúng sau ~480ms (animation thoát vẫn chạy đủ
+thời gian như cũ); mở Menu → Home → hub hiện lại NGAY LẬP TỨC, không độ trễ (đúng hành vi cũ, không
+animation lúc quay về). Không có lỗi console ở bước nào.
+
+---
+
+## 82. Vàng thưởng theo level chuyển ra file CSV riêng, sửa là game tự động cập nhật (29/08)
+
+Yêu cầu: đưa số vàng nhận được mỗi level ra 1 file CSV riêng, sửa trong CSV thì game tự động điều chỉnh
+dòng tiền, không cần sửa code.
+
+**`public/level-rewards.csv`** (file mới) - bảng 3 cột `id,name,reward`. `id` phải khớp `SandLevelConfig.id`
+(giá trị thực sự dùng để tra cứu); `name` chỉ để người đọc file dễ nhận level nào là level nào, game không
+đọc cột này. Level nào KHÔNG có dòng trong bảng này sẽ tự tính theo công thức độ khó có sẵn
+(`levelGoldReward`, mục 79) - nên không bắt buộc điền đủ 50 dòng ngay, chỉ cần thêm dòng cho level nào muốn
+tự tay chỉnh.
+
+**`app/game/level-rewards.ts`** (file mới) - đọc file CSV ở trên qua `fetch("/level-rewards.csv")` (file
+nằm trong `public/` nên được serve như 1 static asset, cả dev server lẫn production `vinext start`), tự
+parse thành `Map<id, reward>`. Parser tự viết (không dùng thư viện ngoài vì bảng chỉ có 3 cột đơn giản),
+bỏ qua dòng bắt đầu bằng `#` (dùng đúng quy ước comment như `work/levels.csv` cũ), bỏ qua dòng có `id`/
+`reward` không phải số hợp lệ thay vì crash.
+
+**Phần "tự động" - không cần sửa code, không cần build lại, không cần F5 lại trang:** sau khi tải CSV lần
+đầu, module tự **poll lại mỗi 4 giây** trong lúc tab còn mở và đang hiện (tạm dừng khi tab bị ẩn, dùng
+`document.hidden`) - sửa file CSV, lưu lại, chờ tối đa 4 giây là lần thắng level tiếp theo sẽ dùng số mới,
+không cần thao tác gì thêm trên trình duyệt. Đã xác nhận qua Network tab: sửa file trên đĩa, request poll
+kế tiếp trả về đúng nội dung mới ngay lập tức (Vite serve `public/` trực tiếp từ đĩa, không cache).
+
+`SandGame.tsx` (`rewardFor` - khối tính vàng lúc thắng, mục 79) đổi thành:
+`getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score)` - ưu tiên số trong
+CSV, fallback về công thức cũ nếu level chưa có dòng nào. Effect gọi `ensureLevelRewardsLoading()` lúc mount
+- không gọi `setState` nào trong effect cả (chỉ ghi vào 1 cache ở module-scope), nên không dính rule
+`react-hooks/set-state-in-effect` (mục 81) dù nó là 1 effect thật.
+
+**Giới hạn cần biết:** file HTML standalone (`work/build-standalone.mjs`, mục 71-72/80) không đọc được CSV
+này - bản export đó không có server để fetch, nên file dựng sẽ lặng lẽ fallback về công thức cũ cho mọi
+level (đúng y hệt trước khi tính năng này tồn tại), không lỗi nhưng cũng không nhận được số đã tay chỉnh
+trong CSV. Nếu cần cả bản standalone dùng đúng số trong CSV, sẽ phải sửa thêm `work/build-standalone.mjs`
+đọc file lúc build và nhúng thẳng bảng vào bundle - chưa làm trong đợt này, nhắm đúng phạm vi "game thật
+(dev/production server)" mà yêu cầu nhắc tới.
+
+**Kiểm tra:** 120 test pass (`tests/level-rewards.test.ts` - file mới, 9 test cho parser: đọc đúng, bỏ qua
+comment/dòng trống, thứ tự cột không quan trọng, dòng lỗi bị bỏ qua thay vì crash, reward âm bị loại, số lẻ
+được làm tròn, thiếu cột id/reward thì không parse gì, và 1 test đọc đúng file CSV thật trong `public/` để
+đảm bảo file thật hợp lệ). `tsc --noEmit` và `eslint` sạch. Verify thật trên dev server: mở app, Network tab
+thấy request `level-rewards.csv` lặp lại đúng mỗi ~4s; sửa số trong file từ 20 thành 33 bằng tay, đợi 5s,
+`fetch` lại file từ console thấy đúng nội dung mới (xác nhận pipeline đọc-từ-đĩa hoạt động) - đã đổi lại 20
+sau khi test xong.
+
+---
+
+## 83. Bản standalone (1 file HTML) cũng đọc `level-rewards.csv` — nhúng lúc build (29/08)
+
+Tiếp mục 82: bản export 1-file (`work/build-standalone.mjs`) không có server nên trước đó luôn fallback về
+công thức độ khó, bỏ qua CSV. Người dùng xác nhận cần làm luôn phần này.
+
+**`work/build-standalone.mjs`** — đọc thẳng `public/level-rewards.csv` bằng `parseLevelRewardsCsv` (import
+trực tiếp từ `app/game/level-rewards.ts`, cùng kiểu Node-đọc-.ts-trực-tiếp script này đã làm với
+`BUILT_IN_LEVELS`/`LOADING_SCREEN_MARKUP`), rồi nhúng kết quả vào bundle qua `esbuild`'s `define` — JSON
+hoá 2 lớp (`JSON.stringify(JSON.stringify(rows))`) vì `define` chèn nguyên văn dưới dạng source code, nên
+cần lớp ngoài để biến JSON thành 1 string-literal JS hợp lệ. File CSV không tồn tại thì build vẫn chạy
+(catch về mảng rỗng) — sheet là tùy chọn, thiếu nó chỉ có nghĩa "chưa override gì", không phải lỗi build.
+
+**`work/standalone-entry.tsx`** — gọi `seedLevelRewards(JSON.parse(__EMBEDDED_LEVEL_REWARDS__))` (hằng số
+`__EMBEDDED_LEVEL_REWARDS__` do `define` ở trên thay thế) NGAY TRƯỚC khi `SandGame` mount, nên khi hiệu ứng
+`ensureLevelRewardsLoading()` của nó chạy, cache đã có sẵn dữ liệu rồi.
+
+**`app/game/level-rewards.ts`** — `__setLevelRewardsForTests` đổi tên thành `seedLevelRewards` (không còn
+chỉ dùng cho test nữa — bản standalone giờ gọi thật). Thêm 1 dòng chặn trong `ensureLevelRewardsLoading`:
+nếu cache đã có sẵn (đúng trường hợp bản standalone vừa seed) thì bỏ qua hẳn việc bắt đầu fetch/poll — bản
+này không có server nên fetch chỉ toàn thất bại, khỏi tốn công và khỏi in ra dòng lỗi network trông như bug
+trong console (trên `file://` một request fetch thất bại rất dễ khiến người dùng tưởng game bị lỗi).
+
+**Đánh đổi cần biết:** số trong bản standalone giờ là "đúng số trong CSV, nhưng đông cứng tại thời điểm
+build" — sửa CSV rồi phải chạy lại `node work/build-standalone.mjs` để bản HTML mới phản ánh đúng, khác với
+bản dev/production server (mục 82) tự cập nhật không cần build lại. Đây là giới hạn tất yếu của một file
+HTML tĩnh không có server, không phải thiếu sót có thể sửa thêm.
+
+**Kiểm tra:** 120 test pass (không đổi logic được test, chỉ đổi tên hàm + build script), `tsc --noEmit` và
+`eslint` sạch trên mọi file đụng tới. Build thật: `node work/build-standalone.mjs` báo
+`"levelRewardOverrides":1`, `grep` xác nhận `"id":1,"reward":20` có mặt trong file HTML xuất ra. Serve file
+đó qua static server tạm, mở trong Browser pane thật: game load bình thường, Network tab xác nhận
+**không có** request `level-rewards.csv` nào (đúng ý đồ — cache đã được seed sẵn, không cần fetch), không
+có lỗi console nào liên quan tới level-rewards.
+
+---
+
+## 84. Vòng radius nhuộm màu đạn (giảm opacity), HUD số đạn lắc lúc bắn (29/08)
+
+Yêu cầu: (1) màu vòng radius luôn theo màu đạn hiện tại, giảm opacity; (2) đúng khoảnh khắc bắn, HUD số
+lượng đạn có anim lắc nhẹ.
+
+**Vòng radius theo màu đạn** (`SandCannonEngine.ts`) — cả 3 vòng dùng chung 1 hình học (`buildSortRings`):
+vòng xem trước tầm bắn khi đang ngắm (`aimRing`/`aimRingGlow`) và vòng flash lúc trúng (`sortRing`) trước
+giờ đều trắng cứng (`0xffffff`) bất kể đạn màu gì. `syncAmmoModel` — hàm đã đồng bộ màu đạn cho buồng nạp,
+đai nòng, bệ súng, hàng đạn chờ mỗi khi đạn đổi — giờ nhuộm luôn cả 3 vòng này theo đúng
+`SAND_COLOR_HEX[current]`, nên tô màu đúng ngay từ frame đầu tiên (không cần đợi phát bắn nào) và tự cập
+nhật mỗi khi đạn trong buồng đổi màu.
+
+Giảm opacity đi kèm (đúng yêu cầu "giảm opacity" — màu bão hoà đầy đủ ở opacity cũ sẽ trông như 1 đĩa đặc
+chứ không phải viền chỉ tầm bắn): `aimMaterial` 0.85→0.5, `aimGlowMaterial` 0.4→0.28,
+`sortRing`/`hitMaterial` (đỉnh flash lúc trúng) 0.9→0.55 (rút ra hằng số `SORT_RING_PEAK_OPACITY` dùng
+chung giữa lúc spawn và lúc fade dần, tránh 2 chỗ chứa cùng 1 con số).
+
+**HUD số đạn lắc lúc bắn** — `SandCannonEngine.ts` đã sẵn có sự kiện `SHOT_FIRED` (bắn ra đúng lúc đạn rời
+nòng, trong `fire()`) nhưng `SandGame.tsx` trước giờ bỏ qua nó (rơi vào nhánh `default`). Thêm case xử lý:
+bump 1 counter (`shotBump`), gắn làm `key` cho `.shots-badge` — remount đúng kiểu `ammoAnim.bump` đã dùng
+cho hiệu ứng đổi màu chấm đạn, chỉ khác là khoá theo "vừa bắn" thay vì "vừa đổi màu". CSS thêm keyframe
+`shots-badge-shake` (lắc trái-phải kèm xoay nhẹ, 0.3s, nhanh và nhỏ hơn hẳn `shots-icon-pop` — đây chỉ là
+"độ giật của phát bắn", không phải sự kiện lớn như đổi màu đạn), áp trực tiếp vào `.shots-badge` để mỗi lần
+remount tự phát lại.
+
+**Kiểm tra:** 120 test pass (không đổi logic pure nào, chỉ engine visual + 1 case xử lý event có sẵn),
+`tsc --noEmit` và `eslint` sạch trên `SandCannonEngine.ts`/`SandGame.tsx`. Verify trên dev server: không có
+lỗi console khi tải trang và vào màn chơi. Chưa verify được bằng mắt trên trình duyệt thật lần này: công cụ
+tự động của phiên này giả lập kéo-thả bằng `PointerEvent` tổng hợp không tái tạo đúng vòng lặp
+frame/ballistic-preview engine cần trước khi thả tay để `shouldFire` (`onAimPointerUp`) trả về true — xác
+nhận được cử chỉ kéo-thả tới đúng (`is-aiming`→bỏ `is-cancelled` khi vượt bán kính arm→reset lúc thả) nhưng
+không chắc phát bắn có thực sự rời nòng hay không, nên không đọc được `getAnimations()` của `.shots-badge`
+để xác nhận trực quan. Cả hai thay đổi đều nhỏ, cơ giới, bám sát nguyên xi các điểm móc/khuôn mẫu đã hoạt
+động sẵn trong file (màu nhuộm dùng đúng field `SAND_COLOR_HEX[current]` 6 chỗ khác trong cùng hàm đã dùng;
+shake dùng đúng khuôn `key`-remount `ammoAnim.bump` đã có) — nhờ bạn tự bắn vài phát để xác nhận cả hai
+trực quan trên máy thật.
+
+---
+
+## 85. Tăng lại opacity vòng radius — màu đạn cần rõ hơn (29/08)
+
+Phản hồi mục 84: vòng radius nhuộm màu đạn nhưng ở opacity 0.5/0.28/0.55 thì màu quá mờ, khó thấy rõ đó là
+màu gì.
+
+**`SandCannonEngine.ts`** (`buildSortRings`/`SORT_RING_PEAK_OPACITY`) — tăng opacity cả 3 vật liệu: vòng
+ngắm `aimMaterial` 0.5→0.75, quầng sáng `aimGlowMaterial` 0.28→0.45, đỉnh flash lúc trúng
+`SORT_RING_PEAK_OPACITY` 0.55→0.8. Vẫn thấp hơn mức trắng gốc ban đầu (0.85/0.4/0.9) một chút — giữ đúng
+tinh thần "không phải đĩa đặc" của yêu cầu trước, nhưng đủ đậm để nhận ra ngay là màu gì thay vì phải nhìn
+kỹ.
+
+**Kiểm tra:** 120 test pass, `eslint` sạch. Thay đổi thuần số (opacity), không đổi logic — độ rõ thực tế
+nhờ bạn tự nhìn trên máy để xác nhận đã đủ rõ hay cần chỉnh thêm.
+
+---
+
+## 86. Gộp toàn bộ số kinh tế còn lại (vàng khởi điểm, giá booster, thưởng daily login) vào 1 file CSV (29/08)
+
+Tiếp mục 82/83 (vàng theo level): mục 82 chỉ đưa được "vàng theo level" ra CSV, còn vàng khởi điểm, giá
+booster, thưởng daily login 7 ngày vẫn hard-code trong `economy.ts`. Yêu cầu: gộp hết vào 1 file.
+
+**`public/economy.csv`** (file mới) — bảng `key,value` duy nhất cho mọi số kinh tế KHÔNG theo level:
+`starterGold`, `starterBoosterRadiusOvercharge`, `starterBoosterPrismShot`, `boosterPriceRadiusOvercharge`,
+`boosterPricePrismShot`, `dailyLoginDay1`..`dailyLoginDay7`. Tách riêng khỏi `level-rewards.csv` (khác cấu
+trúc: id→reward theo từng level, còn đây là key→value theo tên) — mỗi bảng đúng 1 loại dữ liệu, không gộp
+hai hình dạng khác nhau vào cùng 1 file.
+
+**`app/game/economy-config.ts`** (file mới) — y hệt kiến trúc `level-rewards.ts` (fetch + parse + poll mỗi
+~4s trong lúc tab mở, seed được cho bản standalone) nhưng tổng quát hơn: đọc key/value chứ không phải
+id/reward, nên dùng chung được cho mọi loại số ở đây thay vì phải tách 4 file riêng.
+
+**`economy.ts`** — mỗi hằng số cũ (`STARTER_GOLD`, `STARTER_BOOSTER_CHARGES`, `BOOSTER_PRICE`) giờ chỉ còn
+là **giá trị mặc định**; số thật đi qua hàm tương ứng (`boosterPrice(type)`, `dailyLoginReward(dayIndex)`,
+và `defaultWallet()` nội bộ dùng `starterGold()`/`starterBoosterCharges()`) — ưu tiên đọc từ
+`economy.csv`, rơi về hằng số nếu sheet chưa có dòng đó. `SandGame.tsx` (Shop, modal Daily Login) đổi qua
+đọc các hàm này thay vì hằng số thô, nên UI thật sự phản ánh đúng số trong sheet.
+
+**Vấn đề kỹ thuật đáng chú ý — race điều kiện lúc tạo ví lần đầu:** khác với vàng-theo-level (chỉ được đọc
+lúc thắng màn, tức là rất lâu sau khi trang đã tải), `starterGold`/`starterBoosterCharges` bị đọc gần như
+NGAY khi trang mở (lúc component render lần đầu) — trước khi `fetch` CSV kịp trả lời (fetch luôn bất đồng
+bộ, còn render đầu tiên luôn đồng bộ, nên fetch KHÔNG BAO GIỜ có thể xong trước render đầu). Nếu để vậy,
+sửa `starterGold` trong CSV sẽ không bao giờ có tác dụng thật sự, vì ví "mới" (mặc định) đã bị cache cứng
+từ trước khi sheet load xong.
+
+Sửa bằng `applyStarterOverrideIfFresh` (`economy.ts`) — theo dõi cờ `walletIsFreshDefault` (chỉ true cho 1
+ví vừa được tạo mặc định, tắt ngay khi có hoạt động thật: kiếm/tiêu vàng, mua/bắn booster). Khi
+`economy.csv` load xong (hoặc poll ra số mới), nếu ví hiện tại vẫn còn "mới tinh chưa đụng tới", nó được
+tạo lại đúng theo số trong sheet — nhưng KHÔNG BAO GIỜ đụng vào 1 ví đã có hoạt động thật, dù sau đó sheet
+đổi số nữa. Đây là lý do vàng-khởi-điểm/booster-khởi-điểm chỉ ảnh hưởng người chơi MỚI (đúng như thiết kế
+economy.ts đã ghi từ mục 79), chứ không phải giới hạn kỹ thuật của tính năng này.
+
+**Bản standalone** (`work/build-standalone.mjs`/`standalone-entry.tsx`) — nhúng luôn cả `economy.csv` cùng
+lúc với `level-rewards.csv`, đúng kiến trúc mục 83.
+
+**Kiểm tra:** 134 test pass (`tests/economy-config.test.ts` — file mới, 9 test cho parser, y hệt khuôn
+`level-rewards.test.ts`; `tests/sand-economy.test.ts` thêm 5 test cho override booster price/daily login
+day/starter gold+booster qua `seedEconomyConfig`). `tsc --noEmit` và `eslint` sạch. Build standalone báo
+`"economyConfigOverrides":12` (đúng 12 dòng trong sheet), file HTML xuất ra chứa đúng dữ liệu nhúng.
+
+Verify thật trên dev server (không phải suy luận): xoá `localStorage`, sửa `starterGold` trong CSV thành
+777, F5 lại trang — HUD hiện đúng **777** (xác nhận race-condition ở trên đã được xử lý đúng, không chỉ lý
+thuyết). Sửa `boosterPriceRadiusOvercharge` thành 45, đợi ~5s (không F5), mở Shop — giá hiện đúng **45**
+ngay lập tức (xác nhận poll + `useSyncExternalStore` mới thêm khiến UI Shop tự cập nhật khi đang mở, không
+cần rời màn hình). Đã đổi lại cả hai số về mặc định (100/60) và build lại bản standalone sau khi test xong.

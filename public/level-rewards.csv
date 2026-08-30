@@ -1,0 +1,7 @@
+# Vang thuong khi thang 1 level, LAN DAU TIEN moi level (thang lai khong duoc thuong - xem economy.ts).
+# Sua so o cot "reward", luu file, tai lai trang la game dung so moi ngay - khong can build lai.
+# Level nao khong co dong trong bang nay se tu tinh theo do kho (levelGoldReward trong economy.ts),
+# nen chi can them dong cho level nao ban muon tu tay chinh, khong bat buoc dien het 50 level.
+# Cot "name" chi de doc cho de, game khong doc cot nay - dung "id" (dung SandLevelConfig.id) de tra cuu.
+id,name,reward
+1,Level 1,20

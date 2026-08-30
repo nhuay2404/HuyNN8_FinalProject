@@ -23,6 +23,7 @@ import type {
 // A value import, not a type one, so it needs the extension the test runner
 // resolves with — this file is executed by node directly, not only bundled.
 import { SAND_COLORS } from "./sand-types.ts";
+import { getBoosterCount, spendBoosterCharge as spendWalletBoosterCharge } from "./economy.ts";
 
 /** The picture's alphabet. One letter per colour keeps an authored row readable. */
 export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
@@ -736,21 +737,30 @@ export function effectiveSortRadius(level: SandLevelConfig, booster?: BoosterTyp
 }
 
 /**
- * Unlimited for the whole current test phase (spec §4): every level in this
- * build can be replayed as many times as a hard level needs while boosters
- * are being tuned. A `Record` rather than one flat `Infinity` so the day this
- * becomes finite (spent from a currency or a level grant), each booster gets
- * its own real number here without touching `getBoosterCharges` or any of
- * its callers, which already treat the answer as a count that can run out.
+ * How many charges of `type` are left — spec §4.
+ *
+ * Used to be a flat `Infinity` for both boosters, with a comment noting that
+ * "the day this becomes finite (spent from a currency or a level grant),
+ * each booster gets its own real number here". `economy.ts`'s wallet is that
+ * real number now — bought in the Shop, spent one per boosted shot in
+ * `SandCannonEngine.fire()`. Delegated rather than inlined so `sand-rules.ts`
+ * stays the deterministic, DOM-free half of the game (see the file's header
+ * comment) while the actual persistence lives with the rest of the player's
+ * economy.
  */
-const BOOSTER_CHARGES_TEMP: Record<BoosterType, number> = {
-  radiusOvercharge: Infinity,
-  prismShot: Infinity,
-};
-
-/** How many charges of `type` are left — spec §4. */
 export function getBoosterCharges(type: BoosterType): number {
-  return BOOSTER_CHARGES_TEMP[type];
+  return getBoosterCount(type);
+}
+
+/**
+ * Spends one charge of `type` — called from `SandCannonEngine.fire()` at
+ * spec §7.1's "consumed the instant it leaves the barrel", never at arm
+ * time: arming only checks `getBoosterCharges`, so a level restarted after
+ * arming but before firing loses nothing (the engine that had it armed is
+ * torn down whole; a fresh one starts unarmed).
+ */
+export function spendBoosterCharge(type: BoosterType): void {
+  spendWalletBoosterCharge(type);
 }
 
 // ---- Game state ---------------------------------------------------------

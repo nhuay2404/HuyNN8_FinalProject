@@ -18,6 +18,7 @@ import {
   parseSandLevel,
   resolveShot,
   resolveWind,
+  spendBoosterCharge,
 } from "./sand-rules";
 import type {
   BoosterType,
@@ -251,6 +252,10 @@ const SETTLE_TAIL_MS = 130;
 const IMPACT_FLASH_SECONDS = 0.4;
 /** How long the disc a radius shot swept stays readable after the impact. */
 const SORT_RING_SECONDS = 0.5;
+/** The hit flash's opacity the instant it spawns, before it fades over
+ * `SORT_RING_SECONDS` — see `aimMaterial`'s own comment in `buildSortRings`
+ * for why this went 0.9 -> 0.55 -> 0.8 across the tint feedback. */
+const SORT_RING_PEAK_OPACITY = 0.8;
 /** How far a shaking pixel is redrawn off its true column, in canvas pixels. */
 const SHAKE_DRAW_OFFSET_PX = 1.6;
 
@@ -1184,6 +1189,20 @@ export class SandCannonEngine {
       ball.visible = color !== undefined;
       if (color) (ball.material as THREE.MeshLambertMaterial).color.setHex(SAND_COLOR_HEX[color]);
     });
+    // The radius rings — reach preview (`aimRing`/`aimRingGlow`) and hit
+    // flash (`sortRing`, drawn with `hitMaterial`) — used to be plain white
+    // regardless of what was loaded. Tinting them to the chambered colour
+    // puts them in the same bullet-colour language as the chamber ball,
+    // muzzle band, base ring and feed queue this function already keeps in
+    // sync; the lower opacities on all three materials (set where they are
+    // constructed) are what keep a fully-saturated colour from reading as a
+    // solid disc instead of a soft radius indicator.
+    if (current) {
+      const hex = SAND_COLOR_HEX[current];
+      if (this.aimRing) (this.aimRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
+      if (this.aimRingGlow) (this.aimRingGlow.material as THREE.MeshBasicMaterial).color.setHex(hex);
+      if (this.sortRing) (this.sortRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
+    }
   }
 
   /**
@@ -1264,8 +1283,14 @@ export class SandCannonEngine {
     const glowGeometry = this.track(
       new THREE.RingGeometry(Math.max(0, outer - rimThickness * 2.2), outer + this.cell * 0.18, 64),
     );
+    // Tinted to the chambered ammo colour (`syncAmmoModel`), not plain white.
+    // Opacity went 0.85 -> 0.5 when the tint first shipped (a fully-saturated
+    // colour read as too solid at the old white-ring opacity), then back up
+    // to 0.75 on feedback that the tint itself was too faint to actually
+    // read as that colour — still short of the original 0.85 so the ring
+    // stays a translucent indicator rather than a solid disc.
     const aimMaterial = this.track(
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }),
     );
     // Additive halo behind the rim: a flat-opacity ring reads the same over
     // every sand colour, but a soft glow is what actually pulls the eye to
@@ -1274,7 +1299,7 @@ export class SandCannonEngine {
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.4,
+        opacity: 0.45,
         depthWrite: false,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
@@ -1388,7 +1413,7 @@ export class SandCannonEngine {
     this.sortRing.visible = true;
     this.sortRingScale = scale;
     this.sortRing.scale.setScalar(0.72 * scale);
-    (this.sortRing.material as THREE.MeshBasicMaterial).opacity = 0.9;
+    (this.sortRing.material as THREE.MeshBasicMaterial).opacity = SORT_RING_PEAK_OPACITY;
     this.sortRingAge = 0;
   }
 
@@ -1769,6 +1794,9 @@ export class SandCannonEngine {
     this.armedBooster = null;
     this.syncBoosterOverlay();
     this.callbacks.onBoosterChange?.(null);
+    // The wallet charge this armed shot cost — see `spendBoosterCharge`'s own
+    // comment for why this is the one and only place it is spent.
+    if (booster) spendBoosterCharge(booster);
 
     if (!this.projectileMesh) {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
@@ -2243,7 +2271,7 @@ export class SandCannonEngine {
       this.sortRingAge += FIXED_STEP;
       const life = Math.min(1, this.sortRingAge / SORT_RING_SECONDS);
       this.sortRing.scale.setScalar((0.72 + life * 0.42) * this.sortRingScale);
-      (this.sortRing.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - life);
+      (this.sortRing.material as THREE.MeshBasicMaterial).opacity = SORT_RING_PEAK_OPACITY * (1 - life);
       if (life >= 1) this.sortRing.visible = false;
     }
 

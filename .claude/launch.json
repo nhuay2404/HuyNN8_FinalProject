@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "prototype-prod",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vinext", "start", "--port", "4100"],
+      "port": 4100
     }
   ]
 }

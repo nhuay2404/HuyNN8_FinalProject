@@ -1,0 +1,25 @@
+# Cac so kinh te chung cua game (KHONG phai vang theo tung level - xem level-rewards.csv cho cai do).
+# Sua so o cot "value", luu file. Ap dung cho dev/production server gan nhu ngay lap tuc (poll moi ~4s,
+# khong can F5). Rieng 2 dong "starter..." chi anh huong luc vi duoc tao MOI (nguoi choi chua tung mo game
+# tren trinh duyet nay) - khong bao gio ghi de len vi da co hoat dong that (da kiem vang/mua gi do).
+#
+# key                              | y nghia
+# starterGold                      | vang nguoi choi moi bat dau co
+# starterBoosterRadiusOvercharge   | so vien Radius Overcharge tang luc dau
+# starterBoosterPrismShot          | so vien Prism Shot tang luc dau
+# boosterPriceRadiusOvercharge     | gia 1 vien Radius Overcharge o Shop
+# boosterPricePrismShot            | gia 1 vien Prism Shot o Shop
+# dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo ngay trong chu ky 7 ngay
+key,value
+starterGold,100
+starterBoosterRadiusOvercharge,1
+starterBoosterPrismShot,1
+boosterPriceRadiusOvercharge,60
+boosterPricePrismShot,100
+dailyLoginDay1,10
+dailyLoginDay2,15
+dailyLoginDay3,20
+dailyLoginDay4,25
+dailyLoginDay5,30
+dailyLoginDay6,40
+dailyLoginDay7,80

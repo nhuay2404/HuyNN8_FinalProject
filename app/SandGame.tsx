@@ -7,6 +7,24 @@ import {
   SAND_COLOR_HEX,
   type SandEngineEvent,
 } from "./game/SandCannonEngine";
+import {
+  addGold,
+  boosterPrice,
+  buyBoosterCharge,
+  claimDailyLogin,
+  dailyLoginReward,
+  DAILY_LOGIN_REWARDS,
+  getDailyLoginState,
+  getWallet,
+  levelGoldReward,
+  markLevelCleared,
+  SERVER_WALLET,
+  subscribeWallet,
+  type DailyLoginState,
+} from "./game/economy";
+import { ensureEconomyConfigLoading, getEconomyConfigVersion, subscribeEconomyConfig } from "./game/economy-config";
+import { computeLevelDifficulty } from "./game/level-difficulty";
+import { ensureLevelRewardsLoading, getLevelRewardOverride } from "./game/level-rewards";
 import { BUILT_IN_LEVELS } from "./game/sand-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
 import {
@@ -49,6 +67,13 @@ const BOOSTER_NAME: Record<BoosterType, string> = {
   prismShot: "Prism Shot",
 };
 
+/** The Shop's one-line pitch for each booster — what a player who has never
+ * armed one is actually buying. */
+const BOOSTER_DESC: Record<BoosterType, string> = {
+  radiusOvercharge: "Doubles the sorting disc for one shot.",
+  prismShot: "One shot takes every colour in reach, not just the one loaded.",
+};
+
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
 const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
 
@@ -61,10 +86,11 @@ const HOME_EXIT_MS = 480;
 /**
  * The home screen's bottom bar, left to right.
  *
- * `home` and `gallery` are real: one is the screen itself, the other picks the
- * level the screen is showing. The other three are named here because the bar
- * they belong to is being built now, but nothing behind them exists yet — they
- * say so when opened rather than pretending.
+ * `home`, `gallery` and `shop` are real: one is the screen itself, one picks
+ * the level the screen is showing, and one buys booster charges with the
+ * gold levels pay out (`economy.ts`). `skin` and `customize` are named here
+ * because the bar they belong to is being built now, but nothing behind them
+ * exists yet — they say so when opened rather than pretending.
  */
 const HUB_TABS = ["shop", "skin", "home", "gallery", "customize"] as const;
 type HubTab = (typeof HUB_TABS)[number];
@@ -77,9 +103,11 @@ const HUB_TAB_NAME: Record<HubTab, string> = {
   customize: "Customize",
 };
 
-/** What each unbuilt section is for, so the placeholder is not just an apology. */
+/** What each still-unbuilt section is for, so its placeholder is not just an
+ * apology. `shop` has no entry read at runtime any more (it has a real panel
+ * now) but keeps one so this stays a total `Record<HubTab, string>`. */
 const HUB_TAB_BLURB: Record<HubTab, string> = {
-  shop: "Where bundles and shot refills would be bought.",
+  shop: "",
   skin: "Where the cannon's finish would be chosen.",
   home: "",
   gallery: "",
@@ -273,6 +301,22 @@ function readBoot(): Boot {
 }
 
 /**
+ * The daily-login streak as it stood the moment this page was first checked
+ * this load — same reasoning as `readBoot`/`SERVER_BOOT` just above (a
+ * `window.localStorage` read cached once for `useSyncExternalStore`, real on
+ * the client and a fixed "nothing claimed yet" stand-in on the server, so
+ * hydration never has to reconcile a modal that only one side knows about).
+ */
+const SERVER_DAILY_LOGIN: DailyLoginState = { day: 0, reward: DAILY_LOGIN_REWARDS[0], claimedToday: false };
+
+let cachedInitialDailyLogin: DailyLoginState | null = null;
+
+function readInitialDailyLogin(): DailyLoginState {
+  if (!cachedInitialDailyLogin) cachedInitialDailyLogin = getDailyLoginState();
+  return cachedInitialDailyLogin;
+}
+
+/**
  * Levels whose first-time overlay (`SandLevelConfig.tutorial`) has already
  * been shown, this browser. A `Set` of ids serialised as an array — small
  * and stable enough that reading it fresh on every mount costs nothing.
@@ -302,9 +346,6 @@ function markTutorialSeen(id: number) {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
-/** Placeholder balance until a real coin economy (shop purchases, level
- * rewards, ...) exists to back it. */
-const PLACEHOLDER_COINS = 100;
 
 export default function SandGame() {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -347,12 +388,27 @@ export default function SandGame() {
   const [ammoAnim, setAmmoAnim] = useState<{ color: SandColor | null; bump: number }>(
     () => ({ color: currentAmmo(level, state), bump: 0 }),
   );
+  // Remounts `.shots-badge` (via `key`) on every `SHOT_FIRED` so its shake
+  // animation replays — the same trick `ammoAnim.bump` uses for the colour
+  // pop, just keyed off "a shot left the barrel" instead of "the loaded
+  // colour changed".
+  const [shotBump, setShotBump] = useState(0);
   const [toast, setToast] = useState<Toast | null>(null);
   // Mirrors `SandCannonEngine`'s own `armedBooster` — null means neither
   // booster is armed. The engine is the source of truth (it is what enforces
   // spec §3's no-cancel, no-swap rule); this only echoes it for the HUD.
   const [armedBooster, setArmedBooster] = useState<BoosterType | null>(null);
   const toastTimer = useRef<number | null>(null);
+  // The player's gold + booster inventory. `economy.ts` is the source of
+  // truth (localStorage-backed); this just re-renders whenever it changes —
+  // a level win, a Shop purchase, or a daily-login claim all call through it.
+  const wallet = useSyncExternalStore(subscribeWallet, getWallet, () => SERVER_WALLET);
+  // undefined: no action taken yet this page load, so the daily-login modal's
+  // open/closed state defers entirely to `initialDailyLogin` below (open iff
+  // unclaimed today). Claiming, dismissing, or reopening via the gift button
+  // all write a real snapshot (or `null` for "closed") here, which then wins
+  // over the initial one for the rest of the session.
+  const [dailyLoginOverride, setDailyLoginOverride] = useState<DailyLoginState | null | undefined>(undefined);
   // The game opens on the home screen, the way it did before the pivot.
   const [playing, setPlaying] = useState(false);
   const [tab, setTab] = useState<HubTab>("home");
@@ -370,12 +426,25 @@ export default function SandGame() {
     toastTimer.current = window.setTimeout(() => setToast(null), 1500);
   }, []);
 
+  // Back to the home screen (goHome, a fresh level, a loss/win "Home" tap)
+  // shows it again immediately — no entrance animation was asked for, so
+  // this does not wait for the effect below the way the delayed hide on the
+  // way OUT does. Same "adjust state during render" shape `ammoAnim` (and
+  // `rewardFor`/`dailyLoginOverride`) already use elsewhere in this file:
+  // guarded so it only fires the render where `playing` has actually gone
+  // false and `homeVisible` is not already true, so it converges instead of
+  // looping, and it needs no `useEffect` (nor the `setState`-in-effect that
+  // would come with one) to do it.
+  if (!playing && !homeVisible) {
+    setHomeVisible(true);
+  }
+
   useEffect(() => {
     if (!playing) {
-      // Back to the home screen (goHome, a fresh level, a loss/win "Home"
-      // tap): show it again immediately, no entrance animation was asked for.
+      // The render-body check above already forced `homeVisible` back to
+      // true the instant `playing` went false; this only has a real timer to
+      // clean up, in case a Play -> home transition was still pending one.
       if (homeExitTimer.current) { window.clearTimeout(homeExitTimer.current); homeExitTimer.current = null; }
-      setHomeVisible(true);
       return;
     }
     homeExitTimer.current = window.setTimeout(() => setHomeVisible(false), HOME_EXIT_MS);
@@ -385,6 +454,39 @@ export default function SandGame() {
   }, [playing]);
 
   useEffect(() => advanceLoading("mount"), []);
+
+  // Starts loading `public/level-rewards.csv` and `public/economy.csv` (see
+  // `level-rewards.ts`/`economy-config.ts`) and keeps polling both while the
+  // tab stays open — no `setState` here at all (only module-level caches
+  // read later: `getLevelRewardOverride` at the moment a level is actually
+  // won, `economy.ts`'s accessors whenever the Shop/daily-login render), so
+  // unlike the daily-login snapshot below this genuinely is a plain effect,
+  // not something the `set-state-in-effect` rule has any opinion about.
+  useEffect(() => {
+    ensureLevelRewardsLoading();
+    ensureEconomyConfigLoading();
+  }, []);
+
+  // Re-renders whenever `economy.csv` actually changes (`economy-config.ts`'s
+  // version counter) — the Shop panel's price and the daily-login modal's
+  // 7-day strip both read `boosterPrice`/`dailyLoginReward` directly during
+  // render rather than through `subscribeWallet`, so without this a poll
+  // pickup would sit in the module cache unseen until some unrelated
+  // re-render happened to read it fresh.
+  useSyncExternalStore(subscribeEconomyConfig, getEconomyConfigVersion, () => 0);
+
+  // What today looked like the FIRST time this page checked — same
+  // `readBoot`/`SERVER_BOOT` shape just above (a value `useSyncExternalStore`
+  // reads once through a cached snapshot, real on the client and a fixed
+  // stand-in on the server, so hydration never disagrees about whether a
+  // modal is on screen) rather than a `useEffect` that would have to call
+  // `setDailyLoginOverride` itself.
+  const initialDailyLogin = useSyncExternalStore(noopSubscribe, readInitialDailyLogin, () => SERVER_DAILY_LOGIN);
+  // The modal's actual state: an explicit action this page load always wins;
+  // otherwise the modal opens itself iff there is something unclaimed today.
+  const dailyLogin = dailyLoginOverride !== undefined
+    ? dailyLoginOverride
+    : (initialDailyLogin.claimedToday ? null : initialDailyLogin);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -418,6 +520,12 @@ export default function SandGame() {
           break;
         case "BOOSTER_ARMED":
           pushToast(`${BOOSTER_NAME[event.booster]} armed — next shot`, "good");
+          break;
+        case "SHOT_FIRED":
+          // No toast — a shake on every single shot is feedback enough, and
+          // a toast that fired that often would drown out the ones that
+          // actually say something (NO_MATCH, MISS, ...).
+          setShotBump((bump) => bump + 1);
           break;
         default:
           break;
@@ -510,6 +618,46 @@ export default function SandGame() {
     }
   }, [level]);
 
+  /**
+   * The gold economy's one entry point: pays out a level's reward the moment
+   * it is WON, but only the first time that level is ever won on this
+   * browser (`markLevelCleared`'s return value) — a replay clears the board
+   * again but pays nothing, so farming one easy level cannot mint unlimited
+   * gold.
+   *
+   * The reward itself is `getLevelRewardOverride(raw.id)` — a designer's own
+   * number, hand-tuned in `public/level-rewards.csv` (`level-rewards.ts`) —
+   * when that level has a row in the sheet, and `levelGoldReward`'s
+   * difficulty-score formula otherwise (every level until someone tunes it
+   * by hand). Scored off `raw`, the level as authored (blueprint scale), not
+   * `level` (expanded to the pixel board `state` runs on) — the same scale
+   * `computeLevelDifficulty` already reasons about everywhere else (the
+   * editor's difficulty overview, §77).
+   *
+   * Set during render, not in an effect — the same "adjust state when a
+   * dependency changes" shape `ammoAnim` below already uses. The guard
+   * (`state.result !== rewardFor.result`) makes the whole block, side
+   * effects included, run at most once per actual result transition — a
+   * fresh WIN/FAIL object the engine publishes, not a re-render for an
+   * unrelated reason — so `markLevelCleared`'s own idempotency is a second
+   * line of defence rather than the only one. `restart`/`goHome`/`openLevel`
+   * do not need to reset this themselves: they all reset `state.result` to
+   * `null` via a fresh `createSandGameState`, which this guard already reads
+   * as a change and resolves back to `reward: null`.
+   */
+  const [rewardFor, setRewardFor] = useState<{ result: SandGameState["result"]; reward: number | null }>(
+    () => ({ result: null, reward: null }),
+  );
+  if (state.result !== rewardFor.result) {
+    let reward: number | null = null;
+    if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
+      reward = getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score);
+      addGold(reward);
+    }
+    setRewardFor({ result: state.result, reward });
+  }
+  const lastReward = rewardFor.reward;
+
   const remaining = ammoRemaining(level, state);
   const busy = BUSY_PHASES.has(state.phase);
   /**
@@ -570,9 +718,9 @@ export default function SandGame() {
             behind one settings button on the right so it is never in the way
             of the picture or the cannon underneath it. */}
         <div className="hud-top-left">
-          <div className="coin-badge" role="status" aria-label={`${PLACEHOLDER_COINS} coins`}>
+          <div className="coin-badge" role="status" aria-label={`${wallet.gold} coins`}>
             <CoinIcon />
-            <strong>{PLACEHOLDER_COINS}</strong>
+            <strong>{wallet.gold}</strong>
           </div>
           <header className="hud-top" hidden={!playing}>
             {/* The dot is the bullet in the chamber, not a generic "ammo" icon —
@@ -582,6 +730,10 @@ export default function SandGame() {
                 queue is empty (win/fail), which is the only time there is no
                 colour to show. */}
             <div
+              // Keyed on the fire counter so `.shots-badge`'s shake replays
+              // on every shot (see `shotBump`'s own comment) — unrelated to
+              // `ammoAnim.bump` just below, which remounts only the dot.
+              key={shotBump}
               className="shots-badge"
               role="status"
               aria-label={loadedAmmo ? `${remaining} ${COLOR_NAME[loadedAmmo]} shots left` : `${remaining} shots left`}
@@ -671,6 +823,28 @@ export default function SandGame() {
           )}
         </div>
 
+        {/* The hub's own top-right control, in the same corner `.settings-wrap`
+            uses mid-play — the two are never visible together, so sharing the
+            spot reads as one persistent "top-right button" rather than two.
+            Its own class rather than reusing `.settings-wrap`: that one sits
+            at z-index 12, below `.hub-screen`'s 30 (fine mid-play, where the
+            hub is not on screen at all), but this button has to read over the
+            hub screen itself. Reopens the daily-login modal on demand:
+            `initialDailyLogin` above already opens it once automatically
+            when unclaimed, this is just "let me look again" (before
+            claiming, or after, to see tomorrow's reward is not up yet). */}
+        <div className="hub-gift-wrap" hidden={playing}>
+          <button
+            type="button"
+            className="icon-button gift-button"
+            onClick={() => setDailyLoginOverride(getDailyLoginState())}
+            aria-label="Daily login reward"
+            title="Daily login reward"
+          >
+            🎁
+          </button>
+        </div>
+
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
           <span className="aim-crosshair" ref={crosshairRef}>
@@ -689,27 +863,35 @@ export default function SandGame() {
               visual language so a player who has seen either in play
               recognises the button. Disabled rather than hidden while the
               other booster is armed (spec §3: no cancel, no swap — the only
-              way out of an armed booster is to fire it) and while input is
-              locked (`busy`, §21) — armBooster is a no-op then regardless, but
-              a button that visibly cannot respond is the whole point of §3. */}
+              way out of an armed booster is to fire it), while input is
+              locked (`busy`, §21), or while the wallet is out of that
+              booster's charges — `armBooster` is a no-op in every one of
+              those cases regardless (the engine's own guard reads the same
+              wallet via `getBoosterCharges`), but a button that visibly
+              cannot respond is the whole point of §3. */}
           <div className="booster-hud" hidden={!playing}>
-            {(["radiusOvercharge", "prismShot"] as const).map((type) => (
-              <button
-                key={type}
-                type="button"
-                className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
-                onClick={() => engine?.armBooster(type)}
-                disabled={busy || (armedBooster !== null && armedBooster !== type)}
-                aria-label={BOOSTER_NAME[type]}
-                aria-pressed={armedBooster === type}
-                title={BOOSTER_NAME[type]}
-              >
-                <BoosterIcon type={type} />
-                {/* Reserved, not shown: spec §4 wants room for a future charge-count
-                    badge but no display while boosters are unlimited. */}
-                <span className="booster-badge" aria-hidden="true" />
-              </button>
-            ))}
+            {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+              const charges = wallet.boosters[type];
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
+                  onClick={() => engine?.armBooster(type)}
+                  disabled={busy || charges <= 0 || (armedBooster !== null && armedBooster !== type)}
+                  aria-label={`${BOOSTER_NAME[type]} — ${charges} left`}
+                  aria-pressed={armedBooster === type}
+                  title={`${BOOSTER_NAME[type]} — ${charges} left`}
+                >
+                  <BoosterIcon type={type} />
+                  {/* Spec §4's reserved charge-count badge, now shown for real
+                      (see `economy.ts`) — the actual owned count, not capped
+                      to a single digit: the Shop has no cap on how many a
+                      player can hold. */}
+                  <span className="booster-badge" aria-hidden="true">{charges}</span>
+                </button>
+              );
+            })}
           </div>
 
           {busy && (
@@ -791,7 +973,56 @@ export default function SandGame() {
               </div>
             )}
 
-            {tab !== "home" && tab !== "gallery" && (
+            {tab === "shop" && (
+              <div className="hub-panel" role="group" aria-label="Shop">
+                <h3>Shop</h3>
+                <p className="shop-balance">
+                  <CoinIcon /> <strong>{wallet.gold}</strong>
+                </p>
+                <div className="shop-list">
+                  {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+                    const price = boosterPrice(type);
+                    const owned = wallet.boosters[type];
+                    const canAfford = wallet.gold >= price;
+                    return (
+                      <div key={type} className="shop-item">
+                        <span className={`shop-item-icon is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
+                          <BoosterIcon type={type} />
+                        </span>
+                        <span className="shop-item-info">
+                          <b>{BOOSTER_NAME[type]}</b>
+                          <span className="shop-item-desc">{BOOSTER_DESC[type]}</span>
+                          <span className="shop-item-owned">Owned: {owned}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="shop-buy-btn"
+                          disabled={!canAfford}
+                          onClick={() => {
+                            // The wallet notifies its own subscribers on a
+                            // successful buy, so `wallet.gold`/`.boosters`
+                            // above are already the post-purchase numbers by
+                            // the time this toast reads `owned` — but `owned`
+                            // was captured before the click, so the message
+                            // still has to add the one charge itself.
+                            if (buyBoosterCharge(type)) {
+                              pushToast(`Bought ${BOOSTER_NAME[type]} — ${owned + 1} owned`, "good");
+                            } else {
+                              pushToast("Not enough coins", "warn");
+                            }
+                          }}
+                          aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins`}
+                        >
+                          <CoinIcon /> {price}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {tab !== "home" && tab !== "gallery" && tab !== "shop" && (
               <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
                 <h3>{HUB_TAB_NAME[tab]}</h3>
                 <p>{HUB_TAB_BLURB[tab]}</p>
@@ -829,6 +1060,19 @@ export default function SandGame() {
                   ? `Every grain gone with ${remaining} shot${remaining === 1 ? "" : "s"} to spare.`
                   : `${cleared}% cleared — ${state.remainingCells} grains still in the frame.`}
               </p>
+              {state.result.kind === "WIN" && (
+                lastReward !== null ? (
+                  <p className="result-reward" role="status">
+                    <CoinIcon /> <strong>+{lastReward}</strong>
+                  </p>
+                ) : (
+                  // Honest about why there is no number here rather than just
+                  // omitting it: a level pays out once, ever (economy.ts) —
+                  // silently showing nothing would read as a bug the first
+                  // time a player replays a level they already cleared.
+                  <p className="result-reward is-replay">Already cleared — no coins this time</p>
+                )
+              )}
               <div className="result-actions">
                 <button type="button" onClick={restart}>
                   Play again
@@ -860,6 +1104,61 @@ export default function SandGame() {
               <div className="result-actions">
                 <button type="button" onClick={() => setTutorialOpen(false)}>
                   Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Daily login: opened once automatically (`initialDailyLogin` above)
+            the first time the hub is seen on a day it has not been claimed,
+            and reopenable any time from the gift button in the hub's
+            top-right. Gated on `!playing` on top of that — the very first
+            render is always the hub, but this stays defensive rather than
+            relying on that ordering. */}
+        {!playing && dailyLogin && (
+          <div className="result-screen" role="dialog" aria-modal="true" aria-label="Daily login reward">
+            <div className="result-card daily-login-card">
+              <h2>Daily Login</h2>
+              <div className="daily-login-strip">
+                {DAILY_LOGIN_REWARDS.map((_, index) => {
+                  const isToday = index === dailyLogin.day;
+                  const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
+                  return (
+                    <div
+                      key={index}
+                      className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
+                    >
+                      <span className="daily-login-label">Day {index + 1}</span>
+                      <CoinIcon />
+                      <strong>{dailyLoginReward(index)}</strong>
+                    </div>
+                  );
+                })}
+              </div>
+              {dailyLogin.claimedToday ? (
+                <p>
+                  Day {dailyLogin.day + 1} claimed — Day{" "}
+                  {((dailyLogin.day + 1) % DAILY_LOGIN_REWARDS.length) + 1} is worth{" "}
+                  {dailyLoginReward((dailyLogin.day + 1) % DAILY_LOGIN_REWARDS.length)} coins tomorrow.
+                </p>
+              ) : (
+                <p>Day {dailyLogin.day + 1} — come back every day to climb the streak.</p>
+              )}
+              <div className="result-actions">
+                {!dailyLogin.claimedToday && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const claimed = claimDailyLogin();
+                      if (claimed) setDailyLoginOverride(claimed);
+                    }}
+                  >
+                    Claim {dailyLogin.reward} coins
+                  </button>
+                )}
+                <button type="button" className="is-quiet" onClick={() => setDailyLoginOverride(null)}>
+                  {dailyLogin.claimedToday ? "Close" : "Later"}
                 </button>
               </div>
             </div>

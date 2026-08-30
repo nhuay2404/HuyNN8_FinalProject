@@ -6,6 +6,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { __resetWalletForTests } from "../app/game/economy.ts";
 import { lockAndKey, sandBloom } from "../app/game/sand-levels.ts";
 import {
   cellKey,
@@ -18,6 +19,7 @@ import {
   getBoosterCharges,
   parseSandLevel,
   resolveShot,
+  spendBoosterCharge,
 } from "../app/game/sand-rules.ts";
 import { RADIUS_GAMEPLAY } from "../app/game/sand-types.ts";
 import type { SandBody, SandColor, SandLevelConfig } from "../app/game/sand-types.ts";
@@ -123,11 +125,23 @@ test("effectiveSortRadius: Radius Overcharge doubles the reach, capped at the fr
   assert.ok(diagonal < tiny.sortRadius * 2, "the fixture is only useful if doubling would have overshot");
 });
 
-// ---- getBoosterCharges ----------------------------------------------------
+// ---- getBoosterCharges ------------------------------------------------------
+// Finite now — see `economy.ts`. The wallet-mechanics themselves (buying,
+// spending, the starter grant) are covered in `sand-economy.test.ts`; this
+// just checks the seam `getBoosterCharges`/`spendBoosterCharge` still expose
+// into `sand-rules.ts` for `SandCannonEngine.ts` to call.
 
-test("getBoosterCharges is unlimited for both boosters in this build — spec §4", () => {
-  assert.equal(getBoosterCharges("radiusOvercharge"), Infinity);
-  assert.equal(getBoosterCharges("prismShot"), Infinity);
+test("getBoosterCharges reads the real wallet, and spendBoosterCharge decrements it", () => {
+  __resetWalletForTests({ boosters: { radiusOvercharge: 2, prismShot: 0 } });
+  assert.equal(getBoosterCharges("radiusOvercharge"), 2);
+  assert.equal(getBoosterCharges("prismShot"), 0);
+
+  spendBoosterCharge("radiusOvercharge");
+  assert.equal(getBoosterCharges("radiusOvercharge"), 1);
+
+  // Never goes negative — a booster that reads 0 stays at 0.
+  spendBoosterCharge("prismShot");
+  assert.equal(getBoosterCharges("prismShot"), 0);
 });
 
 // ---- resolveShot: booster folded into the one disc it resolves -----------
