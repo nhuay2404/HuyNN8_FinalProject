@@ -1,28 +1,26 @@
-// The two map mechanics, tested against the solver rather than the renderer.
+// The map mechanic (lock & key), tested against the solver rather than the
+// renderer.
 //
-// Both are authored entirely as data — lower-case letters, a `K`, and a `wind`
-// block — so everything worth proving about them is a property of
-// `parseSandLevel`, `runGrainSettle` and `runWindGust`. If these pass, what the
-// engine draws is a replay of a result that was already correct.
+// Authored entirely as data — lower-case letters and a `K` — so everything
+// worth proving about it is a property of `parseSandLevel` and
+// `runGrainSettle`. If these pass, what the engine draws is a replay of a
+// result that was already correct.
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crosswind, lockAndKey } from "../app/game/sand-levels.ts";
+import { lockAndKey } from "../app/game/sand-levels.ts";
 import {
   cellKey,
   cellsInRadius,
   countCells,
   createSandGameState,
   currentAmmo,
-  expandLevelForPixelBoard,
   fixturesOf,
   frozenSet,
   isConnected,
   parseSandLevel,
   resolveShot,
-  resolveWind,
   runGrainSettle,
-  runWindGust,
 } from "../app/game/sand-rules.ts";
 import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells } from "../app/game/sand-sprites.ts";
 import type { CellCoord, SandBody, SandGameState, SandKey } from "../app/game/sand-types.ts";
@@ -158,189 +156,14 @@ test("a lock the key never reaches stays shut, and the level stays unwinnable by
   assert.equal(after.keys.length, 1, "and the key is still waiting on its plug");
 });
 
-// ---- Wind ----------------------------------------------------------------
-
-test("a gust carries loose sand downwind and lets it fall again", () => {
-  const { bodies } = parseSandLevel(crosswind);
-  const before = countCells(bodies);
-  const gust = runWindGust(bodies, crosswind.frame, "right", 1);
-
-  assert.ok(gust.steps.some((step) => step.kind === "GRAIN_PASS"), "a gust on this mound has to move something");
-  assert.equal(countCells(gust.bodies), before, "wind moves sand, it never adds or removes any");
-
-  // The mound's centre of mass has to have moved with the wind, not against it.
-  const centre = (list: SandBody[]) =>
-    list.flatMap((body) => body.cells).reduce((sum, cell) => sum + cell.x, 0) / before;
-  assert.ok(
-    centre(gust.bodies) > centre(bodies),
-    "sand blown right must end up further right on average",
-  );
-});
-
-test("wind is deterministic, and blowing left is the mirror of blowing right", () => {
-  const { bodies } = parseSandLevel(crosswind);
-  const first = runWindGust(bodies, crosswind.frame, "right", 1);
-  const second = runWindGust(bodies, crosswind.frame, "right", 1);
-  const shape = (outcome: typeof first) =>
-    outcome.bodies.flatMap((body) => body.cells.map((cell) => `${body.color}:${cell.x},${cell.y}`)).sort().join("|");
-  assert.equal(shape(first), shape(second), "the same board and the same gust must give the same board");
-
-  const before = bodies.flatMap((body) => body.cells).reduce((sum, cell) => sum + cell.x, 0);
-  const left = runWindGust(bodies, crosswind.frame, "left", 1);
-  const after = left.bodies.flatMap((body) => body.cells).reduce((sum, cell) => sum + cell.x, 0);
-  assert.ok(after < before, "a gust from the right must push sand left");
-});
-
-test("frozen sand ignores the weather", () => {
-  // No key in this board on purpose: with one, the gust would blow it into the
-  // slab and open the lock — which is the mechanic working, not the thing under
-  // test here.
-  const { bodies, locked } = parseSandLevel(lockAndKey);
-  const gust = runWindGust(bodies, lockAndKey.frame, "right", 3, { locked });
-  assert.deepEqual(keySet(gust.locked), keySet(locked), "a lock is the one thing wind cannot argue with");
-  for (const cell of locked) {
-    assert.ok(
-      gust.bodies.some((body) => body.cells.some((c) => c.x === cell.x && c.y === cell.y)),
-      `the locked cell ${cell.x},${cell.y} was blown out of place`,
-    );
-  }
-});
-
-test("wind can blow a key into a lock, and that opens it like any other arrival", () => {
-  const frame = { width: 14, height: 12 };
-  // Blown three cells right from x=2, `KEY_SPRITE`'s leftmost column (from the
-  // same bottom row the gravity test reads) lands at absolute column 7 — swap
-  // that one floor cell for a locked one, so the same fall that carries the
-  // key there also opens it. Starts one row lower than the sprite's own
-  // height would suggest, so its top stays inside this frame's ceiling.
-  const originX = 2;
-  const bottomLocalX = Math.min(...spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x));
-  const lockColumn = originX + bottomLocalX + 3;
-  const floor = floorRow(14).cells.filter((cell) => cell.x !== lockColumn);
-  const lock: SandBody = { id: "purple-lock", color: "purple", cells: [{ x: lockColumn, y: 0 }] };
-  const gust = runWindGust(
-    [{ ...floorRow(14), cells: floor }, lock],
-    frame,
-    "right",
-    3,
-    { locked: [{ x: lockColumn, y: 0 }], keys: [keyAt(originX, 5)] },
-  );
-  assert.deepEqual(gust.locked, [], "the key's tip landed right on the lock, so it opened");
-  assert.deepEqual(gust.keys, [], "and the key was spent doing it");
-});
-
-test("a gust spends no shot and cannot lose the level", () => {
-  const state = createSandGameState(crosswind);
-  const blown = resolveWind(crosswind, state, crosswind.wind!.phases[0]);
-  assert.equal(blown.state.shotsUsed, 0, "wind is not a turn");
-  assert.equal(blown.state.result, null);
-  assert.equal(blown.removed.length, 0, "and it sorts nothing out of the frame");
-});
-
-test("a level with still air is untouched by the wind rule", () => {
-  assert.ok(!lockAndKey.wind, "this level has no weather at all");
-  // Handed a phase it does not own, it still must not invent one for itself:
-  // the engine is what decides a level has wind, and it never asks this level.
-  assert.equal(lockAndKey.wind, undefined);
-});
-
-// ---- the wind loop -------------------------------------------------------
-
-test("the wind loop is a list of phases, and each one is its own weather", () => {
-  const phases = crosswind.wind!.phases;
-  assert.equal(phases.length, 3, "one phase would be a constant, not a pattern");
-  assert.deepEqual(phases.map((phase) => phase.direction), ["right", "left", "right"]);
-  for (const phase of phases) {
-    assert.ok(phase.durationMs > 0, "a phase that blows for no time is not a phase");
-    assert.ok(phase.cooldownMs > 0, "and one with no still air leaves nothing to aim at");
-    assert.ok(phase.power >= 1);
-  }
-});
-
-test("a phase whose zone holds no sand does nothing at all", () => {
-  const { bodies } = parseSandLevel(crosswind);
-  // Well above the mound. The cleanest proof the rule reads the zone rather
-  // than only the direction.
-  const nowhere = runWindGust(bodies, crosswind.frame, "right", 2, {}, { x: 0, y: 12, width: 12, height: 2 });
+test("the mechanic level is already at rest as drawn", () => {
+  const { bodies, locked, keys } = parseSandLevel(lockAndKey);
+  const settled = runGrainSettle(bodies, lockAndKey.frame, { locked, keys });
   assert.equal(
-    nowhere.steps.filter((step) => step.kind !== "REINDEX").length,
+    settled.steps.filter((step) => step.kind !== "REINDEX").length,
     0,
-    "there is no sand that high, so nothing should have happened",
+    `${lockAndKey.name} slumps on load — the player would never see what was drawn`,
   );
-});
-
-test("a zoned phase pushes only the sand inside it", () => {
-  // A board small enough to state the whole answer: a floor of orange, and a
-  // shelf of yellow on top of it with room to slide right. The real levels are
-  // too tall to isolate this on — sand blown along the top of a mound then
-  // falls *through* the zone boundary, which is correct and would drown out
-  // what is being checked here.
-  const frame = { width: 6, height: 3 };
-  const floor: SandBody = {
-    id: "orange-0-0",
-    color: "orange",
-    cells: Array.from({ length: 6 }, (_, x) => ({ x, y: 0 })),
-  };
-  const shelf: SandBody = {
-    id: "yellow-0-1",
-    color: "yellow",
-    cells: Array.from({ length: 4 }, (_, x) => ({ x, y: 1 })),
-  };
-
-  const gust = runWindGust([floor, shelf], frame, "right", 1, {}, { x: 0, y: 1, width: 6, height: 1 });
-  const at = (y: number) => gust.bodies.flatMap((body) => body.cells)
-    .filter((cell) => cell.y === y).map((cell) => cell.x).sort((a, b) => a - b);
-
-  assert.deepEqual(at(1), [1, 2, 3, 4], "the shelf inside the zone slid one cell downwind");
-  assert.deepEqual(at(0), [0, 1, 2, 3, 4, 5], "the floor below the zone did not move");
-});
-
-test("a phase with no zone reaches the whole frame", () => {
-  const { bodies } = parseSandLevel(crosswind);
-  const everywhere = runWindGust(bodies, crosswind.frame, "right", 1, {}, null);
-  const wholeFrame = runWindGust(bodies, crosswind.frame, "right", 1, {}, {
-    x: 0, y: 0, width: crosswind.frame.width, height: crosswind.frame.height,
-  });
-  const shape = (outcome: typeof everywhere) =>
-    outcome.bodies.flatMap((body) => body.cells.map((cell) => `${body.color}:${cell.x},${cell.y}`)).sort().join("|");
-  assert.equal(shape(everywhere), shape(wholeFrame), "`null` and a frame-sized zone are the same thing");
-});
-
-test("power is how far one gust carries, and it scales with the board", () => {
-  const { bodies } = parseSandLevel(crosswind);
-  const centre = (list: SandBody[]) => {
-    const cells = list.flatMap((body) => body.cells);
-    return cells.reduce((sum, cell) => sum + cell.x, 0) / cells.length;
-  };
-  const soft = centre(runWindGust(bodies, crosswind.frame, "right", 1).bodies);
-  const hard = centre(runWindGust(bodies, crosswind.frame, "right", 3).bodies);
-  assert.ok(hard > soft, "more power has to carry sand further, not just differently");
-
-  // Authored in blueprint cells, so expansion has to scale both power and zone
-  // or a gust would reach a different fraction of the picture at 5x.
-  const expanded = expandLevelForPixelBoard(crosswind);
-  const authoredZone = crosswind.wind!.phases[1].zone!;
-  const scaledZone = expanded.wind!.phases[1].zone!;
-  assert.equal(expanded.wind!.phases[1].power, crosswind.wind!.phases[1].power * crosswind.pixelScale);
-  assert.equal(scaledZone.y, authoredZone.y * crosswind.pixelScale);
-  assert.equal(scaledZone.height, authoredZone.height * crosswind.pixelScale);
-  assert.equal(
-    expanded.wind!.phases[1].durationMs,
-    crosswind.wind!.phases[1].durationMs,
-    "durations are real time and must NOT be scaled with the board",
-  );
-});
-
-test("both mechanic levels are already at rest as drawn", () => {
-  for (const level of [lockAndKey, crosswind]) {
-    const { bodies, locked, keys } = parseSandLevel(level);
-    const settled = runGrainSettle(bodies, level.frame, { locked, keys });
-    assert.equal(
-      settled.steps.filter((step) => step.kind !== "REINDEX").length,
-      0,
-      `${level.name} slumps on load — the player would never see what was drawn`,
-    );
-  }
 });
 
 // ---- what a key does ------------------------------------------------------
@@ -400,30 +223,6 @@ test("a key is rigid: support under only one column is not enough to reach the f
   // a real, if modest, perch — but the point is what it does NOT do: teleport,
   // split apart, or hang above where any of its cells could still fall.
   assert.equal(keyBottomLeft(settled.keys)!.y, 3, "it should have settled onto the pillar under its centre");
-});
-
-test("wind carries a key across the frame, and gravity still applies to it", () => {
-  const frame = { width: 16, height: 12 };
-  // One row lower than a round number, so the sprite's own height still
-  // leaves its top cell inside this frame's ceiling.
-  const gust = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)] });
-  const landed = keyBottomLeft(gust.keys)!;
-  // Three cells of power, then a straight drop — the gravity test above shows
-  // this sprite needs no settle drift of its own, so the gust is the only
-  // horizontal move here.
-  assert.equal(landed.x, 5, "power carried it downwind, and gravity settled it the rest of the way");
-  assert.equal(landed.y, 1, "and it fell to the floor in the same resolution");
-});
-
-test("friction resists a key being blown, without preventing it entirely", () => {
-  const frame = { width: 16, height: 12 };
-  const loose = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)], friction: 0 });
-  const sticky = runWindGust([floorRow(16)], frame, "right", 3, { keys: [keyAt(2, 5)], friction: 1 });
-  const looseX = keyBottomLeft(loose.keys)!.x;
-  const stickyX = keyBottomLeft(sticky.keys)!.x;
-  assert.ok(stickyX < looseX, "more friction has to carry the key less far in the same gust");
-  assert.equal(loose.keys.length, 1, "friction never breaks a key apart");
-  assert.equal(sticky.keys.length, 1);
 });
 
 test("friction paces a slide but does not change where it ends up at rest", () => {

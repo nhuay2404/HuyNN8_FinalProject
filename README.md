@@ -255,10 +255,10 @@ Có test giữ kết luận này: nếu chơi giỏi không còn dư ≥ 3 lư�
 - Một projectile một lượt. Không bắn trong `PROJECTILE_FLYING`, `HIT_RESOLUTION`, `SETTLING`.
 - Win kiểm tra trước, fail kiểm tra sau — phát cuối dọn sạch khung là thắng, không phải hoà.
 
-## Hai map mechanic đang thử
+## Map mechanic đang thử
 
-Cả hai đều là **data của level**, không phải nhánh code riêng: level không dùng tới chúng đọc và chạy
-y hệt như trước khi chúng tồn tại.
+Là **data của level**, không phải nhánh code riêng: level không dùng tới nó đọc và chạy y hệt như trước
+khi nó tồn tại.
 
 **Lock & Key.** Chữ thường trong tranh (`y`, `p`, …) là cát **bị khoá**: vẫn là cát — có màu, chiếm ô,
 đỡ cát khác, tính vào điều kiện thắng — nhưng không rơi và đĩa bắn không nhìn thấy. Vì không rơi nên nó
@@ -268,7 +268,7 @@ vào ô khoá nào thì **cả vùng khoá liền kề đó** tan băng cùng l�
 
 **Chìa khoá là một silhouette lởm chởm vẽ tay (`KEY_SPRITE`, `sand-sprites.ts`), không phải hình tròn —
 nó trượt trên cát, không lăn.** Vật lý của chìa khoá là vật lý của cát, áp cho cả khối: rơi thẳng khi
-dưới trống, trượt chéo khi không, và bị gió thổi ngang. Khác biệt duy nhất là tính cứng — một nước đi chỉ
+dưới trống, trượt chéo khi không. Khác biệt duy nhất là tính cứng — một nước đi chỉ
 xảy ra khi *mọi* ô đích đều hợp lệ cùng lúc, nên một chìa khoá có ô nằm ngoài khung thì không nhúc nhích
 được (editor chặn không cho đặt như vậy). Engine vẽ nó thẳng lên canvas cát — phẳng màu vàng cộng một
 bóng đổ 1px — y hệt cách một hạt cát hay icon ổ khoá được vẽ, không phải một đối tượng 3D riêng.
@@ -281,7 +281,7 @@ pixel của sprite trở thành một khối `scale×scale`.
 **Friction** (`keyFriction`, 0–1, mục "Key friction" trong editor) quyết định độ trơn trượt — 0 là trơn
 tối đa (trượt ngay khi có đường đi), 1 là ì (chờ vài pass mới trượt). Chỉ cản **chuyển động ngang** — rơi
 thẳng đứng không bao giờ bị chậm lại, đúng như ma sát thật chỉ tác động dọc theo bề mặt tiếp xúc, không
-bao giờ chống lại trọng lực. Cơ chế: mỗi lần chìa khoá có cơ hội trượt/bị gió thổi mà chưa đi, nó "chờ"
+bao giờ chống lại trọng lực. Cơ chế: mỗi lần chìa khoá có cơ hội trượt ngang mà chưa đi, nó "chờ"
 thêm một pass; đủ `round(friction × 4)` pass thì mới thực sự di chuyển. Level `Lock & Key` không khai
 `keyFriction`, mặc định 0 — trơn trượt cao nhất.
 
@@ -296,36 +296,6 @@ ngoài chỗ nó đang chú thích thì đọc thành rác.
 
 Một màu bị khoá **toàn bộ** sẽ không được bánh xe phát ra (`shootableColors`) — phát viên đạn đó ra thì
 đúng là dead bullet mà `deadBulletPolicy` sinh ra để cấm — và nó quay lại bánh xe ngay khi khoá mở.
-
-**Wind.** `wind: { phases: [...] }` trong level — một **vòng lặp các pha**, chạy hết rồi quay lại từ
-đầu. Mỗi pha khai báo năm thứ:
-
-| Trường | Nghĩa |
-| --- | --- |
-| `direction` | `"left"` / `"right"` — đặt tên theo *cát đi đâu*, không phải gió đến từ đâu |
-| `durationMs` | thổi trong bao lâu |
-| `cooldownMs` | lặng gió bao lâu sau đó, trước khi pha kế tiếp bắt đầu |
-| `power` | một cơn đẩy cát bao nhiêu ô (đơn vị blueprint cell) |
-| `zone` | hình chữ nhật gió với tới, `null` là cả khung |
-
-Một pha là **một quãng thời tiết**, không phải một cú đẩy: nó gust liên tục suốt `durationMs`. Nhờ tách
-"thổi bao lâu" khỏi "đẩy mạnh bao nhiêu" mà "gió nhẹ kéo dài" và "một cú tát" là hai thứ khác nhau viết
-được. Một pha thì là level lúc nào cũng thổi một hướng; nhiều pha thì là một pattern người chơi học
-được.
-
-Gió đẩy cát rồi trả board về **đúng solver rơi cũ**, nên cát bị thổi khỏi mép vẫn rơi y như cát vẫn rơi.
-Lưu ý phần rơi đó **không bị giới hạn bởi zone**: gió với tới đâu là chuyện của gió, còn trọng lực là
-của cả khung — cát bị thổi ra rìa zone vẫn rơi xuyên qua ranh giới đó. Cát khoá không nhúc nhích; chìa
-khoá thì có, nên gió tự nó có thể mở một ổ khoá. Gió **không tiêu lượt** và không bao giờ làm thua, vì
-ngân sách chỉ động khi người chơi bắn.
-
-`power` và `zone` tính bằng blueprint cell nên được `expandLevelForPixelBoard` scale cùng board;
-`durationMs`/`cooldownMs` là thời gian thật nên **không** scale.
-
-Đồng hồ nằm ở engine chứ không ở rules — `sand-rules.ts` vẫn không có đồng hồ. Engine cũng không bao
-giờ cho gió nổi giữa lúc đạn đang bay hay cát đang rơi: board người chơi ngắm phải là board viên đạn hạ
-xuống (§21). Đồng hồ pha vẫn chạy trong lúc đó, nên cơn gió bị hoãn đến ngay khi board thuộc về người
-chơi trở lại.
 
 Một lưu ý khi tự vẽ level có khoá: cát chỉ đứng yên khi mỗi cột mép cao hơn cột bên cạnh **tối đa 1 ô**,
 nên một khối vuông đặt trên một slab hẹp sẽ lăn khỏi sườn của chính nó ở frame đầu. Nút chặn của
@@ -343,12 +313,12 @@ Cái giá là phải có **cỡ cọ**: `− brush Npx +` cạnh tool Brush/Eras
 còn lưới guide mỗi 10 pixel thì luôn có để đếm.
 
 `expandLevelForPixelBoard` vẫn còn cho level viết tay (`sand-levels.ts` vẫn dùng `pixelScale: 5`) và cho
-**migration**: draft cũ trong localStorage được phóng đúng bằng hệ số game vốn sẽ phóng, kèm `sortRadius`
-và gió, rồi đặt `pixelScale: 1`.
+**migration**: draft cũ trong localStorage được phóng đúng bằng hệ số game vốn sẽ phóng, kèm `sortRadius`,
+rồi đặt `pixelScale: 1`.
 
-### Cả hai đều vẽ được trong editor
+### Lock & Key vẽ được trong editor
 
-Hai level thử: `Lock & Key` và `Crosswind` trong `sand-levels.ts`. Editor vẽ được cả hai:
+Level thử `Lock & Key` trong `sand-levels.ts`:
 
 - Nút `🔒 Locked` là *modifier của cọ*, không phải tool riêng — khoá là một **trạng thái của một màu**,
   nên phải vẽ bằng một màu.
@@ -359,9 +329,6 @@ Hai level thử: `Lock & Key` và `Crosswind` trong `sand-levels.ts`. Editor v�
   một silhouette lởm chởm. Bấm lại lên một chìa khoá đã có thì **nhấc nó lên**, nên đổi cỡ = nhấc, chỉnh,
   đặt lại. Cỡ tối đa bị chặn theo kích thước khung, vì một chìa khoá bị cắt cụt là một silhouette khác,
   không phải một chìa khoá to.
-- Mục **Wind** dựng cả vòng lặp: thêm/xoá/đảo thứ tự pha, và bấm tiêu đề một pha thì **zone của nó vẽ
-  đè lên tranh** — bốn con số trong sidebar thì không hình dung được, hình chữ nhật trên chính bức
-  tranh thì có.
 
 Preview của editor tính cỡ ổ khoá ở **độ phân giải board thật** rồi thu lại để vẽ, chứ không tính ở cỡ
 blueprint: game dán icon lên board đã mở rộng, nên tính ở cỡ blueprint sẽ cho editor và game bất đồng về

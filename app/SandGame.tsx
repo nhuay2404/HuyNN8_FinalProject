@@ -35,6 +35,7 @@ import {
   KEY_LETTER,
   SAND_COLOR_BY_LETTER,
 } from "./game/sand-rules";
+import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
 import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 
@@ -413,6 +414,9 @@ export default function SandGame() {
   const [playing, setPlaying] = useState(false);
   const [tab, setTab] = useState<HubTab>("home");
   const [menuOpen, setMenuOpen] = useState(false);
+  // Read once: `isSoundEnabled()` is a plain module variable, and this is the
+  // only place in the UI that ever writes it, so nothing else can go stale.
+  const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   // Lags `playing` on the way in: the home screen stays mounted for one more
   // beat after Play is tapped so its CSS exit animation (Play button
   // shrinking, the bottom bar sliding off) actually gets to play instead of
@@ -510,14 +514,6 @@ export default function SandGame() {
         case "UNLOCKED":
           pushToast("Lock opened — the sand is free", "good");
           break;
-        case "WIND_INCOMING":
-          // Ahead of the wind, not with it: a warning that arrives at the same
-          // moment as the sand it is warning about is not a warning.
-          pushToast(event.direction === "right" ? "Wind picking up →" : "← Wind picking up", "warn");
-          break;
-        case "WIND_END":
-          pushToast("The air is still", "good");
-          break;
         case "BOOSTER_ARMED":
           pushToast(`${BOOSTER_NAME[event.booster]} armed — next shot`, "good");
           break;
@@ -557,6 +553,11 @@ export default function SandGame() {
 
   useEffect(() => {
     const onVisibility = () => {
+      // A background tab must not keep ambience playing (or drifting out of
+      // its own schedule) behind the player's back, regardless of whether a
+      // level is even open yet.
+      if (document.hidden) suspendSound();
+      else resumeSound();
       if (!engine) return;
       // A tab coming back must not hand control to a player looking at a menu.
       if (document.hidden || !playing) engine.pause();
@@ -817,6 +818,18 @@ export default function SandGame() {
                   <button type="button" onClick={() => { restart(); setMenuOpen(false); }}>
                     <span aria-hidden="true">⟲</span> Restart
                   </button>
+                  {soundSupported() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !soundOn;
+                        setSoundEnabled(next);
+                        setSoundOn(next);
+                      }}
+                    >
+                      <span aria-hidden="true">{soundOn ? "🔊" : "🔇"}</span> Sound {soundOn ? "on" : "off"}
+                    </button>
+                  )}
                 </div>
               </div>
             </>

@@ -60,61 +60,6 @@ export type SandFrame = {
   height: number;
 };
 
-// ---- map mechanics -------------------------------------------------------
-// Two experiments, both authored as data rather than as code paths: a level
-// that uses neither reads and runs exactly as it did before they existed.
-
-/**
- * Which way a gust crosses the frame.
- *
- * Only the two horizontal directions. A vertical gust is either gravity, which
- * the settle solver already is, or the opposite of it — and sand that flies
- * upward stops being sand.
- */
-export type WindDirection = "left" | "right";
-
-/**
- * The part of the frame a phase of wind reaches, in blueprint cells.
- *
- * `x`/`y` are the bottom-left corner, the same way the grid counts. A phase
- * with no zone reaches the whole frame — which is the common case, so it is
- * spelled `null` rather than a rectangle the size of the board.
- */
-export type WindZone = { x: number; y: number; width: number; height: number };
-
-/**
- * One leg of a level's weather.
- *
- * Wind blows for `durationMs`, then the air is still for `cooldownMs`, then the
- * next phase takes over. A phase is a *stretch* of weather rather than a single
- * gust: how long it lasts and how hard it pushes are separate dials, so "a long
- * soft breeze" and "one hard slap" are different things an author can write.
- */
-export type WindPhase = {
-  direction: WindDirection;
-  durationMs: number;
-  cooldownMs: number;
-  /** Cells one gust of this phase carries a loose grain, at blueprint scale. */
-  power: number;
-  /** null reaches the whole frame. */
-  zone: WindZone | null;
-};
-
-/**
- * Weather for a level: a loop of phases.
- *
- * Timed in real milliseconds, so the pressure is on the player rather than on
- * the turn — weather arrives whether or not they have taken their shot. The
- * rules that move the sand stay clockless pure functions; only the engine owns
- * the timer, and it never lets a gust land during a shot.
- *
- * The list runs in order and then round again, so one phase is a level that
- * always blows the same way, and several are a pattern the player can learn.
- */
-export type WindConfig = {
-  phases: WindPhase[];
-};
-
 // ---- boosters -------------------------------------------------------------
 // See booster-radius-prism-spec.md. Two one-shot buffs the player arms ahead
 // of a shot; the shot itself is unaware of them beyond the extra argument
@@ -246,12 +191,10 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * fraction of the picture.
    */
   pixelScale: number;
-  /** Still air when absent. */
-  wind?: WindConfig | null;
   /**
    * How strongly a key resists rolling sideways, 0–1. Absent or 0 rolls the
-   * instant a slope or a gust offers it a way down; 1 waits several settle
-   * passes between rolls, which reads as heavier. Only sideways movement is
+   * instant a slope offers it a way down; 1 waits several settle passes
+   * between rolls, which reads as heavier. Only sideways movement is
    * slowed — a key still falls straight down at full speed, the way real
    * friction only ever acts along a contact surface, never against gravity
    * itself.

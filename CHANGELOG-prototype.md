@@ -4681,3 +4681,52 @@ nằm đúng cạnh phải giữa màn hình (ảnh chụp xác nhận); bấm P
 **không còn trong DOM** (`giftInDom:false`), `.booster-hud` **có trong DOM** (`boosterInDom:true`), nút gear
 settings hiện đúng (`display:flex`) — cả 3 đúng như thiết kế, không còn khả năng chồng UI. Quay lại Home →
 nút 🎁 xuất hiện lại đúng cạnh phải, khay booster biến mất khỏi DOM hoàn toàn. Build lại bản standalone.
+
+---
+
+## 89. Bỏ hẳn cơ chế Wind — cả trong level editor lẫn trong game (30/08)
+
+Yêu cầu: bỏ cơ chế Wind ra khỏi level editor. Vì Wind là một trong hai "map mechanic" thử nghiệm của dự
+án (cùng với Lock & Key — mục 40/41/42/44), và mọi phần khác của game (rules, engine render, level fixture,
+test) đều xây trên đúng cùng bộ kiểu dữ liệu mà editor dùng để vẽ nó, nên gỡ Wind khỏi editor mà không gỡ
+luôn phần còn lại sẽ để lại code chết: các hàm `runWindGust`/`resolveWind`/`windPass` trong `sand-rules.ts`
+và bộ đếm giờ `updateWind` trong engine vẫn tồn tại nhưng không còn cách nào tạo ra `wind` config để gọi
+tới chúng nữa. Nên lần này bỏ **toàn bộ** cơ chế, không chỉ phần UI.
+
+**Xoá khỏi từng lớp:**
+- `sand-types.ts`: xoá hẳn `WindDirection`/`WindZone`/`WindPhase`/`WindConfig` và field `wind` trên
+  `SandLevelConfig` — cùng luôn cả section comment "map mechanics" giờ trống vì chỉ có Wind từng nằm ở đó.
+- `sand-rules.ts`: xoá `runWindGust`, `windPass`, `inZone`, `resolveWind`, `scaleWindPhase`, và phần
+  `wind: ...` trong `expandLevelForPixelBoard`. `World`/`Fixtures` không đổi — chúng chưa từng cần biết về
+  wind, chỉ cần biết về `locked`/`keys`/`friction`.
+- `level-drafts.ts`: xoá `defaultWindPhase`, validate 4 lỗi/cảnh báo riêng cho phase Wind, và đoạn
+  `normaliseWind` từng dùng để dịch draft Wind đời cũ (`{everyMs, direction, strength}`) — một draft cũ
+  còn field `wind` mồ côi trong localStorage giờ chỉ là một property thừa không ai đọc, không crash gì.
+- `LevelEditor.tsx`: bỏ hẳn mục **Wind** trong sidebar (bật/tắt, danh sách phase, thêm/xoá/đảo thứ tự,
+  chỉnh direction/duration/cooldown/power/zone), state `phaseIndex`, và hình chữ nhật zone từng vẽ đè lên
+  canvas.
+- `SandCannonEngine.ts`: bỏ đồng hồ pha (`windPhase`/`windRemaining`/`windBlowing`/`windSinceGust`/
+  `windWarned`), phương thức `updateWind()` và lệnh gọi nó mỗi `step()`, 4 event `WIND_INCOMING`/
+  `WIND_START`/`WIND_END`/`WIND`.
+- `SandGame.tsx`: bỏ 2 case xử lý toast `WIND_INCOMING`/`WIND_END`.
+- `sand-levels.ts`: xoá hẳn level fixture `crosswind` (level thử wind duy nhất, không nằm trong roster
+  chơi được, chỉ tồn tại cho test).
+- `globals.css`: xoá khối CSS `.editor-phases`/`.editor-phase-pick`/`.editor-phase-summary`/
+  `.editor-phase-add` — không còn JSX nào dùng tới.
+- `scripts/level-writer.mjs`: file này **cố tình duplicate** `draftToTypeScript` từ `level-drafts.ts` (chạy
+  Node thuần, không qua TypeScript — xem comment đầu file), nên phải sửa tay y hệt, không thì "Ship to
+  sand-levels.ts" từ editor sẽ vẫn ghi ra một field `wind:` mà type không còn khai báo.
+- `README.md`: xoá đoạn giải thích cơ chế Wind, sửa các câu nhắc "hai map mechanic"/"Lock & Key và
+  Crosswind" về chỉ còn một.
+
+**Test:** xoá 13 test chỉ kiểm Wind trong `tests/sand-mechanics.test.ts` (gust cơ bản, xác định, cát khoá
+lờ gió, gió mở khoá qua chìa, gió không tiêu lượt, vòng lặp pha, zone, power theo scale, chìa khoá bị gió
+thổi, friction cản gió) — 2 test friction còn lại (`friction paces a slide...`) vẫn giữ nguyên vì chúng
+kiểm ma sát trên sườn dốc tự nhiên (`runGrainSettle`), không phải trên gió. Gộp test "both mechanic levels
+are already at rest" (từng chạy cho cả `lockAndKey` và `crosswind`) thành "the mechanic level is already at
+rest" chỉ còn `lockAndKey`. 134 → **121/121 test pass**, `tsc --noEmit` sạch trên toàn repo (chỉ còn 2 lỗi
+cloudflare worker type có từ trước, không liên quan), `eslint` sạch trên mọi file đã sửa.
+
+Verify thật trên dev server: mở `/editor`, đọc DOM xác nhận sidebar đi thẳng từ Height sang "Key friction",
+không còn mục Wind ở giữa; `fetch('/app/game/sand-rules.ts')` xác nhận module đã build không còn export
+`resolveWind`; mở trang chủ `/` xác nhận vẫn load bình thường, có nút "Play Level 1", không lỗi runtime.

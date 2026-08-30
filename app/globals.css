@@ -976,35 +976,6 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- Editor: the wind loop --------------------------------------------- */
-/* One card per phase, in the order they play. The order IS the loop, so the
-   list is numbered and reorderable rather than a set of named settings. */
-.editor-phases { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.editor-phases > li {
-  padding: 9px 10px 10px; border: 1px solid var(--line); border-radius: 13px;
-  background: rgba(255,255,255,.04); display: grid; gap: 7px;
-  transition: border-color .18s, background .18s;
-}
-/* The selected phase is the one whose zone is drawn on the picture, so it has
-   to be obvious which card that is. */
-.editor-phases > li.is-active {
-  border-color: rgba(150,215,255,.65); background: rgba(120,200,255,.1);
-}
-.editor-phases > li > header { display: flex; align-items: center; gap: 6px; }
-.editor-phases > li > header b { font-size: 12px; letter-spacing: .04em; }
-.editor-phase-pick {
-  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; cursor: pointer;
-  padding: 2px 4px; border: 0; border-radius: 8px; background: none;
-  color: inherit; text-align: left;
-}
-.editor-phase-pick:hover { background: rgba(255,255,255,.08); }
-.editor-phase-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.editor-phase-summary {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
-}
-.editor-phase-add { border: 0 !important; background: none !important; padding: 0 !important; }
-
 .editor-issues { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .editor-issues li {
   display: flex; align-items: flex-start; gap: 8px;

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
+import { sound, soundSandLanded, startAmbience, stopAmbience } from "./sound";
 import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColor } from "./sand-color";
 // Only the padlock: the key's shape is whatever cells the level authored, and
 // this file draws them rather than deciding them.
@@ -17,14 +18,12 @@ import {
   nextAmmo,
   parseSandLevel,
   resolveShot,
-  resolveWind,
   spendBoosterCharge,
 } from "./sand-rules";
 import type {
   BoosterType,
   CellCoord,
   SandColor,
-  WindDirection,
   SandGameState,
   SandLevelConfig,
   SettleStep,
@@ -278,16 +277,6 @@ const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
 const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
 const KEY_GLINT_RGB: readonly [number, number, number] = [255, 250, 214];
 const THAW_SECONDS = 0.5;
-/** How long the warning shows before a phase of wind starts blowing. */
-const WIND_WARNING_MS = 900;
-/**
- * Shortest gap between two gusts inside one phase.
- *
- * A phase is a stretch of weather, not one shove: it gusts repeatedly for as
- * long as it lasts. This is only a floor — a gust also waits for the board to
- * come to rest, so a long settle paces the next one rather than stacking on it.
- */
-const WIND_GUST_INTERVAL_MS = 620;
 
 export type SandEngineEvent =
   | { type: "AIM_TOUCHED" }
@@ -296,12 +285,6 @@ export type SandEngineEvent =
   | { type: "NO_MATCH"; ammo: SandColor }
   | { type: "MISS"; hitFrame: boolean }
   | { type: "UNLOCKED"; cells: number }
-  /** Wind is about to start. Fired once, `WIND_WARNING_MS` before the phase. */
-  | { type: "WIND_INCOMING"; direction: WindDirection }
-  | { type: "WIND_START"; direction: WindDirection }
-  | { type: "WIND_END" }
-  /** One gust inside a blowing phase. */
-  | { type: "WIND"; direction: WindDirection }
   | { type: "SETTLE_END" }
   /** A booster was just armed — waiting on the next shot to spend it. */
   | { type: "BOOSTER_ARMED"; booster: BoosterType };
@@ -469,14 +452,6 @@ export class SandCannonEngine {
    * disc of its own measured radius would if it were truly rolling.
    */
   private keyRotation = new Map<string, number>();
-  /** Where the level's wind loop has got to. */
-  private windPhase = 0;
-  /** Milliseconds left in whatever the current phase is doing. */
-  private windRemaining = 0;
-  /** True while the current phase is blowing, false while it is cooling down. */
-  private windBlowing = false;
-  private windSinceGust = 0;
-  private windWarned = false;
   /** Padlock placements, and whether the locked cells have changed under them. */
   private lockRegionCache: Array<{ icon: CellCoord[] }> = [];
   private lockRegionsDirty = true;
@@ -714,13 +689,6 @@ export class SandCannonEngine {
       }
     }
     for (const key of keys) this.keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
-    // The loop opens on the first phase's cooldown, so a level does not start
-    // by immediately blowing the picture the player has not looked at yet.
-    const first = this.level.wind?.phases[0];
-    if (first) {
-      this.windBlowing = false;
-      this.windRemaining = first.cooldownMs;
-    }
 
     const openWidth = this.level.frame.width * this.cell;
     const openHeight = this.level.frame.height * this.cell;
@@ -1928,6 +1896,7 @@ export class SandCannonEngine {
     this.spawnImpactFlash(contact, ammo);
     this.triggerFrameRecoil(contact);
     haptic("impact");
+    sound("impact");
 
     // Sand under the impact centres the disc on that grain; empty air centres it
     // on the square the shot came down in. Either way the disc has a centre and
@@ -1950,6 +1919,7 @@ export class SandCannonEngine {
     // say is which reach came up empty — hence the whole disc rattling.
     if (resolution.outcome === "NO_MATCH") {
       haptic("wrongColor");
+      sound("wrongColor");
       this.callbacks.onEvent?.({ type: "NO_MATCH", ammo });
       // The bullet is already gone, so the count has to move now. Only the
       // phase waits for the shake to finish.
@@ -1970,6 +1940,7 @@ export class SandCannonEngine {
     }
 
     haptic("bodyCleared");
+    sound("bodyCleared");
     this.callbacks.onEvent?.({
       type: "SAND_SORTED",
       color: ammo,
@@ -2100,6 +2071,7 @@ export class SandCannonEngine {
       this.keys.delete(step.keyId);
       this.keyRotation.delete(step.keyId);
       haptic("bodyCleared");
+      sound("bodyCleared");
       this.callbacks.onEvent?.({ type: "UNLOCKED", cells: step.cells.length });
       return;
     }
@@ -2117,84 +2089,12 @@ export class SandCannonEngine {
         this.cells.set(cellKey(cell.x, cell.y), cell);
       }
       this.settleLandings += 1;
-      if (this.settleLandings % 2 === 1) hapticSandLanded(Math.floor(this.settleLandings / 2));
-    }
-  }
-
-  // ---- wind ---------------------------------------------------------------
-
-  /**
-   * The clock the rules are not allowed to own.
-   *
-   * A gust only ever lands in READY, with nothing else playing: interrupting a
-   * shot mid-flight would make the board the player aimed at a different board
-   * by the time the disc arrived, which is the one thing §21 exists to prevent.
-   * The timer keeps running through a shot, so a gust held back by a long
-   * settle arrives as soon as the board is the player's again.
-   */
-  private updateWind(deltaMs: number) {
-    const phases = this.level.wind?.phases;
-    if (!phases?.length || this.state.result) return;
-
-    const phase = phases[this.windPhase % phases.length];
-    this.windRemaining -= deltaMs;
-    this.windSinceGust += deltaMs;
-
-    if (!this.windBlowing) {
-      // Cooling down. Announce the phase that is about to start, once, so the
-      // player can spend the last of the still air on a shot that expects it.
-      if (!this.windWarned && this.windRemaining <= WIND_WARNING_MS) {
-        this.windWarned = true;
-        this.callbacks.onEvent?.({ type: "WIND_INCOMING", direction: phase.direction });
+      if (this.settleLandings % 2 === 1) {
+        const order = Math.floor(this.settleLandings / 2);
+        hapticSandLanded(order);
+        soundSandLanded(order);
       }
-      if (this.windRemaining > 0) return;
-      this.windBlowing = true;
-      this.windWarned = false;
-      this.windRemaining = phase.durationMs;
-      this.windSinceGust = WIND_GUST_INTERVAL_MS;
-      this.callbacks.onEvent?.({ type: "WIND_START", direction: phase.direction });
     }
-
-    if (this.windRemaining <= 0) {
-      // The phase blew itself out. Hand over to the next one's cooldown.
-      this.windBlowing = false;
-      this.windPhase = (this.windPhase + 1) % phases.length;
-      this.windRemaining = phases[this.windPhase].cooldownMs;
-      this.windWarned = false;
-      this.callbacks.onEvent?.({ type: "WIND_END" });
-      return;
-    }
-
-    // A gust only lands on a board that is the player's again. §21 exists so
-    // that what was aimed at is what the disc arrives at; weather is no more
-    // entitled to break that than a second shot would be. The phase clock keeps
-    // running through a settle, so a held-back gust arrives the moment it can.
-    if (this.windSinceGust < WIND_GUST_INTERVAL_MS) return;
-    if (this.projectile || this.beats.length || this.state.phase !== "READY") return;
-    this.windSinceGust = 0;
-
-    const resolution = resolveWind(this.level, this.state, phase);
-    if (resolution.outcome === "MISS") return;
-
-    haptic("impact");
-    this.callbacks.onEvent?.({ type: "WIND", direction: phase.direction });
-
-    const timed = resolution.steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
-    const perStep = this.settleStepMs(timed);
-    this.beats = [
-      ...resolution.steps.map((step): Beat => ({
-        kind: "STEP",
-        step,
-        ms: step.kind === "REINDEX" ? 0 : perStep,
-      })),
-      { kind: "HOLD", ms: SETTLE_TAIL_MS },
-    ];
-    this.beatElapsed = 0;
-    this.beatStarted = false;
-    this.settleLandings = 0;
-    this.pendingState = resolution.state;
-    this.setPhase("SETTLING");
-    this.callbacks.onState({ ...resolution.state, phase: "SETTLING" });
   }
 
   private advanceBeats(deltaMs: number) {
@@ -2221,8 +2121,8 @@ export class SandCannonEngine {
     if (!resolved) return;
     this.state = resolved;
     this.callbacks.onEvent?.({ type: "SETTLE_END" });
-    if (resolved.result?.kind === "WIN") haptic("win");
-    if (resolved.result?.kind === "FAIL") haptic("lose");
+    if (resolved.result?.kind === "WIN") { haptic("win"); sound("win"); }
+    if (resolved.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
     this.callbacks.onState(this.cloneState());
     if (!resolved.result) this.showIdleCrosshair();
   }
@@ -2242,7 +2142,6 @@ export class SandCannonEngine {
     if (this.projectile) this.updateProjectile(this.projectile);
     else this.advanceBeats(deltaMs);
 
-    this.updateWind(deltaMs);
     for (const cell of this.cells.values()) {
       if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);
     }
@@ -2344,6 +2243,7 @@ export class SandCannonEngine {
     if (!idle) {
       this.cannonRoot.visible = true;
       this.startCannonEntrance();
+      startAmbience();
       // Ease the picture back to its authored orientation first; `resume()`
       // fires once that finishes, from `updateFrameSpin`. Staying paused for
       // that stretch keeps a shot from landing before the aim math (which
@@ -2359,6 +2259,7 @@ export class SandCannonEngine {
     this.cannonEntranceStart = null;
     this.spinReturnStart = null;
     this.pause();
+    stopAmbience();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
   }
 
@@ -2439,6 +2340,9 @@ export class SandCannonEngine {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    // Immediate, not the usual fade: this instance is gone, so there is
+    // nothing left for a fade-out to play against.
+    stopAmbience(true);
     cancelAnimationFrame(this.frameId);
     this.resizeObserver.disconnect();
     this.aimZone.removeEventListener("pointerdown", this.onAimPointerDown);

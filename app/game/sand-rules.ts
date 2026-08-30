@@ -16,9 +16,6 @@ import type {
   SandLevelConfig,
   SettleOutcome,
   SettleStep,
-  WindDirection,
-  WindPhase,
-  WindZone,
 } from "./sand-types";
 // A value import, not a type one, so it needs the extension the test runner
 // resolves with — this file is executed by node directly, not only bundled.
@@ -161,27 +158,7 @@ export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfi
     frame: { width: level.frame.width * scale, height: level.frame.height * scale },
     rows,
     sortRadius: level.sortRadius * scale,
-    // Wind is authored in blueprint cells like the disc is, so a gust carries
-    // sand the same fraction of the way across the frame — and reaches the same
-    // part of the picture — at any resolution.
-    wind: level.wind ? { phases: level.wind.phases.map((phase) => scaleWindPhase(phase, scale)) } : level.wind,
     pixelScale: 1,
-  };
-}
-
-function scaleWindPhase(phase: WindPhase, scale: number): WindPhase {
-  return {
-    ...phase,
-    power: phase.power * scale,
-    // Durations are real time and must not be scaled — only the geometry is.
-    zone: phase.zone
-      ? {
-        x: phase.zone.x * scale,
-        y: phase.zone.y * scale,
-        width: phase.zone.width * scale,
-        height: phase.zone.height * scale,
-      }
-      : null,
   };
 }
 
@@ -338,47 +315,9 @@ export function runGrainSettle(
   return finishWorld(world, frame, steps);
 }
 
-/**
- * One gust, then everything it disturbed falling back to rest.
- *
- * A gust is not a second physics: it slides loose grains sideways `strength`
- * times and then hands the board straight back to the same settle loop. So sand
- * blown off a ledge falls exactly the way sand always falls, and a level with
- * wind stays as predictable as one without — the only new thing is *when* the
- * board changes, which is the point of the mechanic.
- *
- * Locked sand does not move: it is the one thing in the frame the weather
- * cannot argue with, which is what makes it a landmark to aim a key at.
- */
-export function runWindGust(
-  bodies: SandBody[],
-  frame: SandFrame,
-  direction: WindDirection,
-  strength: number,
-  fixtures: Fixtures = {},
-  zone: WindZone | null = null,
-): SettleOutcome {
-  const world = buildWorld(bodies, fixtures);
-  const steps: SettleStep[] = [];
-  const step = direction === "left" ? -1 : 1;
-  for (let gust = 0; gust < Math.max(0, Math.round(strength)); gust += 1) {
-    if (!windPass(world, frame, step, zone, steps)) break;
-  }
-  // The settle is NOT zoned. Wind reaches where it reaches, but gravity is the
-  // whole frame's — sand blown to the edge of a zone still falls out of it.
-  settleWorld(world, frame, steps);
-  return finishWorld(world, frame, steps);
-}
-
-/** Whether a cell is inside a phase's reach. No zone means the whole frame. */
-function inZone(zone: WindZone | null, x: number, y: number) {
-  if (!zone) return true;
-  return x >= zone.x && x < zone.x + zone.width && y >= zone.y && y < zone.y + zone.height;
-}
-
 // ---- the settle world ----------------------------------------------------
-// One mutable board that the settle loop, the key loop and the wind pass all
-// work on, so a grain, a key and a lock can never disagree about what is where.
+// One mutable board that the settle loop and the key loop both work on, so a
+// grain, a key and a lock can never disagree about what is where.
 
 /** The parts of the board that are not plain falling sand. */
 export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: number };
@@ -386,7 +325,7 @@ export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: numb
 /**
  * How many settle passes a key waits at `friction: 1` before a sideways roll
  * it could take is actually taken. `friction: 0` waits none — it rolls the
- * instant a slope or a gust offers it one, same as before friction existed.
+ * instant a slope offers it one, same as before friction existed.
  */
 const FRICTION_MAX_WAIT_PASSES = 4;
 
@@ -398,12 +337,10 @@ type World = {
   /** Reverse index of `keys`, so occupancy is one lookup rather than a scan. */
   keyAt: Map<string, string>;
   /**
-   * Passes a key has already waited toward its next sideways roll.
+   * Passes a key has already waited toward its next sideways roll (`keyPass`).
    *
-   * Shared between the natural roll (`keyPass`) and being blown (`windPass`) on
-   * purpose: both are "sliding sideways", and a key's resistance to one is its
-   * resistance to the other. Reset the moment the key actually moves sideways,
-   * or falls straight down instead of rolling.
+   * Reset the moment the key actually moves sideways, or falls straight down
+   * instead of rolling.
    */
   keyRollWait: Map<string, number>;
   friction: number;
@@ -578,49 +515,6 @@ function unlockPass(world: World, steps: SettleStep[]) {
     opened = true;
   }
   return opened;
-}
-
-/**
- * One sideways shove. Grains at the downwind edge move first, or they jam.
- *
- * A grain is moved when it *starts* inside the zone. Being carried one cell
- * past the edge is what a zone boundary should look like — a wall that sand
- * piles up against would be a wall, not weather.
- */
-function windPass(
-  world: World,
-  frame: SandFrame,
-  step: -1 | 1,
-  zone: WindZone | null,
-  steps: SettleStep[],
-) {
-  const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
-  const columns = Array.from({ length: frame.width }, (_, index) =>
-    step === 1 ? frame.width - 1 - index : index);
-  for (let y = 0; y < frame.height; y += 1) {
-    for (const x of columns) {
-      if (!inZone(zone, x, y)) continue;
-      const from = cellKey(x, y);
-      const color = world.grid.get(from);
-      if (color === undefined || world.locked.has(from)) continue;
-      if (occupied(world, frame, x + step, y)) continue;
-      world.grid.delete(from);
-      world.grid.set(cellKey(x + step, y), color);
-      moves.push({ from: { x, y }, to: { x: x + step, y } });
-    }
-  }
-  // Keys are blown too — a key parked on a ledge would otherwise be the one
-  // thing in the frame the weather could not reach. A key counts as inside the
-  // zone if any part of it is: half a key in the wind still catches it.
-  // Gated by the same friction a natural roll is: a heavier key resists wind
-  // exactly as much as it resists a slope, because both are sideways.
-  let keysMoved = false;
-  for (const [id, cells] of [...world.keys]) {
-    if (!cells.some((cell) => inZone(zone, cell.x, cell.y))) continue;
-    if (rollKey(world, frame, id, step, 0, steps)) keysMoved = true;
-  }
-  if (moves.length) steps.push({ kind: "GRAIN_PASS", moves });
-  return moves.length > 0 || keysMoved;
 }
 
 /**
@@ -975,62 +869,4 @@ export function resolveShot(
     keys: settle.keys,
   };
   return { state: withResult(level, sorted), outcome: "SORTED", hitBody, removed, settle, steps };
-}
-
-/**
- * A gust, as a resolved change to the state.
- *
- * Separate from `resolveShot` on purpose: wind is not a turn. It spends no
- * ammo, it can win a level (by burying nothing and clearing the last grain it
- * cannot — but a lock freed by a blown key can), and it can never lose one,
- * because the budget only moves when the player fires.
- */
-export function resolveWind(
-  level: SandLevelConfig,
-  state: SandGameState,
-  phase: WindPhase,
-): ShotResolution {
-  const idle: ShotResolution = {
-    state,
-    outcome: "MISS",
-    hitBody: null,
-    removed: [],
-    settle: null,
-    steps: [],
-  };
-  if (state.result) return idle;
-
-  const settle = runWindGust(
-    state.bodies,
-    level.frame,
-    phase.direction,
-    phase.power,
-    fixturesOf(level, state),
-    phase.zone,
-  );
-  if (!settle.steps.some((step) => step.kind !== "REINDEX")) return idle;
-
-  // A gust can blow a key into a lock, so the wheel has to be re-checked even
-  // though no bullet was spent — the colour that just came free needs a bullet.
-  const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
-  const shootable = shootableColors(settle.bodies, stillFrozen);
-  const blown: SandGameState = {
-    ...state,
-    bodies: settle.bodies,
-    queue: [
-      ...state.queue.filter((color) => shootable.includes(color)),
-      ...shootable.filter((color) => !state.queue.includes(color)),
-    ],
-    remainingCells: countCells(settle.bodies),
-    locked: settle.locked,
-    keys: settle.keys,
-  };
-  return {
-    state: withResult(level, blown),
-    outcome: "SORTED",
-    hitBody: null,
-    removed: [],
-    settle,
-    steps: settle.steps,
-  };
 }
