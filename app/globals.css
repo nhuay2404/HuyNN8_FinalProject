@@ -136,6 +136,28 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: var(--bg);
   isolation: isolate;
 }
+/* Phone-width viewports: full-bleed, not a rounded card floating with a
+   coloured gutter around it. `.page-shell`'s 18px padding and
+   `.game-frame`'s 34px corners exist for a wider window (tablet/desktop),
+   where the frame no longer spans the whole viewport on its own and reads
+   as a phone mockup sitting on a background — on an actual phone that same
+   chrome just wastes screen and looks like the game failed to fill the
+   screen rather than a deliberate frame. The breakpoint (480px) sits just
+   above `.game-frame`'s own 430px cap plus its old padding, so this covers
+   every phone in portrait without touching the tablet/desktop look at all. */
+@media (max-width: 480px) {
+  .page-shell { padding: 0; }
+  .game-frame {
+    border-radius: 0;
+    /* The wider-viewport height (`min(900px, calc(100dvh - 56px))`) leaves
+       room on purpose for the card to float clear of the very top/bottom of
+       a big screen — exactly the gap this breakpoint exists to remove, so
+       it has to be overridden here too, not just the padding/radius above. */
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+  }
+}
 
 /* A real panel background, not a light-on-dark glass tint — this floats
    directly over the open sky above the frame with nothing else behind it. */
@@ -161,13 +183,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   width: 42px; height: 42px; font-size: 19px; line-height: 1;
   display: grid; place-items: center;
 }
-/* The hub's top-right, above `.hub-screen` (z-index 30) rather than
-   `.settings-wrap`'s 12 — see the JSX comment on why this is a separate
-   class instead of reusing that one. */
+/* The hub's right edge, vertically centred — deliberately NOT the top-right
+   corner `.settings-wrap` occupies mid-play (see the JSX comment: sharing
+   that spot read as the daily-login button overlapping the in-game settings
+   gear). Above `.hub-screen` (z-index 30) rather than `.settings-wrap`'s 12,
+   since unlike that one this has to read over the hub screen itself. */
 .hub-gift-wrap {
-  position: absolute; z-index: 31; display: flex; gap: 8px;
-  top: max(var(--hud-inset), env(safe-area-inset-top));
-  right: max(14px, env(safe-area-inset-right));
+  position: absolute; z-index: 31;
+  top: 50%; right: max(14px, env(safe-area-inset-right));
+  transform: translateY(-50%);
 }
 .settings-backdrop {
   position: fixed; z-index: 11; inset: 0; border: 0; padding: 0;

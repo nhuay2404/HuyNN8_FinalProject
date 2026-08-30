@@ -4628,3 +4628,56 @@ Verify thật trên dev server (không phải suy luận): xoá `localStorage`, 
 thuyết). Sửa `boosterPriceRadiusOvercharge` thành 45, đợi ~5s (không F5), mở Shop — giá hiện đúng **45**
 ngay lập tức (xác nhận poll + `useSyncExternalStore` mới thêm khiến UI Shop tự cập nhật khi đang mở, không
 cần rời màn hình). Đã đổi lại cả hai số về mặc định (100/60) và build lại bản standalone sau khi test xong.
+
+---
+
+## 87. Bỏ khoảng hở màu nền quanh khung game trên điện thoại (29/08)
+
+Phản hồi kèm ảnh chụp: mở trên điện thoại, UI bị thụt vào trong, chừa một viền màu nền (`--bg`) đều quanh
+4 cạnh thay vì sát mép màn hình. Khác với mục 80 (đó là bug — `dvh` không được hỗ trợ khiến layout co lại
+bất ngờ, ảnh có viền lớn bất thường): lần này là đúng-như-CSS-viết, chỉ là thiết kế "khung game như 1 cái
+thẻ nổi trên nền màu" (`.page-shell`'s `padding: 18px` + `.game-frame`'s `border-radius: 34px`) không hợp
+khi xem trên điện thoại thật — trên màn hình rộng (desktop/tablet) nhìn giống mockup điện thoại nằm trên
+nền, nhưng trên chính điện thoại thì chỉ tổ phí diện tích và trông như game bị lỗi không full màn hình.
+
+**Sửa:** thêm 1 breakpoint `@media (max-width: 480px)` (`globals.css`, `480px` = ngay trên mức
+`.game-frame`'s cap 430px cộng padding cũ, phủ hết điện thoại dọc mà không đụng tới màn hình rộng) — bỏ
+`padding` của `.page-shell`, bỏ `border-radius` của `.game-frame`, và ghi đè `height`/`min-height` của
+`.game-frame` về đúng `100vh`/`100dvh` (chiều cao gốc `min(900px, calc(100dvh - 56px))` cố tình chừa
+khoảng trống trên-dưới cho đúng cái "thẻ nổi" đang muốn bỏ, nên phải ghi đè luôn chứ không chỉ mỗi
+padding/radius).
+
+**Kiểm tra:** 134 test pass (thay đổi CSS thuần, không đụng logic). Verify thật trên dev server, giả lập
+khung điện thoại 375×812: `getBoundingClientRect()` của `.game-frame` ra đúng `{left:0, top:0, width:375,
+height:812}` — khớp CHÍNH XÁC viewport, không còn khoảng hở nào. Chụp màn hình xác nhận trực quan: HUD vàng
+và nút quà nằm sát 2 góc trên, thanh nav sát đáy, không còn viền teal bao quanh. Test lại ở màn rộng 496px
+(qua breakpoint) — `padding`/`border-radius` vẫn nguyên 18px/34px như cũ, xác nhận không ảnh hưởng bản
+desktop/tablet. Build lại bản standalone, `grep` xác nhận breakpoint có trong file xuất ra.
+
+---
+
+## 88. Sửa UI Daily Login/Booster hiện sai màn, dời nút Daily Login sang cạnh phải (29/08)
+
+3 lỗi báo cùng lúc: (1) UI Daily Login chồng lên UI settings khi đang chơi, (2) UI booster xuất hiện ở màn
+hub, (3) đổi vị trí nút Daily Login sang cạnh phải màn hub.
+
+**Nguyên nhân (1) & (2):** cả nút 🎁 (`.hub-gift-wrap`) và khay booster (`.booster-hud`) trước giờ dùng
+thuộc tính `hidden={...}` (ẩn bằng CSS) thay vì gỡ hẳn khỏi DOM — về lý thuyết `[hidden]` vẫn thắng nhờ thứ
+tự ưu tiên UA-stylesheet, nhưng đây là hành vi ngầm định dựa vào cascade chứ không phải điều JSX nói rõ
+ràng, và đúng là 2 UI này lại được đặt chung 1 toạ độ góc trên-phải với `.settings-wrap` (chỉ khác đúng lúc
+nào hiện) — hễ có bất kỳ sai lệch nào giữa 2 điều kiện `hidden` đối nghịch nhau (`hidden={playing}` vs
+`hidden={!playing}`) trong lúc chuyển trạng thái là chồng lên nhau ngay tại cùng 1 điểm.
+
+**Sửa:** đổi cả hai từ `hidden` sang **render có điều kiện thật sự** (`{!playing && <div>...</div>}` cho
+nút Daily Login, `{playing && <div>...</div>}` cho khay booster) — không còn DOM node nào để lộ ra dù cascade
+có bất ngờ thế nào, gỡ hẳn thay vì chỉ ẩn.
+
+**Sửa (3):** `.hub-gift-wrap` dời từ góc trên-phải (trùng chỗ `.settings-wrap` dùng lúc chơi — đúng nguyên
+nhân gây chồng UI ở trên) sang **cạnh phải, canh giữa theo chiều dọc** (`top:50%; transform:
+translateY(-50%)`), tách hẳn khỏi mọi vị trí UI khác dùng lúc đang chơi.
+
+**Kiểm tra:** 134 test pass, `tsc --noEmit`/`eslint` sạch. Verify thật trên dev server: ở màn hub, nút 🎁
+nằm đúng cạnh phải giữa màn hình (ảnh chụp xác nhận); bấm Play → đọc DOM thật xác nhận `.hub-gift-wrap`
+**không còn trong DOM** (`giftInDom:false`), `.booster-hud` **có trong DOM** (`boosterInDom:true`), nút gear
+settings hiện đúng (`display:flex`) — cả 3 đúng như thiết kế, không còn khả năng chồng UI. Quay lại Home →
+nút 🎁 xuất hiện lại đúng cạnh phải, khay booster biến mất khỏi DOM hoàn toàn. Build lại bản standalone.
