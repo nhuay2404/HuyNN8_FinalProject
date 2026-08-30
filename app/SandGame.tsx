@@ -823,27 +823,34 @@ export default function SandGame() {
           )}
         </div>
 
-        {/* The hub's own top-right control, in the same corner `.settings-wrap`
-            uses mid-play — the two are never visible together, so sharing the
-            spot reads as one persistent "top-right button" rather than two.
-            Its own class rather than reusing `.settings-wrap`: that one sits
-            at z-index 12, below `.hub-screen`'s 30 (fine mid-play, where the
-            hub is not on screen at all), but this button has to read over the
-            hub screen itself. Reopens the daily-login modal on demand:
-            `initialDailyLogin` above already opens it once automatically
-            when unclaimed, this is just "let me look again" (before
-            claiming, or after, to see tomorrow's reward is not up yet). */}
-        <div className="hub-gift-wrap" hidden={playing}>
-          <button
-            type="button"
-            className="icon-button gift-button"
-            onClick={() => setDailyLoginOverride(getDailyLoginState())}
-            aria-label="Daily login reward"
-            title="Daily login reward"
-          >
-            🎁
-          </button>
-        </div>
+        {/* The hub's own control, on the right edge rather than the top-right
+            corner `.settings-wrap` uses mid-play — the two used to share
+            that corner (they are never visible together, `hidden` rather
+            than unmounted, on the reasoning that sharing a spot reads as one
+            persistent button), but a hub-only control belongs somewhere that
+            reads as hub chrome, not stacked on the exact spot the in-game
+            settings gear appears the instant `playing` flips — see
+            CHANGELOG-prototype.md for a report of exactly that read as an
+            overlap. Conditionally rendered now, not `hidden`, so there is no
+            DOM node here at all mid-play for any stray z-index/cascade
+            surprise to make visible.
+            Reopens the daily-login modal on demand: `initialDailyLogin`
+            above already opens it once automatically when unclaimed, this
+            is just "let me look again" (before claiming, or after, to see
+            tomorrow's reward is not up yet). */}
+        {!playing && (
+          <div className="hub-gift-wrap">
+            <button
+              type="button"
+              className="icon-button gift-button"
+              onClick={() => setDailyLoginOverride(getDailyLoginState())}
+              aria-label="Daily login reward"
+              title="Daily login reward"
+            >
+              🎁
+            </button>
+          </div>
+        )}
 
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
@@ -868,31 +875,40 @@ export default function SandGame() {
               booster's charges — `armBooster` is a no-op in every one of
               those cases regardless (the engine's own guard reads the same
               wallet via `getBoosterCharges`), but a button that visibly
-              cannot respond is the whole point of §3. */}
-          <div className="booster-hud" hidden={!playing}>
-            {(["radiusOvercharge", "prismShot"] as const).map((type) => {
-              const charges = wallet.boosters[type];
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
-                  onClick={() => engine?.armBooster(type)}
-                  disabled={busy || charges <= 0 || (armedBooster !== null && armedBooster !== type)}
-                  aria-label={`${BOOSTER_NAME[type]} — ${charges} left`}
-                  aria-pressed={armedBooster === type}
-                  title={`${BOOSTER_NAME[type]} — ${charges} left`}
-                >
-                  <BoosterIcon type={type} />
-                  {/* Spec §4's reserved charge-count badge, now shown for real
-                      (see `economy.ts`) — the actual owned count, not capped
-                      to a single digit: the Shop has no cap on how many a
-                      player can hold. */}
-                  <span className="booster-badge" aria-hidden="true">{charges}</span>
-                </button>
-              );
-            })}
-          </div>
+              cannot respond is the whole point of §3.
+              Conditionally rendered on `playing` rather than `hidden`: this
+              tray has no business appearing over the hub (a report said it
+              was), and dropping the DOM node entirely mid-play leaves no
+              CSS cascade edge case that could make it visible there again —
+              `.scene-wrap` around it stays mounted either way (§ its own
+              comment — the 3D scene is the hub's own artwork too, never
+              torn down), only this tray comes and goes with `playing`. */}
+          {playing && (
+            <div className="booster-hud">
+              {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+                const charges = wallet.boosters[type];
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
+                    onClick={() => engine?.armBooster(type)}
+                    disabled={busy || charges <= 0 || (armedBooster !== null && armedBooster !== type)}
+                    aria-label={`${BOOSTER_NAME[type]} — ${charges} left`}
+                    aria-pressed={armedBooster === type}
+                    title={`${BOOSTER_NAME[type]} — ${charges} left`}
+                  >
+                    <BoosterIcon type={type} />
+                    {/* Spec §4's reserved charge-count badge, now shown for real
+                        (see `economy.ts`) — the actual owned count, not capped
+                        to a single digit: the Shop has no cap on how many a
+                        player can hold. */}
+                    <span className="booster-badge" aria-hidden="true">{charges}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {busy && (
             <div
