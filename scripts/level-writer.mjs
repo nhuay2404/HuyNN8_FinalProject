@@ -1,6 +1,6 @@
 // A small standalone Node server that writes every level in the editor's
-// level list straight into app/game/sand-levels.ts, replacing whatever was
-// there before — so shipping never piles up stale entries from levels the
+// level list straight into design/levels/sand-levels.ts, replacing whatever
+// was there before — so shipping never piles up stale entries from levels the
 // editor no longer has.
 //
 // It cannot live inside the app itself: this project's dev/build target is
@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const PORT = Number(process.env.LEVEL_WRITER_PORT) || 4787;
-const SAND_LEVELS_PATH = path.join(process.cwd(), "app", "game", "sand-levels.ts");
+const SAND_LEVELS_PATH = path.join(process.cwd(), "design", "levels", "sand-levels.ts");
 
 const BEGIN_MARKER = "// ==== Editor-shipped levels ====";
 const END_MARKER = "// ==== End editor-shipped levels ====";
@@ -109,7 +109,7 @@ async function shipLevels(drafts) {
   const beginIdx = source.indexOf(BEGIN_MARKER);
   const endIdx = source.indexOf(END_MARKER);
   if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
-    throw new Error("Could not find the editor-shipped levels markers in sand-levels.ts.");
+    throw new Error("Could not find the editor-shipped levels markers in design/levels/sand-levels.ts.");
   }
 
   // IDs starting right after every hand-authored level already in the file,

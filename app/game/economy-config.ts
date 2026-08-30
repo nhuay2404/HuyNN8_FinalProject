@@ -1,5 +1,5 @@
 // General (not per-level) economy numbers, hand-tuned in a CSV a designer
-// edits directly — see `public/economy.csv`. Covers everything in
+// edits directly — see `public/design/economy.csv`. Covers everything in
 // `economy.ts` that is not "how much does clearing THIS level pay" (that one
 // is `level-rewards.ts`, a sibling file with the exact same shape): the
 // starter grant, booster prices, and the 7-day daily-login curve.
@@ -11,7 +11,7 @@
 // because their rows mean different things (id->reward vs key->value) and
 // every caller already knows which sheet it wants.
 
-const CSV_URL = "/economy.csv";
+const CSV_URL = "/design/economy.csv";
 /** Same value as `level-rewards.ts`'s `POLL_MS` — sized for "an edit shows
  * up without touching the keyboard again", not a production polling budget. */
 const POLL_MS = 4000;

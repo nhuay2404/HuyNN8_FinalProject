@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crosswind, lockAndKey } from "../app/game/sand-levels.ts";
+import { crosswind, lockAndKey } from "../design/levels/sand-levels.ts";
 import {
   cellKey,
   cellsInRadius,

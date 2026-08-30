@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sandBloom } from "../app/game/sand-levels.ts";
+import { sandBloom } from "../design/levels/sand-levels.ts";
 import {
   ammoRemaining,
   cellKey,

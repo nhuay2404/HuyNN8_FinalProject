@@ -1,5 +1,5 @@
 // Per-level gold-reward overrides, hand-tuned in a CSV a designer edits
-// directly rather than in code — see `public/level-rewards.csv`.
+// directly rather than in code — see `public/design/level-rewards.csv`.
 //
 // `economy.ts`'s `levelGoldReward` (a difficulty-score formula, §79) stays
 // the fallback for any level id NOT listed here, which is every level until
@@ -20,7 +20,7 @@
 // (see `work/standalone-entry.tsx`) — real numbers, just frozen at whatever
 // the sheet said the moment that export was made, rather than live.
 
-const CSV_URL = "/level-rewards.csv";
+const CSV_URL = "/design/level-rewards.csv";
 /** How often the tab re-checks the file while it stays open and visible. A
  * plain static-file GET to localhost/self, so even a few times a minute costs
  * nothing real — sized for "an edit shows up without touching the keyboard

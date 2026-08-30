@@ -1532,7 +1532,7 @@ export default function LevelEditor() {
                 const code = draftToTypeScript(draft, index + 2);
                 setExported(code);
                 navigator.clipboard?.writeText(code).then(
-                  () => flash("Copied — paste it into app/game/sand-levels.ts"),
+                  () => flash("Copied — paste it into design/levels/sand-levels.ts"),
                   () => flash("Copy it from the box below"),
                 );
               }}

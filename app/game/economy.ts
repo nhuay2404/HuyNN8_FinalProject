@@ -27,7 +27,7 @@ const DAILY_KEY = "sand-cannon:v1:daily-login";
 //
 // Every constant in this section is a FALLBACK — the real, current number
 // goes through the matching function just below it, which checks
-// `public/economy.csv` (`economy-config.ts`) first and only falls back to
+// `public/design/economy.csv` (`economy-config.ts`) first and only falls back to
 // the constant for a key the sheet does not have a row for. The constants
 // stay exported (rather than folded into the functions) because they are
 // still the shipped defaults a fresh checkout runs on with no CSV edits at

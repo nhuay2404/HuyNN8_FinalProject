@@ -25,7 +25,7 @@ import {
 import { ensureEconomyConfigLoading, getEconomyConfigVersion, subscribeEconomyConfig } from "./game/economy-config";
 import { computeLevelDifficulty } from "./game/level-difficulty";
 import { ensureLevelRewardsLoading, getLevelRewardOverride } from "./game/level-rewards";
-import { BUILT_IN_LEVELS } from "./game/sand-levels";
+import { BUILT_IN_LEVELS } from "../design/levels/sand-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
 import {
   ammoRemaining,
@@ -455,7 +455,7 @@ export default function SandGame() {
 
   useEffect(() => advanceLoading("mount"), []);
 
-  // Starts loading `public/level-rewards.csv` and `public/economy.csv` (see
+  // Starts loading `public/design/level-rewards.csv` and `public/design/economy.csv` (see
   // `level-rewards.ts`/`economy-config.ts`) and keeps polling both while the
   // tab stays open — no `setState` here at all (only module-level caches
   // read later: `getLevelRewardOverride` at the moment a level is actually
@@ -626,7 +626,7 @@ export default function SandGame() {
    * gold.
    *
    * The reward itself is `getLevelRewardOverride(raw.id)` — a designer's own
-   * number, hand-tuned in `public/level-rewards.csv` (`level-rewards.ts`) —
+   * number, hand-tuned in `public/design/level-rewards.csv` (`level-rewards.ts`) —
    * when that level has a row in the sheet, and `levelGoldReward`'s
    * difficulty-score formula otherwise (every level until someone tunes it
    * by hand). Scored off `raw`, the level as authored (blueprint scale), not
