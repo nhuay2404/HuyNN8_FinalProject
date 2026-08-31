@@ -56,10 +56,10 @@ test("an empty sheet (header only, or nothing at all) parses to no rows", () => 
   assert.deepEqual(parseEconomyConfigCsv(""), []);
 });
 
-test("the real shipped public/economy.csv parses, and has every key economy.ts expects", async () => {
+test("the real shipped public/design/economy.csv parses, and has every key economy.ts expects", async () => {
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
-  const csvPath = path.join(process.cwd(), "public", "economy.csv");
+  const csvPath = path.join(process.cwd(), "public", "design", "economy.csv");
   const text = await readFile(csvPath, "utf8");
   const rows = parseEconomyConfigCsv(text);
   const keys = new Set(rows.map((row) => row.key));

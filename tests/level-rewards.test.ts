@@ -64,10 +64,10 @@ test("an empty sheet (header only, or nothing at all) parses to no rows", () => 
   assert.deepEqual(parseLevelRewardsCsv(""), []);
 });
 
-test("the real shipped public/level-rewards.csv parses, and its id 1 row matches the shipped default level", async () => {
+test("the real shipped public/design/level-rewards.csv parses, and its id 1 row matches the shipped default level", async () => {
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
-  const csvPath = path.join(process.cwd(), "public", "level-rewards.csv");
+  const csvPath = path.join(process.cwd(), "public", "design", "level-rewards.csv");
   const text = await readFile(csvPath, "utf8");
   const rows = parseLevelRewardsCsv(text);
   assert.ok(rows.length >= 1, "the shipped sheet should have at least the default level's row");

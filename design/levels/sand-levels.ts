@@ -1,4 +1,4 @@
-import { RADIUS_GAMEPLAY, type SandLevelConfig } from "./sand-types.ts";
+import { RADIUS_GAMEPLAY, type SandLevelConfig } from "../../app/game/sand-types.ts";
 
 // Everything below `BUILT_IN_LEVELS` used to be the shipped level roster.
 // That roster has been cleared down to a single default level on purpose —

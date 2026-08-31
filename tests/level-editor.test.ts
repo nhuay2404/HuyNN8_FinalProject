@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultLevel, sandBloom, BUILT_IN_LEVELS } from "../app/game/sand-levels.ts";
+import { defaultLevel, sandBloom, BUILT_IN_LEVELS } from "../design/levels/sand-levels.ts";
 import { analyseLevel, playCareless, playStrong } from "../app/game/level-analysis.ts";
 import {
   DEFAULT_HEIGHT,
