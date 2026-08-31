@@ -344,6 +344,74 @@ function markTutorialSeen(id: number) {
   }
 }
 
+/**
+ * Unlike `tutorial`, `ftueGesture` is not a "shown once, ever" overlay — a
+ * teaching aid that costs zero clicks to dismiss (it clears itself on the
+ * player's own first touch) is cheap enough to bring back on its own once the
+ * lesson has plausibly gone stale, rather than trusting a player to remember
+ * a control from a single showing weeks ago. Two independent triggers decide
+ * that, either is enough:
+ *
+ *  - the app was killed and relaunched since the glyph last showed —
+ *    `sessionStorage`, not `localStorage`, records "shown this run", so a
+ *    fresh process (a fresh `sessionStorage`) always earns a replay;
+ *  - enough real time has passed since it last showed that it is worth
+ *    repeating even inside the one still-running session
+ *    (`FTUE_GESTURE_REPLAY_AFTER_MS`) — the "quay lại sau một thời gian"
+ *    case, for an app instance that goes a long while without ever actually
+ *    being killed (backgrounded, not terminated).
+ *
+ * `lastShown` lives in `localStorage`, keyed by level id, because it has to
+ * survive the very kill/relaunch the first trigger is built to detect.
+ */
+const FTUE_GESTURE_LAST_SHOWN_KEY = "sand-cannon:v1:ftue-gesture-last-shown";
+const FTUE_GESTURE_SESSION_KEY_PREFIX = "sand-cannon:v1:ftue-gesture-session-shown:";
+/** Six hours reads as "a different sitting", not a momentary alt-tab. */
+const FTUE_GESTURE_REPLAY_AFTER_MS = 6 * 60 * 60 * 1000;
+
+function loadFtueGestureLastShown(): Record<number, number> {
+  try {
+    const raw = window.localStorage.getItem(FTUE_GESTURE_LAST_SHOWN_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: Record<number, number> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const id = Number(key);
+      if (Number.isFinite(id) && typeof value === "number") result[id] = value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function shouldShowFtueGesture(id: number): boolean {
+  try {
+    if (!window.sessionStorage.getItem(`${FTUE_GESTURE_SESSION_KEY_PREFIX}${id}`)) return true;
+  } catch {
+    // Private browsing can refuse sessionStorage outright — showing the
+    // glyph is the safe direction to fail in for a teaching aid.
+    return true;
+  }
+  const lastShown = loadFtueGestureLastShown()[id];
+  return lastShown === undefined || Date.now() - lastShown >= FTUE_GESTURE_REPLAY_AFTER_MS;
+}
+
+function markFtueGestureShown(id: number) {
+  try {
+    const next = loadFtueGestureLastShown();
+    next[id] = Date.now();
+    window.localStorage.setItem(FTUE_GESTURE_LAST_SHOWN_KEY, JSON.stringify(next));
+  } catch {
+    // Falls back to showing again next time — see loadFtueGestureLastShown.
+  }
+  try {
+    window.sessionStorage.setItem(`${FTUE_GESTURE_SESSION_KEY_PREFIX}${id}`, "1");
+  } catch {
+    // Same fallback.
+  }
+}
+
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
@@ -373,6 +441,11 @@ export default function SandGame() {
   // time a level with unread `tutorial` content starts play, and reopenable
   // any time from the HUD's help button.
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  // Same shape as `tutorialOpen`, for `ftueGesture` levels' hand/drag glyph —
+  // opened by `startPlaying`, but also closed early by the engine's own
+  // `AIM_TOUCHED` event (see the effect below): the glyph's job is done the
+  // instant the player makes their own first touch on the real joystick.
+  const [ftueGestureOpen, setFtueGestureOpen] = useState(false);
 
   // The engine simulates and reports state at pixel resolution — every number
   // this component reads off `state` (remainingCells above all) is in those
@@ -500,6 +573,12 @@ export default function SandGame() {
 
     const onEvent = (event: SandEngineEvent) => {
       switch (event.type) {
+        case "AIM_TOUCHED":
+          // The gesture glyph's whole job is to get out of the way the moment
+          // the player tries the real control themselves — a no-op the rest
+          // of the time, since this fires on every aim, not just the first.
+          setFtueGestureOpen(false);
+          break;
         case "NO_MATCH":
           // A shot can land on sand and still take nothing — the disc simply
           // found none of its colour in reach. That looks like a bug unless it
@@ -616,6 +695,10 @@ export default function SandGame() {
     if (level.tutorial && !loadSeenTutorials().has(level.id)) {
       setTutorialOpen(true);
       markTutorialSeen(level.id);
+    }
+    if (level.ftueGesture && shouldShowFtueGesture(level.id)) {
+      setFtueGestureOpen(true);
+      markFtueGestureShown(level.id);
     }
   }, [level]);
 
@@ -755,11 +838,11 @@ export default function SandGame() {
         </div>
 
         <div className="settings-wrap" hidden={!playing}>
-          {level.tutorial && (
+          {(level.tutorial || level.ftueGesture) && (
             <button
               type="button"
               className="icon-button help-button"
-              onClick={() => setTutorialOpen(true)}
+              onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
               aria-label="How to play this level"
               title="How to play"
             >
@@ -876,6 +959,37 @@ export default function SandGame() {
             </div>
           </div>
 
+          {/* The gesture-taught FTUE (`SandLevelConfig.ftueGesture`) — see the
+              field's own doc comment in sand-types.ts for why this exists
+              instead of the text `tutorial` modal. `pointer-events: none`
+              throughout (see .ftue-gesture in globals.css) so it never eats
+              the touch it is demonstrating: the very drag it is showing
+              reaches `.aim-zone` underneath untouched, fires `AIM_TOUCHED`,
+              and that is what actually closes this — not a button here.
+              No enclosing card: two dashed "tap here" rings (the same dashed
+              marker language `.aim-joystick::after` already draws on the real
+              pad, borrowed rather than invented) with a properly-built hand —
+              palm, thumb, one pointing finger, all rounded primitives, same
+              construction technique as `BoosterIcon` above — gliding between
+              them: press at the first ring, drag to the second, release. */}
+          {ftueGestureOpen && level.ftueGesture && (
+            <div className="ftue-gesture" role="status" aria-label="Drag to aim, release to fire">
+              <svg className="ftue-gesture-glyph" viewBox="0 0 220 190" aria-hidden="true">
+                <circle className="ftue-gesture-ring ftue-gesture-ring-a" cx="90" cy="135" r="17" />
+                <circle className="ftue-gesture-ring ftue-gesture-ring-b" cx="140" cy="100" r="17" />
+                <g className="ftue-gesture-hand">
+                  <g transform="rotate(20)">
+                    <rect x="-15" y="-58" width="30" height="28" rx="13" />
+                    <circle cx="-14" cy="-40" r="9" />
+                    <rect x="-7" y="-32" width="14" height="32" rx="7" />
+                    <line className="ftue-gesture-hand-crease" x1="-2" y1="-33" x2="-2" y2="-23" />
+                  </g>
+                </g>
+              </svg>
+              <span className="ftue-gesture-caption">Drag to aim · release to fire</span>
+            </div>
+          )}
+
           {/* One HUD tray in the band between the picture and the cannon
               (see the comment on .scene-wrap), both booster buttons inside
               it rather than loose on the sides. No text (spec §6) — the icon
@@ -895,8 +1009,11 @@ export default function SandGame() {
               CSS cascade edge case that could make it visible there again —
               `.scene-wrap` around it stays mounted either way (§ its own
               comment — the 3D scene is the hub's own artwork too, never
-              torn down), only this tray comes and goes with `playing`. */}
-          {playing && (
+              torn down), only this tray comes and goes with `playing`.
+              Also gated on `!level.ftueGesture`: a level whose one lesson is
+              "aim and shoot" should not show a second control nobody has
+              explained yet — see `ftueGesture`'s doc comment. */}
+          {playing && !level.ftueGesture && (
             <div className="booster-hud">
               {(["radiusOvercharge", "prismShot"] as const).map((type) => {
                 const charges = wallet.boosters[type];

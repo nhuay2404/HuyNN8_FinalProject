@@ -76,6 +76,20 @@ const SHOT_COOLDOWN_MS = 400;
 const JOYSTICK_RADIUS = 64;
 const JOYSTICK_RESPONSE_DEAD_ZONE = 14;
 const JOYSTICK_ARM_RADIUS = 18;
+/**
+ * Grace period for a drag that has wandered outside `host` (the rendered
+ * picture-and-cannon scene — the closest thing on screen to "the sand frame"
+ * a raw pointer position can be tested against without a per-frame 3D→screen
+ * projection of the picture's exact corners). Leaving that area does not cancel
+ * the shot on the spot — a thumb sliding past the edge mid-drag is normal touch
+ * noise, and `.aim-zone` now spans the whole scene precisely so a drag can start
+ * or wander anywhere on it. Only a drag that *stays* outside for this long reads
+ * as the player having let go in spirit, so it is cancelled the same way lifting
+ * the finger over dead centre is: no shot, cannon resets. Re-entering before the
+ * timer fires cancels the timer, not just resets it — a brief overshoot costs
+ * nothing.
+ */
+const AIM_OUTSIDE_ZONE_CANCEL_MS = 1700;
 const MIN_CONTROL_SENSITIVITY = 0.5;
 const MAX_CONTROL_SENSITIVITY = 2;
 const CANNON_NEUTRAL_YAW = 0;
@@ -493,6 +507,10 @@ export class SandCannonEngine {
   private displayedLaunch: BallisticSolution | null = null;
   private aimPreviewDirty = false;
   private aimDragSensitivity = 1;
+  /** Non-null while the pointer is currently outside `host` mid-drag — see
+   * `AIM_OUTSIDE_ZONE_CANCEL_MS`. Cleared the instant the pointer comes back
+   * inside, or the gesture ends any other way. */
+  private aimOutsideTimer: ReturnType<typeof setTimeout> | null = null;
 
   private frameId = 0;
   private accumulator = 0;
@@ -1412,6 +1430,7 @@ export class SandCannonEngine {
     this.aimDistance = 0;
     this.aimArmed = false;
     this.aimStick.set(0, 0);
+    this.clearAimOutsideTimer();
     const bounds = this.aimZone.getBoundingClientRect();
     this.aimZone.style.setProperty("--joystick-x", `${event.clientX - bounds.left}px`);
     this.aimZone.style.setProperty("--joystick-y", `${event.clientY - bounds.top}px`);
@@ -1464,6 +1483,43 @@ export class SandCannonEngine {
       this.aimStick.set(0, 0);
     }
     this.aimPreviewDirty = true;
+    this.updateAimOutsideZone(clientX, clientY);
+  }
+
+  /** Whether a screen point sits over `host` — the rendered scene the drag
+   * is meant to stay near. See `AIM_OUTSIDE_ZONE_CANCEL_MS`. */
+  private isInsideAimZone(clientX: number, clientY: number) {
+    const bounds = this.host.getBoundingClientRect();
+    return clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom;
+  }
+
+  /**
+   * Arms or disarms the leave-the-zone grace timer for the current pointer
+   * position. Called on every drag update; the timer itself is what actually
+   * fires the cancel, since a finger that stops moving outside the zone would
+   * otherwise never trigger another check.
+   */
+  private updateAimOutsideZone(clientX: number, clientY: number) {
+    if (this.isInsideAimZone(clientX, clientY)) {
+      this.clearAimOutsideTimer();
+      return;
+    }
+    if (this.aimOutsideTimer !== null) return;
+    this.aimZone.classList.add("is-out-of-bounds");
+    this.aimOutsideTimer = setTimeout(() => {
+      this.aimOutsideTimer = null;
+      if (this.aimPointer === null) return;
+      this.clearAimGesture();
+      this.updateAimPreview();
+    }, AIM_OUTSIDE_ZONE_CANCEL_MS);
+  }
+
+  private clearAimOutsideTimer() {
+    if (this.aimOutsideTimer !== null) {
+      clearTimeout(this.aimOutsideTimer);
+      this.aimOutsideTimer = null;
+    }
+    this.aimZone.classList.remove("is-out-of-bounds");
   }
 
   private onAimPointerMove = (event: PointerEvent) => {
@@ -1505,6 +1561,7 @@ export class SandCannonEngine {
     } catch {
       // Already released with the pointer itself.
     }
+    this.clearAimOutsideTimer();
     this.aimZone.classList.remove("is-aiming", "is-cancelled");
     this.aimArmed = false;
     this.displayedAimArmed = false;
@@ -2344,6 +2401,7 @@ export class SandCannonEngine {
     // nothing left for a fade-out to play against.
     stopAmbience(true);
     cancelAnimationFrame(this.frameId);
+    this.clearAimOutsideTimer();
     this.resizeObserver.disconnect();
     this.aimZone.removeEventListener("pointerdown", this.onAimPointerDown);
     this.aimZone.removeEventListener("pointermove", this.onAimPointerMove);

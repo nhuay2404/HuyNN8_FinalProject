@@ -227,6 +227,30 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
     title: string;
     steps: string[];
   };
+  /**
+   * The gesture-taught FTUE, for a level whose one and only lesson is "drag to
+   * aim, release to fire" — mutually exclusive with `tutorial` in spirit (a
+   * level should not need both a wall-of-text overlay and a show-don't-tell
+   * one), though nothing enforces that.
+   *
+   * Unlike `tutorial`, this is not a modal the player reads and dismisses: it
+   * draws a looping hand/drag glyph directly over the joystick pad — the real
+   * control, not an illustration of it — and disappears the instant the player
+   * makes their own first touch on it (`AIM_TOUCHED`), handing off to the real
+   * thing rather than asking for a second tap to close a dialog. It also hides
+   * the booster tray for the whole level: a level teaching exactly one control
+   * should not show a second one nobody has explained yet. The ammo badge
+   * (count and loaded colour) stays up regardless — that is the one piece of
+   * state a shot changes, and hiding it would make "how many are left" a
+   * mystery rather than a lesson.
+   *
+   * Unlike `tutorial`, this is not "shown once, ever": it also reappears on
+   * a killed-and-relaunched app, or after several hours away in a session
+   * that was never actually killed — see `shouldShowFtueGesture` in
+   * SandGame.tsx. A dismiss that costs zero clicks can afford to repeat
+   * itself; a wall-of-text modal cannot.
+   */
+  ftueGesture?: boolean;
 };
 
 export type SandPhase =

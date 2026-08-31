@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultLevel, sandBloom, BUILT_IN_LEVELS } from "../design/levels/sand-levels.ts";
+import { defaultLevel, secondConsequence, BUILT_IN_LEVELS } from "../design/levels/sand-levels.ts";
+import { sandBloom } from "./level-fixtures.ts";
 import { analyseLevel, playCareless, playStrong } from "../app/game/level-analysis.ts";
 import {
   DEFAULT_HEIGHT,
@@ -374,9 +375,10 @@ test("a name with a quote cannot break out of the generated string", () => {
 // ---- the shipped level stays a valid draft target -------------------------
 
 test("the built-in level list is what the game and editor both start from", () => {
-  // Cleared down to the one default level — everything else is authored and
-  // shipped from the editor now.
+  // Two hand-authored levels (1: FTUE, 2: the falling-sand consequence) —
+  // everything past that is authored and shipped from the editor now.
   assert.ok(BUILT_IN_LEVELS.includes(defaultLevel));
-  assert.equal(BUILT_IN_LEVELS.length, 1);
-  assert.deepEqual(BUILT_IN_LEVELS.map((level) => level.id), [1], "ids are what the HUD shows");
+  assert.ok(BUILT_IN_LEVELS.includes(secondConsequence));
+  assert.equal(BUILT_IN_LEVELS.length, 2);
+  assert.deepEqual(BUILT_IN_LEVELS.map((level) => level.id), [1, 2], "ids are what the HUD shows");
 });

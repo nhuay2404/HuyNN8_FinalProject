@@ -8,11 +8,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-<<<<<<< HEAD
-import { lockAndKey } from "../app/game/sand-levels.ts";
-=======
-import { crosswind, lockAndKey } from "../design/levels/sand-levels.ts";
->>>>>>> ef36fad84d1203866dd06a7203f56ade6ba001cd
+import { lockAndKey } from "./level-fixtures.ts";
 import {
   cellKey,
   cellsInRadius,

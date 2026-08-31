@@ -286,7 +286,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    the frame's bottom edge and the cannon below, and that band is where
    `.booster-hud` sits (see the "Booster HUD" block below). */
 .scene-wrap {
-  --aim-touch-height: 40%;
+  /* The joystick's drag surface. Spans the whole scene (picture and cannon
+     alike) rather than just the band below the frame: a bigger, more forgiving
+     surface to grab and sweep across, the way the reference touch-gesture
+     glyphs (drag/swipe/pinch) all cover most of a device's screen rather than
+     a thin strip of it. `SandCannonEngine`'s pointer capture already lets the
+     drag keep tracking past this element's own edges regardless — this is
+     about how much room a player has to *start* and *continue* the gesture
+     comfortably, not about where tracking stops. See `.is-out-of-bounds`
+     below for what happens once a drag leaves it and stays gone. */
+  --aim-touch-height: 100%;
   /* Where the booster tray sits, vertically — see `.booster-hud` below. */
   --booster-hud-y: 65%;
   position: absolute;
@@ -352,6 +361,91 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .aim-zone.is-cancelled .aim-joystick::after { border-color: rgba(255,255,255,.42); background: rgba(255,255,255,.07); }
 .aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255,255,255,.16); }
 .aim-zone.is-cancelled .aim-joystick-knob::after { content: "×"; }
+/* The drag has wandered off `.scene-host` and is sitting in the ~1.7s grace
+   window before it auto-cancels (`AIM_OUTSIDE_ZONE_CANCEL_MS`). A warm tint on
+   the knob is the only cue — no countdown text, the same "show, don't
+   caption" rule the rest of the aim UI already follows — so it reads at a
+   glance as "let go now or this will fire nothing", without a wall of copy. */
+.aim-zone.is-out-of-bounds .aim-joystick-knob {
+  background: var(--danger);
+  transition: background .5s ease-out;
+}
+
+/* ---- FTUE gesture glyph --------------------------------------------------- */
+/* `SandLevelConfig.ftueGesture` (see its doc comment in sand-types.ts): a
+   looping hand/drag demo instead of a text tutorial card. Sits over the scene
+   at a fixed spot rather than tracking the real joystick pad (which has no
+   default position of its own — it only appears wherever a player's first
+   touch lands), so this is a demonstration next to the control, not a label
+   glued to it. `pointer-events: none` end to end — the whole point is that the
+   drag it is teaching lands on `.aim-zone` underneath, not on this.
+   Deliberately no backing card or panel behind the glyph (an earlier pass had
+   one and it read as a blob sitting on top of the picture) — the hand and the
+   two rings are drawn with their own solid ink outline, the same "sticker"
+   contrast every other flat icon in this file uses instead of a shadow, so
+   they read fine directly against the scene without one. */
+.ftue-gesture {
+  position: absolute; z-index: 6; left: 50%; top: 56%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+.ftue-gesture-glyph {
+  width: 176px; height: 152px;
+}
+/* The two stops of the drag, drawn with the same dashed-ring language
+   `.aim-joystick::after` already uses for the real pad's own centre marker —
+   borrowed on purpose, so the glyph reads as pointing at the actual control
+   rather than inventing a second visual vocabulary next to it. Each ring
+   flashes once, timed to `.ftue-gesture-hand`'s own two keyframes below, so
+   the "press here" beat lands on the ring the hand is actually touching. */
+.ftue-gesture-ring {
+  fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round;
+  stroke-dasharray: 1 8; opacity: .3;
+}
+.ftue-gesture-ring-a { animation: ftue-gesture-ring-a 3.2s ease-in-out infinite; }
+.ftue-gesture-ring-b { animation: ftue-gesture-ring-b 3.2s ease-in-out infinite; }
+/* Palm, thumb, one pointing finger — three rounded primitives, same
+   construction as `BoosterIcon`'s circle-and-rect icons above, rather than a
+   hand-drawn silhouette. `transform` (not an SVG attribute) animates the
+   whole hand so the same keyframes can carry both the translate and the
+   press/release squash together. */
+.ftue-gesture-hand {
+  fill: var(--panel); stroke: var(--ink); stroke-width: 3; stroke-linejoin: round;
+  animation: ftue-gesture-drag 3.2s ease-in-out infinite;
+}
+.ftue-gesture-hand-crease {
+  stroke: var(--line); stroke-width: 2; stroke-linecap: round;
+}
+.ftue-gesture-caption {
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+  color: var(--ink); background: var(--panel);
+  border: 2px solid var(--line); border-radius: 999px; padding: 4px 12px;
+}
+@keyframes ftue-gesture-ring-a {
+  0%, 4% { opacity: .3; }
+  8% { opacity: .95; }
+  20%, 100% { opacity: .3; }
+}
+@keyframes ftue-gesture-ring-b {
+  0%, 52% { opacity: .3; }
+  58% { opacity: .95; }
+  70%, 100% { opacity: .3; }
+}
+/* Fade in descending onto ring A, press (squash), release, hold, glide to
+   ring B, press, release, hold, lift and fade, reset invisibly. The hand's
+   own shapes are drawn with their fingertip at local (0,0), so each
+   `translate` below is simply that ring's centre — see the JSX. */
+@keyframes ftue-gesture-drag {
+  0% { transform: translate(90px, 145px) scale(1); opacity: 0; }
+  6% { transform: translate(90px, 135px) scale(1); opacity: 1; }
+  11% { transform: translate(90px, 137px) scale(1.05, .92); }
+  17% { transform: translate(90px, 135px) scale(1); }
+  55% { transform: translate(140px, 100px) scale(1); opacity: 1; }
+  60% { transform: translate(140px, 102px) scale(1.05, .92); }
+  66% { transform: translate(140px, 100px) scale(1); opacity: 1; }
+  84% { transform: translate(140px, 90px) scale(1); opacity: 0; }
+  100% { transform: translate(90px, 145px) scale(1); opacity: 0; }
+}
 
 /* ---- Booster HUD --------------------------------------------------------- */
 /* One pill-shaped tray, not two loose buttons — the reserved band between the

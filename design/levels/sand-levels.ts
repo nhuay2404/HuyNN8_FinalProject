@@ -1,35 +1,48 @@
 import { RADIUS_GAMEPLAY, type SandLevelConfig } from "../../app/game/sand-types.ts";
 
 // Everything below `BUILT_IN_LEVELS` used to be the shipped level roster.
-// That roster has been cleared down to a single default level on purpose —
-// the level editor at `/editor` is where levels are authored and shipped
-// from now on; this file just needs one valid level for the game to boot
-// into and for a fresh editor session to have something to build on top of.
+// That roster has been cleared down to the hand-authored levels on purpose —
+// the level editor at `/editor` is where the rest are authored and shipped
+// from now on.
 //
-// `sandBloom` and `lockAndKey` are NOT part of that roster any more (see
-// `BUILT_IN_LEVELS` below) — they stay exported because the test suite
-// exercises the radius/lock-key mechanics against their exact, hand-tuned
-// geometry (tests/sand-radius.test.ts, sand-mechanics.test.ts,
-// sand-boosters.test.ts, sand-pixel-board.test.ts). Treat them as fixtures,
-// not as levels a player can reach; do not add them back to the roster
-// without checking what those tests assume about their shape first.
+// `sandBloom` and `lockAndKey` — the two mechanic-test fixtures that used to
+// live in this file — have moved to tests/level-fixtures.ts. They were never
+// part of the roster (`BUILT_IN_LEVELS` never included them) and never
+// reachable by a player; keeping them in the same file as the real levels
+// just meant every reader of "the level roster" had to hold two unplayable
+// levels in their head to find the two real ones. Same exact definitions,
+// same tests exercising them (tests/sand-radius.test.ts, sand-mechanics.test.ts,
+// sand-boosters.test.ts, sand-pixel-board.test.ts, level-editor.test.ts) —
+// only the file changed.
 
 /**
- * The single default level. A small, deliberately easy mound-and-floor
- * picture — enough to demonstrate aim, fire and the radius disc without
- * asking anything else of a first shot.
+ * The single default level — this build's FTUE. One colour, one mound, one
+ * lesson: aim and fire. A second colour (or a lock, or wind) would be a
+ * second thing to learn before the player has learned the first, so this
+ * picture deliberately has nothing else in it. See `ftueGesture` on the config
+ * below for how that lesson is taught (a hand/drag glyph over the joystick,
+ * not a text overlay — SandGame.tsx renders it, sand-types.ts documents the
+ * field). Same silhouette as the old two-tone default (mound over a floor),
+ * just poured from one colour instead of two.
+ *
+ * Every step in from the full-width base narrows by exactly one column on
+ * each side (w4 → w6 → w8 → w10), never repeats a width, and only the
+ * full-width rows repeat — see the taper-stability note on `SECOND_LEVEL_PICTURE`
+ * below for why a repeated sub-full width is the one shape `GRAIN_FALL_TEMP`
+ * cannot hold still (this row count used to repeat w8 once and slumped six
+ * grains on load, invisibly enough that nobody had flagged it before).
  */
 const DEFAULT_LEVEL_PICTURE = [
   "..........",
   "...BBBB...",
   "..BBBBBB..",
   ".BBBBBBBB.",
-  ".BBBBBBBB.",
   "BBBBBBBBBB",
   "BBBBBBBBBB",
-  "OOOOOOOOOO",
-  "OOOOOOOOOO",
-  "OOOOOOOOOO",
+  "BBBBBBBBBB",
+  "BBBBBBBBBB",
+  "BBBBBBBBBB",
+  "BBBBBBBBBB",
 ];
 
 export const defaultLevel: SandLevelConfig = {
@@ -41,157 +54,87 @@ export const defaultLevel: SandLevelConfig = {
   frame: { width: 10, height: 10 },
   rows: DEFAULT_LEVEL_PICTURE,
 
-  ammoQueue: ["blue", "orange"],
+  ammoQueue: ["blue"],
 
   sortRadius: 2,
-  shotLimit: 16,
+  shotLimit: 12,
   pixelScale: 5,
 
-  tutorial: {
-    title: "Aim & Fire",
-    steps: [
-      "Drag anywhere on the board to aim the cannon.",
-      "Release to fire — matching-colour sand disappears in a circle around the hit.",
-      "The disc only ever takes your colour, so sand in the way is never a problem.",
-      "Clear every grain in the frame before your shots run out.",
-    ],
-  },
+  ftueGesture: true,
 
-  notes: "The default level: a board that is almost impossible to fail.",
+  notes: "The default level: this build's FTUE. One colour only, on purpose — "
+    + "see ftueGesture. A board that is almost impossible to fail.",
 };
 
-// ---- mechanic-test fixtures (not shipped levels) --------------------------
-
-/** Drawn top row first, one letter per cell. R G Y B P O, `.` for empty. */
-const BLOOM_PICTURE = [
-  "YYYYYYYYYYYY",
-  "YYYGGYYGGYYY",
-  "YYGBBGGBBGYY",
-  "YGBBBBBBBBGY",
-  "GBBBBBBBBBBG",
-  "GBBBBBBBBBBG",
-  "YGBBBBBBBBGY",
-  "YYGBBBBBBGYY",
-  "YYYGBBBBGYYY",
-  "YYYYGBBGYYYY",
-  "YYYYYGGYYYYY",
-  "OOYYYOOYYYOO",
-  "OOOYOOOOYOOO",
-  "OOOOOOOOOOOO",
+/**
+ * Level 2 — the second consequence: sand does not just vanish where you hit
+ * it, whatever was resting on top of it falls to fill the gap. Level 1 only
+ * ever taught "shoot to clear"; every shot there ate into a solid, single-
+ * colour pile, so a grain quietly dropping one row into the dent it just made
+ * never reads as a separate event. This level exists to make that same
+ * physics — always on, never a special case — visible as its own thing, once.
+ *
+ * The picture, bottom to top: three rows of green floor, two rows of yellow
+ * sitting directly on it (the plug), then a blue mound sitting directly on
+ * the yellow, tapering up the same one-column-per-side way `DEFAULT_LEVEL_PICTURE`
+ * does. `ammoQueue`'s first colour is yellow, so the very first shot — aimed
+ * anywhere near the middle of that wide, hard-to-miss yellow band — punches a
+ * hole straight through the plug, and the blue sitting on the breached
+ * section has nothing left under it but the gap. It drops into the yellow's
+ * old place on camera, on the very first shot: the board visibly reshapes
+ * itself, cause (the shot) and effect (the drop) in the same spot, no caption
+ * required.
+ *
+ * Taper-stability note, worth keeping next to the picture it explains: under
+ * `GRAIN_FALL_TEMP` a grain rolls diagonally off an edge whenever the
+ * diagonal-down cell is empty, not only when the cell directly below it is —
+ * a resting block behaves like real loose sand, not a rigid brick, so a
+ * vertical wall face erodes into a slope. That means two consecutive rows can
+ * never share a width narrower than the full frame: row(y-1) has to extend at
+ * least one column further out than row(y) on *each* side, or that row's own
+ * edge column finds its diagonal-down neighbour sitting in empty space and
+ * slides into it before the player ever sees the picture as drawn. Only rows
+ * that already run edge-to-edge can repeat a width, because there is no
+ * further-out column inside the frame left for them to erode into. Verified
+ * with `runGrainSettle` directly (zero `GRAIN_PASS` steps) rather than by eye.
+ */
+const SECOND_LEVEL_PICTURE = [
+  "..........",
+  "...BBBB...",
+  "..BBBBBB..",
+  ".BBBBBBBB.",
+  "BBBBBBBBBB",
+  "YYYYYYYYYY",
+  "YYYYYYYYYY",
+  "GGGGGGGGGG",
+  "GGGGGGGGGG",
+  "GGGGGGGGGG",
 ];
 
-/**
- * Sand Bloom — the reference radius-sort fixture: four colours, a cycling
- * wheel, and a budget that is measured, not guessed.
- *
- * A blue bloom rimmed in green, resting on an orange bed, in a field of yellow
- * sand. Four colours, drawn as organic masses rather than a mosaic — under the
- * radius rule a big soft region is a real target, because *where* you bite it
- * changes what falls.
- *
- * The picture fills the frame on purpose: an uneven skyline slumps on the very
- * first frame, and the player would never see what was authored.
- *
- * The budget is measured, not guessed. Two play models run against the real
- * solver (see `analyseLevel`):
- *
- *   - strong play — always the disc that takes the most — clears in 19 shots
- *   - careless play — a random cell of the colour in hand — wins 8 times in 12
- *
- * 26 leaves a good player six shots of slack and still fails a lazy line a
- * third of the time.
- *
- * `tests/sand-radius.test.ts` and `tests/sand-pixel-board.test.ts` assert on
- * this exact picture (four colours, specific cells like the Blue centre at
- * (5, 8) and the Orange corner at (0, 0)) — do not edit the rows without
- * checking those tests.
- */
-export const sandBloom: SandLevelConfig = {
+export const secondConsequence: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
 
   id: 2,
-  name: "Sand Bloom",
+  name: "Level 2",
 
-  frame: { width: 12, height: 14 },
-  rows: BLOOM_PICTURE,
+  frame: { width: 10, height: 10 },
+  rows: SECOND_LEVEL_PICTURE,
 
-  // The starting rotation only. Under the cycling rule this list is a wheel,
-  // not a budget: colours come round again until they are gone.
-  ammoQueue: ["blue", "yellow", "orange", "green"],
-
-  // In blueprint cells. Big enough that placement is a real decision, small
-  // enough that no single shot can take a whole mass.
-  sortRadius: 2.5,
-  shotLimit: 26,
-
-  // Measured: grain-by-grain settling stays cheap as the board grows, so 5x
-  // keeps every shot's settle under ~40ms worst case at this size (60x70
-  // pixels) while giving a real fine-sand canvas.
-  pixelScale: 5,
-
-  notes: "Radius-sort fixture: recycling queue, difficulty is the shot budget alone.",
-};
-
-/**
- * Lock & Key — the frozen-sand-and-key mechanic fixture.
- *
- * A slab of purple hangs in mid-air, frozen: those are the lower-case letters
- * in the picture. Nothing can shoot it and it does not fall, so it is the one
- * fixed point in the frame. Above it sits a plug of yellow with the key resting
- * on top; take the yellow out and the key drops onto the slab, which opens on
- * contact and lets the purple pour to the floor.
- *
- * The `K` cells are `KEY_SPRITE` at scale 1 — a plain filled disc, because a
- * solid shape is the one silhouette that cannot read as broken. It never
- * authors `keyFriction`, so it is maximally slippery by default — it moves
- * the instant a slope or a gust offers it a way down.
- *
- * The plug (cols3-8, 6 cells) sits a column in from the slab on each side
- * (cols2-9, 8 cells) — no partial overhang to reason about by hand, and the
- * key's own disc overflows the plug by one column on each side: a rigid body
- * cell without support is still valid, it just cannot be sand.
- *
- * `tests/sand-mechanics.test.ts` and `tests/sand-boosters.test.ts` assert on
- * this exact picture (e.g. shooting the plug at (5, 8), the floor at (0, 0))
- * — do not edit the rows without checking those tests.
- */
-const LOCK_PICTURE = [
-  "............",
-  "............",
-  "....KKK.....",
-  "...KKKKK....",
-  "..KKKKKKK...",
-  "..KKKKKKK...",
-  "..KKKKKKK...",
-  "...KKKKK....",
-  "....KKK.....",
-  "...YYYYYY...",
-  "..pppppppp..",
-  "..pppppppp..",
-  "..pppppppp..",
-  "............",
-  "............",
-  "GGGGGGGGGGGG",
-  "OOOOOOOOOOOO",
-  "OOOOOOOOOOOO",
-];
-
-export const lockAndKey: SandLevelConfig = {
-  ...RADIUS_GAMEPLAY,
-
-  id: 3,
-  name: "Lock & Key",
-
-  frame: { width: 12, height: 18 },
-  rows: LOCK_PICTURE,
-
-  ammoQueue: ["yellow", "green", "orange", "purple"],
+  // Yellow first and only yellow lives in the plug, so the opening bullet is
+  // guaranteed to be the one that triggers the collapse.
+  ammoQueue: ["yellow", "blue", "green"],
 
   sortRadius: 2.5,
-  shotLimit: 24,
+  // Measured with analyseLevel: strong play clears in 9, careless play (a
+  // random cell of the colour in hand) wins 7 of 8 sampled runs at this
+  // budget — five shots of slack for a strong line, same "good" verdict the
+  // difficulty measurer itself would report.
+  shotLimit: 14,
   pixelScale: 5,
 
-  notes: "Mechanic fixture: frozen sand hanging in the frame, opened by a falling key.",
+  notes: "Teaches that sand above a cleared plug falls to fill the gap — the "
+    + "yellow band is deliberately wide and loaded first so the first shot "
+    + "demonstrates it.",
 };
 
 // ==== Editor-shipped levels ====
@@ -206,7 +149,9 @@ export const EDITOR_LEVELS: SandLevelConfig[] = [];
 // ==== End editor-shipped levels ====
 
 /**
- * What the game and the level editor both start from. Cleared down to the
- * one default level on purpose — everything else lives in the editor now.
+ * What the game and the level editor both start from, and — via `playables`
+ * in SandGame.tsx — what the Gallery and the level-switcher both list in
+ * full. Every level meant for a player to actually reach belongs in this
+ * array.
  */
-export const BUILT_IN_LEVELS: SandLevelConfig[] = [defaultLevel, ...EDITOR_LEVELS];
+export const BUILT_IN_LEVELS: SandLevelConfig[] = [defaultLevel, secondConsequence, ...EDITOR_LEVELS];

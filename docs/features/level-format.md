@@ -94,3 +94,13 @@ nguyên y hệt, chỉ nhiều pixel nhỏ hơn hợp thành (test: `tests/sand-
 - `notes` — ghi chú tự do cho người đọc file, không được engine đọc.
 - `tutorial` — overlay hướng dẫn hiện một lần khi level được mở lần đầu (`title` + `steps`), trạng
   thái đã-xem lưu ở `localStorage` theo `id`. Bỏ trống nếu level không dạy gì mới.
+- `ftueGesture` — FTUE bằng cử chỉ thay vì chữ: `true` vẽ một icon tay-kéo lặp lại đè lên joystick
+  thật (không phải một hộp chữ), tự tắt ngay khi người chơi chạm lần đầu vào aim-zone
+  (`AIM_TOUCHED`), và ẩn cả khay booster suốt level đó — badge số đạn/màu đạn vẫn hiện. Khác
+  `tutorial`, đây **không** phải "hiện một lần rồi thôi": nó hiện lại mỗi khi app bị kill rồi mở lại
+  (tính bằng `sessionStorage` — phiên mới thì trống), hoặc khi đã hơn
+  `FTUE_GESTURE_REPLAY_AFTER_MS` (6 giờ) kể từ lần hiện gần nhất dù app chưa hề bị kill (tính bằng
+  `localStorage`, key `sand-cannon:v1:ftue-gesture-last-shown`, theo `id`). Xem
+  `shouldShowFtueGesture`/`markFtueGestureShown` trong `SandGame.tsx`, doc comment của trường này
+  trong `sand-types.ts`, và `defaultLevel`/Level 1 trong `sand-levels.ts` — level duy nhất bật cờ
+  này, cố tình chỉ có một màu cát để bài học duy nhất là ngắm-và-bắn không bị pha loãng.

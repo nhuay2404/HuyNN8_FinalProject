@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sandBloom } from "../design/levels/sand-levels.ts";
+import { sandBloom } from "./level-fixtures.ts";
 import {
   countCells,
   createSandGameState,

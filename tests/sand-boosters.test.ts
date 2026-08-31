@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __resetWalletForTests } from "../app/game/economy.ts";
-import { lockAndKey, sandBloom } from "../design/levels/sand-levels.ts";
+import { lockAndKey, sandBloom } from "./level-fixtures.ts";
 import {
   cellKey,
   cellsInRadius,
