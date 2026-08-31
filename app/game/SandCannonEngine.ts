@@ -157,6 +157,27 @@ const MUZZLE_SMOKE_MIN_SCALE = 0.16;
 const MUZZLE_SMOKE_MAX_SCALE = 0.46;
 const MUZZLE_SMOKE_OPACITY = 0.92;
 
+// ---- sand spray ---------------------------------------------------------
+// A burst of grains kicked up from the point of impact, the instant a shot
+// actually lands on sand (not on empty air). Reads as debris rather than
+// smoke — small tumbling cubes tinted to the grain they came from, thrown
+// outward and up, then pulled back down by the same gravity as the shot.
+// Pool ceiling — how many grains a single burst can ever use, when the shot
+// clears a whole lot of sand at once. Actual count per burst scales with how
+// much sand that shot actually sorted; see `spawnSandSpray`'s `count`.
+const SAND_SPRAY_GRAINS = 18;
+/** Below this many cleared cells, a burst still shows this many grains — a
+ * one-cell clear still needs to read as an impact, not a single flying speck. */
+const SAND_SPRAY_MIN_GRAINS = 3;
+const SAND_SPRAY_LIFE_SECONDS = 1.1;
+const SAND_SPRAY_MIN_SPEED = 1.2;
+const SAND_SPRAY_MAX_SPEED = 2.6;
+const SAND_SPRAY_UP_SPEED = 1.7;
+// Chunky on purpose — small values here render as a couple of stray pixels
+// and are effectively invisible against sand of their own colour.
+const SAND_SPRAY_MIN_SCALE = 0.9;
+const SAND_SPRAY_MAX_SCALE = 1.6;
+
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
 // about what it was loaded with. These give the model the same answer: a
@@ -241,28 +262,33 @@ const SPIN_RETURN_SECONDS = 1;
 
 // ---- settle pacing -------------------------------------------------------
 // §24 wants sand that flows without turning into dead time, and Open Decision
-// 17 asks how long is too long. Rather than a cutoff that snaps the board to
-// its answer, the whole cascade is fitted into a budget: a two-step settle
-// plays slowly and reads, a forty-step collapse plays fast and still shows
-// every step in order. Nothing is ever skipped.
-const SETTLE_BUDGET_MS = 1350;
-const SETTLE_STEP_MIN_MS = 15;
-const SETTLE_STEP_MAX_MS = 58;
-// SETTLE_STEP_MIN_MS is a floor on each step, not on the total — for a big
-// enough cascade (SETTLE_BUDGET_MS / SETTLE_STEP_MIN_MS ≈ 90 steps and up)
-// that floor forces the total past the budget instead of holding it there,
-// and the total keeps climbing the more steps a cascade has (a 300-step
-// collapse would run 4.5s at the floor alone). This is the actual "how long
-// is too long" ceiling Open Decision 17 asks for: it wins over the per-step
-// floor once the two disagree, so nothing ever settles for that long no
-// matter how big the cascade is — see `settleStepMs`.
-const SETTLE_TOTAL_MAX_MS = 1900;
-const CLEAR_DURATION_MS = 300;
+// 17 asks how long is too long. Every cascade — whether it is a two-step
+// settle or a forty-step collapse — is fitted into the same fixed window, so
+// falling sand always reads at one consistent speed rather than crawling for
+// big cascades and snapping for small ones. Nothing is ever skipped, just
+// spread thinner across more steps.
+const SETTLE_TOTAL_MS = 800;
+// A cleared grain flashes solid white first, then vanishes — not a straight
+// fade from its own colour, which read as sand quietly dimming rather than
+// actually being sorted away. And it does not happen to every grain in the
+// batch at once: each one gets its own random start delay inside the overall
+// window, so the batch dissolves pixel by pixel — a scattered disintegration
+// — rather than the whole cleared patch flashing and fading in lockstep.
+const CLEAR_LOCAL_WHITEN_MS = 200;
+const CLEAR_LOCAL_VANISH_MS = 100;
+/** One grain's own whiten-then-vanish run, once its stagger delay elapses. */
+const CLEAR_LOCAL_MS = CLEAR_LOCAL_WHITEN_MS + CLEAR_LOCAL_VANISH_MS;
+/** Where a grain's own local run crosses from whitening into vanishing. */
+const CLEAR_LOCAL_WHITEN_FRACTION = CLEAR_LOCAL_WHITEN_MS / CLEAR_LOCAL_MS;
+/** Overall time the whole batch gets — every grain's delay + its own run
+ * fits inside this, so the last straggler is always gone by the time it ends. */
+const CLEAR_DURATION_MS = 700;
+/** How widely grains' start times spread across the batch's overall window. */
+const CLEAR_STAGGER_MS = CLEAR_DURATION_MS - CLEAR_LOCAL_MS;
 const NO_MATCH_SHAKE_MS = 360;
 /** A beat of stillness after the last grain lands, so the new board can be read. */
 const SETTLE_TAIL_MS = 130;
 
-const IMPACT_FLASH_SECONDS = 0.4;
 /** How long the disc a radius shot swept stays readable after the impact. */
 const SORT_RING_SECONDS = 0.5;
 /** The hit flash's opacity the instant it spawns, before it fades over
@@ -320,8 +346,11 @@ type PixelCell = {
   bodyId: string;
   /** Fixed at spawn, like every grain's tint in a real sand pile. */
   rgb: readonly [number, number, number];
-  /** 0 -> 1 while fading out after being sorted away. */
+  /** Milliseconds elapsed since this grain started dying, while it is. */
   dying: number | null;
+  /** This grain's own random start delay within the batch's dissolve window
+   * — see the comment above `CLEAR_LOCAL_WHITEN_MS`. Meaningless until dying. */
+  dyingDelay: number;
   shake: number;
   /** Frozen: drawn as frost, cannot fall, cannot be shot out. */
   locked: boolean;
@@ -359,6 +388,16 @@ type MuzzleSmokePuff = {
   life: number;
   startScale: number;
   endScale: number;
+};
+
+/** One tumbling grain in the sand-spray pool — see `spawnSandSpray`. */
+type SandSprayGrain = {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  velocity: THREE.Vector3;
+  spin: THREE.Vector3;
+  age: number;
+  life: number;
 };
 
 export type ControlSensitivity = { aim: number };
@@ -471,8 +510,6 @@ export class SandCannonEngine {
   private lockRegionsDirty = true;
 
   private state: SandGameState;
-  /** The resolved state waiting for its animation to finish before it is published. */
-  private pendingState: SandGameState | null = null;
   private beats: Beat[] = [];
   private beatElapsed = 0;
   private beatStarted = false;
@@ -480,8 +517,6 @@ export class SandCannonEngine {
 
   private projectile: Projectile | null = null;
   private projectileMesh: THREE.Mesh | null = null;
-  private impactFlash: THREE.PointLight | null = null;
-  private impactFlashAge = 0;
 
   private yaw = CANNON_NEUTRAL_YAW;
   private elevation = CANNON_NEUTRAL_ELEVATION;
@@ -535,6 +570,11 @@ export class SandCannonEngine {
    * `buildMuzzleSmoke`. In `this.scene` directly rather than under the cannon
    * hierarchy: real smoke does not stay glued to the barrel it left. */
   private readonly muzzleSmokePuffs: MuzzleSmokePuff[] = [];
+
+  /** Pool of tumbling grains `spawnSandSpray` recycles on every shot that lands
+   * on sand — see `buildSandSpray`. In `this.scene` directly, same reasoning
+   * as `muzzleSmokePuffs`: flying debris does not stay glued to anything. */
+  private readonly sandSprayGrains: SandSprayGrain[] = [];
 
   constructor(
     host: HTMLDivElement,
@@ -595,6 +635,7 @@ export class SandCannonEngine {
     this.buildCannon();
     this.buildSortRings();
     this.buildMuzzleSmoke();
+    this.buildSandSpray();
     this.bindInput();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -646,10 +687,16 @@ export class SandCannonEngine {
     const backing = this.track(
       new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
-    // Pastel, not neutral grey: a shade of the same sky-blue behind the frame
-    // (--bg in globals.css) so the recess reads as depth in one continuous
-    // colour rather than a border competing with the picture it sets off.
-    const backingMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0x6fcdd1 }));
+    // Dark neutral grey rather than a pastel echo of the page background —
+    // it makes the sand's own colours (and the white clear-flash/dissolve)
+    // read against real contrast instead of blending into a similarly pale
+    // recess. Unlit (MeshBasic, not Lambert): the scene's own lights are
+    // bright enough that a lit dark grey here still washed out toward a
+    // medium tone — this needs to read as genuinely dark regardless of them.
+    // DoubleSide: the picture is seen from both faces (the idle spin shows
+    // its back, via `sandMeshBack`), and this recess has to read the same
+    // dark behind either one, not just the front.
+    const backingMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0x101114, side: THREE.DoubleSide }));
     const back = new THREE.Mesh(backing, backingMaterial);
     back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
@@ -657,7 +704,11 @@ export class SandCannonEngine {
     // Flat white, no emissive glow — the "sticker" outline the rest of the
     // chrome uses instead of a lit highlight.
     const railMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xffffff }));
-    const innerMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xc4e8ea }));
+    // Same dark grey as `backingMaterial`: `lip` sits directly behind the sand
+    // (closer to camera than `back`), so it — not `back` — is what a straight-
+    // on view actually reveals through empty sand pixels. `back` only shows
+    // through at an angle, or from behind. Both have to read the same colour.
+    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0x101114 }));
     const horizontal = this.track(new RoundedBoxGeometry(openWidth + border * 2, border, depth, 2, border * 0.22));
     const vertical = this.track(new RoundedBoxGeometry(border, openHeight, depth, 2, border * 0.22));
 
@@ -700,6 +751,7 @@ export class SandCannonEngine {
           bodyId: body.id,
           rgb,
           dying: null,
+          dyingDelay: 0,
           shake: 0,
           locked: frozen.has(cellKey(cell.x, cell.y)),
           thaw: 0,
@@ -770,8 +822,27 @@ export class SandCannonEngine {
     }
 
     for (const cell of this.dying) {
-      const alpha = Math.round(255 * Math.max(0, 1 - (cell.dying ?? 0)));
-      writePixel(cell.x, height - 1 - cell.y, cell.rgb[0], cell.rgb[1], cell.rgb[2], alpha);
+      // Still waiting on this grain's own stagger delay — sits at its normal
+      // colour, untouched, until its turn in the dissolve comes up.
+      const local = Math.max(0, (cell.dying ?? 0) - cell.dyingDelay);
+      if (local <= 0) {
+        writePixel(cell.x, height - 1 - cell.y, cell.rgb[0], cell.rgb[1], cell.rgb[2], 255);
+        continue;
+      }
+      const t = Math.min(1, local / CLEAR_LOCAL_MS);
+      if (t < CLEAR_LOCAL_WHITEN_FRACTION) {
+        // Flashes to solid white first — reads as the grain actually being
+        // sorted away, not just quietly dimming to nothing.
+        const whiten = t / CLEAR_LOCAL_WHITEN_FRACTION;
+        const r = Math.round(cell.rgb[0] + (255 - cell.rgb[0]) * whiten);
+        const g = Math.round(cell.rgb[1] + (255 - cell.rgb[1]) * whiten);
+        const b = Math.round(cell.rgb[2] + (255 - cell.rgb[2]) * whiten);
+        writePixel(cell.x, height - 1 - cell.y, r, g, b, 255);
+      } else {
+        const vanish = (t - CLEAR_LOCAL_WHITEN_FRACTION) / (1 - CLEAR_LOCAL_WHITEN_FRACTION);
+        const alpha = Math.round(255 * Math.max(0, 1 - vanish));
+        writePixel(cell.x, height - 1 - cell.y, 255, 255, 255, alpha);
+      }
     }
 
     // A padlock on each locked region, so what the darkened sand *is* has a
@@ -1380,6 +1451,107 @@ export class SandCannonEngine {
     }
   }
 
+  /** Builds the sand-spray pool once. Each grain gets its own material, same
+   * reasoning as `buildMuzzleSmoke`: independent fades read as loose debris
+   * rather than one shared puff. */
+  private buildSandSpray() {
+    const geometry = this.track(new THREE.BoxGeometry(1, 1, 1));
+    for (let index = 0; index < SAND_SPRAY_GRAINS; index += 1) {
+      const material = this.track(
+        // depthTest off: a grain spawns exactly on the sand plane's own
+        // surface, so with depth testing on, half of every grain would be
+        // silently clipped by that plane depending on which way it happened
+        // to tumble — this is meant to read as a foreground burst, not a
+        // physically occludable object.
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, depthTest: false }),
+      ) as THREE.MeshBasicMaterial;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.visible = false;
+      mesh.renderOrder = 22;
+      this.scene.add(mesh);
+      this.sandSprayGrains.push({
+        mesh,
+        material,
+        velocity: new THREE.Vector3(),
+        spin: new THREE.Vector3(),
+        age: 0,
+        life: SAND_SPRAY_LIFE_SECONDS,
+      });
+    }
+  }
+
+  /**
+   * Fires `count` grains from the pool, each starting at its own random point
+   * inside the shot's sort disc (`radiusCells`, in grid cells) rather than
+   * all bursting from the exact contact point — real kicked-up sand comes
+   * loose across the whole reach a shot disturbed, not from one spot. Each
+   * grain also gets its own random outward direction and upward kick, so the
+   * burst reads as sand actually getting knocked loose rather than a ring of
+   * identical debris. `count` is how much sand this shot actually sorted — a
+   * big clear kicks up a lot of sand, a one-cell clear barely disturbs the pile.
+   * `colors` is every colour the shot actually cleared — usually one colour
+   * repeated, but a Prism Shot clearing several at once hands over all of
+   * them, and each grain picks its own at random so the burst shows the
+   * whole palette rather than being painted in a single colour.
+   */
+  private spawnSandSpray(point: THREE.Vector3, colors: number[], count: number, radiusCells: number) {
+    if (!this.sandSprayGrains.length || !colors.length) return;
+    const radiusWorld = Math.max(0, radiusCells) * this.cell;
+    for (const grain of this.sandSprayGrains.slice(0, count)) {
+      const angle = Math.random() * Math.PI * 2;
+      const outward = SAND_SPRAY_MIN_SPEED + Math.random() * (SAND_SPRAY_MAX_SPEED - SAND_SPRAY_MIN_SPEED);
+      grain.velocity.set(
+        Math.cos(angle) * outward,
+        SAND_SPRAY_UP_SPEED * (0.5 + Math.random() * 0.6),
+        Math.sin(angle) * outward * 0.4,
+      );
+      // Uniform over the disc, not the square — sqrt(random()) on the radius
+      // is what keeps the distribution from bunching up toward the centre.
+      const spawnAngle = Math.random() * Math.PI * 2;
+      const spawnDist = radiusWorld * Math.sqrt(Math.random());
+      grain.mesh.position.set(
+        point.x + Math.cos(spawnAngle) * spawnDist,
+        point.y + Math.sin(spawnAngle) * spawnDist,
+        point.z,
+      );
+      grain.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      grain.spin.set(
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 10,
+      );
+      grain.age = 0;
+      grain.life = SAND_SPRAY_LIFE_SECONDS * (0.9 + Math.random() * 0.2);
+      const scale = this.cell * (SAND_SPRAY_MIN_SCALE + Math.random() * (SAND_SPRAY_MAX_SCALE - SAND_SPRAY_MIN_SCALE));
+      grain.mesh.scale.setScalar(scale);
+      grain.material.color.setHex(colors[Math.floor(Math.random() * colors.length)]);
+      grain.material.opacity = 1;
+      grain.mesh.visible = true;
+    }
+  }
+
+  /** Ages every visible grain, pulling it down with the same gravity as a shot
+   * and fading it out over its lifetime so the burst dissolves rather than
+   * popping out of existence. */
+  private updateSandSpray(deltaSeconds: number) {
+    for (const grain of this.sandSprayGrains) {
+      if (!grain.mesh.visible) continue;
+      grain.age += deltaSeconds;
+      const life = Math.min(1, grain.age / grain.life);
+      grain.velocity.addScaledVector(GRAVITY, deltaSeconds);
+      grain.mesh.position.addScaledVector(grain.velocity, deltaSeconds);
+      grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
+      grain.mesh.rotation.y += grain.spin.y * deltaSeconds;
+      grain.mesh.rotation.z += grain.spin.z * deltaSeconds;
+      // Fully solid for the first stretch of its life — fading from the very
+      // instant it spawns read as soft and washed-out rather than a crisp
+      // chunk of sand — then fades out over the back half.
+      const fadeT = Math.max(0, (life - 0.4) / 0.6);
+      grain.material.opacity = 1 - fadeT ** 2;
+      if (life >= 1) grain.mesh.visible = false;
+    }
+  }
+
   private cellWorld(x: number, y: number) {
     return {
       x: (x - (this.level.frame.width - 1) / 2) * this.cell,
@@ -1922,17 +2094,6 @@ export class SandCannonEngine {
     this.frameRecoil = 1;
   }
 
-  private spawnImpactFlash(point: THREE.Vector3, color: SandColor) {
-    if (!this.impactFlash) {
-      this.impactFlash = new THREE.PointLight(0xffffff, 0, 4.5);
-      this.scene.add(this.impactFlash);
-    }
-    this.impactFlash.color.setHex(SAND_COLOR_HEX[color]);
-    this.impactFlash.position.copy(point);
-    this.impactFlash.intensity = 12;
-    this.impactFlashAge = 0;
-  }
-
   private handleMiss(hitFrame: boolean) {
     this.clearProjectile();
     this.callbacks.onEvent?.({ type: "MISS", hitFrame });
@@ -1950,7 +2111,6 @@ export class SandCannonEngine {
     const booster = this.projectile?.booster ?? null;
     this.clearProjectile();
     if (!ammo) return;
-    this.spawnImpactFlash(contact, ammo);
     this.triggerFrameRecoil(contact);
     haptic("impact");
     sound("impact");
@@ -1965,11 +2125,30 @@ export class SandCannonEngine {
       { bodyId: cell?.bodyId ?? null, x: center.x, y: center.y },
       booster,
     );
-    this.setPhase("HIT_RESOLUTION");
     // Sized to what this specific shot actually reached — the flash for a
     // Radius Overcharge hit has to be the bigger disc, not the level's base one.
     const radiusUsed = effectiveSortRadius(this.level, booster);
     this.spawnSortRing(center.x, center.y, this.boosterRadiusScale(booster));
+    // How much this shot actually kicked loose, not just whether the crosshair
+    // itself sat on a grain — aiming at the gap above the pile still sorts
+    // whatever sand the disc reaches, so the spray has to fire off of that,
+    // not off `cell` (which is null whenever the contact point itself is empty
+    // air). Grains start spread across the whole disc the shot reached, not
+    // all bunched at the exact contact point.
+    if (resolution.removed.length) {
+      // Every colour actually cleared, not just the one under the crosshair —
+      // a Prism Shot clears every colour the disc touches (matchColor is off
+      // for it), so its spray has to show the whole palette that came loose,
+      // not just paint it all in the ammo's own colour.
+      const colors = resolution.removed
+        .map((coord) => this.cells.get(cellKey(coord.x, coord.y))?.rgb)
+        .filter((rgb): rgb is readonly [number, number, number] => Boolean(rgb))
+        .map((rgb) => (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]);
+      if (colors.length) {
+        const grainCount = THREE.MathUtils.clamp(resolution.removed.length, SAND_SPRAY_MIN_GRAINS, SAND_SPRAY_GRAINS);
+        this.spawnSandSpray(contact, colors, grainCount, radiusUsed);
+      }
+    }
 
     // The disc landed on sand but found none of its own colour in reach. The
     // shot is still spent and the board is untouched, so the only thing left to
@@ -1978,15 +2157,13 @@ export class SandCannonEngine {
       haptic("wrongColor");
       sound("wrongColor");
       this.callbacks.onEvent?.({ type: "NO_MATCH", ammo });
-      // The bullet is already gone, so the count has to move now. Only the
-      // phase waits for the shake to finish.
-      this.pendingState = resolution.state;
-      this.callbacks.onState({ ...resolution.state, phase: "HIT_RESOLUTION" });
-      this.beats = [
-        { kind: "SHAKE_AREA", center, radius: radiusUsed, ms: NO_MATCH_SHAKE_MS },
-      ];
-      this.beatElapsed = 0;
-      this.beatStarted = false;
+      // The next shot no longer waits on this one's own animation to finish —
+      // state (and the ability to aim again) applies the instant the outcome
+      // is known. The shake is queued as a purely cosmetic beat, appended
+      // behind whatever is already animating rather than replacing it.
+      this.state = resolution.state;
+      this.callbacks.onState(this.cloneState());
+      this.beats.push({ kind: "SHAKE_AREA", center, radius: radiusUsed, ms: NO_MATCH_SHAKE_MS });
       return;
     }
 
@@ -2013,7 +2190,7 @@ export class SandCannonEngine {
     // how fast the pouring plays.
     const timed = steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
     const perStep = this.settleStepMs(timed);
-    this.beats = [
+    this.beats.push(
       { kind: "CLEAR", cells: doomed, ms: CLEAR_DURATION_MS },
       ...steps.map((step): Beat => ({
         kind: "STEP",
@@ -2023,24 +2200,36 @@ export class SandCannonEngine {
         ms: step.kind === "REINDEX" ? 0 : perStep,
       })),
       { kind: "HOLD", ms: SETTLE_TAIL_MS },
-    ];
-    this.beatElapsed = 0;
-    this.beatStarted = false;
+    );
     this.settleLandings = 0;
-    this.pendingState = resolution.state;
-    this.callbacks.onState({ ...resolution.state, phase: "SETTLING" });
+    // The falling/settling that follows is purely cosmetic — the next shot
+    // does not wait on it. Only the clear-flash-and-dissolve beat itself
+    // holds the trigger: firing mid-dissolve would land a shot against a
+    // board the player can't fully read yet, so the cooldown is stretched to
+    // cover just that (never shortened — SHOT_COOLDOWN_MS still applies if
+    // it's already longer, e.g. nothing was cleared).
+    this.nextShotAt = Math.max(this.nextShotAt, performance.now() + CLEAR_DURATION_MS);
+    // State applies immediately so the board, ammo count, etc. are correct
+    // the instant the outcome is known, even though input stays held off
+    // until the clear beat above finishes.
+    this.state = resolution.state;
+    this.callbacks.onState(this.cloneState());
+    if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); }
+    if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
+    if (!resolution.state.result) this.showIdleCrosshair();
   }
 
   // ---- settle playback ---------------------------------------------------
 
   /**
    * How long each non-REINDEX settle step gets, given how many of them a
-   * shot (or gust) produced — see the comment on `SETTLE_TOTAL_MAX_MS`.
+   * shot (or gust) produced — see the comment on `SETTLE_TOTAL_MS`. Every
+   * cascade is spread evenly across the same fixed window, so the total
+   * falling time is always `SETTLE_TOTAL_MS` regardless of cascade size.
    */
   private settleStepMs(timed: number): number {
     if (!timed) return 0;
-    const budgeted = THREE.MathUtils.clamp(SETTLE_BUDGET_MS / timed, SETTLE_STEP_MIN_MS, SETTLE_STEP_MAX_MS);
-    return Math.min(budgeted, SETTLE_TOTAL_MAX_MS / timed);
+    return SETTLE_TOTAL_MS / timed;
   }
 
   private startBeat(beat: Beat) {
@@ -2048,6 +2237,7 @@ export class SandCannonEngine {
       case "CLEAR":
         for (const cell of beat.cells) {
           cell.dying = 0;
+          cell.dyingDelay = Math.random() * CLEAR_STAGGER_MS;
           this.cells.delete(cellKey(cell.x, cell.y));
           this.dying.push(cell);
         }
@@ -2154,6 +2344,14 @@ export class SandCannonEngine {
     }
   }
 
+  /**
+   * Plays the queued beats purely as a cosmetic animation track — the clear
+   * flash, pixel dissolve and settle fall. `handleImpact` applies gameplay
+   * state (and unblocks the next shot) the instant a shot resolves, so this
+   * no longer gates anything; it just keeps the board's visuals catching up
+   * to whatever `this.state` already is, even while later shots queue more
+   * beats on top (appended, never replacing what is already animating).
+   */
   private advanceBeats(deltaMs: number) {
     if (!this.beats.length) return;
     if (!this.beatStarted) {
@@ -2168,20 +2366,7 @@ export class SandCannonEngine {
       if (!this.beats.length) break;
       this.startBeat(this.beats[0]);
     }
-    if (this.beats.length) return;
-
-    // Everything the shot set in motion has now played out. Only here does the
-    // resolved phase — READY, WIN or FAIL — reach the player (§13).
-    this.beatStarted = false;
-    const resolved = this.pendingState;
-    this.pendingState = null;
-    if (!resolved) return;
-    this.state = resolved;
-    this.callbacks.onEvent?.({ type: "SETTLE_END" });
-    if (resolved.result?.kind === "WIN") { haptic("win"); sound("win"); }
-    if (resolved.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
-    this.callbacks.onState(this.cloneState());
-    if (!resolved.result) this.showIdleCrosshair();
+    if (!this.beats.length) this.beatStarted = false;
   }
 
   // ---- loop --------------------------------------------------------------
@@ -2196,8 +2381,11 @@ export class SandCannonEngine {
   }
 
   private step(deltaMs: number) {
+    // Both run every tick now, not either/or: a settle animation queued by
+    // an earlier shot keeps playing in the background even while a later
+    // shot's bullet is still in the air, instead of freezing until it lands.
     if (this.projectile) this.updateProjectile(this.projectile);
-    else this.advanceBeats(deltaMs);
+    this.advanceBeats(deltaMs);
 
     for (const cell of this.cells.values()) {
       if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);
@@ -2216,12 +2404,7 @@ export class SandCannonEngine {
 
     this.updateAmmoModel();
     this.updateMuzzleSmoke(FIXED_STEP);
-
-    if (this.impactFlash && this.impactFlash.intensity > 0) {
-      this.impactFlashAge += FIXED_STEP;
-      const life = 1 - Math.min(1, this.impactFlashAge / IMPACT_FLASH_SECONDS);
-      this.impactFlash.intensity = 12 * life * life;
-    }
+    this.updateSandSpray(FIXED_STEP);
 
     if (this.sortRing?.visible) {
       this.sortRingAge += FIXED_STEP;
@@ -2238,8 +2421,8 @@ export class SandCannonEngine {
     if (this.dying.length) {
       const finished: PixelCell[] = [];
       for (const cell of this.dying) {
-        cell.dying = (cell.dying ?? 0) + FIXED_STEP * (1000 / CLEAR_DURATION_MS);
-        if (cell.dying >= 1) finished.push(cell);
+        cell.dying = (cell.dying ?? 0) + FIXED_STEP * 1000;
+        if (cell.dying >= cell.dyingDelay + CLEAR_LOCAL_MS) finished.push(cell);
       }
       if (finished.length) this.dying = this.dying.filter((cell) => !finished.includes(cell));
     }

@@ -4730,3 +4730,74 @@ cloudflare worker type có từ trước, không liên quan), `eslint` sạch tr
 Verify thật trên dev server: mở `/editor`, đọc DOM xác nhận sidebar đi thẳng từ Height sang "Key friction",
 không còn mục Wind ở giữa; `fetch('/app/game/sand-rules.ts')` xác nhận module đã build không còn export
 `resolveWind`; mở trang chủ `/` xác nhận vẫn load bình thường, có nút "Play Level 1", không lỗi runtime.
+
+---
+
+## 90. Hiệu ứng cát văng khi bắn trúng, anim dọn cát dissolve từng pixel, nới nhịp bắn tiếp, sửa màu nền khung tranh (31/08)
+
+Yêu cầu ban đầu: thêm hiệu ứng hạt cát văng ra khi đạn bắn trúng cát (~0,5s). Qua nhiều vòng chỉnh theo
+phản hồi trực tiếp, tính năng đi xa hơn phạm vi ban đầu khá nhiều — ghi lại trạng thái cuối cùng.
+
+**Hiệu ứng cát văng (`spawnSandSpray`/`updateSandSpray`, `SandCannonEngine.ts`):** pool tối đa 18 hạt hình
+khối, tái sử dụng theo mẫu `muzzleSmokePuffs` có sẵn. Chỉnh qua nhiều vòng:
+- Kích thước và tốc độ: từ "vài pixel lẻ tẻ gần như vô hình" tăng dần lên hạt to rõ (0,9–1,6 lần cell),
+  tốc độ/quãng đường/thời gian sống cũng tăng (đời hạt 1,1s thay vì 0,5s ban đầu) để bay xa và ở lại lâu
+  hơn trong khung nhìn.
+- **Bug che khuất do `depthTest`:** hạt spawn đúng trên bề mặt phẳng của mặt cát nên tuỳ hướng xoay ngẫu
+  nhiên, gần nửa số hạt bị chính mặt phẳng cát che mất ngay khi vừa sinh ra (test bằng cách đổi tạm màu hạt
+  sang đỏ chói, thấy chỉ 1–2 chấm nhỏ lọt qua). Sửa bằng cách tắt `depthTest` trên vật liệu hạt — vẽ hạt như
+  lớp hiệu ứng tiền cảnh, không bị vật lý occlusion của cảnh chi phối.
+- **Số lượng theo lượng cát thực sự bị sort**, không phải cứ trúng cát là văng đủ pool: `count =
+  clamp(số ô đã dọn, 3, 18)`. Không có hiệu ứng nếu bắn trượt/không khớp màu (`NO_MATCH`) hoặc không dọn
+  được ô nào.
+- **Không còn phụ thuộc vào ô đúng dưới tâm ngắm:** trước đó chỉ văng khi `cell` (ô cát ngay dưới crosshair)
+  khác null, nhưng bắn vào khoảng trống phía trên đống cát vẫn dọn được cát trong bán kính — sửa điều kiện
+  kích hoạt về `resolution.removed.length` thay vì `cell`, lấy màu từ ô thật sự bị dọn khi cần.
+- **Điểm xuất phát rải trong cả bán kính đã bắn** (`radiusUsed`, phân bố đều trên hình tròn bằng
+  `sqrt(random())`), không còn dồn hết vào đúng điểm chạm.
+- **Màu:** thử tăng sáng/bão hoà cho nổi bật trên nền cùng tông, nhưng bị yêu cầu trả về đúng màu cát gốc
+  (`cell.rgb`) — không chỉnh sửa màu nữa. Với **Prism Shot** (`matchColor: false`, dọn mọi màu trong bán
+  kính chứ không riêng màu đạn): thu thập màu thật của **toàn bộ** ô đã dọn, mỗi hạt tự chọn ngẫu nhiên 1
+  màu trong tập đó — không còn tô đồng loạt 1 màu khi thực tế đã dọn nhiều màu khác nhau.
+
+**Anim "biến mất" sau khi bị sort (`redrawSand`, `step`):** ban đầu chỉ mờ dần theo màu gốc. Đổi sang chớp
+trắng solid rồi mới mờ (0,2s → sau đó kéo dài thành 0,7s theo yêu cầu). Nâng cấp tiếp: mỗi ô cát có
+`dyingDelay` — độ trễ khởi động ngẫu nhiên riêng trong cửa sổ `CLEAR_STAGGER_MS` — nên khi bị sort, cả cụm
+rã ra theo kiểu lốm đốm (một số ô còn màu gốc, một số đã trắng, một số đã biến mất cùng lúc) giống hiệu ứng
+pixel-dissolve tham khảo, thay vì đồng loạt chớp-và-mờ cùng nhịp.
+
+**Nhịp cát rơi/settle (`settleStepMs`):** bỏ hệ ngân sách cũ (`SETTLE_BUDGET_MS` + trần
+`SETTLE_STEP_MIN/MAX_MS` + `SETTLE_TOTAL_MAX_MS`) khiến cascade nhỏ rơi nhanh bất thường còn cascade lớn có
+thể kéo dài tới 1,9s — thay bằng một cửa sổ cố định `SETTLE_TOTAL_MS = 800`, chia đều cho mọi bước bất kể
+cascade to hay nhỏ, nên cát luôn rơi ở một tốc độ nhất quán.
+
+**Nhịp bắn tiếp:** đi qua 2 thái cực trước khi chốt. Ban đầu súng chờ hết toàn bộ chuỗi settle (rơi cát)
+mới bắn tiếp được → đổi sang bắn được ngay lập tức không chờ gì (cả anim trắng lẫn anim rơi đều chạy nền) →
+theo yêu cầu cuối, chốt ở giữa: chỉ giữ khoá bắn trong đúng khoảng thời gian của anim trắng+dissolve
+(`CLEAR_DURATION_MS`, 0,7s) bằng cách nới `nextShotAt` thêm đúng chừng đó khi có cát bị dọn, còn cát rơi
+settle ở nền thì không chặn gì thêm.
+
+Bỏ hẳn hiệu ứng đèn flash neon (`spawnImpactFlash`, một `THREE.PointLight` màu theo đạn) lúc đạn đáp
+xuống — xoá field, phương thức, và đoạn cập nhật độ sáng trong `step()`. Vòng tròn sort-ring vẫn giữ
+nguyên, chỉ bỏ đèn phát sáng.
+
+**Sửa màu nền khung tranh (2 bug riêng, phát hiện qua debug bằng màu chói):**
+1. `backingMaterial` (panel sau mặt cát) dùng `MeshLambertMaterial` — ánh sáng scene khá mạnh (Hemisphere
+   1,5 + 2 Directional 2,1/0,85) rửa trôi màu xám đậm thành xám nhạt dù đã set màu tối. Đổi sang
+   `MeshBasicMaterial` (unlit) để hiện đúng màu bất kể ánh sáng, và thêm `side: THREE.DoubleSide` vì tranh
+   được nhìn từ cả 2 mặt (mặt sau lộ ra qua `sandMeshBack` lúc khung xoay ở màn hình chờ).
+2. Đổi màu xong vẫn thấy màu cũ **lúc chơi thật** (chỉ đúng khi xoay xem mặt sau ở màn hình chờ) — test
+   bằng cách đổi tạm `backingMaterial` sang màu tím/đỏ chói, xác nhận không hề xuất hiện lúc chơi thẳng.
+   Phát hiện có một lớp khác — `lip` (dùng `innerMaterial`, màu xanh cyan nhạt `0xc4e8ea`) — nằm gần camera
+   hơn `backingMaterial`, che khuất nó hoàn toàn khi nhìn thẳng; `backingMaterial` chỉ lộ ra khi nhìn
+   nghiêng hoặc từ mặt sau. Đổi `innerMaterial` sang cùng màu tối `0x101114` (unlit) để nhất quán ở mọi góc
+   nhìn, không riêng gì lúc xoay.
+
+**Test:** thay đổi chỉ ở tầng render/hiệu ứng của `SandCannonEngine.ts`, không đụng `sand-rules.ts` nên bộ
+test hiện có không đổi — **121/121 test pass**, `eslint` sạch trên file đã sửa, `tsc --noEmit` sạch (chỉ
+còn 2 lỗi cloudflare worker type có từ trước, không liên quan). Verify thật nhiều vòng trên dev server: bắn
+thử xác nhận hạt cát văng đúng vị trí/số lượng/màu qua từng bản chỉnh; zoom màn hình + chụp đúng khung hình
+lúc va chạm để xác nhận anim dissolve chạy lốm đốm từng pixel; bắn liên tiếp qua script mô phỏng pointer
+event xác nhận phát thứ 2 (gửi trong cửa sổ 0,7s) bị chặn đúng — không tốn đạn — còn phát thứ 3 (sau khi
+cửa sổ hết) bắn được ngay dù cát vẫn đang rơi; vào thẳng màn chơi từ đầu (không qua màn hình chờ) xác nhận
+nền tối nhất quán, không còn màu cũ lộ ra.
