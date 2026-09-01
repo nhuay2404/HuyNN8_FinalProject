@@ -1,5 +1,13 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import {
+  disposeCostumeParts,
+  getCostume,
+  getSelectedCostume,
+  setSelectedCostume,
+  type CostumeDef,
+  type CostumeId,
+} from "./costumes";
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
 import { sound, soundSandLanded, startAmbience, stopAmbience } from "./sound";
@@ -116,7 +124,9 @@ const FRAME_RECOIL_DECAY_PER_SECOND = 7.5;
 const FRAME_RECOIL_TILT = 0.05;
 const FRAME_RECOIL_PUSH = 0.05;
 const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
-const MUZZLE_Z = -2.18;
+// Exported for costumes.ts: a costume's muzzle ornament has to line up
+// against the same source of truth the engine fires from, not a copy of it.
+export const MUZZLE_Z = -2.18;
 /**
  * Uniform shrink applied to the whole rig, base to muzzle.
  *
@@ -158,10 +168,12 @@ const MUZZLE_SMOKE_MAX_SCALE = 0.46;
 const MUZZLE_SMOKE_OPACITY = 0.92;
 
 // ---- sand spray ---------------------------------------------------------
-// A burst of grains kicked up from the point of impact, the instant a shot
+// A burst of grains kicked loose at the point of impact, the instant a shot
 // actually lands on sand (not on empty air). Reads as debris rather than
-// smoke — small tumbling cubes tinted to the grain they came from, thrown
-// outward and up, then pulled back down by the same gravity as the shot.
+// smoke — small tumbling cubes tinted to the grain they came from, given the
+// briefest hop and a small sideways jitter, then pulled straight back down
+// hard (see `SAND_SPRAY_GRAVITY_SCALE`) — this is sand giving way and
+// dropping, not an explosion scattering it outward.
 // Pool ceiling — how many grains a single burst can ever use, when the shot
 // clears a whole lot of sand at once. Actual count per burst scales with how
 // much sand that shot actually sorted; see `spawnSandSpray`'s `count`.
@@ -170,13 +182,34 @@ const SAND_SPRAY_GRAINS = 18;
  * one-cell clear still needs to read as an impact, not a single flying speck. */
 const SAND_SPRAY_MIN_GRAINS = 3;
 const SAND_SPRAY_LIFE_SECONDS = 1.1;
-const SAND_SPRAY_MIN_SPEED = 1.2;
-const SAND_SPRAY_MAX_SPEED = 2.6;
-const SAND_SPRAY_UP_SPEED = 1.7;
+// A small sideways jitter only — enough for grains not to fall in perfect
+// unison, not the outward burst a real explosion would have. This is sand
+// giving way and dropping, not debris flying off an impact.
+const SAND_SPRAY_JITTER_MIN_SPEED = 0.15;
+const SAND_SPRAY_JITTER_MAX_SPEED = 0.45;
+/** A brief hop, just enough to read as "knocked loose" before gravity — an
+ * exaggerated version of this reads as an explosion, not a drop. */
+const SAND_SPRAY_UP_SPEED = 0.55;
+/** Pulled down several times harder than the shot's own ballistic gravity —
+ * this is what actually sells "strong pull straight down" rather than a
+ * lazy, floaty arc. */
+const SAND_SPRAY_GRAVITY_SCALE = 3.2;
 // Chunky on purpose — small values here render as a couple of stray pixels
 // and are effectively invisible against sand of their own colour.
 const SAND_SPRAY_MIN_SCALE = 0.9;
 const SAND_SPRAY_MAX_SCALE = 1.6;
+
+// ---- sparkle bling (rune-cannon flavor: "magic") -------------------------
+// The rune costume's extra layer on top of the always-on smoke/sand-spray
+// above: a burst of faceted light shards at the muzzle, a thin trickle while
+// a shot is in flight, and a burst again on impact. Shards leave the pool by
+// shrinking, same as smoke — see `updateSparkles`.
+const SPARKLE_POOL_SIZE = 40;
+const SPARKLE_DRAG = 0.94;
+/** Roughly how often the flight trail spawns a shard — not every tick, or a
+ * shot's whole arc would be one continuous smear rather than a trail. */
+const SPARKLE_TRAIL_INTERVAL = 0.03;
+const SPARKLE_COLORS = [0xffffff, 0xffd54a, 0xff8ad8, 0x9fe8ff];
 
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
@@ -400,6 +433,20 @@ type SandSprayGrain = {
   life: number;
 };
 
+/** One shard of magic light in the sparkle pool — see `spawnSparkles`. Unlit,
+ * so it reads as light rather than as painted plastic, and it leaves by
+ * shrinking the same way the smoke does. */
+type SparkleShard = {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  velocity: THREE.Vector3;
+  spin: THREE.Vector3;
+  gravity: number;
+  size: number;
+  age: number;
+  life: number;
+};
+
 export type ControlSensitivity = { aim: number };
 
 /** Overshoots past 1 before settling back — used for the turret dropping onto
@@ -432,6 +479,12 @@ export class SandCannonEngine {
   private readonly resizeObserver: ResizeObserver;
   private readonly disposables: Array<{ dispose: () => void }> = [];
 
+  /** Which skin the cannon is wearing, and what it built for it — see
+   * `costumes.ts`. Not part of `disposables`: a costume can be swapped
+   * while the engine keeps running, `setCostume` disposes its own parts. */
+  private costume: CostumeDef = getCostume(getSelectedCostume());
+  private costumeParts: THREE.Object3D[] = [];
+
   /** World size of one simulated pixel, fitted to the expanded grid. */
   private readonly cell: number;
   /** Pixels, not blueprint cells — already scaled by expandLevelForPixelBoard. */
@@ -441,6 +494,13 @@ export class SandCannonEngine {
   private aimRingGlow: THREE.Mesh | null = null;
   private sortRing: THREE.Mesh | null = null;
   private sortRingAge = 0;
+  /** The rotating rune-circle overlay, parented under `aimRing` so it always
+   * inherits its position, scale and visibility for free — only ever
+   * visible for a `flavor: "magic"` costume. See `buildRuneCircle`. */
+  private runeCircle: THREE.Group | null = null;
+  private runeCircleOuter: THREE.Group | null = null;
+  private runeCircleInner: THREE.Mesh | null = null;
+  private readonly runeCircleMaterials: THREE.MeshBasicMaterial[] = [];
   /** How much bigger than its base geometry the current sortRing flash is
    * drawn — 2x (clamped) for a shot that resolved under Radius Overcharge, so
    * the flash marking what a boosted shot actually swept isn't sized for the
@@ -576,6 +636,20 @@ export class SandCannonEngine {
    * as `muzzleSmokePuffs`: flying debris does not stay glued to anything. */
   private readonly sandSprayGrains: SandSprayGrain[] = [];
 
+  /** Pool of magic shards `spawnSparkles` recycles — the rune costume's
+   * muzzle burst, flight trail and impact burst, see `buildSparkles`. Only
+   * ever spawned from while `isMagicCostume()` is true. */
+  private readonly sparkleShards: SparkleShard[] = [];
+  /** Rolling cursor into `sparkleShards` — a plain round-robin rather than
+   * "reuse the first N" (`spawnSandSpray`'s pattern) because a muzzle burst,
+   * a flight trail and an impact burst can all be alive at once, and reusing
+   * the same first shards every time would cut an earlier effect off rather
+   * than letting it fade on its own. */
+  private sparkleCursor = 0;
+  /** Time since the last flight-trail shard, throttling `updateProjectile`'s
+   * trickle to roughly `SPARKLE_TRAIL_INTERVAL` instead of once a tick. */
+  private sparkleTrailAge = 0;
+
   constructor(
     host: HTMLDivElement,
     aimZone: HTMLDivElement,
@@ -634,8 +708,10 @@ export class SandCannonEngine {
     this.buildSand();
     this.buildCannon();
     this.buildSortRings();
+    this.buildRuneCircle();
     this.buildMuzzleSmoke();
     this.buildSandSpray();
+    this.buildSparkles();
     this.bindInput();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -958,17 +1034,15 @@ export class SandCannonEngine {
     this.muzzleAnchor.position.z = MUZZLE_Z;
     this.barrelPivot.add(this.muzzleAnchor);
 
-    // Pastel, matching the chrome around it now: a soft powder-blue hull, a
-    // muted lavender-navy for the shadowed parts, and the same candy gold the
-    // CSS uses for coins and the "go" buttons (--gold).
-    const body = this.track(new THREE.MeshLambertMaterial({ color: 0x8fc0f0 }));
-    const dark = this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0 }));
-    const accent = this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 }));
+    // The decorative shell — pedestal, cradle, barrel, muzzle ornament — is
+    // whatever the equipped costume builds (see `costumes.ts`). Everything
+    // below this line is costume-agnostic: it communicates gameplay state
+    // (ammo colour, boosters, radius) and stays the same for every skin.
+    this.buildCostumeRig();
 
-    const base = new THREE.Mesh(this.track(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40)), dark);
-    this.cannonRoot.add(base);
-    // Its own material, not `accent` — it starts the same gold, but it has to
-    // repaint independently of the muzzle ring once ammo starts cycling.
+    // Its own material, not the costume's — it starts gold, but it has to
+    // repaint independently of both the costume's shell and the muzzle ring
+    // once ammo starts cycling.
     this.baseRing = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
       this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 })),
@@ -976,20 +1050,6 @@ export class SandCannonEngine {
     this.baseRing.rotation.x = Math.PI / 2;
     this.baseRing.position.y = 0.27;
     this.cannonRoot.add(this.baseRing);
-
-    // Squashed enough to keep swallowing the barrel's back rim through the
-    // whole recoil travel, so nothing pops out of the cradle on a shot.
-    const cradle = new THREE.Mesh(this.track(new THREE.SphereGeometry(0.62, 28, 18)), dark);
-    cradle.scale.set(1, 0.86, 1);
-    this.turret.add(cradle);
-
-    const barrel = new THREE.Mesh(this.track(new THREE.CylinderGeometry(0.24, 0.38, 2.35, 28)), body);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.z = -0.98;
-    this.barrelVisual.add(barrel);
-    const muzzle = new THREE.Mesh(this.track(new THREE.TorusGeometry(0.26, 0.07, 12, 28)), accent);
-    muzzle.position.z = MUZZLE_Z + 0.06;
-    this.barrelVisual.add(muzzle);
 
     // The muzzle says what is about to come out of it. Thin enough to read as a
     // painted line around the lip rather than a second ring of hardware, and
@@ -1001,9 +1061,48 @@ export class SandCannonEngine {
     this.muzzleBand.position.z = MUZZLE_Z + 0.2;
     this.barrelVisual.add(this.muzzleBand);
 
-    this.buildAmmoFeed(dark);
+    // The ammo feed's own hardware colour — neutral and costume-independent,
+    // so the mechanical rail/housing/chamber always reads the same regardless
+    // of what shell the gun is wearing.
+    const feedDark = this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0 }));
+    this.buildAmmoFeed(feedDark);
     this.buildBoosterOverlay();
     this.applyCannonTransform();
+  }
+
+  /** Builds the equipped costume's decorative shell onto the rig groups and
+   * records what it added, so `setCostume` can cleanly tear it back down. */
+  private buildCostumeRig() {
+    this.costumeParts = this.costume.build({
+      cannonRoot: this.cannonRoot,
+      turret: this.turret,
+      barrelPivot: this.barrelPivot,
+      barrelVisual: this.barrelVisual,
+    });
+  }
+
+  /** Whether the sparkle "bling" layer and the rune radius overlay should be
+   * showing — every branch that cares asks this one question instead of
+   * naming a specific costume. */
+  private isMagicCostume() {
+    return this.costume.flavor === "magic";
+  }
+
+  /** Swaps the cannon's decorative shell for another costume's, live. Purely
+   * visual: the frame, the aim math and any shot already in flight are all
+   * untouched — see `CostumeRigGroups`'s own contract in costumes.ts. */
+  setCostume(id: CostumeId) {
+    setSelectedCostume(id);
+    if (this.costume.id === id) return;
+    disposeCostumeParts(this.costumeParts);
+    this.costumeParts = [];
+    this.costume = getCostume(id);
+    this.buildCostumeRig();
+    if (this.runeCircle) this.runeCircle.visible = this.isMagicCostume();
+  }
+
+  getCostumeId(): CostumeId {
+    return this.costume.id;
   }
 
   /**
@@ -1259,6 +1358,7 @@ export class SandCannonEngine {
       if (this.aimRing) (this.aimRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.aimRingGlow) (this.aimRingGlow.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.sortRing) (this.sortRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
+      for (const material of this.runeCircleMaterials) material.color.setHex(hex);
     }
   }
 
@@ -1385,6 +1485,74 @@ export class SandCannonEngine {
     this.frameRoot.add(this.sortRing);
   }
 
+  /**
+   * The rune costume's "pháp trận": a decorative ring of glyph ticks and a
+   * counter-rotating inner ring, layered around the real aim ring rather than
+   * replacing it — `aimRing` itself still carries the actual reach, ammo
+   * colour and hit-flash, unchanged for every costume (see `buildSortRings`).
+   *
+   * Parented as a child of `aimRing` rather than a sibling in `frameRoot`, so
+   * it inherits that mesh's position (`moveRingToCell`), booster-armed scale
+   * and visibility for free — nothing here needs its own sync code at the
+   * three call sites that already toggle `aimRing.visible`. Only ever shown
+   * for a `flavor: "magic"` costume (`setCostume`, `isMagicCostume`).
+   */
+  private buildRuneCircle() {
+    if (!this.aimRing || this.sortRadius <= 0) return;
+    const outer = this.sortRadius * this.cell + this.cell * 0.5;
+
+    const group = new THREE.Group();
+    group.visible = this.isMagicCostume();
+    group.renderOrder = 18;
+
+    // A ring of short glyph ticks just outside the real rim, spinning one way.
+    const tickGroup = new THREE.Group();
+    const tickRadius = outer * 1.14;
+    const tickCount = 16;
+    const tickArc = (Math.PI * 2) / tickCount;
+    const tickLength = tickArc * 0.32;
+    for (let index = 0; index < tickCount; index += 1) {
+      const geometry = this.track(
+        new THREE.RingGeometry(tickRadius, tickRadius + this.cell * 0.12, 4, 1, index * tickArc, tickLength),
+      );
+      const material = this.track(
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+        }),
+      ) as THREE.MeshBasicMaterial;
+      this.runeCircleMaterials.push(material);
+      tickGroup.add(new THREE.Mesh(geometry, material));
+    }
+    group.add(tickGroup);
+
+    // A thin ring just inside the real rim, spinning the other way — the
+    // classic "nested rings" read of a summoning circle.
+    const innerGeometry = this.track(new THREE.RingGeometry(outer * 0.74, outer * 0.78, 48));
+    const innerMaterial = this.track(
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }),
+    ) as THREE.MeshBasicMaterial;
+    this.runeCircleMaterials.push(innerMaterial);
+    const innerRing = new THREE.Mesh(innerGeometry, innerMaterial);
+    group.add(innerRing);
+
+    this.aimRing.add(group);
+    this.runeCircle = group;
+    this.runeCircleOuter = tickGroup;
+    this.runeCircleInner = innerRing;
+  }
+
   /** Builds the muzzle-smoke pool once. Each puff gets its own material —
    * cheap at this count — so `updateMuzzleSmoke` can fade them independently
    * for a puffier, less uniform-looking burst than one shared material would. */
@@ -1485,9 +1653,10 @@ export class SandCannonEngine {
    * inside the shot's sort disc (`radiusCells`, in grid cells) rather than
    * all bursting from the exact contact point — real kicked-up sand comes
    * loose across the whole reach a shot disturbed, not from one spot. Each
-   * grain also gets its own random outward direction and upward kick, so the
-   * burst reads as sand actually getting knocked loose rather than a ring of
-   * identical debris. `count` is how much sand this shot actually sorted — a
+   * grain also gets its own small random sideways jitter and a brief upward
+   * hop, so the burst reads as sand actually getting knocked loose and pulled
+   * straight back down rather than a ring of identical debris. `count` is
+   * how much sand this shot actually sorted — a
    * big clear kicks up a lot of sand, a one-cell clear barely disturbs the pile.
    * `colors` is every colour the shot actually cleared — usually one colour
    * repeated, but a Prism Shot clearing several at once hands over all of
@@ -1499,11 +1668,11 @@ export class SandCannonEngine {
     const radiusWorld = Math.max(0, radiusCells) * this.cell;
     for (const grain of this.sandSprayGrains.slice(0, count)) {
       const angle = Math.random() * Math.PI * 2;
-      const outward = SAND_SPRAY_MIN_SPEED + Math.random() * (SAND_SPRAY_MAX_SPEED - SAND_SPRAY_MIN_SPEED);
+      const jitter = SAND_SPRAY_JITTER_MIN_SPEED + Math.random() * (SAND_SPRAY_JITTER_MAX_SPEED - SAND_SPRAY_JITTER_MIN_SPEED);
       grain.velocity.set(
-        Math.cos(angle) * outward,
+        Math.cos(angle) * jitter,
         SAND_SPRAY_UP_SPEED * (0.5 + Math.random() * 0.6),
-        Math.sin(angle) * outward * 0.4,
+        Math.sin(angle) * jitter,
       );
       // Uniform over the disc, not the square — sqrt(random()) on the radius
       // is what keeps the distribution from bunching up toward the centre.
@@ -1530,15 +1699,15 @@ export class SandCannonEngine {
     }
   }
 
-  /** Ages every visible grain, pulling it down with the same gravity as a shot
-   * and fading it out over its lifetime so the burst dissolves rather than
-   * popping out of existence. */
+  /** Ages every visible grain, pulling it down much harder than the shot's
+   * own gravity — see `SAND_SPRAY_GRAVITY_SCALE` — and fading it out over its
+   * lifetime so the burst dissolves rather than popping out of existence. */
   private updateSandSpray(deltaSeconds: number) {
     for (const grain of this.sandSprayGrains) {
       if (!grain.mesh.visible) continue;
       grain.age += deltaSeconds;
       const life = Math.min(1, grain.age / grain.life);
-      grain.velocity.addScaledVector(GRAVITY, deltaSeconds);
+      grain.velocity.addScaledVector(GRAVITY, SAND_SPRAY_GRAVITY_SCALE * deltaSeconds);
       grain.mesh.position.addScaledVector(grain.velocity, deltaSeconds);
       grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
       grain.mesh.rotation.y += grain.spin.y * deltaSeconds;
@@ -1549,6 +1718,117 @@ export class SandCannonEngine {
       const fadeT = Math.max(0, (life - 0.4) / 0.6);
       grain.material.opacity = 1 - fadeT ** 2;
       if (life >= 1) grain.mesh.visible = false;
+    }
+  }
+
+  /** Builds the sparkle pool once. A shard, not a ball: flat faces catch the
+   * light as it spins, which is what separates a spark from a puff of smoke.
+   * Each shard gets its own material so a burst can show several colours and
+   * fade independently, same reasoning as `buildMuzzleSmoke`. */
+  private buildSparkles() {
+    const geometry = this.track(new THREE.OctahedronGeometry(0.5));
+    for (let index = 0; index < SPARKLE_POOL_SIZE; index += 1) {
+      const material = this.track(
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }),
+      ) as THREE.MeshBasicMaterial;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.visible = false;
+      mesh.renderOrder = 23;
+      this.scene.add(mesh);
+      this.sparkleShards.push({
+        mesh,
+        material,
+        velocity: new THREE.Vector3(),
+        spin: new THREE.Vector3(),
+        gravity: 0,
+        size: 1,
+        age: 0,
+        life: 1,
+      });
+    }
+  }
+
+  /**
+   * Fires `count` shards from the pool, walking a rolling cursor rather than
+   * always reusing the first N (`spawnSandSpray`'s pattern) — a muzzle burst,
+   * a flight trail and an impact burst can all be alive together, and always
+   * grabbing the same first shards would cut an earlier burst off instead of
+   * letting it fade on its own. `speed` is how hard a shard leaves `origin`,
+   * `rise` how much of that is upward, and `gravity` whether it arcs back
+   * down — a bling burst floats, an impact burst falls a little harder.
+   */
+  private spawnSparkles(
+    origin: THREE.Vector3,
+    options: { count: number; size: number; speed: number; rise: number; life: number; gravity: number; spread?: number },
+  ) {
+    if (!this.sparkleShards.length) return;
+    const spread = options.spread ?? 1;
+    for (let shard = 0; shard < options.count; shard += 1) {
+      const slot = this.sparkleShards[this.sparkleCursor];
+      this.sparkleCursor = (this.sparkleCursor + 1) % this.sparkleShards.length;
+      const angle = (shard / options.count) * Math.PI * 2 + Math.random() * 1.6;
+      const lift = Math.random() * 2 - 1;
+      const size = options.size * (0.6 + Math.random() * 0.8);
+
+      slot.mesh.position.copy(origin).add(
+        new THREE.Vector3(
+          Math.cos(angle) * spread * 0.16,
+          (Math.random() - 0.5) * spread * 0.2,
+          Math.sin(angle) * spread * 0.16,
+        ),
+      );
+      slot.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+      slot.mesh.scale.setScalar(size);
+      slot.velocity.set(
+        Math.cos(angle) * options.speed * (0.7 + Math.random() * 0.6),
+        options.rise + lift * options.speed * 0.35,
+        Math.sin(angle) * options.speed * (0.7 + Math.random() * 0.6),
+      );
+      slot.spin.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12);
+      slot.gravity = options.gravity;
+      slot.size = size;
+      slot.age = 0;
+      slot.life = options.life;
+      slot.material.color.setHex(SPARKLE_COLORS[Math.floor(Math.random() * SPARKLE_COLORS.length)]);
+      slot.material.opacity = 1;
+      slot.mesh.visible = true;
+    }
+  }
+
+  /** Bling: a bright burst at the muzzle the instant a magic shot fires. */
+  private spawnSparkleMuzzleBurst(origin: THREE.Vector3) {
+    this.spawnSparkles(origin, { count: 10, size: 0.14, speed: 2, rise: 0.9, life: 0.42, gravity: -2, spread: 1 });
+  }
+
+  /** The thin trail a magic shot leaves along its whole flight. */
+  private spawnSparkleTrail(point: THREE.Vector3) {
+    this.spawnSparkles(point, { count: 2, size: 0.09, speed: 0.35, rise: 0.1, life: 0.26, gravity: -1.2, spread: 0.5 });
+  }
+
+  /** Bling: the landing itself, floating outward rather than dropping. */
+  private spawnSparkleImpactBurst(point: THREE.Vector3) {
+    this.spawnSparkles(point, { count: 14, size: 0.15, speed: 2.6, rise: 1.1, life: 0.5, gravity: -2.4, spread: 1.2 });
+  }
+
+  /** Ages, drags and fades every visible shard — same shape as `updateSandSpray`. */
+  private updateSparkles(deltaSeconds: number) {
+    for (const shard of this.sparkleShards) {
+      if (!shard.mesh.visible) continue;
+      shard.age += deltaSeconds;
+      const progress = Math.min(1, shard.age / shard.life);
+      if (progress >= 1) {
+        shard.mesh.visible = false;
+        continue;
+      }
+      shard.velocity.multiplyScalar(SPARKLE_DRAG);
+      shard.velocity.y += shard.gravity * deltaSeconds;
+      shard.mesh.position.addScaledVector(shard.velocity, deltaSeconds);
+      shard.mesh.rotation.x += shard.spin.x * deltaSeconds;
+      shard.mesh.rotation.y += shard.spin.y * deltaSeconds;
+      shard.mesh.rotation.z += shard.spin.z * deltaSeconds;
+      // Solid to the last frame, like the smoke: it goes out by getting small.
+      shard.mesh.scale.setScalar(Math.max(0.001, shard.size * (1 - progress * progress)));
+      shard.material.opacity = 1 - progress;
     }
   }
 
@@ -1983,6 +2263,10 @@ export class SandCannonEngine {
     // the queue hands the next one over.
     this.chamberLoaded = false;
     this.spawnMuzzleSmoke(launch.start, launch.velocity);
+    if (this.isMagicCostume()) {
+      this.spawnSparkleMuzzleBurst(launch.start);
+      this.sparkleTrailAge = 0;
+    }
 
     // Consumed the instant it leaves the barrel (spec §7.1), whether this
     // shot goes on to hit or miss — the overlay rings come down with it, since
@@ -2038,6 +2322,14 @@ export class SandCannonEngine {
       (projectile.mesh.material as THREE.MeshBasicMaterial).color.setHSL(hue, 0.85, 0.6);
     }
     const next = this.positionAt(projectile.start, projectile.velocity, projectile.time);
+
+    if (this.isMagicCostume()) {
+      this.sparkleTrailAge += FIXED_STEP;
+      if (this.sparkleTrailAge >= SPARKLE_TRAIL_INTERVAL) {
+        this.sparkleTrailAge = 0;
+        this.spawnSparkleTrail(next);
+      }
+    }
 
     const hit = this.planeHit(projectile.previous, next.clone().sub(projectile.previous).normalize(), true);
     // planeHit solves against the infinite plane along a ray; confirm the
@@ -2114,6 +2406,7 @@ export class SandCannonEngine {
     this.triggerFrameRecoil(contact);
     haptic("impact");
     sound("impact");
+    if (this.isMagicCostume()) this.spawnSparkleImpactBurst(contact);
 
     // Sand under the impact centres the disc on that grain; empty air centres it
     // on the square the shot came down in. Either way the disc has a centre and
@@ -2405,6 +2698,14 @@ export class SandCannonEngine {
     this.updateAmmoModel();
     this.updateMuzzleSmoke(FIXED_STEP);
     this.updateSandSpray(FIXED_STEP);
+    this.updateSparkles(FIXED_STEP);
+
+    if (this.runeCircle?.visible) {
+      // Two nested rings spinning opposite ways — the "pháp trận" reads as
+      // alive rather than a static sticker on the aim ring.
+      if (this.runeCircleOuter) this.runeCircleOuter.rotation.z += FIXED_STEP * 0.6;
+      if (this.runeCircleInner) this.runeCircleInner.rotation.z -= FIXED_STEP * 0.9;
+    }
 
     if (this.sortRing?.visible) {
       this.sortRingAge += FIXED_STEP;
