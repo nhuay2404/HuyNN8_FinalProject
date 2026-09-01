@@ -1022,8 +1022,13 @@ export default function SandGame() {
       {/* `.is-hub` swaps the wall from gameplay's vivid cyan to the calmer
           navy the hub reads in now (see globals.css) — tied to `homeVisible`
           rather than `playing` so it fades out in step with the hub screen's
-          own exit animation instead of cutting the instant Play is tapped. */}
-      <div className={`game-frame${homeVisible ? " is-hub" : ""}`}>
+          own exit animation instead of cutting the instant Play is tapped.
+          `.is-skin-*` layers a per-flavour wash on top while the skin picker
+          is up — on `.game-frame` itself, not `.skin-screen` sitting over
+          it, because the rig is drawn by the transparent canvas *below*
+          that screen; a background on the screen would paint over the rig
+          instead of showing through behind it. */}
+      <div className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}`}>
         {/* Top-left HUD stack: the coin balance sits above the ammo row and,
             unlike it, is not gated on `playing` — a balance is true on the
             home screen too, not just mid-level. §22/§23: ammo, the 3D frame,
@@ -1430,13 +1435,19 @@ export default function SandGame() {
             — the hub screen above is unmounted entirely while this is up
             (`tab !== "skin"` on it). The rig filling the middle is the real
             one, drawn by the engine behind this screen in its own showroom
-            pose (`setShowcase`); `.skin-stage` is an empty, see-through
-            placeholder that only exists to give that rig a claimed spot in
-            the layout. No close button of its own — `.hub-nav` below stays
-            mounted over this screen too, so tapping any other tab is how you
-            leave. */}
+            pose (`setShowcase`) — turning on its own now (`SHOWCASE_SWAY`
+            in SandCannonEngine.ts), not dragged — against a wash keyed to
+            its own flavour (`.game-frame.is-skin-*` in globals.css, driven
+            by the class on the frame div above); `.skin-stage` is an empty,
+            see-through placeholder that only exists to give that rig a
+            claimed spot in the layout. No close button of its own —
+            `.hub-nav` below stays mounted over this screen too, so tapping
+            any other tab is how you leave. */}
         {tab === "skin" && (
-          <div className="skin-screen" role="dialog" aria-modal="true" aria-labelledby="skin-title">
+          <div
+            className="skin-screen"
+            role="dialog" aria-modal="true" aria-labelledby="skin-title"
+          >
             <div className="skin-heading">
               <h2 id="skin-title">{COSTUMES[previewCostume].name}</h2>
               <p className="skin-tagline">{COSTUMES[previewCostume].tagline}</p>

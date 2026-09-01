@@ -146,22 +146,27 @@ const CANNON_MODEL_SCALE = 0.8;
 // player is looking at is the rig a level will actually hand them — same
 // groups (`cannonRoot`/`turret`/`barrelPivot`/`barrelVisual`), same
 // `muzzleAnchor`, nothing about the rig itself is faked for the picker.
-// Held well back from camera, almost level with it rather than pulled in
-// close — real play's own rig sits far from camera too (at
-// `CANNON_ROOT_POSITION`, distance ~9.8 from the camera's (0,3.3,13.6),
-// see its own `.set` call below), which is why its rings read as flat,
-// nearly edge-on ellipses instead of full circles: an object subtends a
-// much wider spread of angles across its own size up close than it does far
-// away, and that spread — not the centre angle to it — is what makes rings
-// look "rounder"/more face-on. Held up close, the way an earlier pass at
-// this had it, the same rings widened into full circles (a wide-angle-lens
-// close-up effect) no matter what angle they sat at. `SHOWCASE_FOV` is the
-// other half of this: a distance this size would otherwise read as a speck
-// at real play's 37°-44° (`resize()` below), so the showcase narrows the
-// lens to re-magnify it back to a normal on-screen size — the same
-// far-away-but-zoomed size a telephoto lens gives, without the up-close
-// distortion a wide lens held near the subject has.
-const SHOWCASE_POSITION = new THREE.Vector3(0, 1.88, 5.77);
+// Held well back from camera rather than pulled in close — real play's own
+// rig sits far from camera too (at `CANNON_ROOT_POSITION`, distance ~9.8
+// from the camera's (0,3.3,13.6), see its own `.set` call below), which is
+// why its rings read as flat, nearly edge-on ellipses instead of full
+// circles: an object subtends a much wider spread of angles across its own
+// size up close than it does far away, and that spread — not the centre
+// angle to it — is what makes rings look "rounder"/more face-on. Held up
+// close, the way an earlier pass at this had it, the same rings widened
+// into full circles (a wide-angle-lens close-up effect) no matter what
+// angle they sat at. `SHOWCASE_FOV` is the other half of this: a distance
+// this size would otherwise read as a speck at real play's 37°-44°
+// (`resize()` below), so the showcase narrows the lens to re-magnify it
+// back to a normal on-screen size — the same far-away-but-zoomed size a
+// telephoto lens gives, without the up-close distortion a wide lens held
+// near the subject has. Sits a little below the camera's own dead-centre
+// line, not exactly level with it — the barrel points straight away from
+// camera at rest (`SHOWCASE_YAW` below), all but invisible end-on until
+// `SHOWCASE_SWAY` turns it into profile, and this small a downward tilt is
+// what keeps the barrel's own length legible above the muzzle ring for the
+// rest of that turn instead of just the ring hanging level with it.
+const SHOWCASE_POSITION = new THREE.Vector3(0, 1.19, 5.88);
 const SHOWCASE_SCALE = 1.1;
 const SHOWCASE_FOV = 43;
 // Exactly `CANNON_NEUTRAL_YAW`/`CANNON_NEUTRAL_ELEVATION` below, not a
@@ -175,11 +180,13 @@ const SHOWCASE_ELEVATION = CANNON_NEUTRAL_ELEVATION;
 const SHOWCASE_YAW = CANNON_NEUTRAL_YAW;
 /** Peak yaw, in radians, of the slow side-to-side turn
  * (`SHOWCASE_SWAY_SPEED` full cycles/second), added on top of
- * `SHOWCASE_YAW`. Zero — the cannon does not idly turn on its own mid-play
- * either, and swinging it off `SHOWCASE_YAW` is exactly the "different
- * camera angle than the game" read this is trying to avoid. */
-const SHOWCASE_SWAY = 0;
-const SHOWCASE_SWAY_SPEED = 0.7;
+ * `SHOWCASE_YAW`. The picker's only motion now that dragging the rig is
+ * gone — enough to swing the barrel out from directly-behind-it into
+ * profile and back (see `SHOWCASE_POSITION`'s own comment on why that
+ * straight-on view hides the barrel's length in the first place), without
+ * reading as a spin the player did not ask for. */
+const SHOWCASE_SWAY = 0.4;
+const SHOWCASE_SWAY_SPEED = 0.35;
 /** Seconds between demo shots — long enough that each one reads as its own
  * beat rather than a stutter of gunfire. */
 const SHOWCASE_FIRE_INTERVAL = 1.5;

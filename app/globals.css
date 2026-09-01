@@ -258,6 +258,18 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    fades out in step with the hub screen leaving rather than cutting the
    instant Play is tapped. */
 .game-frame.is-hub { background: var(--hub-navy); }
+/* The skin picker's own showroom wash, keyed to whichever costume is being
+   looked at right now — cool steel-blue for the classic cannon, a violet
+   haze for the rune one — rather than the hub's flat cream showing through
+   no matter what's on the pedestal. Keyed on `flavor` (`CostumeFlavor`), not
+   a colour of its own on `CostumeDef`: two buckets is exactly the
+   granularity the rest of the file already uses for this
+   (`isMagicCostume()`), and a wash is a mood, not a hue precise enough to
+   need its own per-costume constant. Overrides `.is-hub` above (same
+   specificity, later in the file) since the skin screen is itself a
+   `!playing` hub tab and always carries both classes together. */
+.game-frame.is-skin-classic { background: #d8edf4; }
+.game-frame.is-skin-magic { background: #e9def6; }
 /* Phone-width viewports: full-bleed, not a rounded card floating with a
    coloured gutter around it. `.page-shell`'s 18px padding, `.game-frame`'s
    corners and its shadow exist for a wider window (tablet/desktop), where
@@ -1028,6 +1040,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .skin-screen {
   position: absolute; z-index: 30; inset: 0;
   display: flex; flex-direction: column;
+  /* Transparent, not a wash of its own — the rig is drawn by the canvas
+     *underneath* this screen (`.scene-host`, z-index 0), so a background
+     here would paint over it instead of showing through behind it. The
+     per-costume wash lives on `.game-frame.is-skin-*` instead, below the
+     canvas — see its own comment. */
   background: transparent; pointer-events: none;
   animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
@@ -1057,7 +1074,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* Deliberately empty: the rig in the middle is drawn by the engine behind
    this screen, not by anything in here — this is just the flex space that
    keeps the bar/heading pinned to the top and the button/tray pinned to the
-   bottom around it. */
+   bottom around it. Not a drag surface any more — the rig turns on its own
+   (`SHOWCASE_SWAY` in SandCannonEngine.ts) instead of tracking a finger. */
 .skin-stage { flex: 1 1 auto; min-height: 0; }
 
 .skin-equip {
@@ -1079,26 +1097,33 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    hard rule — the tray reads as a drawer sliding up over the showroom rather
    than as the bottom half of a split screen. Bottom padding reserves room
    for `.hub-nav`, which now stays mounted over this whole screen (see its
-   own comment) and would otherwise sit on top of the last row of cards.
-   `min-height` holds the tray open to roughly three card rows' worth of
-   space (3 × the grid's own 84px minimum, plus its gaps and its own
-   padding) even with only the two costumes there are today to show — a
-   two-card single row would otherwise leave the tray looking like an
-   afterthought pinned to the very bottom, when this is meant to read as
-   the picker's main gallery, pushed up into real presence on screen rather
-   than however tall its current contents happen to be. `max-height` grows
-   to match so a future costume count that actually fills three rows is not
-   clipped by the old 42% cap. */
+   own comment) and would otherwise sit on top of the last row of cards —
+   `height` has to add that same amount back on top of the visible ~106px
+   (14px top padding + a 78px card row + 14px breathing room), or that
+   padding just eats into the row instead of sitting below it. A fixed
+   height, not `min-height`: held to one row on purpose — a low strip of
+   cards, not the big gallery panel an earlier pass had this as — so the
+   showroom above it (the rig and its background wash) gets the bulk of the
+   screen. More costumes than fit in that one row scroll horizontally rather
+   than wrapping to a second row (`.skin-grid`'s own `grid-auto-flow`) — a
+   taller tray is exactly what this is trying to avoid. */
 .skin-tray {
   pointer-events: auto; position: relative; z-index: 1;
-  padding: 16px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 16px);
+  padding: 14px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 14px);
   border-top: 2px solid var(--line);
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--panel);
   box-shadow: 0 -4px 0 rgba(122, 96, 70, .08), 0 -10px 26px rgba(92, 74, 58, .18);
-  min-height: min(56%, 400px); max-height: 56%; overflow-y: auto;
+  height: calc(106px + var(--hub-nav-height) + env(safe-area-inset-bottom));
 }
-.skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+/* One row, fixed-width columns rather than `auto-fill`'s stretchy ones — a
+   card has to stay the same size whether there are two costumes or twenty,
+   since it's the row that grows (scrolling sideways) instead of the cards
+   themselves or a second row. */
+.skin-grid {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 78px;
+  gap: 10px; height: 100%; overflow-x: auto; overflow-y: hidden;
+}
 .skin-card {
   position: relative; aspect-ratio: 1; padding: 0; cursor: pointer;
   border: 0; border-radius: var(--r-md); overflow: hidden;
