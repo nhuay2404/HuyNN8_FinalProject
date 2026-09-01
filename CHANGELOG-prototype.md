@@ -4801,3 +4801,25 @@ lúc va chạm để xác nhận anim dissolve chạy lốm đốm từng pixel;
 event xác nhận phát thứ 2 (gửi trong cửa sổ 0,7s) bị chặn đúng — không tốn đạn — còn phát thứ 3 (sau khi
 cửa sổ hết) bắn được ngay dù cát vẫn đang rơi; vào thẳng màn chơi từ đầu (không qua màn hình chờ) xác nhận
 nền tối nhất quán, không còn màu cũ lộ ra.
+
+---
+
+## 91. Vật lý hiệu ứng cát văng: rơi thẳng xuống theo lực hút thay vì bay tứ tán (01/09)
+
+Phản hồi: hiệu ứng cát văng ở mục 90 "nhìn giả quá" — muốn hạt rơi thẳng xuống như đang có một lực hút
+mạnh, chứ không bay ra loạn xạ như hiện tại.
+
+**Sửa (`spawnSandSpray`/`updateSandSpray`, `SandCannonEngine.ts`):**
+- Bỏ lực bắn ngang toả đều mọi hướng (`SAND_SPRAY_MIN/MAX_SPEED` cũ, 1,2–2,6) — thay bằng một chút rung lắc
+  nhẹ (`SAND_SPRAY_JITTER_MIN/MAX_SPEED`, 0,15–0,45) chỉ đủ để các hạt không rơi y hệt nhau, không còn văng
+  xa theo phương ngang.
+- Giảm cú hất lên ban đầu (`SAND_SPRAY_UP_SPEED`) từ 1,7 xuống 0,55 — chỉ đủ đọc là "vừa bị bung ra" trong
+  tích tắc rồi rơi ngay, không còn bay vọt lên.
+- Thêm `SAND_SPRAY_GRAVITY_SCALE = 3,2`, nhân trực tiếp vào gia tốc `GRAVITY` áp lên hạt mỗi khung hình —
+  kéo hạt xuống nhanh gấp hơn 3 lần trọng lực bình thường của viên đạn, tạo đúng cảm giác "có lực hút mạnh"
+  thay vì trôi theo vòng cung chậm rãi như một vụ nổ.
+
+**Test:** không đụng `sand-rules.ts`, bộ test hiện có không đổi (121/121 pass), `eslint`/`tsc --noEmit` sạch
+trên file đã sửa. Verify thật trên dev server: bắn thử, zoom màn hình + chụp nhiều khung hình liên tiếp sau
+va chạm — xác nhận các hạt giờ chỉ dập dềnh nhẹ tại chỗ rồi rơi thẳng xuống nhanh, gọn trong vùng va chạm,
+không còn bay ra xa như trước.

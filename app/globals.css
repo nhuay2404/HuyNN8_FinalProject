@@ -1,61 +1,166 @@
 @import "tailwindcss";
 
-/* The display face the whole game reads in now — bundled locally (not a
-   webfont service) so it works offline the same way the rest of this
-   single-page game does. */
-@font-face {
-  font-family: "Super Pandora";
-  src: url("/fonts/SuperPandora.ttf") format("truetype");
-  font-weight: 400;
-  font-display: swap;
-}
-
 :root {
-  /* Flat and softly rounded, same as before, but punchier: the first pass at
-     this palette leaned pastel-desaturated and read as washed out next to the
-     reference — every token here is the same hue family, pushed back up in
-     saturation. Depth still comes from a solid, slightly darker border on the
-     lower edge of a shape rather than a blur — a "sticker" outline, not a
-     shadow — and the main game UI still uses no `gradient`, `box-shadow` or
-     `text-shadow` (the level editor is scoped out of this — see the note on
-     .editor-shell). The picture and the cannon are still the only other
-     saturated colour on screen; both got the same saturation pass (see
-     SAND_COLOR_HEX and buildCannon in SandCannonEngine.ts) so they stay in
-     the same family as the chrome around them instead of clashing with it. */
-  --ink: #2c4356;
-  --muted: #5f838d;
-  --panel: #ffffff;
-  --line: #9ccfd4;
-  --accent: #41c138;
-  --accent-ink: #1f4a1c;
-  --accent-line: #30892e;
-  --danger: #ff3142;
-  --danger-ink: #5c0f1c;
-  --danger-line: #e01c36;
-  --gold: #ffb70e;
-  --gold-ink: #5c3d05;
-  --locked: #b5d1d4;
-  --bg: #5dd4d9;
+  /* ---- The cozy pass -----------------------------------------------------
+     This UI used to be cold and punchy: a vivid cyan wall, cool navy ink,
+     pastel-cyan hairlines, and a hard rule that nothing could ever carry a
+     `gradient`, a `box-shadow` or a `text-shadow` — depth came only from a
+     solid darker border on a shape, a "sticker" outline. A later pass then
+     went the opposite way — warm cream panels, a chunky drop-shadow "soft
+     depth" on every control, and a gradient rationed onto four hero buttons.
+
+     The brief now is flatter still: nhẹ nhàng / cozy in the read Animal
+     Crossing's own menus get, where every card is one plain matte colour and
+     nothing pretends to be lit from above. Concretely:
+
+     1. WARM PAPER, NOT WHITE. Every panel is a cream (`--panel`), every
+        recessed fill an oat (`--locked`), every hairline a soft sand
+        (`--line`), and the text is a cocoa brown (`--ink`) rather than a
+        cool navy. Nothing on screen is a neutral grey and nothing is pure
+        white — a cozy interface is warm all the way down.
+     2. NO BORDER, GRADIENT OR SHADOW ON A BUTTON. Every clickable control —
+        `.icon-button`, `.hub-play-btn`, `.skin-equip`, `.shop-buy-btn`, the
+        settings rows, the booster buttons, all of it — is a flat single
+        colour with `border: 0` and no `box-shadow`. Pressing one is a plain
+        `translateY`, not a shadow collapsing under it. `--shadow-*` below
+        still exists and is still used, but only on STATIC chrome (panels,
+        modals, badges, toasts) that is never itself a button — never add one
+        back to a `<button>` or an `<a>` standing in for one.
+     3. BIG, EVEN CORNERS. `--r-*` below replaces the fourteen one-off radius
+        literals this file used to carry. Everything is rounder than it was.
+
+     The picture and the cannon are still the only heavily saturated things on
+     screen, and they got the same warming pass (see SAND_COLOR_HEX and
+     buildCannon in SandCannonEngine.ts) so they sit in the same family as the
+     chrome instead of shouting over it.
+
+     Token NAMES are all carried over unchanged even where the name no longer
+     describes the value (`--hub-navy` is the hub's cream wall now, not sage
+     and not navy). The level editor at the bottom of this file redefines
+     several of these same names for its own dark theme — renaming them here
+     would silently break that. */
+
+  /* Paper and ink. */
+  --ink: #5c4a3a;
+  --muted: #8a7460;
+  --panel: #fffbf0;
+  --line: #e2d2b4;
+  /* The heavier outline, for the few controls that carry a 3px border. */
+  --line-strong: #c8b393;
+  --locked: #efe3cc;
+
+  /* Leaf green — the primary action colour. */
+  --accent: #8fcb6b;
+  --accent-ink: #33511f;
+  --accent-line: #6ba84c;
+
+  /* Soft coral. Still the "this ends the run" colour, but a coral rather than
+     the fire-engine red it was: a warning in a cozy game is a gentle one. */
+  --danger: #ff9a8b;
+  --danger-ink: #6e2a20;
+  --danger-line: #e5705e;
+
+  /* Honey gold — the Play button, the coin balance, and the Shop tab's own
+     fill once it is the active one in the bottom bar. */
+  --gold: #ffce6b;
+  --gold-ink: #6b4a15;
+  --gold-line: #e2a63f;
+
+  /* Soft sky — the language pill, and the Gallery tab's active fill. */
+  --sky: #8fd3e8;
+  --sky-ink: #1f4c5c;
+  --sky-line: #5fafc9;
+
+  /* Warm wood — the Customize tab's active fill, the one hub-nav colour with
+     no other job in the file (every other tab reuses a hue that already
+     means something elsewhere: green is the primary action, coral is
+     danger/exit, gold is currency, sky is the language pill). */
+  --wood: #b98a5e;
+  --wood-ink: #4a2f1a;
+
+  /* Gameplay's own sky. Same hue the vivid cyan used to sit at, pulled down in
+     saturation and up in lightness until it reads as air rather than as a
+     colour. Duplicated by hand in two places that cannot read this variable:
+     SandCannonEngine's fog (the canvas is transparent where nothing is drawn,
+     so the frame and cannon have to recede into exactly this colour) and the
+     pre-bundle loading screen below. Change all three together. */
+  --bg: #aedee4;
+  /* The wall the whole frame sits on at tablet/desktop width, where
+     `.game-frame` no longer fills the viewport. Warm sand rather than a
+     repeat of `--bg`, so the frame reads as a physical thing resting on a
+     surface instead of a window cut out of one flat field. */
+  --wall: #e8dcc6;
+
   --hud-inset: 14px;
   --hud-height: 44px;
   /* The home screen's bottom bar, excluding the phone's own safe area. Shared
      so the play hint and any open section know where the bar starts. */
-  --hub-nav-height: 62px;
+  --hub-nav-height: 64px;
+
+  /* ---- Hub palette ------------------------------------------------------- */
+  /* The hub reads as one warm room now rather than a separate app: an ivory
+     wall (`--hub-navy` below — the name is a leftover, see the top-of-file
+     note), the same cream panels the rest of the game uses, and one flat
+     coral Play button as the single thing that pops against it. */
+  --hub-navy: #fff7e7;
+  --hub-navy-deep: #6a9080;
+  --hub-panel-navy: #fffbf0;
+  --hub-line-navy: #557a6a;
+
+  /* ---- Shape scale ------------------------------------------------------- */
+  /* One ladder instead of the 7/9/10/12/14/16/18/20/24/26/28/34 sprawl this
+     file used to carry. Cozy leans large, so every step is bigger than the
+     literal it replaces. */
+  --r-xs: 10px;
+  --r-sm: 14px;
+  --r-md: 20px;
+  --r-lg: 28px;
+  --r-xl: 34px;
+  --r-frame: 36px;
+  --r-pill: 999px;
+
+  /* ---- Depth ------------------------------------------------------------- */
+  /* Always warm-brown tinted, never neutral grey and never black — a grey
+     shadow on cream immediately reads as dirt. Each is a chunky solid offset
+     (the "thickness" of the object) plus a soft blur (the light around it).
+     `--shadow-press` is what a control drops to while held, paired with a
+     2-3px translateY, so pressing something feels like pushing it into the
+     page rather than shrinking it. */
+  --shadow-chip: 0 2px 0 rgba(122, 96, 70, .13), 0 3px 8px rgba(122, 96, 70, .10);
+  --shadow-btn: 0 3px 0 rgba(122, 96, 70, .20), 0 5px 12px rgba(122, 96, 70, .14);
+  --shadow-panel: 0 4px 0 rgba(122, 96, 70, .08), 0 10px 26px rgba(92, 74, 58, .16);
+  --shadow-modal: 0 8px 0 rgba(122, 96, 70, .10), 0 18px 44px rgba(92, 74, 58, .24);
+  --shadow-press: 0 1px 0 rgba(122, 96, 70, .16), 0 2px 5px rgba(122, 96, 70, .12);
+  /* Every overlay backdrop. Warm-tinted like everything else, and lighter than
+     the old near-black — the picture underneath is the thing being decided
+     about, so it should still be legible through a modal. */
+  --scrim: rgba(74, 58, 44, .42);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  /* Flat, not a gradient — the "wall" behind the frame is meant to read as one
-     calm, even colour so the picture and the cannon are the only thing the
-     eye has to work at. */
-  background: var(--bg);
+  /* Flat, not a gradient — the surface behind the frame is meant to read as
+     one calm, even colour so the picture and the cannon are the only thing
+     the eye has to work at. */
+  background: var(--wall);
   color: var(--ink);
-  font-family: "Super Pandora", Arial, Helvetica, sans-serif;
+  /* Nunito carries running text and anything under ~13px; Baloo 2 (below) is
+     applied by role rather than globally, because its tight rounded forms
+     close up at label sizes. Both are self-hosted at build time by vinext's
+     Google-fonts plugin — see the comment in layout.tsx. */
+  font-family: var(--font-body), "Nunito", system-ui, -apple-system, Arial, sans-serif;
   overflow: hidden;
   /* Phones paint a translucent highlight over the whole box of whatever was
      tapped. Inherited, so one declaration covers every button and drag zone. */
   -webkit-tap-highlight-color: transparent;
+}
+/* The display face, by role rather than by element: headings, every control
+   label, and every number that changes. Anything that is prose or a micro
+   label stays on the body face. */
+h1, h2, h3, button, strong, b, .hub-play-btn, .settings-row-label, .settings-select,
+.daily-login-label, .shop-item-owned, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
+  font-family: var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
 }
 button { font: inherit; -webkit-tap-highlight-color: transparent; }
 
@@ -67,7 +172,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .loading-screen {
   position: fixed; z-index: 100; inset: 0; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-end;
-  background: #5dd4d9;
+  background: #aedee4;
   transition: opacity .34s ease;
 }
 .loading-screen.is-done { opacity: 0; pointer-events: none; }
@@ -78,9 +183,13 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   text-align: center;
 }
 .loading-text {
-  margin: 0 0 14px; color: #334451;
-  font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 900;
-  letter-spacing: .22em;
+  margin: 0 0 14px; color: #6b5644;
+  /* --font-display is set on <html> by layout.tsx, so the variable is
+     available from the first paint — but the .woff2 behind it may not have
+     landed yet, which is what the Arial fallback is still here for. */
+  font-family: var(--font-display), Arial, Helvetica, sans-serif;
+  font-size: 15px; font-weight: 700;
+  letter-spacing: .18em;
 }
 /* Three dots that come and go in sequence, so the line reads as working even
    while the bar is between checkpoints. */
@@ -95,12 +204,12 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .loading-text i:nth-of-type(3) { animation-delay: .4s; }
 .loading-track {
   height: 10px; margin: 0 auto; max-width: 260px; overflow: hidden;
-  border: 2px solid #ffffff; border-radius: 999px;
-  background: rgba(255,255,255,.5);
+  border: 2px solid #fffbf0; border-radius: 999px;
+  background: rgba(255, 251, 240, .55);
 }
 .loading-fill {
   display: block; height: 100%; width: var(--loading-progress, 10%);
-  border-radius: 999px; background: #41c138;
+  border-radius: 999px; background: #8fcb6b;
   transition: width .32s cubic-bezier(.3,.9,.3,1);
 }
 @keyframes loading-dot { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
@@ -126,29 +235,43 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   min-height: 680px;
   overflow: hidden;
   border: none;
-  border-radius: 34px;
-  /* One flat pastel fill, not a gradient — the 3D canvas is transparent
-     wherever nothing is drawn (renderer-pool.ts creates it with alpha:true),
-     so whatever open sky shows above and around the picture and the cannon is
+  border-radius: var(--r-frame);
+  /* One flat fill, not a gradient — the 3D canvas is transparent wherever
+     nothing is drawn (renderer-pool.ts creates it with alpha:true), so
+     whatever open sky shows above and around the picture and the cannon is
      this exact colour. See SandCannonEngine's fog for the matching change so
-     the frame and cannon fade into this same blue as they recede, instead of
-     into a colour of their own. */
+     the frame and cannon fade into this same colour as they recede, instead
+     of into a colour of their own. */
   background: var(--bg);
+  /* Only at tablet/desktop width, where the frame is a card resting on
+     `--wall` rather than the whole screen — the phone breakpoint below
+     clears it along with the corners. */
+  box-shadow: var(--shadow-modal);
   isolation: isolate;
+  /* Only this crossfades — gameplay's own `--bg` never animates, it is just
+     what `.is-hub` below transitions back to when Play is tapped. */
+  transition: background-color .4s ease;
 }
+/* The hub's own wall colour — a warm ivory instead of gameplay's sky, applied
+   for as long as `homeVisible` is true in SandGame.tsx (which already
+   outlives `playing` by one exit-animation beat, see its own comment) so this
+   fades out in step with the hub screen leaving rather than cutting the
+   instant Play is tapped. */
+.game-frame.is-hub { background: var(--hub-navy); }
 /* Phone-width viewports: full-bleed, not a rounded card floating with a
-   coloured gutter around it. `.page-shell`'s 18px padding and
-   `.game-frame`'s 34px corners exist for a wider window (tablet/desktop),
-   where the frame no longer spans the whole viewport on its own and reads
-   as a phone mockup sitting on a background — on an actual phone that same
-   chrome just wastes screen and looks like the game failed to fill the
-   screen rather than a deliberate frame. The breakpoint (480px) sits just
-   above `.game-frame`'s own 430px cap plus its old padding, so this covers
-   every phone in portrait without touching the tablet/desktop look at all. */
+   coloured gutter around it. `.page-shell`'s 18px padding, `.game-frame`'s
+   corners and its shadow exist for a wider window (tablet/desktop), where
+   the frame no longer spans the whole viewport on its own and reads as a
+   phone mockup sitting on a background — on an actual phone that same chrome
+   just wastes screen and looks like the game failed to fill the screen
+   rather than a deliberate frame. The breakpoint (480px) sits just above
+   `.game-frame`'s own 430px cap plus its old padding, so this covers every
+   phone in portrait without touching the tablet/desktop look at all. */
 @media (max-width: 480px) {
   .page-shell { padding: 0; }
   .game-frame {
     border-radius: 0;
+    box-shadow: none;
     /* The wider-viewport height (`min(900px, calc(100dvh - 56px))`) leaves
        room on purpose for the card to float clear of the very top/bottom of
        a big screen — exactly the gap this breakpoint exists to remove, so
@@ -159,15 +282,29 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   }
 }
 
-/* A real panel background, not a light-on-dark glass tint — this floats
-   directly over the open sky above the frame with nothing else behind it. */
+/* A real panel, not a light-on-dark glass tint — this floats directly over
+   the open sky above the frame with nothing else behind it. A circle rather
+   than a rounded square: floating chrome buttons read softer round, and it
+   keeps them visually distinct from the rectangular cards they open. */
 .icon-button {
-  width: 36px; height: 36px; border: 2px solid var(--line); border-radius: 12px;
-  background: var(--panel); color: var(--ink); cursor: pointer; transition: background .2s, transform .2s;
+  width: 44px; height: 44px; border: 0; border-radius: 50%;
+  background: var(--panel); color: var(--ink); cursor: pointer;
+  display: grid; place-items: center; padding: 0;
+  transition: background .2s, transform .16s;
 }
 .icon-button:hover { background: var(--locked); }
-.icon-button:active { transform: scale(.94); }
-.icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Pressed = pushed into the page — a plain translateY, no shadow to collapse
+   under it now that no button in this file carries one. */
+.icon-button:active { transform: translateY(2px); }
+.icon-button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
+/* Every hand-drawn chrome icon in SandGame.tsx shares these stroke settings —
+   round caps and joins are most of what makes a line icon read as soft. */
+.icon-glyph {
+  display: block; width: 21px; height: 21px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
 /* ---- Settings menu ------------------------------------------------------ */
 /* Everything that is a menu rather than a live number — level pick, home,
    restart — collapses behind one button so the HUD reads as "one number, one
@@ -175,19 +312,19 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    button sits beside it rather than inside the menu: it is not a menu item,
    it is the one thing worth reaching without a tap-then-tap. */
 .settings-wrap {
-  position: absolute; z-index: 12; display: flex; gap: 8px;
+  /* Above `.hub-screen` (z-index 30) — the hub's own `.hub-tap`/`.hub-scrim`
+     are full-bleed buttons at that same tier, and used to sit over this
+     corner's Settings gear on the hub screen (`!playing`), swallowing every
+     tap meant for it. Only matters there: mid-play `.hub-screen` is not
+     mounted at all, so this button was already unobstructed. */
+  position: absolute; z-index: 32; display: flex; gap: 8px;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
-}
-.settings-button, .help-button, .gift-button {
-  width: 42px; height: 42px; font-size: 19px; line-height: 1;
-  display: grid; place-items: center;
 }
 /* The hub's right edge, vertically centred — deliberately NOT the top-right
    corner `.settings-wrap` occupies mid-play (see the JSX comment: sharing
    that spot read as the daily-login button overlapping the in-game settings
-   gear). Above `.hub-screen` (z-index 30) rather than `.settings-wrap`'s 12,
-   since unlike that one this has to read over the hub screen itself. */
+   gear). */
 .hub-gift-wrap {
   position: absolute; z-index: 31;
   top: 50%; right: max(14px, env(safe-area-inset-right));
@@ -198,69 +335,173 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: transparent; cursor: default;
 }
 .settings-menu {
-  position: absolute; z-index: 13; top: 50px; right: 0;
-  width: 212px; padding: 14px; display: flex; flex-direction: column; gap: 12px;
-  border: 2px solid var(--line); border-radius: 20px; background: var(--panel);
+  position: absolute; z-index: 13; top: 54px; right: 0;
+  width: 216px; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  border: 2px solid var(--line); border-radius: var(--r-lg); background: var(--panel);
+  box-shadow: var(--shadow-panel);
 }
 .settings-level { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .settings-level .level-name {
-  font-size: 14px; font-weight: 800; color: var(--ink);
+  font-size: 15px; font-weight: 700; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .settings-level .level-cleared { font-size: 11px; font-weight: 700; color: var(--muted); }
-.settings-levels { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-levels { display: flex; flex-wrap: wrap; gap: 7px; }
 .settings-levels button {
-  width: 26px; height: 26px; padding: 0; border: 2px solid var(--line); border-radius: 50%;
+  width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%;
   background: var(--locked); color: var(--muted);
-  font-size: 11px; font-weight: 800; line-height: 1; cursor: pointer;
-  transition: background .18s, color .18s, border-color .18s;
+  font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer;
+  transition: background .18s, color .18s, transform .16s;
 }
-.settings-levels button:hover { background: #bacfd3; }
-.settings-levels button.is-active {
-  border-color: var(--accent-line); background: var(--accent); color: var(--accent-ink);
-}
+.settings-levels button:hover { background: #e5d6bd; }
+.settings-levels button:active { transform: translateY(2px); }
+.settings-levels button.is-active { background: var(--accent); color: var(--accent-ink); }
 .settings-levels button:focus-visible,
 .settings-actions button:focus-visible, .settings-actions a:focus-visible {
   outline: 2px solid var(--accent-line); outline-offset: 2px;
 }
-.settings-actions { display: flex; flex-direction: column; gap: 6px; }
+.settings-actions { display: flex; flex-direction: column; gap: 8px; }
 .settings-actions button, .settings-actions a {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border: 2px solid var(--line); border-radius: 12px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 0; border-radius: var(--r-md);
   background: var(--locked); color: var(--ink);
   font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer;
-  transition: background .18s;
+  transition: background .18s, transform .16s;
 }
-.settings-actions button:hover, .settings-actions a:hover { background: #bacfd3; }
+.settings-actions button:hover, .settings-actions a:hover { background: #e5d6bd; }
+.settings-actions button:active, .settings-actions a:active { transform: translateY(2px); }
+.settings-actions .icon-glyph { width: 17px; height: 17px; flex: none; color: var(--muted); }
+
+/* ---- Unified Settings card ---------------------------------------------- */
+/* One Settings screen instead of two: the hub's own gear (shown in
+   `.settings-wrap` in place of the in-play help/menu pair while `!playing`)
+   and the in-play menu's own "Settings" row both open this same overlay —
+   see SandGame.tsx's `settingsOpen`. A cream card with a leaf-green header
+   band, floating over a warm dimmed backdrop. It used to be a navy card, the
+   last survivor of the hub's old navy theme, and against the sage wall and
+   cream panels everything else uses it read as another app's dialog.
+   Dev-only entries (the level editor) live in their own "GameDevOption"
+   section at the bottom rather than mixed in with player settings, so a
+   build without that section stays a clean player-facing screen. */
+.settings-screen {
+  position: absolute; z-index: 33; inset: 0; display: grid; place-items: center;
+  padding: 24px; background: var(--scrim); animation: overlay-in .22s ease-out both;
+}
+.settings-card {
+  width: 100%; max-width: 320px; max-height: 84%;
+  display: flex; flex-direction: column; overflow: hidden;
+  border-radius: var(--r-xl); border: 3px solid var(--line-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow-modal);
+  animation: result-pop .3s cubic-bezier(.2,.9,.24,1.3) both;
+}
+.settings-card-header {
+  position: relative; flex: none; padding: 16px 52px;
+  text-align: center; background: var(--accent);
+  border-bottom: 3px solid var(--accent-line);
+}
+.settings-card-header h2 {
+  margin: 0; font-size: 17px; font-weight: 800; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--accent-ink);
+}
+.settings-close {
+  position: absolute; top: 50%; right: 14px; transform: translateY(-50%);
+  width: 34px; height: 34px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 0; background: var(--panel); color: var(--accent-ink);
+  display: grid; place-items: center; transition: background .18s, transform .18s;
+}
+.settings-close:hover { background: var(--locked); }
+.settings-close:active { transform: translateY(calc(-50% + 2px)); }
+.settings-close .close-icon { width: 16px; height: 16px; }
+.settings-body {
+  flex: 1 1 auto; overflow-y: auto;
+  padding: 6px 20px calc(18px + env(safe-area-inset-bottom));
+}
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 15px 2px;
+}
+.settings-row:not(:last-child) { border-bottom: 2px solid var(--line); }
+.settings-row-label {
+  display: flex; align-items: center; gap: 11px;
+  font-size: 15px; font-weight: 700; color: var(--ink);
+}
+.settings-row-icon { flex: none; width: 19px; height: 19px; color: var(--muted); }
+/* A rounded track-and-knob switch, not the in-play dropdown's plain buttons —
+   with the knob's position (not colour alone) carrying the state so it still
+   reads at a glance for anyone who cannot rely on the green/oat contrast.
+   The inset shadow is the one place a shadow is used to say "recessed"
+   rather than "raised": the track is a groove the knob sits in. */
+.settings-toggle {
+  position: relative; flex: none; width: 54px; height: 32px; padding: 0; cursor: pointer;
+  border-radius: var(--r-pill); border: 0;
+  background: var(--locked);
+  transition: background .2s;
+}
+.settings-toggle::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px;
+  border-radius: 50%; background: var(--panel);
+  transition: transform .2s cubic-bezier(.4,1.4,.6,1);
+}
+.settings-toggle.is-on { background: var(--accent); }
+.settings-toggle.is-on::after { transform: translateX(22px); }
+/* Cosmetic only — there is no second language in the game yet, so this shows
+   the pill without pretending a switch here does anything. */
+.settings-select {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 8px 15px; border-radius: var(--r-pill); border: 2px solid var(--sky-line);
+  background: var(--sky); color: var(--sky-ink);
+  font-size: 13px; font-weight: 700; letter-spacing: .02em;
+  cursor: default; opacity: .85;
+}
+.settings-section-title {
+  margin: 18px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* Where the level editor and any future build-only tooling live, kept
+   visually apart (its own heading, a quieter card each) from the player
+   rows above rather than folded into the same list. */
+.settings-devlink {
+  display: flex; align-items: center; gap: 11px;
+  padding: 13px 15px; border-radius: var(--r-md); border: 0;
+  background: var(--locked); color: var(--ink); text-decoration: none;
+  font-size: 14px; font-weight: 700;
+  transition: background .18s, transform .16s;
+}
+.settings-devlink:hover { background: #e5d6bd; }
+.settings-devlink:active { transform: translateY(2px); }
+.settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
 
 /* ---- Top-left HUD stack ------------------------------------------------ */
 /* Coins sit above the ammo row, both hugging the same corner. Coins are
    z-indexed above .hub-screen (30) so the balance still reads on the home
-   screen, not just mid-play; the ammo row stays play-only underneath it. */
+   screen, not just mid-play; the ammo row stays play-only underneath it.
+   Both are now the same cream pill at the same height — they used to be two
+   different chips (a dark navy one and a white one) stacked on each other,
+   which read as two unrelated widgets rather than one HUD corner. */
 .hud-top-left {
   position: absolute; z-index: 31;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   left: max(14px, env(safe-area-inset-left));
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-.coin-badge {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 14px 6px 8px; border: 2px solid var(--line); border-radius: 999px;
-  background: #ffe88e;
+.coin-badge, .shots-badge {
+  display: flex; align-items: center; gap: 7px; height: 36px;
+  padding: 0 15px 0 9px; border: 2px solid var(--line); border-radius: var(--r-pill);
+  background: var(--panel);
+  box-shadow: var(--shadow-chip);
 }
-.coin-icon { width: 18px; height: 18px; flex: none; color: #c59110; }
-.coin-badge strong {
-  font-size: 19px; font-weight: 900; letter-spacing: -.02em;
+.coin-badge strong, .shots-badge strong {
+  font-size: 17px; font-weight: 800; letter-spacing: -.01em;
   font-variant-numeric: tabular-nums; color: var(--ink);
 }
+.coin-icon { width: 19px; height: 19px; flex: none; color: var(--gold-line); }
+.coin-badge .coin-icon { color: var(--gold); }
 
 /* ---- Ammo HUD ---------------------------------------------------------- */
 /* §23: just the number that changes every shot, small and to the edge —
    a casual-game HUD reads at a glance, not as a panel to study. */
 .shots-badge {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 14px 6px 8px; border: 2px solid var(--line); border-radius: 999px;
-  background: var(--panel);
   /* Remounted (via a React `key`) the instant a shot leaves the barrel
      (`SHOT_FIRED`), same technique as `.shots-icon`'s own pop just below —
      so the whole badge gets a little jolt on every shot, not just when the
@@ -268,15 +509,14 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   animation: shots-badge-shake .3s ease-out;
 }
 .shots-icon {
-  width: 14px; height: 14px; flex: none; border-radius: 50%;
+  width: 15px; height: 15px; flex: none; border-radius: 50%;
   background: var(--gold);
+  /* A single inset band along the bottom so the bullet reads as a little
+     sphere rather than a flat dot — the only decoration on it. */
+  box-shadow: inset 0 -2px 0 rgba(122, 96, 70, .18);
   /* Remounted (via a React `key`) every time the loaded colour actually
      changes, so this plays fresh each time rather than once ever. */
   animation: shots-icon-pop .42s cubic-bezier(.34,1.56,.64,1);
-}
-.shots-badge strong {
-  font-size: 19px; font-weight: 900; letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums; color: var(--ink);
 }
 
 /* ---- Scene and controls ------------------------------------------------ */
@@ -305,6 +545,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .scene-host { position: absolute; inset: 0; z-index: 0; }
 .scene-host canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
 
+/* Every size in this block (26 / 128 / 25px) is tuned against
+   AIM_CURSOR_EDGE_MARGIN and AIM_OUTSIDE_ZONE_CANCEL_MS in
+   SandCannonEngine.ts — the cozy pass recoloured it and left the geometry
+   alone on purpose. */
 .aim-crosshair {
   position: absolute; z-index: 5; left: 50%; top: 50%; width: 26px; height: 26px;
   opacity: 0; visibility: hidden; transform: translate(-50%,-50%) scale(.84); pointer-events: none;
@@ -312,7 +556,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .aim-crosshair::before, .aim-crosshair::after {
   content: ""; position: absolute; left: 50%; top: 50%; box-sizing: border-box;
-  border: 2px solid var(--ink); border-radius: 2px; background: #fff;
+  border: 2px solid var(--ink); border-radius: 3px; background: var(--panel);
   transform: translate(-50%,-50%);
 }
 .aim-crosshair::before { width: 26px; height: 6px; }
@@ -322,7 +566,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   border: 2px solid var(--ink); border-radius: 50%;
   /* Tinted with whatever sand is under the sight. It says what is being aimed
      at, never whether that is the right colour to spend the bullet on. */
-  background: var(--aim-color, #fff);
+  background: var(--aim-color, var(--panel));
   transform: translate(-50%,-50%);
 }
 .aim-crosshair.is-visible { opacity: .28; visibility: visible; transform: translate(-50%,-50%) scale(.86); }
@@ -338,28 +582,31 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   touch-action: none; cursor: grab;
 }
 .aim-zone.is-aiming { cursor: grabbing; }
+/* Warm whites rather than pure white: these sit over the sky and the picture,
+   and a neutral white ring on a warm scene is the one thing that would read
+   as belonging to a different UI. */
 .aim-joystick {
   position: absolute; left: var(--joystick-x); top: var(--joystick-y); width: 128px; height: 128px;
-  border: 1px solid rgba(255,255,255,.34); border-radius: 50%; background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255, 251, 240, .5); border-radius: 50%; background: rgba(255, 251, 240, .08);
   opacity: 0; visibility: hidden; transform: translate(-50%,-50%); pointer-events: none;
   transition: opacity .08s linear;
 }
 .aim-joystick::after {
   content: ""; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px;
-  border: 1px dashed rgba(255,255,255,.2); border-radius: 50%; background: rgba(10,12,21,.18);
+  border: 1px dashed rgba(255, 251, 240, .34); border-radius: 50%; background: rgba(92, 74, 58, .2);
   transform: translate(-50%,-50%);
 }
 .aim-joystick-knob {
   position: absolute; z-index: 1; left: 50%; top: 50%; width: 25px; height: 25px;
   display: grid; place-items: center;
-  border: 1px solid rgba(255,255,255,.46); border-radius: 50%; background: rgba(255,255,255,.5);
-  color: #fff; font-size: 14px; line-height: 1;
+  border: 1px solid rgba(255, 251, 240, .6); border-radius: 50%; background: rgba(255, 251, 240, .58);
+  color: var(--panel); font-size: 14px; line-height: 1;
   transform: translate(calc(-50% + var(--joystick-dx)),calc(-50% + var(--joystick-dy)));
 }
-.aim-zone.is-aiming .aim-joystick { opacity: .48; visibility: visible; }
-.aim-zone.is-cancelled .aim-joystick { opacity: .32; }
-.aim-zone.is-cancelled .aim-joystick::after { border-color: rgba(255,255,255,.42); background: rgba(255,255,255,.07); }
-.aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255,255,255,.16); }
+.aim-zone.is-aiming .aim-joystick { opacity: .5; visibility: visible; }
+.aim-zone.is-cancelled .aim-joystick { opacity: .34; }
+.aim-zone.is-cancelled .aim-joystick::after { border-color: rgba(255, 251, 240, .5); background: rgba(255, 251, 240, .1); }
+.aim-zone.is-cancelled .aim-joystick-knob { background: rgba(255, 251, 240, .2); }
 .aim-zone.is-cancelled .aim-joystick-knob::after { content: "×"; }
 /* The drag has wandered off `.scene-host` and is sitting in the ~1.7s grace
    window before it auto-cancels (`AIM_OUTSIDE_ZONE_CANCEL_MS`). A warm tint on
@@ -381,12 +628,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    drag it is teaching lands on `.aim-zone` underneath, not on this.
    Deliberately no backing card or panel behind the glyph (an earlier pass had
    one and it read as a blob sitting on top of the picture) — the hand and the
-   two rings are drawn with their own solid ink outline, the same "sticker"
-   contrast every other flat icon in this file uses instead of a shadow, so
-   they read fine directly against the scene without one. */
+   two rings carry their own solid ink outline, the same contrast every other
+   flat icon in this file uses, so they read fine against the scene alone. */
 .ftue-gesture {
   position: absolute; z-index: 6; left: 50%; top: 56%; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
   pointer-events: none;
 }
 .ftue-gesture-glyph {
@@ -405,7 +651,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .ftue-gesture-ring-a { animation: ftue-gesture-ring-a 3.2s ease-in-out infinite; }
 .ftue-gesture-ring-b { animation: ftue-gesture-ring-b 3.2s ease-in-out infinite; }
 /* Palm, thumb, one pointing finger — three rounded primitives, same
-   construction as `BoosterIcon`'s circle-and-rect icons above, rather than a
+   construction as `BoosterIcon`'s circle-and-rect icons, rather than a
    hand-drawn silhouette. `transform` (not an SVG attribute) animates the
    whole hand so the same keyframes can carry both the translate and the
    press/release squash together. */
@@ -419,7 +665,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .ftue-gesture-caption {
   font-size: 13px; font-weight: 700; white-space: nowrap;
   color: var(--ink); background: var(--panel);
-  border: 2px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  border: 2px solid var(--line); border-radius: var(--r-pill); padding: 6px 15px;
+  box-shadow: var(--shadow-chip);
 }
 @keyframes ftue-gesture-ring-a {
   0%, 4% { opacity: .3; }
@@ -458,51 +705,50 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .booster-hud {
   position: absolute; z-index: 9; left: 50%; top: var(--booster-hud-y, 65%);
   transform: translate(-50%, -50%);
-  display: flex; align-items: center; justify-content: center; gap: 12px;
-  width: min(64%, 240px); padding: 5px 18px;
-  border-radius: 999px; border: 2px solid var(--line); background: var(--panel);
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  width: min(64%, 244px); padding: 6px 18px;
+  border-radius: var(--r-pill); border: 2px solid var(--line); background: var(--panel);
+  box-shadow: var(--shadow-chip);
 }
 .booster-btn {
-  width: 36px; height: 36px; border-radius: 50%; flex: none;
-  border: 2px solid var(--line); background: var(--locked); color: var(--ink);
+  width: 38px; height: 38px; border-radius: 50%; flex: none;
+  border: 0; background: var(--locked); color: var(--ink);
   display: grid; place-items: center; padding: 0; cursor: pointer; position: relative;
-  transition: background .18s, border-color .18s, opacity .18s, transform .18s;
+  transition: background .18s, opacity .18s, transform .16s;
 }
-.booster-btn:active:not(:disabled) { transform: scale(.9); }
+.booster-btn:active:not(:disabled) { transform: translateY(2px); }
 .booster-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 /* Spec §3: locked, not hidden — the other booster is armed and this one
    cannot respond until it is fired. `disabled` already blocks the tap. */
-.booster-btn:disabled { opacity: .38; cursor: default; }
+.booster-btn:disabled { opacity: .4; cursor: default; }
 .booster-icon { display: block; width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Radius Overcharge armed: the same blue as the chamber/muzzle overlay ring
    (BOOSTER_RADIUS_RING_HEX in SandCannonEngine.ts — kept in sync by hand,
-   there is no shared source between a hex number and a CSS colour). */
+   there is no shared source between a hex number and a CSS colour). Colour
+   coding now lives entirely in the flat background — no border, no ring —
+   since the fill is on and no longer needs a border to read as "armed". */
 .booster-btn.is-radius.is-armed {
-  border-color: #2581b4; color: #17516f;
-  background: color-mix(in srgb, #27b5ff 24%, var(--panel));
+  color: #23557f;
+  background: #9ecbf5;
   animation: booster-armed-pulse 1s ease-in-out infinite;
 }
-/* Prism Shot armed: a spinning seven-band ring behind the button, echoing
-   PRISM_SPECTRUM_HEX — same hand-kept-in-sync caveat as above. */
+/* Prism Shot armed: same flat-fill treatment, no border and no gradient
+   ring — just a flat lilac in place of the old spinning seven-band ring. */
 .booster-btn.is-prism.is-armed {
-  border-color: #8338ed; color: #522f92;
+  color: #5b3f8f;
+  background: #d3bcf7;
   animation: booster-armed-pulse 1s ease-in-out infinite;
-}
-.booster-btn.is-prism.is-armed::before {
-  content: ""; position: absolute; inset: -4px; z-index: -1; border-radius: 50%;
-  background: conic-gradient(from 0deg, #ff2541, #ff750e, #ffb70e, #31b950, #178ff3, #3950e3, #8338ed, #ff2541);
-  animation: booster-prism-spin 2.4s linear infinite;
 }
 /* Spec §4's charge-count badge, for real now the wallet is finite
    (`economy.ts`) — a small filled pill rather than the bare dot other
    badges in this HUD use, because a naked number needs a background to read
    against whatever is behind the booster tray. */
 .booster-badge {
-  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
-  border-radius: 999px; border: 1.5px solid var(--panel);
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: var(--r-pill); border: 2px solid var(--panel);
   background: var(--gold); color: var(--gold-ink);
-  font-size: 10px; font-weight: 900; line-height: 15px; text-align: center;
+  font-size: 11px; font-weight: 800; line-height: 14px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -513,15 +759,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .settle-badge {
   /* Tracks the frame's own move up (FRAME_CENTER_Y in SandCannonEngine.ts) so
      the two shift together instead of the dots staying pinned to the old
-     gap — see the reserved band note on .scene-wrap below. */
+     gap — see the reserved band note on .scene-wrap above. */
   position: absolute; z-index: 7; top: 6px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px; pointer-events: none;
 }
 .settle-badge i {
-  /* Dark, not --accent: these sit right over the open sky above the frame
-     with no panel behind them, and that sky is pastel-light — a light dot on
+  /* Warm brown, not --accent: these sit right over the open sky above the
+     frame with no panel behind them, and that sky is light — a pale dot on
      it would be invisible instead of just quiet. */
-  width: 7px; height: 7px; border-radius: 50%; background: var(--ink);
+  width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
   animation: settle-dot-bounce 1s ease-in-out infinite both;
 }
 .settle-badge i:nth-child(2) { animation-delay: .15s; }
@@ -530,11 +776,12 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .sand-toast {
   /* In the clear band above the frame. Anywhere lower and it covers the sand
      the message is about. */
-  position: absolute; z-index: 8; left: 50%; top: 44px;
+  position: absolute; z-index: 8; left: 50%; top: 46px;
   transform: translateX(-50%);
-  max-width: 84%; padding: 8px 14px; border-radius: 999px;
+  max-width: 84%; padding: 9px 16px; border-radius: var(--r-pill);
   border: 2px solid var(--line); background: var(--panel);
-  color: var(--ink); font-size: 11px; font-weight: 700; text-align: center;
+  color: var(--ink); font-size: 12px; font-weight: 700; text-align: center;
+  box-shadow: var(--shadow-chip);
   pointer-events: none; animation: toast-in .22s ease-out both;
 }
 /* Kept in colour on purpose — warn/good are functional feedback, and the one
@@ -546,79 +793,87 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* ---- Result ------------------------------------------------------------ */
 .result-screen {
   position: absolute; z-index: 30; inset: 0; display: grid; place-items: center;
-  padding: 24px; background: rgba(58,77,92,.45); animation: overlay-in .24s ease-out both;
+  padding: 24px; background: var(--scrim); animation: overlay-in .24s ease-out both;
 }
 .result-card {
-  width: 100%; max-width: 300px; padding: 26px 22px; text-align: center;
-  border: 2px solid var(--line); border-radius: 26px;
+  width: 100%; max-width: 304px; padding: 28px 24px; text-align: center;
+  border: 3px solid var(--line-strong); border-radius: var(--r-xl);
   background: var(--panel);
+  box-shadow: var(--shadow-modal);
   animation: result-pop .34s cubic-bezier(.2,.9,.24,1.3) both;
 }
-.result-card h2 { margin: 0 0 10px; font-size: 21px; letter-spacing: .02em; color: var(--ink); }
-.result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.result-card h2 { margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--ink); }
+.result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 /* The gold a WIN just paid — sits between the result line and the buttons,
    its own row rather than folded into the `<p>` above so the number reads
    like a receipt line, not prose. */
 .result-reward {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
   margin: -8px 0 18px; font-size: 15px; color: var(--ink);
 }
-.result-reward .coin-icon { width: 18px; height: 18px; color: #c59110; }
+.result-reward .coin-icon { width: 19px; height: 19px; color: var(--gold-line); }
 .result-reward strong { font-variant-numeric: tabular-nums; color: var(--accent-line); }
 /* A replayed win: no number to show, said outright instead of just omitting
    the row (see the comment at the call site). Smaller and muted — a note,
    not a receipt. */
 .result-reward.is-replay { font-size: 12px; color: var(--muted); }
+/* Flat leaf green — no border, gradient or shadow on any button in this
+   pass, the primary result action included. */
 .result-card button {
-  width: 100%; padding: 13px; border: 2px solid var(--accent-line); border-radius: 16px;
-  background: var(--accent); color: var(--accent-ink);
-  font-size: 14px; font-weight: 900; letter-spacing: .04em; cursor: pointer;
+  width: 100%; padding: 14px; border: 0; border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 15px; font-weight: 800; letter-spacing: .03em; cursor: pointer;
+  transition: transform .16s;
 }
-.result-card button:active { transform: scale(.98); }
-.result-actions { display: grid; gap: 8px; }
-/* "Home" leaves the level the way "quit" does in the reference — coral, not
-   the neutral grey a merely-secondary action would get. */
+.result-card button:active { transform: translateY(3px); }
+.result-actions { display: grid; gap: 10px; }
+/* "Home" leaves the level the way "quit" does — coral, not the neutral grey a
+   merely-secondary action would get. */
 .result-card button.is-quiet {
-  background: var(--danger); color: var(--danger-ink);
-  border: 2px solid var(--danger-line); font-weight: 800;
+  background: var(--danger);
+  color: var(--danger-ink);
+  border: 0; font-weight: 700;
 }
 
 /* ---- Tutorial overlay ---------------------------------------------------- */
 /* Reuses `.result-screen`/`.result-card` for the backdrop and pop-in — it is
    the same "one card, centred, everything else locked out" shape — with its
    own body: a short numbered read instead of a one-line result. */
-.tutorial-card { max-width: 320px; text-align: left; }
+.tutorial-card { max-width: 324px; text-align: left; }
 .tutorial-card h2 { text-align: center; }
 .tutorial-steps {
-  margin: 0 0 20px; padding-left: 22px; display: grid; gap: 10px;
-  color: var(--ink); font-size: 13px; line-height: 1.5;
+  margin: 0 0 20px; padding-left: 22px; display: grid; gap: 11px;
+  color: var(--ink); font-size: 13px; line-height: 1.55;
 }
-.tutorial-steps li::marker { color: var(--muted); font-weight: 800; }
+.tutorial-steps li::marker { color: var(--accent-line); font-weight: 800; }
 
 /* ---- Daily login overlay ------------------------------------------------- */
 /* Also `.result-screen`/`.result-card` underneath, same reasoning as the
    tutorial overlay above — a seven-chip strip standing in for the numbered
    steps. */
-.daily-login-card { max-width: 320px; }
+.daily-login-card { max-width: 324px; }
 .daily-login-strip {
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
   margin: 0 0 16px;
 }
 .daily-login-day {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 7px 2px; border-radius: 12px; border: 2px solid var(--line); background: var(--locked);
+  padding: 8px 2px; border-radius: var(--r-sm); border: 2px solid var(--line); background: var(--locked);
 }
-.daily-login-day .coin-icon { width: 14px; height: 14px; color: #c59110; }
+.daily-login-day .coin-icon { width: 15px; height: 15px; color: var(--gold-line); }
 .daily-login-day strong { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); }
-.daily-login-label { font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.daily-login-label { font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
 /* Already claimed this cycle — flattened and quieted rather than removed, so
    the strip still reads as one continuous week. */
 .daily-login-day.is-past { opacity: .55; }
 /* The day the modal opened for — the one chip that can still be claimed. */
 .daily-login-day.is-today {
-  border-color: var(--accent-line); background: #b8e9b6;
+  border-color: var(--accent-line); background: var(--accent);
   animation: booster-armed-pulse 1.6s ease-in-out infinite;
 }
+.daily-login-day.is-today strong { color: var(--accent-ink); }
+.daily-login-day.is-today .daily-login-label { color: var(--accent-ink); opacity: .8; }
 .daily-login-day.is-today.is-past { animation: none; }
 
 /* ---- Home screen ------------------------------------------------------- */
@@ -634,7 +889,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-tap, .hub-scrim {
   position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
   display: flex; align-items: flex-end; justify-content: center;
-  padding-bottom: calc(var(--hub-nav-height) + 26px);
+  padding-bottom: calc(var(--hub-nav-height) + 28px);
   color: var(--ink);
 }
 /* Flat and out of the way — the Play button is a solid opaque pill with its
@@ -642,30 +897,33 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-tap { background: none; }
 /* A section is open, so the picture steps back and stops inviting a tap — a
    deliberate dimming of the picture itself, independent of the wall behind
-   it, so this stays dark (ink-tinted, not pure black) regardless of the page
+   it, so this stays dark (warm-tinted, not pure black) regardless of the page
    background. */
-.hub-scrim { background: rgba(58,77,92,.55); cursor: default; }
+.hub-scrim { background: rgba(74, 58, 44, .5); cursor: default; }
 .hub-play-hint { display: block; }
-/* A real button rather than a glowing label: rounded, flat pastel green, and
-   outlined in a darker shade of the same hue for edge definition instead of a
-   drop shadow — the "sticker" look the rest of the chrome uses. Sits still —
-   no pulse — until the player actually taps it. */
+/* The one thing on the hub that should pop: flat coral against the cream
+   wall. No border, gradient or shadow — every button in this pass is a flat
+   colour shape, this one included, so it stands out by hue alone.
+   `hub-play-breathe` below is a 2.5% swell over nearly three seconds, closer
+   to something resting than to something demanding attention. */
 .hub-play-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 16px 40px; border-radius: 999px;
-  background: var(--accent); border: 3px solid var(--accent-line);
-  color: var(--accent-ink); font-size: 16px; font-weight: 900; letter-spacing: .04em;
+  padding: 18px 48px; border-radius: var(--r-pill);
+  background: #ffcad3; border: 0;
+  color: #725653; font-size: 17px; font-weight: 800; letter-spacing: .03em;
+  animation: hub-play-breathe 2.8s ease-in-out infinite;
 }
-.hub-tap:focus-visible { outline: 2px solid var(--ink); outline-offset: -8px; }
-/* A small flat chip rather than a shadow-lifted headline — it needs to read
-   over whatever colour of picture happens to sit behind it without a drop
-   shadow to fall back on. */
+.hub-tap:active .hub-play-btn { transform: translateY(3px); animation: none; }
+.hub-tap:focus-visible { outline: 2px solid var(--panel); outline-offset: -8px; }
+/* A small flat chip rather than a lifted headline — it needs to read over
+   whatever colour of picture happens to sit behind it. */
 .hub-level-name {
   position: absolute; z-index: 1; top: max(30px, calc(env(safe-area-inset-top) + 22px)); left: 50%;
   transform: translateX(-50%);
-  margin: 0; padding: 8px 20px; text-align: center; pointer-events: none;
-  border-radius: 999px; background: var(--panel); border: 2px solid var(--line);
-  font-size: 18px; font-weight: 800; letter-spacing: -.01em; color: var(--ink);
+  margin: 0; padding: 9px 22px; text-align: center; pointer-events: none;
+  border-radius: var(--r-pill); background: var(--panel); border: 2px solid var(--line);
+  font-size: 17px; font-weight: 800; letter-spacing: -.01em; color: var(--ink);
+  box-shadow: var(--shadow-chip);
   animation: hub-enter .34s cubic-bezier(.2,.8,.2,1) both;
 }
 
@@ -679,36 +937,39 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-screen.is-leaving { pointer-events: none; }
 .hub-screen.is-leaving .hub-tap { animation: hub-tap-exit .46s ease-in forwards; }
 .hub-screen.is-leaving .hub-play-btn { animation: hub-play-btn-exit .4s cubic-bezier(.5,0,1,1) forwards; }
-.hub-screen.is-leaving .hub-nav { animation: hub-nav-exit .44s cubic-bezier(.4,0,1,.7) forwards; }
+.hub-nav.is-leaving { animation: hub-nav-exit .44s cubic-bezier(.4,0,1,.7) forwards; }
 
 /* A section's contents sit above the bar that opened them, never behind it. */
 .hub-panel {
   position: absolute; z-index: 2; left: 14px; right: 14px;
-  bottom: calc(var(--hub-nav-height) + 14px);
-  max-height: 54%; overflow: auto; padding: 16px 16px 18px;
-  border: 2px solid var(--line); border-radius: 24px;
+  bottom: calc(var(--hub-nav-height) + 16px);
+  max-height: 54%; overflow: auto; padding: 18px 18px 20px;
+  border: 2px solid var(--line); border-radius: var(--r-lg);
   background: var(--panel);
+  box-shadow: var(--shadow-panel);
   animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
-.hub-panel h3 { margin: 0 0 12px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+.hub-panel h3 { margin: 0 0 14px; font-size: 15px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
 .hub-panel.is-empty { text-align: center; }
-.hub-panel.is-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.hub-panel.is-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .hub-panel-note {
   margin-top: 10px !important; color: var(--accent-line) !important;
-  font-size: 11px !important; font-weight: 900; letter-spacing: .12em; text-transform: uppercase;
+  font-size: 11px !important; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
 }
 
 .hub-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
 .hub-gallery button {
-  display: grid; justify-items: center; gap: 7px; padding: 9px 7px; cursor: pointer;
-  border: 2px solid var(--line); border-radius: 16px;
+  display: grid; justify-items: center; gap: 8px; padding: 10px 8px; cursor: pointer;
+  border: 0; border-radius: var(--r-md);
   background: var(--locked); color: var(--ink);
-  transition: background .18s, border-color .18s, transform .18s;
+  transition: background .18s, transform .18s;
 }
-.hub-gallery button:hover { background: #bacfd3; transform: translateY(-2px); }
-.hub-gallery button.is-active { border-color: var(--accent-line); background: #b8e9b6; }
+.hub-gallery button:hover { background: #e5d6bd; transform: translateY(-2px); }
+.hub-gallery button:active { transform: translateY(2px); }
+.hub-gallery button.is-active { background: var(--accent); }
+.hub-gallery button.is-active b { color: var(--accent-ink); }
 .hub-gallery button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
-.hub-gallery b { font-size: 11px; font-weight: 800; text-align: center; line-height: 1.25; }
+.hub-gallery b { font-size: 11px; font-weight: 700; text-align: center; line-height: 1.3; }
 
 /* ---- Shop ---------------------------------------------------------------- */
 /* One row per booster: icon, name/blurb/owned-count, and a price button —
@@ -716,38 +977,41 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    menu items, widened into a card since a price needs more room than a
    label. */
 .shop-balance {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  margin: 0 0 14px; font-size: 16px; font-weight: 900; color: var(--ink);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: 0 0 14px; font-size: 17px; font-weight: 800; color: var(--ink);
 }
-.shop-balance .coin-icon { width: 18px; height: 18px; color: #c59110; }
+.shop-balance .coin-icon { width: 19px; height: 19px; color: var(--gold-line); }
 .shop-list { display: flex; flex-direction: column; gap: 10px; }
 .shop-item {
-  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
-  border: 2px solid var(--line); border-radius: 18px; background: var(--locked);
+  display: flex; align-items: center; gap: 12px; padding: 11px 13px;
+  border: 2px solid var(--line); border-radius: var(--r-md); background: var(--locked);
+  box-shadow: var(--shadow-chip);
 }
 .shop-item-icon {
-  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  flex: none; width: 42px; height: 42px; border-radius: 50%;
   display: grid; place-items: center; background: var(--panel); border: 2px solid var(--line);
 }
 .shop-item-icon .booster-icon { width: 21px; height: 21px; }
 /* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
    here is recognisably the same thing armed in the HUD tray. */
-.shop-item-icon.is-radius { color: #17516f; border-color: #2581b4; }
-.shop-item-icon.is-prism { color: #522f92; border-color: #8338ed; }
+.shop-item-icon.is-radius { color: #23557f; border-color: #4a95dd; }
+.shop-item-icon.is-prism { color: #5b3f8f; border-color: #a07be8; }
 .shop-item-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.shop-item-info b { font-size: 14px; color: var(--ink); }
-.shop-item-desc { font-size: 11px; color: var(--muted); line-height: 1.35; }
-.shop-item-owned { font-size: 11px; font-weight: 800; color: var(--accent-line); }
+.shop-item-info b { font-size: 14px; font-weight: 700; color: var(--ink); }
+.shop-item-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.shop-item-owned { font-size: 11px; font-weight: 700; color: var(--accent-line); }
 .shop-buy-btn {
   flex: none; display: flex; align-items: center; gap: 5px;
-  padding: 9px 14px; border-radius: 14px; border: 2px solid var(--accent-line);
-  background: var(--accent); color: var(--accent-ink);
-  font-size: 13px; font-weight: 900; cursor: pointer; transition: transform .16s, opacity .16s;
+  padding: 10px 15px; border-radius: var(--r-sm); border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px; font-weight: 800; cursor: pointer;
+  transition: transform .16s, opacity .16s;
 }
 .shop-buy-btn .coin-icon { width: 15px; height: 15px; color: inherit; }
-.shop-buy-btn:active:not(:disabled) { transform: scale(.95); }
+.shop-buy-btn:active:not(:disabled) { transform: translateY(3px); }
 .shop-buy-btn:disabled {
-  border-color: var(--line); background: var(--panel); color: var(--muted);
+  background: var(--panel); color: var(--muted);
   opacity: .7; cursor: default;
 }
 
@@ -767,27 +1031,28 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: transparent; pointer-events: none;
   animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
-.skin-bar {
-  position: relative; z-index: 1; pointer-events: none;
-  display: flex; justify-content: flex-end;
-  padding: max(var(--hud-inset), env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 0 0;
-}
-.skin-close {
-  pointer-events: auto;
-  width: 38px; height: 38px; border-radius: 50%;
-  border: 2px solid var(--line); background: var(--panel); color: var(--ink);
-  display: grid; place-items: center; cursor: pointer; transition: background .18s, transform .18s;
-}
-.skin-close:hover { background: var(--locked); }
-.skin-close:active { transform: scale(.92); }
 .close-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
+/* The title used to be dark text sitting straight on the hub's old navy
+   wall, so the name got its own cream chip (the same one `.hub-level-name`
+   uses) and the tagline stayed as light text directly on the wall, where a
+   single line at 13px still read cleanly against that dark background. The
+   wall is a cream now (see `--hub-navy`'s own comment) — cream text on a
+   cream wall would be unreadable, so the tagline sits in dark ink instead.
+   No top padding of its own any more — it used to share a row with
+   `.skin-bar`'s close button, now gone, so it just starts at the frame's own
+   top edge under the coin badge. */
 .skin-heading {
   position: relative; z-index: 1; pointer-events: none;
-  margin: 6px 0 0; padding: 0 24px; text-align: center;
+  margin: max(var(--hud-inset), env(safe-area-inset-top)) 0 0; padding: 0 24px; text-align: center;
 }
-.skin-heading h2 { margin: 0; font-size: 22px; font-weight: 900; color: var(--ink); }
-.skin-heading p { margin: 4px 0 0; font-size: 13px; font-weight: 700; color: var(--muted); }
+.skin-heading h2 {
+  display: inline-block; margin: 0; padding: 7px 20px;
+  border-radius: var(--r-pill); background: var(--panel); border: 2px solid var(--line);
+  box-shadow: var(--shadow-chip);
+  font-size: 20px; font-weight: 800; color: var(--ink);
+}
+.skin-tagline { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--ink); }
 
 /* Deliberately empty: the rig in the middle is drawn by the engine behind
    this screen, not by anything in here — this is just the flex space that
@@ -797,45 +1062,67 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 
 .skin-equip {
   pointer-events: auto;
-  align-self: center; margin-bottom: 16px;
-  padding: 12px 40px; border-radius: 999px;
-  background: var(--accent); border: 3px solid var(--accent-line); color: var(--accent-ink);
-  font-size: 15px; font-weight: 900; letter-spacing: .04em; cursor: pointer;
+  align-self: center; margin-bottom: 18px;
+  padding: 14px 44px; border-radius: var(--r-pill);
+  background: var(--accent);
+  border: 0; color: var(--accent-ink);
+  font-size: 15px; font-weight: 800; letter-spacing: .03em; cursor: pointer;
   transition: transform .16s, opacity .16s;
 }
-.skin-equip:active:not(:disabled) { transform: scale(.96); }
+.skin-equip:active:not(:disabled) { transform: translateY(3px); }
 .skin-equip:disabled {
-  border-color: var(--line); background: var(--panel); color: var(--muted); cursor: default;
+  background: var(--panel); color: var(--muted);
+  cursor: default;
 }
 
+/* Rounded at the top and lifted with its own shadow instead of cut off by a
+   hard rule — the tray reads as a drawer sliding up over the showroom rather
+   than as the bottom half of a split screen. Bottom padding reserves room
+   for `.hub-nav`, which now stays mounted over this whole screen (see its
+   own comment) and would otherwise sit on top of the last row of cards.
+   `min-height` holds the tray open to roughly three card rows' worth of
+   space (3 × the grid's own 84px minimum, plus its gaps and its own
+   padding) even with only the two costumes there are today to show — a
+   two-card single row would otherwise leave the tray looking like an
+   afterthought pinned to the very bottom, when this is meant to read as
+   the picker's main gallery, pushed up into real presence on screen rather
+   than however tall its current contents happen to be. `max-height` grows
+   to match so a future costume count that actually fills three rows is not
+   clipped by the old 42% cap. */
 .skin-tray {
   pointer-events: auto; position: relative; z-index: 1;
-  padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+  padding: 16px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 16px);
   border-top: 2px solid var(--line);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--panel);
-  max-height: 42%; overflow-y: auto;
+  box-shadow: 0 -4px 0 rgba(122, 96, 70, .08), 0 -10px 26px rgba(92, 74, 58, .18);
+  min-height: min(56%, 400px); max-height: 56%; overflow-y: auto;
 }
 .skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
 .skin-card {
   position: relative; aspect-ratio: 1; padding: 0; cursor: pointer;
-  border: 2px solid var(--line); border-radius: 16px; overflow: hidden;
+  border: 0; border-radius: var(--r-md); overflow: hidden;
   background: var(--locked);
-  transition: border-color .16s, transform .16s;
+  transition: outline-color .16s, transform .16s;
 }
 .skin-card:hover { transform: translateY(-2px); }
-.skin-card:active { transform: scale(.96); }
-.skin-card.is-previewing { border-color: var(--accent-line); box-shadow: inset 0 0 0 2px var(--accent-line); }
+.skin-card:active { transform: translateY(2px); }
+/* The card's own `img`/icon fills it edge to edge (see below), so a border or
+   shadow would sit underneath and never show — an inset outline is the only
+   ring that still paints on top of that content. Not a border: it doesn't
+   affect layout and isn't the "viền" the rest of this pass avoids. */
+.skin-card.is-previewing { outline: 3px solid var(--accent-line); outline-offset: -3px; }
 /* A data URL rendered from the rig itself: fills the card, like a photo. */
 .skin-card img { display: block; width: 100%; height: 100%; object-fit: contain; }
 /* Only shown for the instant before the picker's first thumbnail capture
    resolves — see `costumeThumbnails` in SandGame.tsx. */
 .skin-card-icon { width: 100%; height: 100%; display: grid; place-items: center; color: var(--ink); }
 .skin-card-icon .costume-icon { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.skin-card-icon.is-magic { color: #6636c7; }
+.skin-card-icon.is-magic { color: #8a5fd6; }
 .skin-card-tick {
-  position: absolute; right: 5px; bottom: 5px; width: 18px; height: 18px; border-radius: 50%;
+  position: absolute; right: 6px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
   background: var(--accent); color: var(--accent-ink); border: 2px solid var(--accent-line);
-  display: grid; place-items: center; font-size: 10px; font-weight: 900;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800;
 }
 
 /* The picture itself, one grid cell per authored cell. `image-rendering` is not
@@ -849,95 +1136,106 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .pixel-thumb {
   display: grid; grid-template-columns: repeat(var(--cols, 12), 1fr);
   width: 100%; aspect-ratio: var(--cols, 12) / var(--rows, 14);
-  border-radius: 9px; overflow: hidden;
+  border-radius: 12px; overflow: hidden;
   background: var(--bg);
   border: 2px solid var(--line);
 }
 .pixel-thumb i { display: block; aspect-ratio: 1; }
 
 /* ---- Home screen: the bottom bar --------------------------------------- */
-/* A toy shelf, not a settings row — the one piece of chrome that gets a hue
-   per tab instead of the shared pastel set, because a casual game's tab bar
-   reads as "professional software" the moment every tab is the same colour.
-   Flat throughout, same as the rest of the file: idle icons sit in a plain
-   pale bubble, and the active one pops up out of the row in a solid flat
-   colour of its own with a bounce (transform only — no glow, no gradient),
-   the way the selected tab floats above the bar in games like Royal Match or
-   Magic Sort. The `flex-grow` bulge from the old version is kept underneath —
-   the row still shoulders space to the pressed tab — but the colour and the
-   lift are what actually reads as "selected" now, not just extra width. */
+/* Five tiles that fully tile the bar — no padding, no gap, no divider —
+   so nothing of the honey-gold shelf underneath ever shows through: not
+   around the outside edge, not in the seam between two tiles. `overflow:
+   hidden` here is what keeps this compatible with the bar's own rounded top
+   corners despite that — the two outer tiles are plain rectangles that
+   would otherwise square off past those corners, and this just clips them
+   back to the bar's own shape instead of every tile having to know its own
+   position in the row and round itself accordingly. Idle tiles sit in a
+   plain oat fill (no border, no shadow — see the top-of-file note); the
+   active one fills solid with its own colour instead (see
+   `.hub-nav-bubble`'s own comment) rather than every tab sharing one
+   accent, AND grows a little wider (`.hub-nav button.is-active` below),
+   pushing its neighbours along the row rather than sitting at the same
+   fixed share as every idle tile — `flex-grow` on plain `flex: 1 1 0%`
+   siblings is what both divides the row evenly at rest AND keeps it
+   full-width with one tile larger: the neighbours' shares shrink by exactly
+   as much as the active tile's grew, so the row's total never changes and
+   never leaves a gap. A sibling of `.hub-screen`/`.skin-screen` rather than
+   nested in either (z-index 31 puts it above both, 30) — every hub screen
+   shares this one bar, the skin picker included, so it stays mounted across
+   all of them instead of being torn down and rebuilt per screen. */
 .hub-nav {
-  position: absolute; z-index: 3; left: 0; right: 0; bottom: 0;
+  position: absolute; z-index: 31; left: 0; right: 0; bottom: 0;
   height: calc(var(--hub-nav-height) + env(safe-area-inset-bottom));
-  padding: 10px 6px env(safe-area-inset-bottom);
-  display: flex; align-items: center; gap: 2px;
-  border-top: 2px solid var(--line);
-  background: var(--panel);
+  padding: 0; overflow: hidden;
+  display: flex; align-items: stretch;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: #ffdfa0;
 }
+/* An even, gapless share of the row's full width (`flex: 1 1 0%`, all five
+   equal at rest) rather than a fixed-width tile with `justify-content`
+   distributing space around it — that left a visible sliver of the bar's
+   own gold on every side. `height: 100%`, unchanged from before, edge to
+   edge top and bottom. Square corners: with tiles now touching, a rounded
+   one would show the gold showing through its own corner cut, right where
+   this is trying to remove exactly that. */
 .hub-nav button {
   position: relative;
   flex: 1 1 0%; min-width: 0; height: 100%; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  border: 0; border-radius: 16px; background: none; padding: 0;
-  transition: flex-grow .32s cubic-bezier(.34,1.56,.64,1);
+  border: 0; border-radius: 0; background: none; padding: 0;
+  transition: flex-grow .3s cubic-bezier(.34,1.56,.64,1);
 }
-.hub-nav button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.hub-nav button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; z-index: 1; }
+/* The pressed tab claims a larger share of the row's flex-grow total
+   (1.6 against everyone else's 1) instead of a fixed width, so it keeps
+   growing relative to whatever the other four are doing rather than
+   overflowing the row if it ever changed size on its own. */
 .hub-nav button.is-active { flex-grow: 1.6; }
 
-/* A hairline between each pair of tabs — sitting in the flex gap rather than
-   as a border on the button, so it never adds width and never has to be
-   toggled off for the popped-up active tab. Faded at both ends so it reads
-   as a soft divider instead of a hard rule across the bar. */
-.hub-nav button:not(:last-child)::after {
-  content: "";
-  position: absolute; top: 50%; right: -1px;
-  width: 1px; height: 44%;
-  transform: translateY(-50%);
-  background: linear-gradient(to bottom, transparent, var(--line) 30%, var(--line) 70%, transparent);
-}
-
-/* The chip itself, kept a fixed circle so the flex-grow bulge on the button
-   around it never stretches it into an oval — it pops in place instead. */
+/* The chip fills its button edge to edge — square corners, same reasoning
+   as `.hub-nav button`'s own comment: touching tiles can't afford a rounded
+   one without a gap showing through it. */
 .hub-nav-bubble {
   position: relative; display: grid; place-items: center;
-  width: 38px; height: 38px; border-radius: 50%;
+  width: 100%; height: 100%; border-radius: 0;
   background: var(--locked);
-  border: 2px solid var(--line);
-  transition: transform .34s cubic-bezier(.34,1.56,.64,1), background .22s, border-color .22s;
+  border: 0;
+  transition: background .18s;
 }
-.hub-nav button:hover .hub-nav-bubble { transform: translateY(-2px); }
-.hub-nav button:active .hub-nav-bubble { transform: scale(.88); }
+/* Line art at rest — muted brown stroke, no fill, same language every other
+   chrome icon in the file uses — and a solid silhouette in the tab's own
+   ink colour the instant it is active (below), no separate icon asset for
+   either state: every path in `HubIcon` is drawn once, with no `fill`/
+   `stroke` of its own, and inherits whichever of these two this element is
+   currently set to. */
 .hub-nav-icon {
-  display: block; width: 18px; height: 18px; color: var(--muted);
-  fill: none; stroke: currentColor; stroke-width: 2;
+  display: block; width: 30px; height: 30px;
+  fill: none; stroke: var(--muted); stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
-  transition: color .22s;
+  transition: width .3s cubic-bezier(.34,1.56,.64,1), fill .16s, stroke .16s;
 }
-/* One flat hue per tab, spent only while that tab is the active one — the
-   fill and its border are two shades of the same colour, not a gradient. */
-.hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { --bubble: #ffbd25; --bubble-line: #cc831e; }
-.hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { --bubble: #ff5fbd; --bubble-line: #db2b8e; }
-.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { --bubble: #39b5f3; --bubble-line: #2581b4; }
-.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { --bubble: #41d27a; --bubble-line: #299458; }
-.hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { --bubble: #ff8032; --bubble-line: #cc5b1e; }
-.hub-nav button.is-active .hub-nav-bubble {
-  transform: translateY(-14px) scale(1.2);
-  background: var(--bubble);
-  border-color: var(--bubble-line);
-  animation: hub-bubble-pop .46s cubic-bezier(.34,1.56,.64,1);
-}
-.hub-nav button.is-active:hover .hub-nav-bubble { transform: translateY(-16px) scale(1.2); }
-.hub-nav button.is-active:active .hub-nav-bubble { transform: translateY(-14px) scale(1.06); }
-.hub-nav button.is-active .hub-nav-icon { color: var(--ink); }
+.hub-nav button.is-active .hub-nav-icon { width: 35px; stroke: none; }
+/* Each tab fills its own tile with its own colour when active, rather than
+   one shared accent for all five — Home green, Skin coral, Shop gold,
+   Gallery sky, Customize wood — and fills its own icon with that colour's
+   "-ink" partner, the dark tone the rest of the file already pairs with
+   each bright one for exactly this reason (readable sitting on top of it).
+   Selected with `[data-tab]` (already on the button for other reasons)
+   rather than a `:nth-child` guess, so this stays correct if `HUB_TABS`'s
+   order ever changes. */
+.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: var(--accent); }
+.hub-nav button[data-tab="home"].is-active .hub-nav-icon { fill: var(--accent-ink); }
+.hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { background: var(--danger); }
+.hub-nav button[data-tab="skin"].is-active .hub-nav-icon { fill: var(--danger-ink); }
+.hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { background: var(--gold); }
+.hub-nav button[data-tab="shop"].is-active .hub-nav-icon { fill: var(--gold-ink); }
+.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { background: var(--sky); }
+.hub-nav button[data-tab="gallery"].is-active .hub-nav-icon { fill: var(--sky-ink); }
+.hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { background: var(--wood); }
+.hub-nav button[data-tab="customize"].is-active .hub-nav-icon { fill: var(--wood-ink); }
 
 /* ---- Keyframes --------------------------------------------------------- */
-/* Overshoots past its rest scale before settling, so picking a tab reads as a
-   little bounce rather than the bubble just arriving at its final size. */
-@keyframes hub-bubble-pop {
-  0% { transform: translateY(0) scale(.85); }
-  55% { transform: translateY(-18px) scale(1.3); }
-  100% { transform: translateY(-14px) scale(1.2); }
-}
 /* A squash-and-stretch swap for the shots-badge dot: it shrinks and twists
    down into the colour change, then overshoots big and wobbles back to rest
    — the same exaggerate-then-settle a cartoon "pop" reads as, rather than
@@ -960,7 +1258,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   60% { transform: translateX(-2px) rotate(-1deg); }
   80% { transform: translateX(2px) rotate(1deg); }
 }
-@keyframes hub-enter { from { opacity: 0; transform: translateY(10px); } }
+/* Barely a pulse: 2.5% over 2.8s, closer to breathing than to a call to
+   action. See the note on `.hub-play-btn` for why it is here at all. */
+@keyframes hub-play-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
+}
+/* `.hub-level-name` is centred with its own translateX(-50%), so this has to
+   carry that too — a bare translateY here would drop the centring for the
+   length of the animation and the chip would jump left, then snap back. */
+@keyframes hub-enter { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
 @keyframes hub-tap-exit { to { opacity: 0; } }
 @keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
 @keyframes hub-nav-exit { to { transform: translateY(130%); opacity: 0; } }
@@ -973,7 +1280,6 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes overlay-in { from { opacity: 0; } }
 @keyframes result-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
 @keyframes booster-armed-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-@keyframes booster-prism-spin { to { transform: rotate(360deg); } }
 
 /* ---- Level editor ------------------------------------------------------ */
 /* A desktop tool, unlike the game: authoring wants a mouse, a keyboard and
@@ -995,6 +1301,23 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   --panel: rgba(20, 20, 23, 0.74);
   --line: rgba(255, 255, 255, 0.16);
   --accent: #ffffff;
+  /* The game's cozy pass gave :root a big soft radius scale and a set of warm
+     drop shadows. Both are wrong here for the same reason the pastel palette
+     is: a dense three-column authoring tool wants tight corners and flat
+     panels, not a shelf of rounded toys. Overridden rather than simply left
+     unused, so that anything in this section which does reach for a --r-* or
+     a --shadow-* gets the tool's values, not the game's. */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
+  --r-frame: 12px;
+  --shadow-chip: none;
+  --shadow-btn: none;
+  --shadow-panel: none;
+  --shadow-modal: none;
+  --shadow-press: none;
   min-height: 100vh;
   min-height: 100dvh;
   padding: 18px clamp(12px, 3vw, 32px) 40px;

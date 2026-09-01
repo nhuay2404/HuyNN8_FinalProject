@@ -146,21 +146,39 @@ const CANNON_MODEL_SCALE = 0.8;
 // player is looking at is the rig a level will actually hand them — same
 // groups (`cannonRoot`/`turret`/`barrelPivot`/`barrelVisual`), same
 // `muzzleAnchor`, nothing about the rig itself is faked for the picker.
-const SHOWCASE_POSITION = new THREE.Vector3(0, 0.5, 5.6);
-const SHOWCASE_SCALE = 0.92;
-const SHOWCASE_ELEVATION = 0.15;
-/** Turned a third of the way round rather than left facing the camera dead
- * on: at rest the barrel points along the same axis the camera looks down
- * (both are -Z), so a straight-on rig reads as staring down its own bore —
- * every ring along its length (base, muzzle band, halo) lines up into one
- * illusion of concentric circles. This is the same fixed turn
- * `getCostumeThumbnails` (costumes.ts) already turns its own thumbnail rig
- * by, for the same reason. */
-const SHOWCASE_YAW = 0.42;
-/** Peak yaw, in radians, of the slow side-to-side turn (`SHOWCASE_SWAY_SPEED`
- * full cycles/second), added on top of `SHOWCASE_YAW` — "xoay vòng" without
- * ever turning the barrel out of frame. */
-const SHOWCASE_SWAY = 0.22;
+// Held well back from camera, almost level with it rather than pulled in
+// close — real play's own rig sits far from camera too (at
+// `CANNON_ROOT_POSITION`, distance ~9.8 from the camera's (0,3.3,13.6),
+// see its own `.set` call below), which is why its rings read as flat,
+// nearly edge-on ellipses instead of full circles: an object subtends a
+// much wider spread of angles across its own size up close than it does far
+// away, and that spread — not the centre angle to it — is what makes rings
+// look "rounder"/more face-on. Held up close, the way an earlier pass at
+// this had it, the same rings widened into full circles (a wide-angle-lens
+// close-up effect) no matter what angle they sat at. `SHOWCASE_FOV` is the
+// other half of this: a distance this size would otherwise read as a speck
+// at real play's 37°-44° (`resize()` below), so the showcase narrows the
+// lens to re-magnify it back to a normal on-screen size — the same
+// far-away-but-zoomed size a telephoto lens gives, without the up-close
+// distortion a wide lens held near the subject has.
+const SHOWCASE_POSITION = new THREE.Vector3(0, 1.88, 5.77);
+const SHOWCASE_SCALE = 1.1;
+const SHOWCASE_FOV = 43;
+// Exactly `CANNON_NEUTRAL_YAW`/`CANNON_NEUTRAL_ELEVATION` below, not a
+// bespoke "product shot" angle for the picker — a turned/tilted rig reads
+// as a different camera setup for the same cannon, not the cannon a player
+// actually sees mid-play. That includes the straight-down-the-bore look
+// (every ring lined up into one glowing tunnel instead of spread out into
+// individual rings): that IS the real gameplay angle, looking from directly
+// behind the cannon, not a framing mistake to steer away from.
+const SHOWCASE_ELEVATION = CANNON_NEUTRAL_ELEVATION;
+const SHOWCASE_YAW = CANNON_NEUTRAL_YAW;
+/** Peak yaw, in radians, of the slow side-to-side turn
+ * (`SHOWCASE_SWAY_SPEED` full cycles/second), added on top of
+ * `SHOWCASE_YAW`. Zero — the cannon does not idly turn on its own mid-play
+ * either, and swinging it off `SHOWCASE_YAW` is exactly the "different
+ * camera angle than the game" read this is trying to avoid. */
+const SHOWCASE_SWAY = 0;
 const SHOWCASE_SWAY_SPEED = 0.7;
 /** Seconds between demo shots — long enough that each one reads as its own
  * beat rather than a stutter of gunfire. */
@@ -562,6 +580,12 @@ export class SandCannonEngine {
   /** The collar around the base — the same colour as the muzzle band, so the
    * cannon reads its own next shot from any angle, not just head-on. */
   private baseRing: THREE.Mesh | null = null;
+  /** The feed rail/rim/throat's solid colour and the chamber housing's glass —
+   * one fixed steel-and-glass finish for every costume (`buildAmmoFeed`),
+   * built once and never retinted; `CostumeDef` carries no per-skin colour
+   * for it. */
+  private feedFrameMaterial: THREE.MeshLambertMaterial | null = null;
+  private feedGlassMaterial: THREE.MeshLambertMaterial | null = null;
   /** The preview queue, nearest first, waiting on the rail. */
   private feedBalls: THREE.Mesh[] = [];
   /** 1 the moment a round is chambered, decaying to 0 as the queue rolls forward. */
@@ -744,7 +768,7 @@ export class SandCannonEngine {
     // pastel sky as they recede, not into a colour of their own, for the two
     // to blend seamlessly into one continuous "wall" the picture and the
     // cannon stand out against.
-    this.scene.fog = new THREE.FogExp2(0x5dd4d9, 0.02);
+    this.scene.fog = new THREE.FogExp2(0xaedee4, 0.02);
     this.camera.position.set(0, 3.3, 13.6);
     this.camera.lookAt(0, 1, -0.5);
     this.renderer = acquireRenderer(this, this.host);
@@ -1106,11 +1130,7 @@ export class SandCannonEngine {
     this.muzzleBand.position.z = MUZZLE_Z + 0.2;
     this.barrelVisual.add(this.muzzleBand);
 
-    // The ammo feed's own hardware colour — neutral and costume-independent,
-    // so the mechanical rail/housing/chamber always reads the same regardless
-    // of what shell the gun is wearing.
-    const feedDark = this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0 }));
-    this.buildAmmoFeed(feedDark);
+    this.buildAmmoFeed();
     this.buildBoosterOverlay();
     this.applyCannonTransform();
   }
@@ -1199,6 +1219,13 @@ export class SandCannonEngine {
       this.yaw = CANNON_NEUTRAL_YAW;
       this.elevation = SHOWCASE_ELEVATION;
       this.applyCannonTransform();
+      // Narrows to `SHOWCASE_FOV` — see its own comment — so a rig held
+      // this far from camera still fills the frame instead of shrinking to
+      // a speck. `resize()` reapplies this same narrow FOV on its own if a
+      // resize fires while the showcase is still up (an orientation change,
+      // say), rather than snapping back to real play's wide one.
+      this.camera.fov = SHOWCASE_FOV;
+      this.camera.updateProjectionMatrix();
       // The stage is the rig alone — the board it would otherwise be aiming
       // at has nothing to do with picking a skin, and neither does a sight:
       // there is nothing to aim at, so the crosshair stays exactly as hidden
@@ -1215,6 +1242,8 @@ export class SandCannonEngine {
     // cannon nowhere at all.
     this.cannonRoot.visible = false;
     this.frameRoot.visible = true;
+    this.camera.fov = this.camera.aspect < 0.62 ? 44 : 37;
+    this.camera.updateProjectionMatrix();
     this.resetCannonDirection();
   }
 
@@ -1301,13 +1330,36 @@ export class SandCannonEngine {
    * `barrelVisual`, which is the piece that slides back on recoil — the
    * chamber holding the *next* round should not kick with the shot that just
    * left.
+   *
+   * The rail/rim/throat's colour and the housing's glass are one fixed
+   * steel-and-glass finish (`this.feedFrameMaterial`, `this.feedGlassMaterial`)
+   * — built once here and never retinted on a skin swap, since `CostumeDef`
+   * carries no per-costume colour for it. The round inside, its glow and the
+   * feed queue's own balls stay ammo-tinted for every costume — see
+   * `syncAmmoModel`.
    */
-  private buildAmmoFeed(dark: THREE.Material) {
+  private buildAmmoFeed() {
+    // DoubleSide for every use, not just the ones that need it (the throat is
+    // open-ended and would otherwise cull to nothing from the inside) — free
+    // on a box or a torus, and one shared material is simpler than two.
+    this.feedFrameMaterial = this.track(
+      new THREE.MeshLambertMaterial({ color: 0x5468a0, side: THREE.DoubleSide }),
+    ) as THREE.MeshLambertMaterial;
+    this.feedGlassMaterial = this.track(
+      new THREE.MeshLambertMaterial({
+        color: 0xc3d2ff,
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    ) as THREE.MeshLambertMaterial;
+
     // A groove for the queue to roll down, sloping up and back from the breech.
     const railLength = FEED_SLOT_SPACING * 3.6;
     const railGeometry = this.track(new THREE.BoxGeometry(0.07, 0.05, railLength));
     for (const side of [-1, 1]) {
-      const rail = new THREE.Mesh(railGeometry, dark);
+      const rail = new THREE.Mesh(railGeometry, this.feedFrameMaterial);
       rail.position.set(side * (FEED_BALL_RADIUS + 0.05), CHAMBER_POSITION.y - 0.1 + railLength * 0.5 * (FEED_SLOT_RISE / FEED_SLOT_SPACING), CHAMBER_POSITION.z + railLength * 0.5);
       rail.rotation.x = -Math.atan2(FEED_SLOT_RISE, FEED_SLOT_SPACING);
       this.barrelPivot.add(rail);
@@ -1317,13 +1369,7 @@ export class SandCannonEngine {
     // and a solid breech would hide the one thing this part exists to show.
     const housing = new THREE.Mesh(
       this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 2.4, 24, 1, true)),
-      this.track(new THREE.MeshLambertMaterial({
-        color: 0xc3d2ff,
-        transparent: true,
-        opacity: 0.22,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      })),
+      this.feedGlassMaterial,
     );
     housing.rotation.x = Math.PI / 2;
     housing.position.copy(CHAMBER_POSITION);
@@ -1331,7 +1377,7 @@ export class SandCannonEngine {
 
     const rimGeometry = this.track(new THREE.TorusGeometry(CHAMBER_BALL_RADIUS * 1.52, 0.035, 10, 26));
     for (const offset of [-CHAMBER_BALL_RADIUS * 1.2, CHAMBER_BALL_RADIUS * 1.2]) {
-      const rim = new THREE.Mesh(rimGeometry, dark);
+      const rim = new THREE.Mesh(rimGeometry, this.feedFrameMaterial);
       rim.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y, CHAMBER_POSITION.z + offset);
       this.barrelPivot.add(rim);
     }
@@ -1340,7 +1386,7 @@ export class SandCannonEngine {
     // the bore rather than parked on top of it.
     const throat = new THREE.Mesh(
       this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 0.8, CHAMBER_BALL_RADIUS * 0.95, 0.3, 16, 1, true)),
-      this.track(new THREE.MeshLambertMaterial({ color: 0x5468a0, side: THREE.DoubleSide })),
+      this.feedFrameMaterial,
     );
     throat.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y - 0.2, CHAMBER_POSITION.z);
     this.barrelPivot.add(throat);
@@ -2886,7 +2932,7 @@ export class SandCannonEngine {
     const height = Math.max(this.host.clientHeight, 1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    this.camera.fov = this.camera.aspect < 0.62 ? 44 : 37;
+    this.camera.fov = this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
     this.camera.updateProjectionMatrix();
     if (this.aimPointer !== null) this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     else this.showIdleCrosshair();

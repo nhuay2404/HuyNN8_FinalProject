@@ -37,6 +37,7 @@ import {
   SAND_COLOR_BY_LETTER,
 } from "./game/sand-rules";
 import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
+import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
 import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 
@@ -118,41 +119,63 @@ const HUB_TAB_BLURB: Record<HubTab, string> = {
   customize: "Where the frame, the sand texture and the board's colours would be set.",
 };
 
-/** Line art, one path set per tab, drawn in currentColor so the active tab tints it. */
+/** One small shape set per tab, line art at rest and filled solid the
+ * instant its tab is active — a single toggle in globals.css
+ * (`.hub-nav-icon`'s `fill`/`stroke`, flipped by `.is-active`) rather than
+ * two different icons, so every path here is drawn once and has to work
+ * both ways: recognisable as an outline (no individual `fill`/`stroke` on
+ * any path — they inherit the toggle from the `<svg>` itself) and still
+ * read as a solid silhouette once filled, even though the odd fine line
+ * (the bag's handle, the palette's paint dabs) is only ever going to show
+ * up in the outline version — normal for an outline/filled icon pair, the
+ * same way a filled Material icon carries less line detail than its own
+ * outline variant. Shapes stay off-centre/off-angle on purpose (a roof with
+ * an uneven overhang, a door pushed to one side, a cannon canted at an
+ * angle) rather than built from a mirrored primitive. */
 function HubIcon({ tab }: { tab: HubTab }) {
   return (
     <svg className="hub-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {tab === "shop" && (
-        <>
-          <path d="M4.6 7.5h14.8l-1.2 12H5.8z" />
-          <path d="M8.8 9.4V6.6a3.2 3.2 0 0 1 6.4 0v2.8" />
-        </>
+        <g transform="rotate(-6 12 12)">
+          <path d="M5.2 9h13.2l-1.3 10.8H6.6z" />
+          <path d="M9 8.6V6.6a3 3 0 0 1 6 0v2" />
+          <circle cx="13.2" cy="14.6" r="1.8" />
+        </g>
       )}
       {tab === "skin" && (
-        <>
-          <path d="M12 3.6c4.2 0 6.6 2.2 6.6 5 0 2.2-1.7 2.9-3 2.9h-1.4c-1 0-1.8.7-1.8 1.7 0 .5.2.9.5 1.3.3.4.5.8.5 1.3 0 1-.8 1.8-1.9 1.8-3.8 0-6.9-3.1-6.9-7s3-7 7.4-7Z" />
-          <circle cx="9" cy="8.6" r="1.1" />
-          <circle cx="14.4" cy="7.4" r="1.1" />
-        </>
+        // The same barrel/breech/base CostumeIcon draws for the skin-card
+        // cannon above (proven at that size already) — the "skin" tab picks
+        // the cannon's skin, so its icon is a cannon. Kept horizontal:
+        // canting it, tried earlier, made both the outline and the filled
+        // silhouette read as a boot instead.
+        <g transform="rotate(-4 12 13)">
+          <rect x="5.6" y="10.2" width="10.8" height="4.6" rx="1.6" />
+          <circle cx="17.2" cy="12.5" r="3.4" />
+          <rect x="7" y="15.6" width="10" height="2.4" rx="1.2" />
+        </g>
       )}
       {tab === "home" && (
         <>
-          <path d="M4.4 10.6 12 4.4l7.6 6.2" />
-          <path d="M6.4 12v7.6h11.2V12" />
+          <path d="M3.4 11.6 12 4.6l9 6.8-1.3 1.8L12 7.2l-7 5.8z" />
+          <path d="M5.4 11h12.6v8.6a1 1 0 0 1-1 1H6.4a1 1 0 0 1-1-1z" />
+          <rect x="13.6" y="14.4" width="3.2" height="6.2" rx=".6" />
+          <rect x="7.2" y="14.2" width="3" height="3" rx=".6" />
         </>
       )}
       {tab === "gallery" && (
         <>
-          <rect x="4" y="5.2" width="16" height="13.6" rx="2" />
-          <path d="M4.6 15.2 9 11.2l3.4 3 2.6-2.2 4.4 3.6" />
-          <circle cx="8.9" cy="8.9" r="1.2" />
+          <rect x="3.4" y="4.6" width="17.2" height="15.4" rx="2.4" />
+          <circle cx="15.6" cy="8.6" r="1.5" />
+          <path d="M5.2 15.6 9.8 10.8l3.6 3.4 2.2-2.8 4.4 4v.2H5.2Z" />
         </>
       )}
       {tab === "customize" && (
         <>
-          <path d="M5 8h14M5 16h14" />
-          <circle cx="10" cy="8" r="2.1" />
-          <circle cx="15" cy="16" r="2.1" />
+          <path d="M12 4.2c4.6 0 7.8 3.2 7.8 7 0 2.6-1.8 3.6-3.4 3.6h-2c-.9 0-1.5.7-1.2 1.5.2.5.6.9.6 1.6 0 1.1-1 1.9-2.2 1.9C7 19.8 4 16.2 4 11.6c0-4.2 3.4-7.4 8-7.4Z" />
+          <circle cx="8.4" cy="9.8" r="1.4" />
+          <circle cx="12.9" cy="6.9" r="1.6" />
+          <circle cx="16.2" cy="10.5" r="1.2" />
+          <circle cx="14.5" cy="14.5" r="1.5" />
         </>
       )}
     </svg>
@@ -237,6 +260,106 @@ function CloseIcon() {
   return (
     <svg className="close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+/**
+ * The chrome glyphs.
+ *
+ * These used to be literal characters in the JSX — "⚙", "?", "🎁", "⌂", "⟲",
+ * "🔊", "📳", "🌐", "✎". Two problems with that, and the cozy pass fixes
+ * both: a dingbat renders in whatever the platform's fallback font happens to
+ * be (so the gear was a different weight and size on every OS), and a
+ * full-colour emoji drops out of the palette entirely — 🎁 painted its own
+ * red and blue over a screen that has exactly one accent hue.
+ *
+ * Drawn on the same 24×24 grid as `HubIcon` above and inheriting the same
+ * `.icon-glyph` stroke settings (2px, round caps, round joins) so every icon
+ * in the game is one family. `name` rather than one component per glyph
+ * keeps them in a single place to keep consistent.
+ */
+type ChromeGlyph = "gear" | "menu" | "help" | "gift" | "home" | "restart" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
+
+function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {name === "gear" && (
+        <>
+          {/* Six soft lobes rather than the usual eight sharp teeth — a
+              rounder gear reads friendlier at this size and survives the
+              2px stroke without the teeth merging into a blob. */}
+          <path d="M12 3.4l1.9.9 2-.5 1 1.8 1.8 1-.5 2 .9 1.9-.9 1.9.5 2-1.8 1-1 1.8-2-.5-1.9.9-1.9-.9-2 .5-1-1.8-1.8-1 .5-2-.9-1.9.9-1.9-.5-2 1.8-1 1-1.8 2 .5z" />
+          <circle cx="12" cy="12" r="3.1" />
+        </>
+      )}
+      {name === "menu" && (
+        <>
+          {/* Three level strokes rather than the gear — mid-play this button
+              opens the level-pick/Home/Restart/Settings dropdown, not
+              Settings itself, so it needs its own mark instead of reusing
+              the gear the "Settings" row inside that dropdown already
+              shows (a gear button opening a menu with a gear item inside
+              read as the settings button nested in itself). */}
+          <path d="M4.6 7.2h14.8M4.6 12h14.8M4.6 16.8h14.8" />
+        </>
+      )}
+      {name === "help" && (
+        <>
+          <path d="M9.3 9.1a2.8 2.8 0 0 1 5.4.9c0 1.9-2.7 2.2-2.7 4" />
+          <path d="M12 17.4v.1" strokeWidth="2.6" />
+        </>
+      )}
+      {name === "gift" && (
+        <>
+          <rect x="4.2" y="10.4" width="15.6" height="9" rx="1.8" />
+          <path d="M3.2 7.2h17.6v3.2H3.2zM12 7.2v12.2" />
+          <path d="M12 7.2c-1-2.6-2.2-3.6-3.5-3.6a1.9 1.9 0 0 0 0 3.6zM12 7.2c1-2.6 2.2-3.6 3.5-3.6a1.9 1.9 0 0 1 0 3.6z" />
+        </>
+      )}
+      {name === "home" && (
+        <>
+          <path d="M4.4 10.6 12 4.4l7.6 6.2" />
+          <path d="M6.4 12v7.6h11.2V12" />
+        </>
+      )}
+      {name === "restart" && (
+        <>
+          <path d="M19.2 12a7.2 7.2 0 1 1-2.4-5.4" />
+          <path d="M18.6 3.6v3.6h-3.6" />
+        </>
+      )}
+      {name === "sound-on" && (
+        <>
+          <path d="M5 9.6h3.2L12.4 6v12l-4.2-3.6H5z" />
+          <path d="M15.6 9.4a3.6 3.6 0 0 1 0 5.2M18.1 7.2a7 7 0 0 1 0 9.6" />
+        </>
+      )}
+      {name === "sound-off" && (
+        <>
+          <path d="M5 9.6h3.2L12.4 6v12l-4.2-3.6H5z" />
+          <path d="M16 10l4 4M20 10l-4 4" />
+        </>
+      )}
+      {name === "vibrate" && (
+        <>
+          <rect x="8.2" y="3.6" width="7.6" height="16.8" rx="2" />
+          <path d="M4.4 9.6v4.8M19.6 9.6v4.8" />
+        </>
+      )}
+      {name === "globe" && (
+        <>
+          <circle cx="12" cy="12" r="8.2" />
+          <path d="M3.8 12h16.4" />
+          <path d="M12 3.8c2.2 2.3 3.3 5 3.3 8.2s-1.1 5.9-3.3 8.2c-2.2-2.3-3.3-5-3.3-8.2s1.1-5.9 3.3-8.2z" />
+        </>
+      )}
+      {name === "pencil" && (
+        <>
+          <path d="M15.6 4.6 19.4 8.4 8.8 19H5v-3.8z" />
+          <path d="M13.4 6.8l3.8 3.8" />
+        </>
+      )}
     </svg>
   );
 }
@@ -549,6 +672,14 @@ export default function SandGame() {
   // Read once: `isSoundEnabled()` is a plain module variable, and this is the
   // only place in the UI that ever writes it, so nothing else can go stale.
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+  // Same one-place-writes-it reasoning as `soundOn` above, for the haptics
+  // module's own stored preference.
+  const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
+  // The one unified Settings card (see globals.css's own comment on
+  // `.settings-screen`) — opened from the hub's gear (`.settings-wrap` while
+  // `!playing`) and from a row in the in-play menu, so there is exactly one
+  // place Sound/Vibration/the level editor live instead of two.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Lags `playing` on the way in: the home screen stays mounted for one more
   // beat after Play is tapped so its CSS exit animation (Play button
   // shrinking, the bottom bar sliding off) actually gets to play instead of
@@ -888,7 +1019,11 @@ export default function SandGame() {
    */
   return (
     <main className="page-shell">
-      <div className="game-frame">
+      {/* `.is-hub` swaps the wall from gameplay's vivid cyan to the calmer
+          navy the hub reads in now (see globals.css) — tied to `homeVisible`
+          rather than `playing` so it fades out in step with the hub screen's
+          own exit animation instead of cutting the instant Play is tapped. */}
+      <div className={`game-frame${homeVisible ? " is-hub" : ""}`}>
         {/* Top-left HUD stack: the coin balance sits above the ammo row and,
             unlike it, is not gated on `playing` — a balance is true on the
             home screen too, not just mid-level. §22/§23: ammo, the 3D frame,
@@ -935,29 +1070,51 @@ export default function SandGame() {
           </header>
         </div>
 
-        <div className="settings-wrap" hidden={!playing}>
-          {(level.tutorial || level.ftueGesture) && (
+        {/* Same top-right corner either way, but not the same button: mid-play
+            it opens the level-pick/Home/Restart/Settings dropdown below; on
+            the hub (`!playing`) that dropdown has nothing to say (no level
+            grid worth showing over the picture, no in-progress run to
+            restart), so this opens the unified Settings card directly
+            instead of a menu with one live item in it.
+            Hidden on the skin tab for now — `.skin-screen`'s own close
+            button already sits in that corner. */}
+        <div className="settings-wrap" hidden={tab === "skin"}>
+          {playing ? (
+            <>
+              {(level.tutorial || level.ftueGesture) && (
+                <button
+                  type="button"
+                  className="icon-button help-button"
+                  onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
+                  aria-label="How to play this level"
+                  title="How to play"
+                >
+                  <Glyph name="help" />
+                </button>
+              )}
+              <button
+                type="button"
+                className="icon-button settings-button"
+                onClick={() => setMenuOpen((open) => !open)}
+                aria-label="Menu"
+                aria-haspopup="true"
+                aria-expanded={menuOpen}
+                title="Menu"
+              >
+                <Glyph name="menu" />
+              </button>
+            </>
+          ) : (
             <button
               type="button"
-              className="icon-button help-button"
-              onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
-              aria-label="How to play this level"
-              title="How to play"
+              className="icon-button settings-button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+              title="Settings"
             >
-              ?
+              <Glyph name="gear" />
             </button>
           )}
-          <button
-            type="button"
-            className="icon-button settings-button"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-label="Menu"
-            aria-haspopup="true"
-            aria-expanded={menuOpen}
-            title="Menu"
-          >
-            ⚙
-          </button>
           {menuOpen && (
             <>
               <button
@@ -991,26 +1148,19 @@ export default function SandGame() {
                 </div>
                 <div className="settings-actions">
                   <button type="button" onClick={goHome}>
-                    <span aria-hidden="true">⌂</span> Home
+                    <Glyph name="home" /> Home
                   </button>
-                  <a href="/editor" onClick={() => setMenuOpen(false)}>
-                    <span aria-hidden="true">✎</span> Level editor
-                  </a>
                   <button type="button" onClick={() => { restart(); setMenuOpen(false); }}>
-                    <span aria-hidden="true">⟲</span> Restart
+                    <Glyph name="restart" /> Restart
                   </button>
-                  {soundSupported() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !soundOn;
-                        setSoundEnabled(next);
-                        setSoundOn(next);
-                      }}
-                    >
-                      <span aria-hidden="true">{soundOn ? "🔊" : "🔇"}</span> Sound {soundOn ? "on" : "off"}
-                    </button>
-                  )}
+                  {/* Sound/Vibration and the level editor moved into the one
+                      unified Settings card (see its own comment in
+                      globals.css) — this just opens it, rather than
+                      duplicating an inline toggle and an editor link here
+                      too. */}
+                  <button type="button" onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>
+                    <Glyph name="gear" /> Settings
+                  </button>
                 </div>
               </div>
             </>
@@ -1041,7 +1191,7 @@ export default function SandGame() {
               aria-label="Daily login reward"
               title="Daily login reward"
             >
-              🎁
+              <Glyph name="gift" />
             </button>
           </div>
         )}
@@ -1273,25 +1423,6 @@ export default function SandGame() {
                 <p className="hub-panel-note">Not built yet.</p>
               </div>
             )}
-
-            <nav className="hub-nav" aria-label="Sections">
-              {HUB_TABS.map((entry) => (
-                <button
-                  key={entry}
-                  type="button"
-                  className={entry === tab ? "is-active" : ""}
-                  data-tab={entry}
-                  onClick={() => setTab(entry)}
-                  aria-current={entry === tab ? "page" : undefined}
-                  aria-label={HUB_TAB_NAME[entry]}
-                  title={HUB_TAB_NAME[entry]}
-                >
-                  <span className="hub-nav-bubble">
-                    <HubIcon tab={entry} />
-                  </span>
-                </button>
-              ))}
-            </nav>
           </div>
         )}
 
@@ -1301,28 +1432,14 @@ export default function SandGame() {
             one, drawn by the engine behind this screen in its own showroom
             pose (`setShowcase`); `.skin-stage` is an empty, see-through
             placeholder that only exists to give that rig a claimed spot in
-            the layout. */}
+            the layout. No close button of its own — `.hub-nav` below stays
+            mounted over this screen too, so tapping any other tab is how you
+            leave. */}
         {tab === "skin" && (
           <div className="skin-screen" role="dialog" aria-modal="true" aria-labelledby="skin-title">
-            {/* No currency counter of its own — `.hud-top-left`'s coin badge
-                already sits above every hub screen (z-index 31 to this
-                screen's 30, see globals.css), the home screen included, so it
-                keeps reading right through this takeover without a second
-                one competing for the same corner. */}
-            <div className="skin-bar">
-              <button
-                className="skin-close"
-                type="button"
-                onClick={() => setTab("home")}
-                aria-label="Close skins"
-              >
-                <CloseIcon />
-              </button>
-            </div>
-
             <div className="skin-heading">
               <h2 id="skin-title">{COSTUMES[previewCostume].name}</h2>
-              <p>{COSTUMES[previewCostume].tagline}</p>
+              <p className="skin-tagline">{COSTUMES[previewCostume].tagline}</p>
             </div>
 
             <div className="skin-stage" aria-hidden="true" />
@@ -1361,6 +1478,111 @@ export default function SandGame() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The bottom bar itself, pulled out of `.hub-screen` so it stays
+            mounted over the skin picker too (that screen used to unmount it
+            along with the rest of `.hub-screen` — the one thing every hub
+            screen shares became the one thing that vanished on skin). Gated
+            on `homeVisible` alone, same as `.hub-screen`/`.skin-screen`
+            themselves, so it fades out with them rather than outliving the
+            screen it belongs to. */}
+        {homeVisible && (
+          <nav className={`hub-nav${playing ? " is-leaving" : ""}`} aria-label="Sections">
+            {HUB_TABS.map((entry) => (
+              <button
+                key={entry}
+                type="button"
+                className={entry === tab ? "is-active" : ""}
+                data-tab={entry}
+                onClick={() => setTab(entry)}
+                aria-current={entry === tab ? "page" : undefined}
+                aria-label={HUB_TAB_NAME[entry]}
+                title={HUB_TAB_NAME[entry]}
+              >
+                <span className="hub-nav-bubble">
+                  <HubIcon tab={entry} />
+                </span>
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {/* The one unified Settings card — see its own comment in
+            globals.css. Reachable from the hub's gear and from the in-play
+            menu's own "Settings" row (both just flip `settingsOpen`), so
+            Sound/Vibration and the dev-only level editor live in exactly one
+            place instead of being split between a dropdown and nothing. */}
+        {settingsOpen && (
+          <div className="settings-screen" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div className="settings-card">
+              <div className="settings-card-header">
+                <h2 id="settings-title">Settings</h2>
+                <button
+                  type="button"
+                  className="settings-close"
+                  onClick={() => setSettingsOpen(false)}
+                  aria-label="Close settings"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="settings-body">
+                {soundSupported() && (
+                  <div className="settings-row">
+                    <span className="settings-row-label">
+                      <Glyph name={soundOn ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> Sound
+                    </span>
+                    <button
+                      type="button"
+                      className={`settings-toggle${soundOn ? " is-on" : ""}`}
+                      role="switch"
+                      aria-checked={soundOn}
+                      aria-label={`Sound ${soundOn ? "on" : "off"}`}
+                      onClick={() => {
+                        const next = !soundOn;
+                        setSoundEnabled(next);
+                        setSoundOn(next);
+                      }}
+                    />
+                  </div>
+                )}
+                {hapticsSupported() && (
+                  <div className="settings-row">
+                    <span className="settings-row-label">
+                      <Glyph name="vibrate" className="icon-glyph settings-row-icon" /> Vibration
+                    </span>
+                    <button
+                      type="button"
+                      className={`settings-toggle${vibrationOn ? " is-on" : ""}`}
+                      role="switch"
+                      aria-checked={vibrationOn}
+                      aria-label={`Vibration ${vibrationOn ? "on" : "off"}`}
+                      onClick={() => {
+                        const next = !vibrationOn;
+                        setHapticsEnabled(next);
+                        setVibrationOn(next);
+                      }}
+                    />
+                  </div>
+                )}
+                {/* Cosmetic, matching the reference — there is no second
+                    language built into the game yet, so this shows the row
+                    without pretending a tap here would do anything. */}
+                <div className="settings-row">
+                  <span className="settings-row-label">
+                    <Glyph name="globe" className="icon-glyph settings-row-icon" /> Language
+                  </span>
+                  <span className="settings-select" aria-label="Language: English (more coming soon)">EN ▾</span>
+                </div>
+
+                <h3 className="settings-section-title">GameDevOption</h3>
+                <a href="/editor" className="settings-devlink">
+                  <Glyph name="pencil" /> Level editor
+                </a>
               </div>
             </div>
           </div>

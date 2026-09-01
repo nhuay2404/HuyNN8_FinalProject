@@ -36,12 +36,12 @@ export type LoadingStep = keyof typeof LOADING_STEPS;
 const LOADING_START = 0.1;
 
 const BLOCK_COLORS = {
-  red: "#ff3d4d",
-  green: "#24e07f",
-  yellow: "#ffd21f",
-  blue: "#2f9dff",
-  purple: "#9d5cff",
-  orange: "#ff8a1f",
+  red: "#ff172a",
+  green: "#1cc870",
+  yellow: "#fcc900",
+  blue: "#0b8cff",
+  purple: "#8432ff",
+  orange: "#fc7800",
 } as const;
 
 // The wall from the reference: three bands, with the right-hand column breaking
@@ -144,13 +144,13 @@ function streaks() {
 function cannon() {
   return [
     `<g transform="rotate(-36 118 596)">`,
-    `<rect x="86" y="386" width="64" height="226" rx="32" fill="#dce6f5"/>`,
-    `<ellipse cx="118" cy="392" rx="32" ry="13" fill="#b9c9e8"/>`,
-    `<rect x="86" y="424" width="64" height="15" rx="7" fill="#8fa3cf" opacity=".55"/>`,
+    `<rect x="86" y="386" width="64" height="226" rx="32" fill="#b1c7e9"/>`,
+    `<ellipse cx="118" cy="392" rx="32" ry="13" fill="#93acdc"/>`,
+    `<rect x="86" y="424" width="64" height="15" rx="7" fill="#728bc2" opacity=".55"/>`,
     `</g>`,
-    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="#6f7fa8"/>`,
-    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="none" stroke="#ffcf5c" stroke-width="15" stroke-dasharray="96 400" stroke-dashoffset="-24"/>`,
-    `<circle cx="118" cy="676" r="26" fill="#ffcf5c" opacity=".92"/>`,
+    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="#5c6d99"/>`,
+    `<ellipse cx="56" cy="628" rx="98" ry="76" fill="none" stroke="#ffc332" stroke-width="15" stroke-dasharray="96 400" stroke-dashoffset="-24"/>`,
+    `<circle cx="118" cy="676" r="26" fill="#ffc332" opacity=".92"/>`,
   ].join("");
 }
 
@@ -160,7 +160,7 @@ const ART = `<svg class="loading-art" viewBox="0 0 390 700" preserveAspectRatio=
 <stop offset="0" stop-color="#ffffff" stop-opacity="0"/><stop offset=".5" stop-color="#ffffff" stop-opacity=".3"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
 </linearGradient>
 </defs>
-<rect width="390" height="700" fill="#7fdde1"/>
+<rect width="390" height="700" fill="#aedee4"/>
 ${streaks()}
 ${specks()}
 ${cluster()}
