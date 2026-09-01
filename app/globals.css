@@ -25,17 +25,17 @@
   --ink: #2c4356;
   --muted: #5f838d;
   --panel: #ffffff;
-  --line: #bfe0e3;
-  --accent: #57cc4f;
+  --line: #9ccfd4;
+  --accent: #41c138;
   --accent-ink: #1f4a1c;
-  --accent-line: #379c34;
-  --danger: #ff5a68;
+  --accent-line: #30892e;
+  --danger: #ff3142;
   --danger-ink: #5c0f1c;
-  --danger-line: #e63950;
-  --gold: #ffc233;
+  --danger-line: #e01c36;
+  --gold: #ffb70e;
   --gold-ink: #5c3d05;
-  --locked: #d7e6e8;
-  --bg: #7fdde1;
+  --locked: #b5d1d4;
+  --bg: #5dd4d9;
   --hud-inset: 14px;
   --hud-height: 44px;
   /* The home screen's bottom bar, excluding the phone's own safe area. Shared
@@ -67,7 +67,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .loading-screen {
   position: fixed; z-index: 100; inset: 0; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-end;
-  background: #7fdde1;
+  background: #5dd4d9;
   transition: opacity .34s ease;
 }
 .loading-screen.is-done { opacity: 0; pointer-events: none; }
@@ -78,7 +78,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   text-align: center;
 }
 .loading-text {
-  margin: 0 0 14px; color: #3a4d5c;
+  margin: 0 0 14px; color: #334451;
   font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 900;
   letter-spacing: .22em;
 }
@@ -100,7 +100,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .loading-fill {
   display: block; height: 100%; width: var(--loading-progress, 10%);
-  border-radius: 999px; background: #57cc4f;
+  border-radius: 999px; background: #41c138;
   transition: width .32s cubic-bezier(.3,.9,.3,1);
 }
 @keyframes loading-dot { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
@@ -215,7 +215,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 11px; font-weight: 800; line-height: 1; cursor: pointer;
   transition: background .18s, color .18s, border-color .18s;
 }
-.settings-levels button:hover { background: #dbe6e8; }
+.settings-levels button:hover { background: #bacfd3; }
 .settings-levels button.is-active {
   border-color: var(--accent-line); background: var(--accent); color: var(--accent-ink);
 }
@@ -231,7 +231,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer;
   transition: background .18s;
 }
-.settings-actions button:hover, .settings-actions a:hover { background: #dbe6e8; }
+.settings-actions button:hover, .settings-actions a:hover { background: #bacfd3; }
 
 /* ---- Top-left HUD stack ------------------------------------------------ */
 /* Coins sit above the ammo row, both hugging the same corner. Coins are
@@ -246,9 +246,9 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .coin-badge {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 14px 6px 8px; border: 2px solid var(--line); border-radius: 999px;
-  background: #fff3c4;
+  background: #ffe88e;
 }
-.coin-icon { width: 18px; height: 18px; flex: none; color: #e0a512; }
+.coin-icon { width: 18px; height: 18px; flex: none; color: #c59110; }
 .coin-badge strong {
   font-size: 19px; font-weight: 900; letter-spacing: -.02em;
   font-variant-numeric: tabular-nums; color: var(--ink);
@@ -479,19 +479,19 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    (BOOSTER_RADIUS_RING_HEX in SandCannonEngine.ts — kept in sync by hand,
    there is no shared source between a hex number and a CSS colour). */
 .booster-btn.is-radius.is-armed {
-  border-color: #2a93cc; color: #1c6a94;
-  background: color-mix(in srgb, #4fc3ff 24%, var(--panel));
+  border-color: #2581b4; color: #17516f;
+  background: color-mix(in srgb, #27b5ff 24%, var(--panel));
   animation: booster-armed-pulse 1s ease-in-out infinite;
 }
 /* Prism Shot armed: a spinning seven-band ring behind the button, echoing
    PRISM_SPECTRUM_HEX — same hand-kept-in-sync caveat as above. */
 .booster-btn.is-prism.is-armed {
-  border-color: #9a5cf0; color: #6a3ec2;
+  border-color: #8338ed; color: #522f92;
   animation: booster-armed-pulse 1s ease-in-out infinite;
 }
 .booster-btn.is-prism.is-armed::before {
   content: ""; position: absolute; inset: -4px; z-index: -1; border-radius: 50%;
-  background: conic-gradient(from 0deg, #ff4d64, #ff8a33, #ffc233, #3ecc5e, #3aa0f5, #5b6ee8, #9a5cf0, #ff4d64);
+  background: conic-gradient(from 0deg, #ff2541, #ff750e, #ffb70e, #31b950, #178ff3, #3950e3, #8338ed, #ff2541);
   animation: booster-prism-spin 2.4s linear infinite;
 }
 /* Spec §4's charge-count badge, for real now the wallet is finite
@@ -563,7 +563,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; align-items: center; justify-content: center; gap: 6px;
   margin: -8px 0 18px; font-size: 15px; color: var(--ink);
 }
-.result-reward .coin-icon { width: 18px; height: 18px; color: #e0a512; }
+.result-reward .coin-icon { width: 18px; height: 18px; color: #c59110; }
 .result-reward strong { font-variant-numeric: tabular-nums; color: var(--accent-line); }
 /* A replayed win: no number to show, said outright instead of just omitting
    the row (see the comment at the call site). Smaller and muted — a note,
@@ -608,7 +608,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   padding: 7px 2px; border-radius: 12px; border: 2px solid var(--line); background: var(--locked);
 }
-.daily-login-day .coin-icon { width: 14px; height: 14px; color: #e0a512; }
+.daily-login-day .coin-icon { width: 14px; height: 14px; color: #c59110; }
 .daily-login-day strong { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); }
 .daily-login-label { font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 /* Already claimed this cycle — flattened and quieted rather than removed, so
@@ -616,7 +616,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .daily-login-day.is-past { opacity: .55; }
 /* The day the modal opened for — the one chip that can still be claimed. */
 .daily-login-day.is-today {
-  border-color: var(--accent-line); background: #e2f6e1;
+  border-color: var(--accent-line); background: #b8e9b6;
   animation: booster-armed-pulse 1.6s ease-in-out infinite;
 }
 .daily-login-day.is-today.is-past { animation: none; }
@@ -705,8 +705,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: var(--locked); color: var(--ink);
   transition: background .18s, border-color .18s, transform .18s;
 }
-.hub-gallery button:hover { background: #dbe6e8; transform: translateY(-2px); }
-.hub-gallery button.is-active { border-color: var(--accent-line); background: #e2f6e1; }
+.hub-gallery button:hover { background: #bacfd3; transform: translateY(-2px); }
+.hub-gallery button.is-active { border-color: var(--accent-line); background: #b8e9b6; }
 .hub-gallery button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .hub-gallery b { font-size: 11px; font-weight: 800; text-align: center; line-height: 1.25; }
 
@@ -719,7 +719,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; align-items: center; justify-content: center; gap: 6px;
   margin: 0 0 14px; font-size: 16px; font-weight: 900; color: var(--ink);
 }
-.shop-balance .coin-icon { width: 18px; height: 18px; color: #e0a512; }
+.shop-balance .coin-icon { width: 18px; height: 18px; color: #c59110; }
 .shop-list { display: flex; flex-direction: column; gap: 10px; }
 .shop-item {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px;
@@ -732,8 +732,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .shop-item-icon .booster-icon { width: 21px; height: 21px; }
 /* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
    here is recognisably the same thing armed in the HUD tray. */
-.shop-item-icon.is-radius { color: #1c6a94; border-color: #2a93cc; }
-.shop-item-icon.is-prism { color: #6a3ec2; border-color: #9a5cf0; }
+.shop-item-icon.is-radius { color: #17516f; border-color: #2581b4; }
+.shop-item-icon.is-prism { color: #522f92; border-color: #8338ed; }
 .shop-item-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .shop-item-info b { font-size: 14px; color: var(--ink); }
 .shop-item-desc { font-size: 11px; color: var(--muted); line-height: 1.35; }
@@ -749,6 +749,93 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .shop-buy-btn:disabled {
   border-color: var(--line); background: var(--panel); color: var(--muted);
   opacity: .7; cursor: default;
+}
+
+/* ---- Skin ---------------------------------------------------------------- */
+/* A full-screen takeover, not another hub-panel card (`.hub-screen` itself is
+   unmounted while this is up — see the `tab !== "skin"` guard on it in
+   SandGame.tsx). The rig filling the middle is the real one, rendered by the
+   engine in its own showroom pose (`SandCannonEngine.setShowcase`) — this
+   screen only frames it, so most of it stays see-through.
+   Same z-index tier as `.hub-screen` (30 — the two are mutually exclusive,
+   never both mounted at once) so `.hud-top-left`'s coin badge (z-index 31)
+   keeps reading right through this the same way it does over every other hub
+   screen, without a second currency counter competing for the same corner. */
+.skin-screen {
+  position: absolute; z-index: 30; inset: 0;
+  display: flex; flex-direction: column;
+  background: transparent; pointer-events: none;
+  animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
+}
+.skin-bar {
+  position: relative; z-index: 1; pointer-events: none;
+  display: flex; justify-content: flex-end;
+  padding: max(var(--hud-inset), env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 0 0;
+}
+.skin-close {
+  pointer-events: auto;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 2px solid var(--line); background: var(--panel); color: var(--ink);
+  display: grid; place-items: center; cursor: pointer; transition: background .18s, transform .18s;
+}
+.skin-close:hover { background: var(--locked); }
+.skin-close:active { transform: scale(.92); }
+.close-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+
+.skin-heading {
+  position: relative; z-index: 1; pointer-events: none;
+  margin: 6px 0 0; padding: 0 24px; text-align: center;
+}
+.skin-heading h2 { margin: 0; font-size: 22px; font-weight: 900; color: var(--ink); }
+.skin-heading p { margin: 4px 0 0; font-size: 13px; font-weight: 700; color: var(--muted); }
+
+/* Deliberately empty: the rig in the middle is drawn by the engine behind
+   this screen, not by anything in here — this is just the flex space that
+   keeps the bar/heading pinned to the top and the button/tray pinned to the
+   bottom around it. */
+.skin-stage { flex: 1 1 auto; min-height: 0; }
+
+.skin-equip {
+  pointer-events: auto;
+  align-self: center; margin-bottom: 16px;
+  padding: 12px 40px; border-radius: 999px;
+  background: var(--accent); border: 3px solid var(--accent-line); color: var(--accent-ink);
+  font-size: 15px; font-weight: 900; letter-spacing: .04em; cursor: pointer;
+  transition: transform .16s, opacity .16s;
+}
+.skin-equip:active:not(:disabled) { transform: scale(.96); }
+.skin-equip:disabled {
+  border-color: var(--line); background: var(--panel); color: var(--muted); cursor: default;
+}
+
+.skin-tray {
+  pointer-events: auto; position: relative; z-index: 1;
+  padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+  border-top: 2px solid var(--line);
+  background: var(--panel);
+  max-height: 42%; overflow-y: auto;
+}
+.skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.skin-card {
+  position: relative; aspect-ratio: 1; padding: 0; cursor: pointer;
+  border: 2px solid var(--line); border-radius: 16px; overflow: hidden;
+  background: var(--locked);
+  transition: border-color .16s, transform .16s;
+}
+.skin-card:hover { transform: translateY(-2px); }
+.skin-card:active { transform: scale(.96); }
+.skin-card.is-previewing { border-color: var(--accent-line); box-shadow: inset 0 0 0 2px var(--accent-line); }
+/* A data URL rendered from the rig itself: fills the card, like a photo. */
+.skin-card img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* Only shown for the instant before the picker's first thumbnail capture
+   resolves — see `costumeThumbnails` in SandGame.tsx. */
+.skin-card-icon { width: 100%; height: 100%; display: grid; place-items: center; color: var(--ink); }
+.skin-card-icon .costume-icon { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.skin-card-icon.is-magic { color: #6636c7; }
+.skin-card-tick {
+  position: absolute; right: 5px; bottom: 5px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); border: 2px solid var(--accent-line);
+  display: grid; place-items: center; font-size: 10px; font-weight: 900;
 }
 
 /* The picture itself, one grid cell per authored cell. `image-rendering` is not
@@ -828,11 +915,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 /* One flat hue per tab, spent only while that tab is the active one — the
    fill and its border are two shades of the same colour, not a gradient. */
-.hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { --bubble: #ffc94d; --bubble-line: #e0942a; }
-.hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { --bubble: #ff8fd1; --bubble-line: #e0499e; }
-.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { --bubble: #5fc3f5; --bubble-line: #2a93cc; }
-.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { --bubble: #5fd98f; --bubble-line: #2fa864; }
-.hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { --bubble: #ff9a5c; --bubble-line: #e06a2a; }
+.hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { --bubble: #ffbd25; --bubble-line: #cc831e; }
+.hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { --bubble: #ff5fbd; --bubble-line: #db2b8e; }
+.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { --bubble: #39b5f3; --bubble-line: #2581b4; }
+.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { --bubble: #41d27a; --bubble-line: #299458; }
+.hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { --bubble: #ff8032; --bubble-line: #cc5b1e; }
 .hub-nav button.is-active .hub-nav-bubble {
   transform: translateY(-14px) scale(1.2);
   background: var(--bubble);

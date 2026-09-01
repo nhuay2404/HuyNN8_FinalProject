@@ -3,9 +3,10 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import {
   disposeCostumeParts,
   getCostume,
+  getCostumeThumbnails,
   getSelectedCostume,
-  setSelectedCostume,
   type CostumeDef,
+  type CostumeFlavor,
   type CostumeId,
 } from "./costumes";
 import { haptic, hapticSandLanded } from "./haptics";
@@ -58,19 +59,19 @@ import type {
 // :root in globals.css), while staying far enough apart in hue that the
 // colour-matching rule never gets ambiguous.
 export const SAND_COLOR_HEX: Record<SandColor, number> = {
-  red: 0xff4d64,
-  green: 0x3ecc5e,
-  yellow: 0xffc233,
-  blue: 0x3aa0f5,
-  purple: 0x9a5cf0,
-  orange: 0xff8a33,
-  cyan: 0x2fd9c7,
+  red: 0xff2541,
+  green: 0x31b950,
+  yellow: 0xffb70e,
+  blue: 0x178ff3,
+  purple: 0x8338ed,
+  orange: 0xff750e,
+  cyan: 0x24c4b3,
   // Pulled lighter, softer and further toward magenta than a straight "hot
   // pink" would sit — a hue that close to red needs the lightness/saturation
   // gap to do the work of telling them apart once jitter is added to both.
-  pink: 0xe689d6,
-  lime: 0xa8e63e,
-  brown: 0x9a6b3a,
+  pink: 0xde65c9,
+  lime: 0x9ae21f,
+  brown: 0x885e33,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -138,6 +139,37 @@ export const MUZZLE_Z = -2.18;
  * ends rather than just getting shorter at the top.
  */
 const CANNON_MODEL_SCALE = 0.8;
+
+// ---- showcase (skin picker) ----------------------------------------------
+// The picker's full-screen preview: the rig moves out to where the camera can
+// see it up close, turns slowly and fires demo shots on a loop, so the skin a
+// player is looking at is the rig a level will actually hand them — same
+// groups (`cannonRoot`/`turret`/`barrelPivot`/`barrelVisual`), same
+// `muzzleAnchor`, nothing about the rig itself is faked for the picker.
+const SHOWCASE_POSITION = new THREE.Vector3(0, 0.5, 5.6);
+const SHOWCASE_SCALE = 0.92;
+const SHOWCASE_ELEVATION = 0.15;
+/** Turned a third of the way round rather than left facing the camera dead
+ * on: at rest the barrel points along the same axis the camera looks down
+ * (both are -Z), so a straight-on rig reads as staring down its own bore —
+ * every ring along its length (base, muzzle band, halo) lines up into one
+ * illusion of concentric circles. This is the same fixed turn
+ * `getCostumeThumbnails` (costumes.ts) already turns its own thumbnail rig
+ * by, for the same reason. */
+const SHOWCASE_YAW = 0.42;
+/** Peak yaw, in radians, of the slow side-to-side turn (`SHOWCASE_SWAY_SPEED`
+ * full cycles/second), added on top of `SHOWCASE_YAW` — "xoay vòng" without
+ * ever turning the barrel out of frame. */
+const SHOWCASE_SWAY = 0.22;
+const SHOWCASE_SWAY_SPEED = 0.7;
+/** Seconds between demo shots — long enough that each one reads as its own
+ * beat rather than a stutter of gunfire. */
+const SHOWCASE_FIRE_INTERVAL = 1.5;
+/** A demo shot never has anything to hit — the picker has no board — so it
+ * simply ends in mid-air after this long and plays its landing effect there.
+ * That is the thing being shown, not a miss. */
+const SHOWCASE_SHOT_FLIGHT = 0.6;
+const SHOWCASE_SHOT_SPEED = 9;
 
 // ---- cannon entrance (home screen -> gameplay) ---------------------------
 // The gun is hidden entirely on the home screen (`buildCannon`) so the
@@ -245,7 +277,7 @@ const MUZZLE_BAND_RADIUS = 0.42;
 /** Blue, per spec §6, for Radius Overcharge's overlay ring. Exported so the
  * HUD button drawn in `SandGame.tsx` uses this exact hue rather than a second
  * guess at "the blue". */
-export const BOOSTER_RADIUS_RING_HEX = 0x4fc3ff;
+export const BOOSTER_RADIUS_RING_HEX = 0x27b5ff;
 /**
  * Seven bands for Prism Shot's overlay ring — spec §6's "quang phổ" (spectrum)
  * language, reused from the retired Rainbow Target/Weak Point asset. The game's
@@ -254,7 +286,7 @@ export const BOOSTER_RADIUS_RING_HEX = 0x4fc3ff;
  * Exported for the same reason as `BOOSTER_RADIUS_RING_HEX` above — one HUD
  * button reuses these colours too.
  */
-export const PRISM_SPECTRUM_HEX = [0xff4d64, 0xff8a33, 0xffc233, 0x3ecc5e, 0x3aa0f5, 0x5b6ee8, 0x9a5cf0];
+export const PRISM_SPECTRUM_HEX = [0xff2541, 0xff750e, 0xffb70e, 0x31b950, 0x178ff3, 0x3950e3, 0x8338ed];
 /** Gap between spectrum bands, as a fraction of one band's arc — enough that
  * seven flat-coloured wedges actually read as seven, not as one ring. */
 const PRISM_BAND_GAP_RATIO = 0.08;
@@ -447,6 +479,18 @@ type SparkleShard = {
   life: number;
 };
 
+/** One demo round fired by the skin picker's showcase — see `launchShowcaseShot`.
+ * Deliberately not a `Projectile`: it has no colour, no collision and no
+ * cooldown, because it must not be able to touch a level that is only paused
+ * behind the picker. */
+type ShowcaseShot = {
+  mesh: THREE.Mesh;
+  start: THREE.Vector3;
+  velocity: THREE.Vector3;
+  time: number;
+  trailTicks: number;
+};
+
 export type ControlSensitivity = { aim: number };
 
 /** Overshoots past 1 before settling back — used for the turret dropping onto
@@ -494,13 +538,6 @@ export class SandCannonEngine {
   private aimRingGlow: THREE.Mesh | null = null;
   private sortRing: THREE.Mesh | null = null;
   private sortRingAge = 0;
-  /** The rotating rune-circle overlay, parented under `aimRing` so it always
-   * inherits its position, scale and visibility for free — only ever
-   * visible for a `flavor: "magic"` costume. See `buildRuneCircle`. */
-  private runeCircle: THREE.Group | null = null;
-  private runeCircleOuter: THREE.Group | null = null;
-  private runeCircleInner: THREE.Mesh | null = null;
-  private readonly runeCircleMaterials: THREE.MeshBasicMaterial[] = [];
   /** How much bigger than its base geometry the current sortRing flash is
    * drawn — 2x (clamped) for a shot that resolved under Radius Overcharge, so
    * the flash marking what a boosted shot actually swept isn't sized for the
@@ -650,6 +687,15 @@ export class SandCannonEngine {
    * trickle to roughly `SPARKLE_TRAIL_INTERVAL` instead of once a tick. */
   private sparkleTrailAge = 0;
 
+  /** The skin picker's full-screen preview — see `setShowcase`. Off for the
+   * entire rest of the game's life; only the picker ever turns it on. */
+  private showcase = false;
+  private showcaseTime = 0;
+  private showcaseCountdown = 0;
+  private showcaseShots: ShowcaseShot[] = [];
+  private showcaseShotGeometry: THREE.SphereGeometry | null = null;
+  private showcaseMaterials: Record<CostumeFlavor, THREE.MeshBasicMaterial> | null = null;
+
   constructor(
     host: HTMLDivElement,
     aimZone: HTMLDivElement,
@@ -698,7 +744,7 @@ export class SandCannonEngine {
     // pastel sky as they recede, not into a colour of their own, for the two
     // to blend seamlessly into one continuous "wall" the picture and the
     // cannon stand out against.
-    this.scene.fog = new THREE.FogExp2(0x7fdde1, 0.02);
+    this.scene.fog = new THREE.FogExp2(0x5dd4d9, 0.02);
     this.camera.position.set(0, 3.3, 13.6);
     this.camera.lookAt(0, 1, -0.5);
     this.renderer = acquireRenderer(this, this.host);
@@ -708,7 +754,6 @@ export class SandCannonEngine {
     this.buildSand();
     this.buildCannon();
     this.buildSortRings();
-    this.buildRuneCircle();
     this.buildMuzzleSmoke();
     this.buildSandSpray();
     this.buildSparkles();
@@ -730,11 +775,11 @@ export class SandCannonEngine {
    * nothing lit — the frame, the cannon's own grey and gold — carries a cast
    * that competes with the sand picture's actual colours. */
   private buildLighting() {
-    this.scene.add(new THREE.HemisphereLight(0xf2f2f2, 0x8fa8ab, 1.5));
-    const key = new THREE.DirectionalLight(0xffffff, 2.1);
+    this.scene.add(new THREE.HemisphereLight(0xf2f2f2, 0x8fa8ab, 1.3));
+    const key = new THREE.DirectionalLight(0xffffff, 1.85);
     key.position.set(-4, 7.5, 6.5);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0xababab, 0.85);
+    const rim = new THREE.DirectionalLight(0xababab, 0.75);
     rim.position.set(5, 2.5, -5);
     this.scene.add(rim);
   }
@@ -1088,21 +1133,163 @@ export class SandCannonEngine {
     return this.costume.flavor === "magic";
   }
 
-  /** Swaps the cannon's decorative shell for another costume's, live. Purely
-   * visual: the frame, the aim math and any shot already in flight are all
-   * untouched — see `CostumeRigGroups`'s own contract in costumes.ts. */
+  /**
+   * Swaps the cannon's decorative shell for another costume's, live — purely
+   * visual, and purely a preview: it does NOT persist the choice. The picker
+   * calls this on every card it previews, and `SandGame.tsx`'s own "Select"
+   * button is what actually saves one (`setSelectedCostume`, `costumes.ts`) —
+   * the same split the historical prototype's cosmetic picker used, so
+   * browsing skins never overwrites the one a player has not confirmed yet.
+   * The frame, the aim math and any shot already in flight are all untouched
+   * — see `CostumeRigGroups`'s own contract in costumes.ts.
+   */
   setCostume(id: CostumeId) {
-    setSelectedCostume(id);
     if (this.costume.id === id) return;
     disposeCostumeParts(this.costumeParts);
     this.costumeParts = [];
     this.costume = getCostume(id);
     this.buildCostumeRig();
-    if (this.runeCircle) this.runeCircle.visible = this.isMagicCostume();
   }
 
   getCostumeId(): CostumeId {
     return this.costume.id;
+  }
+
+  /** Rendered with the engine's own renderer, because the page keeps exactly
+   * one WebGL context and a second one would eventually cost the game its
+   * canvas — see `getCostumeThumbnails` in costumes.ts. */
+  captureCostumeThumbnails() {
+    return getCostumeThumbnails(this.renderer);
+  }
+
+  /**
+   * The skin picker's full-screen preview: the rig moves out to
+   * `SHOWCASE_POSITION`, turns slowly and fires demo shots on a loop, so the
+   * skin on screen is the same rig a level will hand the player — nothing
+   * here moves `muzzleAnchor` or touches the aim math, only where the whole
+   * rig sits and how it is framed.
+   *
+   * The picker is only ever reachable from the paused home screen (`idle`),
+   * so `step()` — and with it every real-gameplay tick — never runs while
+   * this is on; `animate()` drives `updateShowcase`/`updateMuzzleSmoke`/
+   * `updateSparkles` directly instead, on real elapsed time rather than the
+   * fixed step the paused gameplay loop would otherwise supply them.
+   */
+  setShowcase(next: boolean) {
+    if (this.showcase === next) return;
+    this.showcase = next;
+    // A burst lives past the moment it was fired in either direction: the
+    // game must not inherit a showcase burst, and the showcase must not open
+    // into the tail of one still fading from real play.
+    this.clearTransientEffects();
+    this.clearShowcaseShots();
+    if (next) {
+      this.showcaseTime = 0;
+      this.showcaseCountdown = 0.3;
+      // A demo shot fired the instant the entrance animation was mid-rise
+      // would leave the rig split between two animations; the picker only
+      // ever opens from the idle home screen, where there is none in flight,
+      // but cancelling it here costs nothing and keeps that a fact this
+      // method does not have to trust.
+      this.cannonEntranceStart = null;
+      this.cannonRoot.visible = true;
+      this.cannonRoot.position.copy(SHOWCASE_POSITION);
+      this.cannonRoot.scale.setScalar(SHOWCASE_SCALE);
+      this.cannonRoot.rotation.y = SHOWCASE_YAW;
+      this.yaw = CANNON_NEUTRAL_YAW;
+      this.elevation = SHOWCASE_ELEVATION;
+      this.applyCannonTransform();
+      // The stage is the rig alone — the board it would otherwise be aiming
+      // at has nothing to do with picking a skin, and neither does a sight:
+      // there is nothing to aim at, so the crosshair stays exactly as hidden
+      // as it already is on the paused home screen underneath this screen.
+      this.frameRoot.visible = false;
+      return;
+    }
+    this.recoil = 0;
+    this.barrelVisual.position.z = 0;
+    this.cannonRoot.rotation.y = 0;
+    this.cannonRoot.position.copy(CANNON_ROOT_POSITION);
+    this.cannonRoot.scale.setScalar(CANNON_MODEL_SCALE);
+    // The picker is only reachable from the home screen, which shows the
+    // cannon nowhere at all.
+    this.cannonRoot.visible = false;
+    this.frameRoot.visible = true;
+    this.resetCannonDirection();
+  }
+
+  /** Hides every muzzle-smoke puff and sparkle shard currently in flight,
+   * without waiting for its own lifetime to run out — see `setShowcase`. */
+  private clearTransientEffects() {
+    for (const puff of this.muzzleSmokePuffs) puff.mesh.visible = false;
+    for (const shard of this.sparkleShards) shard.mesh.visible = false;
+  }
+
+  private clearShowcaseShots() {
+    for (const shot of this.showcaseShots) this.scene.remove(shot.mesh);
+    this.showcaseShots = [];
+  }
+
+  private launchShowcaseShot() {
+    if (!this.showcaseShotGeometry) this.showcaseShotGeometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
+    if (!this.showcaseMaterials) {
+      this.showcaseMaterials = {
+        classic: this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })) as THREE.MeshBasicMaterial,
+        magic: this.track(new THREE.MeshBasicMaterial({ color: 0xd9b6ff })) as THREE.MeshBasicMaterial,
+      };
+    }
+    this.applyCannonTransform();
+    const start = this.muzzleAnchor.getWorldPosition(new THREE.Vector3());
+    const quaternion = this.muzzleAnchor.getWorldQuaternion(new THREE.Quaternion());
+    const velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).multiplyScalar(SHOWCASE_SHOT_SPEED);
+    this.recoil = 1;
+    this.spawnMuzzleSmoke(start, velocity);
+    if (this.isMagicCostume()) {
+      this.spawnSparkleMuzzleBurst(start);
+      this.sparkleTrailAge = 0;
+    }
+    const mesh = new THREE.Mesh(this.showcaseShotGeometry, this.showcaseMaterials[this.costume.flavor]);
+    mesh.position.copy(start);
+    this.scene.add(mesh);
+    this.showcaseShots.push({ mesh, start: start.clone(), velocity, time: 0, trailTicks: 0 });
+  }
+
+  /** Advances the showcase's own timers on real elapsed seconds — see
+   * `setShowcase` for why this cannot lean on `step()`'s fixed accumulator. */
+  private updateShowcase(deltaSeconds: number) {
+    this.showcaseTime += deltaSeconds;
+    this.cannonRoot.rotation.y = SHOWCASE_YAW + Math.sin(this.showcaseTime * SHOWCASE_SWAY_SPEED) * SHOWCASE_SWAY;
+    this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
+    this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
+
+    this.showcaseCountdown -= deltaSeconds;
+    if (this.showcaseCountdown <= 0) {
+      this.showcaseCountdown = SHOWCASE_FIRE_INTERVAL;
+      this.launchShowcaseShot();
+    }
+
+    const survivors: ShowcaseShot[] = [];
+    for (const shot of this.showcaseShots) {
+      shot.time += deltaSeconds;
+      const position = this.positionAt(shot.start, shot.velocity, shot.time);
+      shot.mesh.position.copy(position);
+      if (this.isMagicCostume()) {
+        const ticks = Math.floor(shot.time / SPARKLE_TRAIL_INTERVAL);
+        if (ticks !== shot.trailTicks) {
+          shot.trailTicks = ticks;
+          this.spawnSparkleTrail(position);
+        }
+      }
+      if (shot.time < SHOWCASE_SHOT_FLIGHT) {
+        survivors.push(shot);
+        continue;
+      }
+      // It ends in mid air on purpose: there is nothing to hit in the
+      // picker, and the landing effect is the thing being shown.
+      if (this.isMagicCostume()) this.spawnSparkleImpactBurst(position);
+      this.scene.remove(shot.mesh);
+    }
+    this.showcaseShots = survivors;
   }
 
   /**
@@ -1358,7 +1545,6 @@ export class SandCannonEngine {
       if (this.aimRing) (this.aimRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.aimRingGlow) (this.aimRingGlow.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.sortRing) (this.sortRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
-      for (const material of this.runeCircleMaterials) material.color.setHex(hex);
     }
   }
 
@@ -1483,74 +1669,6 @@ export class SandCannonEngine {
     this.sortRing.renderOrder = 21;
     this.sortRing.position.z = this.cell * 0.64;
     this.frameRoot.add(this.sortRing);
-  }
-
-  /**
-   * The rune costume's "pháp trận": a decorative ring of glyph ticks and a
-   * counter-rotating inner ring, layered around the real aim ring rather than
-   * replacing it — `aimRing` itself still carries the actual reach, ammo
-   * colour and hit-flash, unchanged for every costume (see `buildSortRings`).
-   *
-   * Parented as a child of `aimRing` rather than a sibling in `frameRoot`, so
-   * it inherits that mesh's position (`moveRingToCell`), booster-armed scale
-   * and visibility for free — nothing here needs its own sync code at the
-   * three call sites that already toggle `aimRing.visible`. Only ever shown
-   * for a `flavor: "magic"` costume (`setCostume`, `isMagicCostume`).
-   */
-  private buildRuneCircle() {
-    if (!this.aimRing || this.sortRadius <= 0) return;
-    const outer = this.sortRadius * this.cell + this.cell * 0.5;
-
-    const group = new THREE.Group();
-    group.visible = this.isMagicCostume();
-    group.renderOrder = 18;
-
-    // A ring of short glyph ticks just outside the real rim, spinning one way.
-    const tickGroup = new THREE.Group();
-    const tickRadius = outer * 1.14;
-    const tickCount = 16;
-    const tickArc = (Math.PI * 2) / tickCount;
-    const tickLength = tickArc * 0.32;
-    for (let index = 0; index < tickCount; index += 1) {
-      const geometry = this.track(
-        new THREE.RingGeometry(tickRadius, tickRadius + this.cell * 0.12, 4, 1, index * tickArc, tickLength),
-      );
-      const material = this.track(
-        new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.55,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
-        }),
-      ) as THREE.MeshBasicMaterial;
-      this.runeCircleMaterials.push(material);
-      tickGroup.add(new THREE.Mesh(geometry, material));
-    }
-    group.add(tickGroup);
-
-    // A thin ring just inside the real rim, spinning the other way — the
-    // classic "nested rings" read of a summoning circle.
-    const innerGeometry = this.track(new THREE.RingGeometry(outer * 0.74, outer * 0.78, 48));
-    const innerMaterial = this.track(
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-      }),
-    ) as THREE.MeshBasicMaterial;
-    this.runeCircleMaterials.push(innerMaterial);
-    const innerRing = new THREE.Mesh(innerGeometry, innerMaterial);
-    group.add(innerRing);
-
-    this.aimRing.add(group);
-    this.runeCircle = group;
-    this.runeCircleOuter = tickGroup;
-    this.runeCircleInner = innerRing;
   }
 
   /** Builds the muzzle-smoke pool once. Each puff gets its own material —
@@ -1864,9 +1982,10 @@ export class SandCannonEngine {
     this.aimZone.addEventListener("pointercancel", this.onAimPointerCancel);
   }
 
-  /** §21: aim and fire exist in READY and nowhere else. */
+  /** §21: aim and fire exist in READY and nowhere else — and never while the
+   * skin picker's showcase is running the rig itself. */
   private canInteract() {
-    return !this.paused && !this.disposed && this.state.phase === "READY" && !this.state.result;
+    return !this.paused && !this.disposed && !this.showcase && this.state.phase === "READY" && !this.state.result;
   }
 
   private canStartAim() {
@@ -2700,13 +2819,6 @@ export class SandCannonEngine {
     this.updateSandSpray(FIXED_STEP);
     this.updateSparkles(FIXED_STEP);
 
-    if (this.runeCircle?.visible) {
-      // Two nested rings spinning opposite ways — the "pháp trận" reads as
-      // alive rather than a static sticker on the aim ring.
-      if (this.runeCircleOuter) this.runeCircleOuter.rotation.z += FIXED_STEP * 0.6;
-      if (this.runeCircleInner) this.runeCircleInner.rotation.z -= FIXED_STEP * 0.9;
-    }
-
     if (this.sortRing?.visible) {
       this.sortRingAge += FIXED_STEP;
       const life = Math.min(1, this.sortRingAge / SORT_RING_SECONDS);
@@ -2739,6 +2851,17 @@ export class SandCannonEngine {
     this.lastFrame = now;
     this.updateFrameSpin(delta);
     this.updateCannonEntrance();
+    // Runs through the same pause the picker opens on top of, the same way
+    // `updateFrameSpin`/`updateCannonEntrance` already do — `step()` below
+    // never runs while `this.paused` (the picker is home-screen-only), so the
+    // showcase drives its own timers and its own smoke/sparkle pools directly
+    // off real elapsed time instead of the fixed-step accumulator.
+    if (this.showcase) {
+      const deltaSeconds = delta / 1000;
+      this.updateShowcase(deltaSeconds);
+      this.updateMuzzleSmoke(deltaSeconds);
+      this.updateSparkles(deltaSeconds);
+    }
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;
@@ -2892,6 +3015,7 @@ export class SandCannonEngine {
     this.aimZone.removeEventListener("pointerup", this.onAimPointerUp);
     this.aimZone.removeEventListener("pointercancel", this.onAimPointerCancel);
     this.sandTexture.dispose();
+    this.clearShowcaseShots();
     for (const item of this.disposables) item.dispose();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
     releaseRenderer(this);
