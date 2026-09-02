@@ -165,12 +165,13 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
   /** Rows top-first, one letter per cell, `.` for empty. Bodies are the connected components. */
   rows: string[];
   /**
-   * The starting rotation only. Under the cycling rule this list is a wheel,
-   * not a budget: colours come round again until they are gone.
+   * Declares the level's wheel of colours — not a fixed opening order. The
+   * queue a player actually sees is drawn at random (`fillQueue`/`drawAmmo`
+   * in sand-rules.ts), never from this list's order directly.
    *
    * Every colour in the picture must appear here or it can never be shot at,
-   * and every colour here must appear in the picture or the opening bullet has
-   * no target. The level editor enforces both.
+   * and every colour here must appear in the picture or nothing is ever there
+   * to draw. The level editor enforces both.
    */
   ammoQueue: SandColor[];
   /** Radius of the sorting disc, in blueprint cells. Scaled with the board. */
@@ -274,6 +275,25 @@ export type SandGameState = {
    * back to the end of it and a finished colour leaves it altogether.
    */
   queue: SandColor[];
+  /**
+   * How many draws in a row each shootable colour has been passed over since
+   * it last came up — resets to 0 the instant `drawAmmo` (sand-rules.ts)
+   * draws it again. A colour absent from this map has never been passed
+   * over (either it was just drawn, or the board has never offered it
+   * before). Drives the "insurance" rule: a colour left waiting 3 draws is
+   * forced onto the 4th, so the randomised queue can still repeat a colour
+   * back-to-back without ever burying another one for good.
+   */
+  ammoPity: Partial<Record<SandColor, number>>;
+  /**
+   * Advances by one every time `drawAmmo` actually rolls the dice (a forced
+   * insurance pick spends no roll). Turned into that draw's pick via
+   * `seededUnit` (sand-color.ts) rather than `Math.random`, so the queue
+   * looks random to a player but — same state in, same draw out — stays
+   * exactly reproducible from the state alone (see this file's own header
+   * comment on §9).
+   */
+  ammoSeed: number;
   /** Bullets spent. Against `shotLimit`, this is the number that matters. */
   shotsUsed: number;
   /** Cells still in the frame. Win is this reaching zero. */

@@ -21,6 +21,7 @@ import type {
 // resolves with — this file is executed by node directly, not only bundled.
 import { SAND_COLORS } from "./sand-types.ts";
 import { getBoosterCount, spendBoosterCharge as spendWalletBoosterCharge } from "./economy.ts";
+import { seededUnit } from "./sand-color.ts";
 
 /** The picture's alphabet. One letter per colour keeps an authored row readable. */
 export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
@@ -664,12 +665,16 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
   const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
   // A colour that starts entirely locked is authored into the wheel — it has to
   // be, or it could never be shot once freed — but it must not be *handed out*
-  // until a key has opened it.
-  const shootable = shootableColors(bodies, frozen);
+  // until a key has opened it. `level.ammoQueue` itself no longer sets the
+  // opening order (see `fillQueue`'s own comment) — it is still what the
+  // level editor validates every board colour against.
+  const filled = fillQueue(level, [], {}, 0, bodies, frozen);
   return {
     phase: "READY",
     bodies,
-    queue: level.ammoQueue.filter((color) => shootable.includes(color)),
+    queue: filled.queue,
+    ammoPity: filled.ammoPity,
+    ammoSeed: filled.ammoSeed,
     shotsUsed: 0,
     remainingCells: countCells(bodies),
     locked,
@@ -733,29 +738,134 @@ export type ShotResolution = {
   steps: SettleStep[];
 };
 
+type AmmoDraw = Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed">;
+
 /**
- * Advance the queue by one bullet.
+ * One random, uniform pick from `shootable` — repeats and all — plus the
+ * pity/seed state the *next* draw needs. Every candidate not picked has
+ * waited one draw longer, `pity` says so, and `seededUnit` is what turns
+ * `seed` into this draw's pick, so the same state always produces the same
+ * one (§9, this file's header comment).
  *
- * Under the cycling rule the colour goes back to the end while any of it is
- * still on the board, and a colour that has just been finished is dropped from
- * the queue wherever it sits — so the player is never handed a bullet with
- * nothing left to shoot at.
+ * No insurance logic here on purpose — see `drainOverdue`, `fillQueue`'s
+ * other half. A single draw can only ever clear one colour's wait to zero,
+ * so if two colours are already overdue in the same call this one has no way
+ * to save both; keeping the two halves separate is what lets `fillQueue`
+ * drain every overdue colour first, however many there are, before spending
+ * a real draw here.
  */
-function advanceQueue(
+function drawAmmo(shootable: readonly SandColor[], pity: Partial<Record<SandColor, number>>, seed: number) {
+  const nextSeed = seed + 1;
+  const color = shootable[Math.min(shootable.length - 1, Math.floor(seededUnit(nextSeed) * shootable.length))];
+  const nextPity: Partial<Record<SandColor, number>> = {};
+  for (const candidate of shootable) {
+    nextPity[candidate] = candidate === color ? 0 : (pity[candidate] ?? 0) + 1;
+  }
+  return { color, pity: nextPity, seed: nextSeed };
+}
+
+/** Insurance threshold: a colour passed over this many draws in a row is forced through the next one. */
+const AMMO_PITY_LIMIT = 3;
+
+/**
+ * Forces through every colour already sitting at the insurance limit,
+ * oldest-waiting first — not just one.
+ *
+ * A plain draw only ever resolves a single colour's wait, but more than one
+ * colour can reach the limit on the very same call (three colours can easily
+ * end up tied at "passed over twice" after a couple of draws, and the next
+ * draw pushes all of them to the limit together) — capping this at one
+ * forced pick per call is exactly what let a second colour slide past the
+ * limit to 4, 5 draws waited and so on. Draining the whole backlog here,
+ * with no seed spent and no *other* colour's clock advanced by the draining
+ * itself, is what keeps the limit an actual ceiling instead of a rough
+ * average.
+ */
+function drainOverdue(
+  shootable: readonly SandColor[],
+  pity: Partial<Record<SandColor, number>>,
+): { colors: SandColor[]; pity: Partial<Record<SandColor, number>> } {
+  let nextPity = pity;
+  const colors: SandColor[] = [];
+  while (true) {
+    const overdue = shootable.filter((color) => (nextPity[color] ?? 0) >= AMMO_PITY_LIMIT);
+    if (!overdue.length) break;
+    overdue.sort((a, b) => (nextPity[b] ?? 0) - (nextPity[a] ?? 0));
+    const color = overdue[0];
+    colors.push(color);
+    nextPity = { ...nextPity, [color]: 0 };
+  }
+  return { colors, pity: nextPity };
+}
+
+/**
+ * Tops `queue` back up to the full lookahead (the loaded round plus
+ * `nextPreviewCount` behind it) with fresh random draws, after dropping
+ * anything left over for a colour that has just been finished.
+ *
+ * Nothing "returns" a specific colour to a specific spot the way the old
+ * round-robin queue did — every currently shootable colour is eligible for
+ * every open slot, so the same colour can now come up back-to-back, and
+ * `drawAmmo`'s insurance rule is what keeps one from vanishing for good
+ * instead of a fixed rotation doing it. Called with an already-shifted
+ * `queue` from `resolveShot`'s `spend`, or with an empty one from
+ * `createSandGameState` — either way this is what makes sure the player
+ * always sees a full preview, never a partial one trailing off into nothing
+ * just because the board only holds a couple of colours.
+ *
+ * `previousShootable`, when given, is the shootable set from *before* this
+ * shot — any colour missing from it that is shootable now just had its lock
+ * opened this turn, and goes straight into the queue rather than waiting on
+ * a lucky roll or three turns of insurance: a key freeing sand is a big
+ * enough moment that the wheel offering it back is immediate, the same
+ * guarantee the old round-robin queue made. `createSandGameState` has no
+ * "before" to compare against, so it omits this and leaves the opening
+ * queue to a plain draw.
+ */
+function fillQueue(
+  level: SandLevelConfig,
   queue: SandColor[],
+  pity: Partial<Record<SandColor, number>>,
+  seed: number,
   bodies: SandBody[],
   frozen: ReadonlySet<string>,
-): SandColor[] {
-  const [spent, ...rest] = queue;
-  if (spent === undefined) return shootableColors(bodies, frozen);
-  const shootable = new Set(shootableColors(bodies, frozen));
-  const recycled = shootable.has(spent) ? [...rest, spent] : rest;
-  const kept = recycled.filter((color) => shootable.has(color));
-  // A colour that is entirely locked away is not gone, it is unreachable — and
-  // it comes back the moment a key frees it, or the wheel would have dropped it
-  // for good and left that sand unshootable.
-  const returning = shootableColors(bodies, frozen).filter((color) => !kept.includes(color));
-  return [...kept, ...returning];
+  previousShootable?: ReadonlySet<SandColor>,
+): AmmoDraw {
+  const shootable = shootableColors(bodies, frozen);
+  const shootableSet = new Set(shootable);
+  const kept = queue.filter((color) => shootableSet.has(color));
+  if (previousShootable) {
+    for (const color of shootable) {
+      if (!previousShootable.has(color) && !kept.includes(color)) kept.push(color);
+    }
+  }
+  let nextPity = pity;
+  let nextSeed = seed;
+  const target = 1 + level.nextPreviewCount;
+
+  // Insurance always goes first, however many colours it takes to clear the
+  // backlog, and gets re-checked after every single regular draw below —
+  // one plain draw can itself push some other colour to the limit, and
+  // leaving that for "next call" is exactly what let a second overdue colour
+  // slide past it. Draining to a fixpoint before ever drawing again is what
+  // keeps the limit an actual ceiling. This can overshoot `target` by a
+  // colour or two on a rare unlucky call, which just means the preview
+  // briefly shows a little more than the usual 3 ahead rather than ever
+  // dropping that promise.
+  while (true) {
+    const drained = drainOverdue(shootable, nextPity);
+    nextPity = drained.pity;
+    if (drained.colors.length) {
+      kept.push(...drained.colors);
+      continue;
+    }
+    if (kept.length >= target || shootable.length === 0) break;
+    const drawn = drawAmmo(shootable, nextPity, nextSeed);
+    kept.push(drawn.color);
+    nextPity = drawn.pity;
+    nextSeed = drawn.seed;
+  }
+  return { queue: kept, ammoPity: nextPity, ammoSeed: nextSeed };
 }
 
 /**
@@ -835,8 +945,14 @@ export function resolveShot(
   const hitBody = hit?.bodyId ? state.bodies.find((body) => body.id === hit.bodyId) ?? null : null;
   if (!hit) return { ...idle, state: { ...state, phase: "READY" } };
 
-  const spend = (bodies: SandBody[], stillFrozen: ReadonlySet<string>): Pick<SandGameState, "queue" | "shotsUsed"> => ({
-    queue: advanceQueue(state.queue, bodies, stillFrozen),
+  // Read before this shot changes anything — a colour missing here that is
+  // shootable again after `spend` just had its lock opened this turn, see
+  // `fillQueue`'s `previousShootable` parameter.
+  const frozen = frozenSet(state);
+  const previousShootable = new Set(shootableColors(state.bodies, frozen));
+
+  const spend = (bodies: SandBody[], stillFrozen: ReadonlySet<string>): Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed" | "shotsUsed"> => ({
+    ...fillQueue(level, state.queue.slice(1), state.ammoPity, state.ammoSeed, bodies, stillFrozen, previousShootable),
     shotsUsed: state.shotsUsed + 1,
   });
 
@@ -845,7 +961,6 @@ export function resolveShot(
   // and only the part of each that falls inside it. The place may be empty air
   // — the disc still reaches down from it. A shot that finds none of its colour
   // in reach is not a special case; NO_MATCH covers it.
-  const frozen = frozenSet(state);
   const radius = effectiveSortRadius(level, booster);
   const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozen, {
     matchColor: booster !== "prismShot",

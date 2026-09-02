@@ -600,12 +600,13 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   /* Remounted (via a React `key` on the bump, same trick as `.shots-icon`)
      every time the queue moves, so every surviving slot visibly slides one
      step down the strip in step with the round that just got promoted into
-     the chamber — see `shots-upcoming-advance`. */
+     the chamber — see `shots-upcoming-advance`. Every slot is now a real,
+     equally-likely upcoming colour rather than a step in a fixed rotation
+     (see sand-rules.ts's `drawAmmo`), so fading the farther dots out used to
+     read as "less certain the farther out you look" — no longer true, and
+     dropped: all three read at the same, fully-opaque strength. */
   animation: shots-upcoming-advance .32s ease-out;
 }
-.shots-upcoming-dot:nth-child(1) { opacity: .85; }
-.shots-upcoming-dot:nth-child(2) { opacity: .6; }
-.shots-upcoming-dot:nth-child(3) { opacity: .4; }
 
 /* ---- Scene and controls ------------------------------------------------ */
 /* The picture frame sits higher in this box than the raw geometry alone

@@ -124,6 +124,44 @@ const RECOIL_TRAVEL = 0.23;
 const FRAME_RECOIL_DECAY_PER_SECOND = 7.5;
 const FRAME_RECOIL_TILT = 0.05;
 const FRAME_RECOIL_PUSH = 0.05;
+
+/**
+ * The "come back and shoot" nudge for a player who has stopped touching the
+ * aim zone mid-level — a nag, not a mechanic, so it only ever runs while
+ * `canInteract()` is true and no pointer is already down (see
+ * `updateIdleHint`).
+ *
+ * `IDLE_HINT_DELAY_SECONDS` is how long nothing has to happen before it
+ * starts. The shake pattern after that is one loop of shake, pause, shake,
+ * a longer pause, then repeat (`IDLE_SHAKE_CYCLE`, read in order) — two
+ * short flinches read as "look here", a single one reads as a stray glitch,
+ * and looping straight into another single flinch with no long rest reads as
+ * the frame twitching continuously rather than nudging twice and waiting.
+ * Each flinch sits about 4 seconds clear of the next (the pauses between
+ * `shake: true` beats), the last one long enough to read as the loop
+ * actually resting rather than just the next gap in the pattern.
+ */
+const IDLE_HINT_DELAY_SECONDS = 10;
+const IDLE_SHAKE_CYCLE = [
+  { shake: true, seconds: 0.4 },
+  { shake: false, seconds: 4 },
+  { shake: true, seconds: 0.4 },
+  { shake: false, seconds: 7 },
+];
+const IDLE_SHAKE_CYCLE_SECONDS = IDLE_SHAKE_CYCLE.reduce((sum, beat) => sum + beat.seconds, 0);
+/** Peak rotation of the idle shake, in radians — a gentle nudge, not a jolt: this has to read as "look here" from across the frame without startling anyone mid-decision. */
+const IDLE_SHAKE_TILT = 0.02;
+/** How many little left-right flinches happen within one `shake: true` beat above. */
+const IDLE_SHAKE_HZ = 7;
+/** How bright the current colour's outline pulses — see `redrawSand`'s highlight pass. */
+const IDLE_HIGHLIGHT_HZ = 1.6;
+/** Orthogonal only — matches `adjacencyMode: "ORTHOGONAL_4"`, so a border pixel here is a border of the same body the solver reasons about, not a diagonal artifact. */
+const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
 const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
@@ -639,6 +677,19 @@ export class SandCannonEngine {
   private frameRecoil = 0;
   private frameRecoilOffsetX = 0;
   private frameRecoilOffsetY = 0;
+  /**
+   * `performance.now()` of the last real input — a pointer going down on the
+   * aim zone, or the phase settling back to READY after a shot. Read by
+   * `updateIdleHint`, which is the only thing that cares how long this has
+   * sat unchanged.
+   */
+  private lastInputAt = 0;
+  /** Seconds into the current loop of `IDLE_SHAKE_CYCLE` — only advances while the hint is actually running (see `updateIdleHint`). */
+  private idleHintElapsed = 0;
+  /** 0 while the hint is off. Read by `redrawSand`'s border-glow pass. */
+  private idleHighlightStrength = 0;
+  /** Whatever `currentAmmo` was the instant the hint last turned on — stashed so `redrawSand` does not have to re-derive it. */
+  private idleHighlightColor: SandColor | null = null;
   private nextShotAt = 0;
   private aimPointer: number | null = null;
   private readonly aimStart = new THREE.Vector2();
@@ -722,6 +773,7 @@ export class SandCannonEngine {
     this.level = expandLevelForPixelBoard(rawLevel);
     this.callbacks = callbacks;
     this.state = createSandGameState(this.level);
+    this.lastInputAt = performance.now();
     // Fitted rather than fixed, so a small board and a large one both fill the
     // frame instead of one of them falling off the top of a phone.
     this.cell = Math.min(FIT_WIDTH / this.level.frame.width, FIT_HEIGHT / this.level.frame.height);
@@ -931,6 +983,22 @@ export class SandCannonEngine {
       data[index + 3] = alpha;
     };
 
+    // The idle hint's outline: every unlocked cell of the loaded colour that
+    // touches a cell of a different colour (or the edge of what is left of
+    // its own body) is a border pixel, and glows toward white by
+    // `idleHighlightStrength` — a silhouette of "shoot around here" rather
+    // than tinting the whole mass, which would just read as a colour swap.
+    // Skipped entirely (and cheap to skip) the instant nothing is pulsing.
+    const highlightColor = this.idleHighlightStrength > 0 ? this.idleHighlightColor : null;
+    const isHighlightBorder = (cell: PixelCell) => {
+      if (cell.color !== highlightColor || cell.locked) return false;
+      for (const [dx, dy] of NEIGHBOR_OFFSETS) {
+        const neighbor = this.cells.get(cellKey(cell.x + dx, cell.y + dy));
+        if (!neighbor || neighbor.color !== cell.color) return true;
+      }
+      return false;
+    };
+
     for (const cell of this.cells.values()) {
       let [r, g, b] = cell.rgb;
       if (cell.locked) {
@@ -943,6 +1011,10 @@ export class SandCannonEngine {
         r = Math.round(r + (255 - r) * flare);
         g = Math.round(g + (255 - g) * flare);
         b = Math.round(b + (255 - b) * flare);
+      } else if (highlightColor && isHighlightBorder(cell)) {
+        r = Math.round(r + (255 - r) * this.idleHighlightStrength);
+        g = Math.round(g + (255 - g) * this.idleHighlightStrength);
+        b = Math.round(b + (255 - b) * this.idleHighlightStrength);
       }
       // A canvas has no sub-pixel space, so a "shake" is a whole-pixel wobble
       // in where a grain is drawn this frame — its true grid position, which
@@ -1859,6 +1931,7 @@ export class SandCannonEngine {
   private onAimPointerDown = (event: PointerEvent) => {
     if (!this.canStartAim()) return;
     this.aimPointer = event.pointerId;
+    this.lastInputAt = performance.now();
     this.callbacks.onEvent?.({ type: "AIM_TOUCHED" });
     this.aimStart.set(event.clientX, event.clientY);
     this.aimCurrent.copy(this.aimStart);
@@ -2621,6 +2694,38 @@ export class SandCannonEngine {
   }
 
   /**
+   * The "come back and shoot" nag — see `IDLE_HINT_DELAY_SECONDS`'s own
+   * comment for the pattern and why. Returns the frame's extra Z-rotation
+   * for this instant (0 outside a shake beat), and leaves
+   * `idleHighlightStrength`/`idleHighlightColor` set for `redrawSand` to
+   * read; both are the actual off switch, so a caller never has to check
+   * eligibility itself.
+   */
+  private updateIdleHint(deltaMs: number): number {
+    const eligible = this.canInteract() && this.aimPointer === null;
+    if (!eligible || (performance.now() - this.lastInputAt) / 1000 < IDLE_HINT_DELAY_SECONDS) {
+      this.idleHintElapsed = 0;
+      this.idleHighlightStrength = 0;
+      this.idleHighlightColor = null;
+      return 0;
+    }
+
+    this.idleHintElapsed = (this.idleHintElapsed + deltaMs / 1000) % IDLE_SHAKE_CYCLE_SECONDS;
+    this.idleHighlightColor = currentAmmo(this.level, this.state);
+    this.idleHighlightStrength = 0.5 + 0.5 * Math.sin(this.idleHintElapsed * IDLE_HIGHLIGHT_HZ * Math.PI * 2);
+
+    let cursor = 0;
+    for (const beat of IDLE_SHAKE_CYCLE) {
+      if (this.idleHintElapsed < cursor + beat.seconds) {
+        if (!beat.shake) return 0;
+        return Math.sin((this.idleHintElapsed - cursor) * IDLE_SHAKE_HZ * Math.PI * 2) * IDLE_SHAKE_TILT;
+      }
+      cursor += beat.seconds;
+    }
+    return 0;
+  }
+
+  /**
    * Plays the queued beats purely as a cosmetic animation track — the clear
    * flash, pixel dissolve and settle fall. `handleImpact` applies gameplay
    * state (and unblocks the next shot) the instant a shot resolves, so this
@@ -2650,6 +2755,11 @@ export class SandCannonEngine {
   private setPhase(phase: SandGameState["phase"]) {
     if (this.state.result) return;
     this.state = { ...this.state, phase };
+    // Control just came back to the player — the idle-hint clock (see
+    // `updateIdleHint`) starts counting fresh from here, not from whenever
+    // the shot that led here was actually fired, or a settle animation that
+    // ran long would leave the hint firing the instant the board goes quiet.
+    if (phase === "READY") this.lastInputAt = performance.now();
   }
 
   private cloneState(): SandGameState {
@@ -2674,8 +2784,9 @@ export class SandCannonEngine {
     // leans toward whichever side the shot actually landed on; the straight
     // push back is the same for every hit regardless of where it landed.
     this.frameRecoil = Math.max(0, this.frameRecoil - FIXED_STEP * FRAME_RECOIL_DECAY_PER_SECOND);
+    const idleShakeZ = this.updateIdleHint(deltaMs);
     this.frameRoot.rotation.x = -this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetY;
-    this.frameRoot.rotation.z = this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetX;
+    this.frameRoot.rotation.z = this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetX + idleShakeZ;
     this.frameRoot.position.z = SAND_PLANE_Z - this.frameRecoil * FRAME_RECOIL_PUSH;
 
     this.updateAmmoModel();

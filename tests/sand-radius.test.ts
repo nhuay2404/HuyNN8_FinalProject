@@ -321,29 +321,64 @@ test("settling re-derives bodies, so a region cut in two comes back as two", () 
   assert.equal(boardKey(whole.bodies), boardKey(START), "a board already at rest comes back unchanged");
 });
 
-// ---- the cycling queue ---------------------------------------------------
+// ---- the randomised queue -------------------------------------------------
+// The queue used to be a strict round-robin: a fired colour went to the very
+// back and stepped every other colour up by one, so the wheel never showed
+// the same colour twice at once. It is a random draw now (sand-rules.ts's
+// `drawAmmo`/`fillQueue`) — repeats are the point, not a bug, and the only
+// promise left is the insurance rule: nothing waits more than 3 draws.
 
-test("a bullet whose colour is still on the board goes to the back of the queue", () => {
+test("the queue holds at least the full preview while any colour is shootable, and empties only once none are", () => {
   const state = createSandGameState(LEVEL);
+  const target = 1 + LEVEL.nextPreviewCount;
+  // At least `target`, not exactly: the insurance rule (`drainOverdue`) can
+  // momentarily push the queue a colour or two past it when more than one
+  // colour reaches the wait limit on the same draw — see its own comment in
+  // sand-rules.ts. The preview never shows fewer than 3 ahead; it can rarely
+  // show a couple more.
+  assert.ok(state.queue.length >= target, "four colours on the board, a full preview to show for it");
   const color = currentAmmo(LEVEL, state)!;
-  const target = bestShot(state, color)!;
-  const owner = ownerOf(state.bodies, target.x, target.y)!;
-  const after = resolveShot(LEVEL, state, { bodyId: owner.id, x: target.x, y: target.y }).state;
-  assert.equal(after.queue.at(-1), color, "the spent colour should be waiting at the end");
-  assert.equal(after.queue.length, state.queue.length, "nothing is finished yet, so nothing leaves the wheel");
-  assert.equal(after.queue[0], state.queue[1], "and the next bullet steps up");
+  const shot = bestShot(state, color)!;
+  const owner = ownerOf(state.bodies, shot.x, shot.y)!;
+  const after = resolveShot(LEVEL, state, { bodyId: owner.id, x: shot.x, y: shot.y }).state;
+  assert.ok(after.queue.length >= target, "nothing finished on one shot, so the preview is still at least full");
+});
+
+test("a colour can repeat back-to-back, and the insurance rule never lets one wait past 3 draws", () => {
+  let state = createSandGameState(LEVEL);
+  let sawRepeat = false;
+  for (let shots = 0; shots < 60 && !state.result; shots += 1) {
+    for (const [color, waiting] of Object.entries(state.ammoPity)) {
+      assert.ok((waiting ?? 0) <= 3, `${color} waited ${waiting} draws — insurance should have forced it by 3`);
+    }
+    if (state.queue[0] !== undefined && state.queue[0] === state.queue[1]) sawRepeat = true;
+    const color = currentAmmo(LEVEL, state)!;
+    const target = bestShot(state, color);
+    if (!target) break;
+    const owner = ownerOf(state.bodies, target.x, target.y)!;
+    state = resolveShot(LEVEL, state, { bodyId: owner.id, x: target.x, y: target.y }).state;
+  }
+  assert.ok(sawRepeat, "a run this long never once repeated a colour back-to-back — the draw is not actually random");
 });
 
 test("a colour that has just been finished leaves the queue for good", () => {
   const { turns, state } = playGreedy();
   assert.equal(state.result?.kind, "WIN");
   assert.deepEqual(state.queue, [], "an empty board means every colour has left the wheel");
+});
 
-  // Somewhere along the run a colour ran out; from that turn on it is gone.
-  const shrinks = turns.filter((turn, index) => index > 0 && turn.queue.length < turns[index - 1].queue.length);
-  assert.ok(shrinks.length >= 3, "with four colours, at least three should drop out before the last one");
-  for (const turn of turns) {
-    assert.equal(new Set(turn.queue).size, turn.queue.length, "a colour must not sit in the wheel twice");
+test("the preview never offers a colour with nothing left to shoot", () => {
+  let state = createSandGameState(LEVEL);
+  while (!state.result) {
+    const onBoard = new Set(state.bodies.map((body) => body.color));
+    for (const queued of state.queue) {
+      assert.ok(onBoard.has(queued), `the preview offered ${queued} with none of it on the board`);
+    }
+    const color = currentAmmo(LEVEL, state)!;
+    const target = bestShot(state, color);
+    if (!target) break;
+    const owner = ownerOf(state.bodies, target.x, target.y)!;
+    state = resolveShot(LEVEL, state, { bodyId: owner.id, x: target.x, y: target.y }).state;
   }
 });
 

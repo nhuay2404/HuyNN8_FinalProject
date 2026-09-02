@@ -4823,3 +4823,166 @@ mạnh, chứ không bay ra loạn xạ như hiện tại.
 trên file đã sửa. Verify thật trên dev server: bắn thử, zoom màn hình + chụp nhiều khung hình liên tiếp sau
 va chạm — xác nhận các hạt giờ chỉ dập dềnh nhẹ tại chỗ rồi rơi thẳng xuống nhanh, gọn trong vùng va chạm,
 không còn bay ra xa như trước.
+
+---
+
+## 92. Bỏ hẳn model nạp đạn 3D trên súng, dời preview đạn kế tiếp lên HUD, tăng cỡ + thêm anim trượt (02/09)
+
+Ba yêu cầu liên tiếp trong cùng một mạch phản hồi, cùng hướng "đạn sắp bắn không còn hiện trên khẩu súng
+3D nữa — chuyển hết lên HUD 2D góc trên-trái":
+
+1. Kèm ảnh so sánh model súng (viên bi phát sáng nằm trong buồng nạp qua các vòng nòng) với HUD 2D
+   ("● 8"): bỏ viên bi buồng nạp (`chamberBall`) khỏi model 3D, thay vào đó kéo dài badge số đạn để hiện
+   trước những viên kế tiếp.
+2. Kèm ảnh chụp phần nòng súng vẫn còn lộ 2 viên bi xếp hàng phía sau (hàng chờ trên rail): "Bỏ luôn model
+   này đi" — bỏ nốt toàn bộ rail/housing/viên chờ còn sót lại, không chỉ viên đã nạp.
+3. "Cho kích cỡ màu bóng được chọn to hơn nữa. Và có anim bóng dự bị di chuyển lên slot bóng bắn chính, và
+   anim bóng dự bị 2 di chuyển sang slot bóng dự bị 1" — phóng to chấm màu đang nạp trong HUD, thêm animation
+   để cảm giác "viên đạn tiếp theo trồi lên buồng nạp" không biến mất hoàn toàn khi rời khỏi model 3D.
+
+**`SandCannonEngine.ts` — bỏ dần đến hết toàn bộ phần model nạp đạn 3D:**
+- Bỏ `chamberBall`/`chamberGlow`/`chamberLight` (viên bi buồng nạp, quầng sáng quanh nó, và đèn nó hắt ra) —
+  cả field, đoạn dựng mesh trong `buildAmmoFeed()`, đoạn đồng bộ màu trong `syncAmmoModel()`, và đoạn hoạt
+  ảnh xoay/nạp trong `updateAmmoModel()`. Giữ lại biến `breath` (nhịp thở dùng chung với overlay booster) và
+  field `chamberLoaded` (vẫn cần cho logic thời điểm nạp đạn tiếp theo).
+- Bỏ nốt phần còn lại của `buildAmmoFeed()`: hai thanh ray, housing kính trong suốt, 2 vòng rim, throat nối
+  xuống nòng, và mảng `feedBalls` (hàng chờ 3D từng lăn dần vào buồng nạp) — cùng các field/hằng số chỉ phục
+  vụ chúng (`feedFrameMaterial`, `feedGlassMaterial`, `feedRoll`, `feedSlotPosition()`,
+  `FEED_SLOT_SPACING/RISE`, `FEED_BALL_RADIUS`, `FEED_ROLL_SECONDS`). `buildAmmoFeed()` không còn gì để làm
+  nên xoá luôn phương thức, chỗ gọi nó đổi thành gọi thẳng `syncAmmoModel()` để khởi tạo màu ban đầu cho
+  muzzle band/base ring/vòng bán kính — những phần **không** liên quan tới model nạp đạn nên vẫn giữ nguyên.
+
+**`SandGame.tsx` — HUD badge làm luôn việc mà model 3D từng làm:**
+- Thêm `nextAmmo` vào import từ `sand-rules.ts`; thêm `upcomingAmmo` (vài viên kế tiếp sau viên đang nạp).
+- Gộp `loadedAmmo` và `upcomingAmmo` vào chung một state `ammoAnim` với một bộ đếm `bump` dùng chung — cả
+  hai chỉ đổi cùng lúc (cùng bắt nguồn từ `state.queue`), và giữ cùng độ trễ theo `busy` để badge không đổi
+  màu trong lúc phát bắn trước vẫn còn đang chạy hoạt ảnh lắng cát.
+- `.shots-badge` JSX: thêm `.shots-upcoming` — một dải chấm nhỏ mờ dần (`.shots-upcoming-dot`, mỗi ô key
+  theo `${ammoAnim.bump}-${index}` để React remount và hoạt ảnh chạy lại mỗi khi hàng đợi dịch chuyển) —
+  cùng cập nhật `aria-label` liệt kê tên màu các viên kế tiếp.
+
+**`globals.css` — phóng to + thêm hoạt ảnh trượt:**
+- `.shots-icon` (chấm màu đang nạp) từ 15px → **30px**, `.shots-badge` cao 36px → 56px, `.shots-upcoming-dot`
+  10px → 12px — badge giờ là vật thể duy nhất còn lại ở góc HUD nên có chỗ để đọc như con số đầu bảng.
+- `@keyframes shots-icon-pop` thêm thành phần `translateX` (từ +20px trượt về 0) chồng lên hiệu ứng
+  squash-and-stretch sẵn có — viên đạn giờ "trượt vào" từ đúng vị trí dải `.shots-upcoming` bên phải nó,
+  đọc như viên kế tiếp vừa nhảy từ hàng chờ vào buồng nạp.
+- Thêm `@keyframes shots-upcoming-advance` (trượt từ +14px về 0, mờ dần vào) áp cho mọi `.shots-upcoming-dot`
+  — mỗi khi hàng đợi dịch, toàn bộ dải chấm đọc như cùng nhau tiến một bước, thay vì màu chỉ đổi tại chỗ.
+
+**Test:** `tsc --noEmit` sạch (chỉ còn 2 lỗi cloudflare worker type có từ trước, không liên quan),
+`eslint` sạch trên file đã sửa, **121/121 test pass** (không đụng `sand-rules.ts`). Verify thật trên dev
+server: chụp màn hình xác nhận model 3D không còn lộ viên bi/rail nào ở cả Level 1 (đơn sắc) lẫn Level 2
+(nhiều màu); đọc DOM `.shots-badge` xác nhận `aria-label`/màu các chấm đúng theo `state.queue` thực tế.
+Vì hai tay cầm chạm-kéo (pointer drag) mô phỏng qua công cụ trình duyệt không bắn được (súng dùng
+`setPointerCapture` + một vòng lặp trễ một khung hình để xác nhận hướng ngắm), gọi thẳng các phương thức
+private của engine (`ballisticSetup()`/`solveAimAtScreenPoint()`/`fire()`) qua console để bắn thật nhiều
+phát liên tiếp, rồi dùng Web Animations API (`element.getAnimations()`) bắt đúng thời điểm badge đổi nội
+dung — xác nhận `shots-icon-pop` và `shots-upcoming-advance` đều bắt đầu chạy lại từ `currentTime: 0` đúng
+khung hình badge cập nhật, khớp với anim "trượt vào slot" mong muốn.
+
+---
+
+## 93. Currency HUD tách riêng khỏi ammo badge, hiệu ứng coin bay khi nhận Daily Login, nền màn chơi đổi màu theo đạn (02/09)
+
+Phần việc này nằm chung một lần commit với mục 92 (cùng đợt dọn HUD đạn) nhưng do một phiên làm việc khác
+thực hiện tiếp ngay trên cùng file, không phải trong cuộc hội thoại đang ghi lại ở đây — mô tả lại dưới đây
+dựa trên diff và các comment giải thích lý do đã có sẵn trong code, không phải tường thuật trực tiếp.
+
+**`SandGame.tsx`/`globals.css`:**
+- Số vàng (`wallet.gold`) tách khỏi góc `hud-top-left` (giờ chỉ còn ammo badge, xem mục 92) sang một badge
+  riêng `.hub-gold-badge`/`.hub-gold-wrap`, chỉ hiện ở màn hub (`!playing`) — không còn hiện đè lên HUD lúc
+  đang chơi.
+- Thêm `displayGold`/`tweenGoldTo`: số vàng hiển thị đếm dần lên bằng `requestAnimationFrame` (ease-out
+  cubic, 0,5s) thay vì nhảy số ngay, và một cờ `suppressGoldSyncRef` giữ số cũ trên màn hình trong lúc coin
+  bay còn ở giữa không trung.
+- `claimDailyLoginWithFlight`: khi nhận thưởng Daily Login, đo `getBoundingClientRect()` của ô ngày đang
+  nhận và của `.hub-gold-badge`, sinh 6 `.coin-fly` (`position: fixed`, bay theo `@keyframes coin-fly-move`
+  từ điểm xuất phát tới đích qua toạ độ `--dx`/`--dy`) rồi mới gọi `tweenGoldTo` sau 720ms cho coin bay tới
+  nơi. Bớt luôn đoạn text nhắc lại bằng lời những gì dải ngày (`.daily-login-day`, `.is-today`/`.is-past`)
+  đã thể hiện bằng hình.
+- `.game-frame` nhận biến `--ammo-bg` (set inline từ `ammoSky(loadedAmmo)`) làm nền, thay `var(--bg)` cố
+  định — nền màn chơi giờ nhuộm nhạt theo đúng màu đạn đang nạp (hàm `ammoSky` làm sáng màu cát gốc lên
+  ~62% về phía trắng, cùng tỷ lệ mà `--bg` vốn đã sáng hơn màu cát cyan gốc của nó). Vì tín hiệu màu đạn dời
+  sang nền, `muzzleBand`/`baseRing` trong `SandCannonEngine.ts` đổi từ tô theo màu đạn (`syncAmmoModel`)
+  sang **cố định** màu vàng đồng bộ với nhau — súng không còn đổi màu viền nòng mỗi lần đạn xoay vòng nữa.
+
+**Đã sửa thêm khi rà lại toàn bộ trước khi ghi log này:** `claimDailyLoginWithFlight` (dùng
+`setDailyLoginOverride`) được khai báo *trước* `const [dailyLoginOverride, setDailyLoginOverride] =
+useState(...)` trong cùng file — hợp lệ lúc chạy (setter chỉ được gọi từ bên trong callback, sau khi hook đã
+chạy xong) nhưng `eslint` báo lỗi truy cập biến trước khi khai báo. Dời khai báo `useState` lên trước
+`claimDailyLoginWithFlight` — hành vi không đổi, chỉ đổi thứ tự đọc trong file.
+
+**Test:** `tsc --noEmit` sạch (chỉ còn 2 lỗi cloudflare worker type có từ trước), `eslint` sạch trên toàn
+repo (không còn lỗi hoisting), **121/121 test pass**. Phần verify thật trên dev server (coin bay đúng quỹ
+đạo, nền đổi màu đúng theo đạn) chưa được lặp lại trong phiên này — chỉ xác nhận qua đọc code/diff và qua
+bộ kiểm tra tự động ở trên.
+
+---
+
+## 94. Queue đạn ngẫu nhiên có bảo hiểm (pity), và hint khi người chơi idle giữa trận (02/09)
+
+Yêu cầu: queue đạn "ngẫu nhiên hơn" — cho phép trùng lặp, nhưng có bảo hiểm để một màu không bị bỏ quên quá
+lâu, và luôn thấy trước 3 viên kế tiếp; đồng thời khi người chơi đứng yên quá lâu giữa trận, khung tranh cần
+lắc để nhắc, kèm highlight sáng lên phần cát cùng màu đạn hiện tại.
+
+**Queue đạn (`sand-rules.ts`, `sand-types.ts`):**
+- Bỏ hẳn `advanceQueue` (round-robin cứng: bắn xong màu nào thì màu đó lùi về cuối hàng, không bao giờ trùng
+  trong cùng một khung nhìn) — thay bằng `drawAmmo` (rút ngẫu nhiên đều `seededUnit`, không loại trừ lặp lại
+  liên tiếp) + `fillQueue` (luôn bù đầy `queue` về đúng `1 + nextPreviewCount` viên sau mỗi phát bắn).
+- Bảo hiểm (`drainOverdue`, ngưỡng `AMMO_PITY_LIMIT = 3`): một màu bị bỏ qua 3 lượt liên tiếp thì lượt kế
+  tiếp **bắt buộc** phải rút đúng màu đó. Bug đã bắt được lúc viết test: nếu chỉ ép được đúng 1 màu mỗi lượt,
+  hai màu cùng chạm ngưỡng một lúc sẽ có một màu vượt quá 3 (thấy rõ qua test debug: `orange waited 4 draws`)
+  — sửa bằng cách rút cạn **hết** các màu đang quá hạn trong cùng một lần gọi (`drainOverdue`, sắp theo màu
+  chờ lâu nhất trước), rồi mới rút ngẫu nhiên bù cho đủ hàng; nhờ vậy `queue` có thể tạm dài hơn mức tối thiểu
+  một, hai màu ở lượt hiếm hoi bị trùng ngưỡng, chứ không bao giờ để một màu chờ quá 3.
+- Một màu vừa được mở khoá (chìa khoá) trong lượt vừa rồi được chèn thẳng vào hàng ngay lập tức
+  (`previousShootable` so sánh tập màu bắn được trước/sau phát bắn) — không phải chờ ngẫu nhiên hay đủ 3 lượt
+  bảo hiểm, giữ đúng cam kết cũ của round-robin.
+- Thêm hai field mới vào `SandGameState`: `ammoPity` (số lượt mỗi màu đang bị bỏ qua) và `ammoSeed` (con trỏ
+  seed cho `seededUnit`) — cả hai đi theo state nên §9 (cùng state + cùng phát bắn → cùng kết quả) vẫn đúng,
+  không cần `Math.random()` thật.
+- `level.ammoQueue` không còn quyết định thứ tự mở màn nữa, chỉ còn dùng để validate (mọi màu trong tranh
+  phải có trong wheel và ngược lại) — comment ở `sand-types.ts` và `level-fixtures.ts` đã cập nhật lại.
+
+**Test đã viết lại** (giả định thứ tự cố định cũ không còn đúng, phải kiểm invariant mới thay vì kiểm đúng
+từng vị trí): `sand-mechanics.test.ts` (thêm `withLoaded` để ghim viên đạn đang nạp cho các test phụ thuộc
+đúng màu cụ thể, đổi so khớp thứ tự cố định sang so khớp tập hợp), `sand-boosters.test.ts` (ghim viên đạn mở
+màn cho fixture Prism Shot), `sand-radius.test.ts` (viết lại toàn bộ nhóm "the cycling queue" thành: queue
+luôn giữ ít nhất đủ preview, một màu có thể lặp liên tiếp *và* không bao giờ chờ quá 3 lượt, màu đã hết không
+bao giờ còn xuất hiện trong preview). `tests/level-fixtures.ts`: hạ `sandBloom.shotLimit` từ 26 xuống 24 —
+đo được bằng `analyseLevel` rằng khi cho phép lặp, chơi ẩu (`playCareless`) tận dụng được các loạt lặp màu để
+thắng đều 8/8 lần thử (trước đó vẫn thua một số lần), hạ 2 phát bù lại đúng độ khó cũ mà không đụng gì khác.
+
+**Idle hint (`SandCannonEngine.ts`):** theo dõi `lastInputAt` (reset khi `pointerdown` vào aim zone hoặc khi
+phase quay lại `READY`); `updateIdleHint` chạy mỗi tick trong `step()`, chỉ hoạt động khi `canInteract()` và
+không có ngón tay nào đang giữ. Sau `IDLE_HINT_DELAY_SECONDS` giây không thao tác: khung tranh lắc theo
+`IDLE_SHAKE_CYCLE` (lắc — dừng — lắc — dừng lâu hơn — lặp lại, cộng thêm vào `frameRoot.rotation.z` cạnh
+recoil hiện có, không ghi đè), và `redrawSand()` tô sáng dần viền các pixel cát cùng màu đạn hiện tại
+(`NEIGHBOR_OFFSETS` 4 hướng để tìm pixel biên, chỉ pixel biên mới sáng lên chứ không phủ trắng cả khối).
+Tắt ngay khi có thao tác thật.
+
+**Test:** `tsc --noEmit` sạch (chỉ còn 3 lỗi cloudflare worker type có từ trước, không liên quan), **123/123
+test pass**. Verify thật trên dev server: bắn nhiều phát liên tiếp thấy đạn lặp màu (trước đây không thể),
+đứng yên hơn 6 giây (ngưỡng lúc đó) thấy viền cát sáng trắng rõ quanh khối cát cùng màu và khung hơi rung,
+chạm vào ngắm là tắt ngay lập tức, không lỗi console liên quan tới thay đổi.
+
+---
+
+## 95. Chỉnh theo phản hồi: bỏ mờ dần màu preview, dời idle hint ra 10 giây, lắc nhẹ và giãn cách hơn (02/09)
+
+Phản hồi sau mục 94: (1) 3 chấm màu preview đạn kế tiếp không nên mờ dần theo khoảng cách — giờ mỗi màu đều
+có xác suất như nhau nên mờ dần đọc sai là "càng xa càng ít chắc chắn"; (2) idle hint nên chờ ~10 giây thay
+vì 6; (3) lắc đang mạnh quá và hai lần lắc trong một chu kỳ quá sát nhau, cần giãn ra cỡ 4 giây.
+
+**Sửa:**
+- `globals.css`: bỏ `.shots-upcoming-dot:nth-child(1/2/3) { opacity: ... }` (0,85/0,6/0,4) — cả 3 chấm giờ
+  full độ sáng như nhau.
+- `SandCannonEngine.ts`: `IDLE_HINT_DELAY_SECONDS` 6 → 10. `IDLE_SHAKE_TILT` 0,045 → 0,02 (biên độ lắc gần
+  một nửa). `IDLE_SHAKE_HZ` 9 → 7 (rung chậm hơn, dịu hơn). `IDLE_SHAKE_CYCLE` đổi từ
+  lắc(0,5s)-dừng(1s)-lắc(0,5s)-dừng(2,4s) sang lắc(0,4s)-dừng(4s)-lắc(0,4s)-dừng(7s) — hai lần lắc trong một
+  chu kỳ giờ cách nhau đúng khoảng 4 giây, và chu kỳ nghỉ dài cuối cùng đủ lâu để đọc là "đang nghỉ" chứ
+  không phải khoảng trống tiếp theo trong mẫu lắc.
+
+**Test:** `tsc --noEmit` sạch (vẫn 3 lỗi cloudflare cũ, không liên quan). Verify trên dev server bằng
+`javascript_tool`: `getComputedStyle` trên cả 3 `.shots-upcoming-dot` trả về `opacity: "1"` đồng đều.

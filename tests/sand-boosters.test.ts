@@ -179,9 +179,13 @@ test("Radius Overcharge: a shot takes exactly what the doubled (capped) disc rea
 
 test("Prism Shot: a shot takes every loose colour in the un-doubled disc", () => {
   const level = lockAndKey;
-  const state = createSandGameState(level);
+  // The queue is a random draw now (sand-rules.ts's `drawAmmo`), and this
+  // fixture's whole point is what a *specific* bullet does here — pin the
+  // loaded round instead of trusting the wheel's opening pick.
+  const opened = createSandGameState(level);
+  const state = { ...opened, queue: ["yellow" as const, ...opened.queue.slice(1)] };
   const ammo = currentAmmo(level, state)!;
-  assert.equal(ammo, "yellow", "fixture assumes the opening bullet — purple starts entirely locked");
+  assert.equal(ammo, "yellow");
 
   // Row y=2 is solid Green (LOCK_PICTURE's "GGGGGGGGGGGG"), directly above
   // solid Orange at y=0-1: a point here is inside `sortRadius` of both

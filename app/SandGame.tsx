@@ -702,6 +702,12 @@ export default function SandGame() {
     };
     goldTweenRef.current = requestAnimationFrame(step);
   }, [displayGold]);
+  // undefined: no action taken yet this page load, so the daily-login modal's
+  // open/closed state defers entirely to `initialDailyLogin` below (open iff
+  // unclaimed today). Claiming, dismissing, or reopening via the gift button
+  // all write a real snapshot (or `null` for "closed") here, which then wins
+  // over the initial one for the rest of the session.
+  const [dailyLoginOverride, setDailyLoginOverride] = useState<DailyLoginState | null | undefined>(undefined);
   /** Claims today's reward, then flies a handful of coins from the day
    * strip's highlighted cell to the hub's gold badge before the number
    * there ticks up — the visual payoff `claimDailyLogin` itself has no
@@ -737,12 +743,6 @@ export default function SandGame() {
       tweenGoldTo(goldBefore + claimed.reward);
     }, 720);
   }, [wallet.gold, tweenGoldTo]);
-  // undefined: no action taken yet this page load, so the daily-login modal's
-  // open/closed state defers entirely to `initialDailyLogin` below (open iff
-  // unclaimed today). Claiming, dismissing, or reopening via the gift button
-  // all write a real snapshot (or `null` for "closed") here, which then wins
-  // over the initial one for the rest of the session.
-  const [dailyLoginOverride, setDailyLoginOverride] = useState<DailyLoginState | null | undefined>(undefined);
   // The game opens on the home screen, the way it did before the pivot.
   const [playing, setPlaying] = useState(false);
   const [tab, setTab] = useState<HubTab>("home");

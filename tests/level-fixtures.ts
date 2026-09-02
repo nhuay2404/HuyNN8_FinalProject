@@ -67,14 +67,19 @@ export const sandBloom: SandLevelConfig = {
   frame: { width: 12, height: 14 },
   rows: BLOOM_PICTURE,
 
-  // The starting rotation only. Under the cycling rule this list is a wheel,
-  // not a budget: colours come round again until they are gone.
+  // The wheel of colours, not a fixed opening order — see `ammoQueue`'s own
+  // comment in sand-types.ts.
   ammoQueue: ["blue", "yellow", "orange", "green"],
 
   // In blueprint cells. Big enough that placement is a real decision, small
   // enough that no single shot can take a whole mass.
   sortRadius: 2.5,
-  shotLimit: 26,
+  // 26 before the ammo queue's random-with-insurance rewrite (sand-rules.ts's
+  // `drawAmmo`/`fillQueue`): a bullet can now repeat back-to-back instead of
+  // strictly rotating, which lets careless play lean on one colour for a
+  // useful run of shots more often than the old round-robin ever allowed.
+  // Trimmed by 2 to buy that back — strong play still needs only 19.
+  shotLimit: 24,
 
   // Measured: grain-by-grain settling stays cheap as the board grows, so 5x
   // keeps every shot's settle under ~40ms worst case at this size (60x70

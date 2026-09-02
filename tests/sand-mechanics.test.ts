@@ -23,7 +23,7 @@ import {
   runGrainSettle,
 } from "../app/game/sand-rules.ts";
 import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells } from "../app/game/sand-sprites.ts";
-import type { CellCoord, SandBody, SandGameState, SandKey } from "../app/game/sand-types.ts";
+import type { CellCoord, SandBody, SandColor, SandGameState, SandKey } from "../app/game/sand-types.ts";
 
 function keySet(cells: CellCoord[]) {
   return new Set(cells.map((cell) => cellKey(cell.x, cell.y)));
@@ -35,6 +35,16 @@ function ownerOf(bodies: SandBody[], x: number, y: number) {
 
 function colorAt(state: SandGameState, x: number, y: number) {
   return ownerOf(state.bodies, x, y)?.color ?? null;
+}
+
+/**
+ * Forces `state`'s loaded round to `color` — the queue is a random draw now
+ * (sand-rules.ts's `drawAmmo`), so a test whose whole point is "the right
+ * bullet hits the plug" has to pin the one thing about the draw it actually
+ * cares about rather than assume the wheel's opening pick.
+ */
+function withLoaded(state: SandGameState, color: SandColor): SandGameState {
+  return { ...state, queue: [color, ...state.queue.slice(1)] };
 }
 
 // ---- Lock & Key ----------------------------------------------------------
@@ -96,7 +106,11 @@ test("a locked colour is not handed out as ammo until a key frees it", () => {
     "purple is authored into the wheel — it has to be, or it could never be shot",
   );
   assert.ok(!state.queue.includes("purple"), "but it must not be offered while every grain is frozen");
-  assert.deepEqual(state.queue, ["yellow", "green", "orange"]);
+  // Only yellow/green/orange are shootable, and the queue is drawn randomly
+  // now (sand-rules.ts's `drawAmmo`) rather than in `ammoQueue`'s order, so
+  // this checks the set the preview is drawn from rather than a fixed
+  // sequence.
+  assert.deepEqual(new Set(state.queue), new Set(["yellow", "green", "orange"]));
 });
 
 test("a frozen grain cannot be sorted out, even with the right bullet in hand", () => {
@@ -108,7 +122,7 @@ test("a frozen grain cannot be sorted out, even with the right bullet in hand", 
 });
 
 test("clearing the plug drops the key onto the slab, which opens on contact", () => {
-  const state = createSandGameState(lockAndKey);
+  const state = withLoaded(createSandGameState(lockAndKey), "yellow");
   assert.equal(currentAmmo(lockAndKey, state), "yellow");
 
   const plug = ownerOf(state.bodies, 5, 8)!;
@@ -141,7 +155,7 @@ test("clearing the plug drops the key onto the slab, which opens on contact", ()
 });
 
 test("the freed colour rejoins the wheel the moment the lock opens", () => {
-  const state = createSandGameState(lockAndKey);
+  const state = withLoaded(createSandGameState(lockAndKey), "yellow");
   const plug = ownerOf(state.bodies, 5, 8)!;
   const after = resolveShot(lockAndKey, state, { bodyId: plug.id, x: 5, y: 8 }).state;
   assert.ok(after.queue.includes("purple"), "purple is shootable now, so it has to be offered");
