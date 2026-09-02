@@ -4986,3 +4986,129 @@ vì 6; (3) lắc đang mạnh quá và hai lần lắc trong một chu kỳ quá
 
 **Test:** `tsc --noEmit` sạch (vẫn 3 lỗi cloudflare cũ, không liên quan). Verify trên dev server bằng
 `javascript_tool`: `getComputedStyle` trên cả 3 `.shots-upcoming-dot` trả về `opacity: "1"` đồng đều.
+
+---
+
+## 96. Ụ súng vật liệu phẳng, không đổ bóng (02/09)
+
+Yêu cầu: model ụ súng (cả khung ngoài lẫn skin) phải trơn láng, không còn đánh bóng hay đổ bóng theo ánh
+sáng.
+
+Ụ súng vốn không dùng vật liệu bóng/specular nào (không `MeshStandardMaterial`/`MeshPhysicalMaterial`,
+không `metalness`/`roughness`) — nhưng `MeshLambertMaterial` (diffuse, có pháp tuyến) vẫn đổ một gradient
+sáng-tối theo hướng đèn (`HemisphereLight` + hai `DirectionalLight` trong `SandCannonEngine.ts`), đọc như
+một dạng "đánh bóng" nhẹ trên các mặt cong.
+
+**Sửa (`costumes.ts`, `SandCannonEngine.ts`):** đổi toàn bộ vật liệu của khung `classic-cannon` và
+`rune-cannon` (`body`/`dark`/`accent`/`stone`/`wood`) cùng vòng vàng cố định (`baseRing`) từ
+`MeshLambertMaterial` sang `MeshBasicMaterial` — màu phẳng, không phụ thuộc ánh sáng, không còn gradient
+sáng-tối trên bề mặt.
+
+**Test:** `tsc --noEmit` sạch (3 lỗi cloudflare cũ, không liên quan).
+
+---
+
+## 97. Idle hint: nhịp thở "zen" hơn, rồi chỉnh theo phản hồi (02/09)
+
+Yêu cầu 1: lớp viền cát nhấp nháy khi người chơi idle (mục 94/95) đang nhấp nháy quá nhanh và gấp — cần
+"nhịp thở" nhẹ nhàng, chậm rãi hơn (zen hơn) thay vì chớp tắt.
+
+**Sửa (`SandCannonEngine.ts`):** `IDLE_HIGHLIGHT_HZ` 1,6 → 0,37 (một chu kỳ mờ-sáng-mờ mất ~2,7s thay vì
+gần 2 lần/giây), và giới hạn biên độ trong khoảng `IDLE_HIGHLIGHT_FLOOR`/`IDLE_HIGHLIGHT_CEILING` (0,12–0,5)
+thay vì dao động hết cỡ 0→1 — viền không bao giờ tắt hẳn cũng không bao giờ chói trắng.
+
+Yêu cầu 2 (phản hồi ngay sau): thích nhịp thở nhưng chưa đủ rõ/nổi bật — đỉnh sáng nên lên hẳn trắng solid,
+đáy chỉ cần giảm còn 30% chứ không tắt; đồng thời lắc idle (mục 94) nên nhẹ nhàng hơn nữa.
+
+**Sửa tiếp:** `IDLE_HIGHLIGHT_FLOOR`/`IDLE_HIGHLIGHT_CEILING` đổi thành 0,3 / 1 (đỉnh = trắng solid, đáy =
+30%, không bao giờ biến mất). `IDLE_SHAKE_TILT` 0,02 → 0,012, `IDLE_SHAKE_HZ` 7 → 4,5 — lắc mềm và chậm
+hơn.
+
+**Test:** `tsc --noEmit` sạch sau cả hai lượt sửa.
+
+---
+
+## 98. Bỏ hiệu ứng rung của HUD số đạn khi bắn (02/09)
+
+Yêu cầu: khi bắn, bỏ animation rung của badge số đạn (`.shots-badge`).
+
+**Sửa:** `globals.css` bỏ `animation: shots-badge-shake` trên `.shots-badge` và xoá hẳn
+`@keyframes shots-badge-shake`. `SandGame.tsx` bỏ state `shotBump` (chỉ tồn tại để remount badge qua `key`
+replay animation đó), bỏ `setShotBump` trong case `SHOT_FIRED`, bỏ `key={shotBump}` trên badge. Badge vẫn
+đổi số/màu chấm đạn bình thường, chỉ không còn giật khi bắn.
+
+**Test:** `tsc --noEmit` sạch, grep xác nhận không còn tham chiếu `shotBump`/`shots-badge-shake` sót lại.
+
+---
+
+## 99. HUD đạn: anim trượt vị trí thay vì blink, và sửa cho đạn cùng màu liên tiếp (02/09)
+
+Yêu cầu 1: dãy chấm đạn sắp tới (`.shots-upcoming-dot`) nên có hiệu ứng *di chuyển* đến vị trí tiếp theo,
+không phải hiện ra đột ngột (blink).
+
+**Nguyên nhân:** animation cũ (`shots-upcoming-advance`) trượt vào có 14px kèm mờ dần `opacity: 0 → 1` —
+phần mờ dần lấn át phần trượt, đọc như hiện ra tại chỗ hơn là di chuyển.
+
+**Sửa:** `globals.css` — bỏ hẳn phần mờ opacity, chỉ còn trượt đúng một khoảng slot đầy đủ (18px = đường
+kính chấm 12px + khoảng cách 6px), giữ opacity 100% suốt animation.
+
+Yêu cầu 2 (phản hồi ngay sau): hai viên đạn *cùng màu* liên tiếp trong queue cũng phải có hiệu ứng trượt
+này.
+
+**Nguyên nhân:** `SandGame.tsx` chỉ bump animation (`ammoAnim.bump`, dùng làm `key` để remount) khi
+`loadedAmmo !== ammoAnim.color` — nếu hai phát bắn liên tiếp trùng màu đạn đang nạp, điều kiện sai, không
+bump, animation bị bỏ qua dù hàng chờ phía sau vẫn thực sự dịch chuyển.
+
+**Sửa:** so sánh cả `loadedAmmo` lẫn toàn bộ mảng `upcomingAmmo` — chỉ cần một trong hai đổi là bump tăng
+(xem thêm mục 100 — cách so sánh nội dung này sau đó lại lộ ra một lỗ hổng khác ở Level 1, sửa tiếp ở đó).
+
+**Test:** `tsc --noEmit` sạch cho cả hai lượt sửa.
+
+---
+
+## 100. Giảm số đạn preview còn 2, và làm lại menu in-game (02/09)
+
+Yêu cầu 1: HUD chỉ nên review 2 viên đạn kế tiếp thay vì 3.
+
+**Sửa:** `sand-types.ts` — `RADIUS_GAMEPLAY.nextPreviewCount` 3 → 2 (không có level nào override giá trị
+này, áp dụng đồng loạt). `tests/sand-radius.test.ts` đọc `LEVEL.nextPreviewCount` động nên không bị ảnh
+hưởng.
+
+Yêu cầu 2: nút menu 3-gạch lúc in-game nên giống hệt nút Settings ở hub; chỉ giữ lại Home và Restart thành
+2 nút tròn to; bỏ nút chọn level; bấm nút Settings in-game phải tạm dừng game.
+
+**Sửa (`SandGame.tsx`, `globals.css`):**
+- Nút in-game đổi từ icon `menu` (hamburger, mở dropdown riêng) sang icon `gear` giống hệt hub, và mở thẳng
+  `.settings-screen` (bỏ hẳn `menuOpen`/`.settings-menu` dropdown cũ gồm tên level, lưới chọn level, và 3
+  nút hàng ngang Home/Restart/Settings).
+- Thêm `.settings-round-actions` — 2 nút tròn 64px (Home, Restart) ở đầu `.settings-card`, chỉ hiện khi
+  `playing`, thay cho phần đó của dropdown cũ. Bấm nút nào cũng đóng settings rồi mới gọi `goHome`/`restart`.
+- Thêm effect mới: `settingsOpen && playing` thì gọi `engine.pause()`, đóng lại thì `engine.resume()` (tái
+  dùng cơ chế `pause()/resume()` sẵn có của engine, cùng cách tab-visibility đang dùng) — mở Settings giữa
+  trận giờ là một pause menu thật sự.
+- Dọn CSS chết: xoá `.settings-menu`, `.settings-level(s)`, `.settings-actions`, `.settings-backdrop`.
+
+**Test:** `tsc --noEmit` sạch. Verify trực tiếp trên dev server (`javascript_tool` dispatch click, vì thao
+tác qua tool click chuột bị treo trong môi trường này): bấm gear mở đúng card với 2 nút tròn Home/Restart,
+không còn lưới chọn level; bấm Restart đóng settings và reset đúng bàn chơi (12/12 đạn).
+
+---
+
+## 101. Sửa HUD đạn không có anim ở Level 1 — level chỉ 1 màu (02/09)
+
+Báo lỗi: ở Level 1, HUD đạn không có animation trượt dù các phát bắn vẫn dịch chuyển hàng chờ.
+
+**Nguyên nhân:** Level 1 chỉ có đúng 1 màu đạn (`ammoQueue: ["blue"]`, `sand-levels.ts`). Cách phát hiện
+"hàng đợi đã đổi" ở mục 99 so sánh **nội dung màu** (`loadedAmmo`/`upcomingAmmo` trước–sau có khác nhau
+không) — vì level này chỉ toàn màu xanh, nội dung trước/sau mỗi phát bắn luôn giống hệt nhau dù hàng đợi có
+thực sự dịch, nên điều kiện không bao giờ đúng, animation không bao giờ chạy suốt cả màn.
+
+**Sửa (`SandGame.tsx`):** đổi tín hiệu phát hiện sang `state.shotsUsed` — bộ đếm tăng đúng 1 lần mỗi khi một
+phát bắn được xử lý xong (`spend()` trong `sand-rules.ts`), bất kể màu đạn có đổi hay không:
+`const ammoChanged = !busy && state.shotsUsed !== ammoAnim.shotsUsed;` (vẫn giữ guard `!busy` để không phát
+animation sớm trong lúc đạn đang settle). Thêm field `shotsUsed` vào state `ammoAnim` để lưu mốc đã animate.
+
+**Test:** `tsc --noEmit` sạch. Không lặp lại được verify bằng thao tác bắn thật trên dev server trong phiên
+này — pointer event tổng hợp qua `javascript_tool`/`computer` không được engine coi là input hợp lệ (aim
+zone cần pointer event thật/trusted) — xác nhận đúng qua đọc lại code (`shotsUsed` tăng độc lập với màu sắc
+ở `spend()`).

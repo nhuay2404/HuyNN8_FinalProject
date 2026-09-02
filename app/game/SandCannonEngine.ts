@@ -53,25 +53,26 @@ import type {
 // radius disc, win/lose — runs directly on those pixels. Nothing here fakes a
 // finer look on top of a coarser truth.
 
-// Candy, not pastel-washed — the first pass at these leaned too far toward
-// desaturated and read as faded next to the reference. Punched back up in
-// saturation, in the same chill hue family as the chrome around them (see
-// :root in globals.css), while staying far enough apart in hue that the
-// colour-matching rule never gets ambiguous.
+// Second palette pass, sourced directly from the reference swatch board the
+// designer sent (hex codes copied verbatim, not re-picked by eye). That board
+// carries 11 swatches for the 10 gameplay colours; one (a peach/orange
+// #EB8D62 close in hue to `orange` below) went unused. Every remaining swatch
+// was assigned by hue order to keep neighbours on the wheel from crossing —
+// e.g. the four cooler swatches (mint, azure, lavender-grey, violet) land on
+// green/cyan/blue/purple in that same ascending order, since the board has no
+// pure grass-green or pure sky-blue and this keeps the closest-hue swatch on
+// each of the closest-hue roles rather than picking pairs independently.
 export const SAND_COLOR_HEX: Record<SandColor, number> = {
-  red: 0xff2541,
-  green: 0x31b950,
-  yellow: 0xffb70e,
-  blue: 0x178ff3,
-  purple: 0x8338ed,
-  orange: 0xff750e,
-  cyan: 0x24c4b3,
-  // Pulled lighter, softer and further toward magenta than a straight "hot
-  // pink" would sit — a hue that close to red needs the lightness/saturation
-  // gap to do the work of telling them apart once jitter is added to both.
-  pink: 0xde65c9,
-  lime: 0x9ae21f,
-  brown: 0x885e33,
+  red: 0xff546c,
+  green: 0x67e0ba,
+  yellow: 0xf4d65e,
+  blue: 0x9692b8,
+  purple: 0xa28fea,
+  orange: 0xf69509,
+  cyan: 0x00a9f7,
+  pink: 0xff97b2,
+  lime: 0xc1ec35,
+  brown: 0x998757,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -212,8 +213,8 @@ const CANNON_MODEL_SCALE = 0.8;
 // `SHOWCASE_SWAY` turns it into profile, and this small a downward tilt is
 // what keeps the barrel's own length legible above the muzzle ring for the
 // rest of that turn instead of just the ring hanging level with it.
-const SHOWCASE_POSITION = new THREE.Vector3(0, 1.19, 5.88);
-const SHOWCASE_SCALE = 1.1;
+const SHOWCASE_POSITION = new THREE.Vector3(0, 1.55, 5.88);
+const SHOWCASE_SCALE = 0.85;
 const SHOWCASE_FOV = 43;
 // Exactly `CANNON_NEUTRAL_YAW`/`CANNON_NEUTRAL_ELEVATION` below, not a
 // bespoke "product shot" angle for the picker — a turned/tilted rig reads
@@ -457,7 +458,10 @@ export type SandEngineEvent =
   | { type: "UNLOCKED"; cells: number }
   | { type: "SETTLE_END" }
   /** A booster was just armed — waiting on the next shot to spend it. */
-  | { type: "BOOSTER_ARMED"; booster: BoosterType };
+  | { type: "BOOSTER_ARMED"; booster: BoosterType }
+  /** The armed booster was tapped a second time and cancelled before firing —
+   * no shot spent, no charge spent. */
+  | { type: "BOOSTER_DISARMED"; booster: BoosterType };
 
 export type SandEngineCallbacks = {
   onState: (state: SandGameState) => void;
@@ -879,28 +883,29 @@ export class SandCannonEngine {
     const backing = this.track(
       new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
-    // Dark neutral grey rather than a pastel echo of the page background —
-    // it makes the sand's own colours (and the white clear-flash/dissolve)
-    // read against real contrast instead of blending into a similarly pale
-    // recess. Unlit (MeshBasic, not Lambert): the scene's own lights are
-    // bright enough that a lit dark grey here still washed out toward a
-    // medium tone — this needs to read as genuinely dark regardless of them.
-    // DoubleSide: the picture is seen from both faces (the idle spin shows
-    // its back, via `sandMeshBack`), and this recess has to read the same
-    // dark behind either one, not just the front.
-    const backingMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0x101114, side: THREE.DoubleSide }));
+    // Light greige (warm light grey-brown), matching the frame's own wood
+    // tone rather than the near-black this used to be. Unlit (MeshBasic, not
+    // Lambert): flat regardless of the scene's lights, same reasoning as
+    // `railMaterial` below. DoubleSide: the picture is seen from both faces
+    // (the idle spin shows its back, via `sandMeshBack`), and this recess has
+    // to read the same colour behind either one, not just the front.
+    const backingMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xd8c6a6, side: THREE.DoubleSide }));
     const back = new THREE.Mesh(backing, backingMaterial);
     back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
 
-    // Flat white, no emissive glow — the "sticker" outline the rest of the
-    // chrome uses instead of a lit highlight.
-    const railMaterial = this.track(new THREE.MeshLambertMaterial({ color: 0xffffff }));
-    // Same dark grey as `backingMaterial`: `lip` sits directly behind the sand
-    // (closer to camera than `back`), so it — not `back` — is what a straight-
-    // on view actually reveals through empty sand pixels. `back` only shows
-    // through at an angle, or from behind. Both have to read the same colour.
-    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0x101114 }));
+    // Flat wood-brown, unlit (MeshBasic, not Lambert — same reasoning as
+    // `backingMaterial` above): the frame reads as one flat painted colour
+    // regardless of the scene's lights, the same "sticker" look the cannon's
+    // own shell (costumes.ts) and its fixed trim (baseRing/muzzleBand below)
+    // already use, rather than a lit surface picking up shading/highlights.
+    const railMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xb98a5e }));
+    // Same light greige as `backingMaterial`: `lip` sits directly behind the
+    // sand (closer to camera than `back`), so it — not `back` — is what a
+    // straight-on view actually reveals through empty sand pixels. `back`
+    // only shows through at an angle, or from behind. Both have to read the
+    // same colour.
+    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xd8c6a6 }));
     const horizontal = this.track(new RoundedBoxGeometry(openWidth + border * 2, border, depth, 2, border * 0.22));
     const vertical = this.track(new RoundedBoxGeometry(border, openHeight, depth, 2, border * 0.22));
 
@@ -1474,12 +1479,23 @@ export class SandCannonEngine {
   }
 
   /**
-   * Arms `type` for the next shot. A no-op whenever a booster — this one or
-   * the other — is already armed: spec §3 gives boosters no cancel and no
-   * swap, so the only way out of an armed state is to fire it.
+   * Arms `type` for the next shot, toggling it back off if it is already the
+   * one armed — a second tap on the same booster button cancels it rather
+   * than doing nothing, spending no charge either way. Still a no-op to arm
+   * `type` while the *other* booster is armed: swapping mid-arm stays
+   * unsupported, the only way out of the other one is to fire it or cancel
+   * it first with its own button.
    */
   armBooster(type: BoosterType) {
-    if (!this.canInteract() || this.armedBooster !== null) return;
+    if (!this.canInteract()) return;
+    if (this.armedBooster === type) {
+      this.armedBooster = null;
+      this.syncBoosterOverlay();
+      this.callbacks.onBoosterChange?.(null);
+      this.callbacks.onEvent?.({ type: "BOOSTER_DISARMED", booster: type });
+      return;
+    }
+    if (this.armedBooster !== null) return;
     if (getBoosterCharges(type) <= 0) return;
     this.armedBooster = type;
     this.syncBoosterOverlay();

@@ -20,11 +20,13 @@ Bỏ điều kiện đúng màu: `cellsInRadius(..., { matchColor: false })`. M�
 màu trong đĩa, không chỉ màu đang cầm — có thể xoá nhiều body khác màu cùng lúc nếu chúng nằm trong
 tầm.
 
-## §3. Mutually exclusive — không huỷ, không đổi
+## §3. Mutually exclusive — không đổi, huỷ được bằng cách bấm lại
 
 Một session chỉ có tối đa **một** booster armed tại một thời điểm. `armBooster(type)` là no-op nếu
-đã có booster khác đang armed (`SandCannonEngine.ts`). Không có nút huỷ armed: cách duy nhất thoát
-khỏi trạng thái armed là **bắn nó đi**.
+đã có booster *khác* đang armed (`SandCannonEngine.ts`) — không đổi giữa chừng. Nhưng gọi lại
+`armBooster(type)` với đúng loại đang armed sẽ **huỷ** nó (toggle), không tốn viên nào — huỷ chỉ đặt
+lại trạng thái, viên chỉ thực sự trừ lúc bắn (`spendBoosterCharge`). Ngoài bắn đi, bấm lại nút đang
+armed cũng thoát được trạng thái armed.
 
 ## §4. Số viên — ví người chơi
 

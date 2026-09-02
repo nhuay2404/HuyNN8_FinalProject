@@ -273,8 +273,32 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    need its own per-costume constant. Overrides `.is-hub` above (same
    specificity, later in the file) since the skin screen is itself a
    `!playing` hub tab and always carries both classes together. */
-.game-frame.is-skin-classic { background: #d8edf4; }
-.game-frame.is-skin-magic { background: #e9def6; }
+/* Each wash gets the same looping stripe pattern on top of the flat colour —
+   same angle/spacing either way now (only the tint and the flat base colour
+   still differ per flavour), drifting slowly behind the rig so the showroom
+   reads as alive rather than a static poster behind the model. Both share one
+   duration too, kept slow — a fast drift behind a slowly-turning showcase rig
+   read as busier than the rig itself. `background-position` is what animates
+   (not `background-color`, which stays on the transition above so a flavour
+   swap still crossfades); `background-size` bigger than the viewport is what
+   gives the position animation room to travel before it has to loop back to
+   its start point. */
+.game-frame.is-skin-classic {
+  background-color: #d8edf4;
+  background-image: repeating-linear-gradient(-55deg, rgba(255, 255, 255, .4) 0 20px, transparent 20px 42px);
+  background-size: 300% 300%;
+  animation: skin-bg-drift 60s linear infinite;
+}
+.game-frame.is-skin-magic {
+  background-color: #e9def6;
+  background-image: repeating-linear-gradient(-55deg, rgba(172, 113, 255, .3) 0 20px, transparent 20px 42px);
+  background-size: 300% 300%;
+  animation: skin-bg-drift 60s linear infinite;
+}
+@keyframes skin-bg-drift {
+  from { background-position: 0 0; }
+  to { background-position: 300% 300%; }
+}
 /* Phone-width viewports: full-bleed, not a rounded card floating with a
    coloured gutter around it. `.page-shell`'s 18px padding, `.game-frame`'s
    corners and its shadow exist for a wider window (tablet/desktop), where
@@ -314,6 +338,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    under it now that no button in this file carries one. */
 .icon-button:active { transform: translateY(2px); }
 .icon-button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
+/* The gear button on its own: dark brown chip with a white glyph (via
+   `currentColor`, same as every other `.icon-glyph`), instead of the pale
+   panel the rest of `.icon-button` shares. */
+.settings-button { background: var(--wood-ink); color: #fff; }
+.settings-button:hover { background: #5c3a20; }
 /* Every hand-drawn chrome icon in SandGame.tsx shares these stroke settings —
    round caps and joins are most of what makes a line icon read as soft. */
 .icon-glyph {
@@ -362,8 +391,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .hub-gold-badge {
   display: flex; align-items: center; gap: 8px; height: 44px;
-  padding: 0 16px 0 10px; border: 2px solid var(--line); border-radius: var(--r-pill);
-  background: var(--panel); box-shadow: var(--shadow-chip);
+  padding: 0 16px 0 10px; border: 0; border-radius: var(--r-pill);
+  background: #fde59c;
 }
 .hub-gold-badge .coin-icon { width: 18px; height: 18px; color: var(--gold-line); }
 .hub-gold-badge strong {
@@ -1114,7 +1143,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    top edge under the coin badge. */
 .skin-heading {
   position: relative; z-index: 1; pointer-events: none;
-  margin: max(var(--hud-inset), env(safe-area-inset-top)) 0 0; padding: 0 24px; text-align: center;
+  /* Dropped a full badge-height-plus-gap below the top inset (not level with
+     it any more) so the name doesn't sit in the same row as the coin badge —
+     `.hub-gold-badge` is 44px tall and this used to share its exact top. */
+  margin: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 0 0;
+  padding: 0 24px; text-align: center;
 }
 .skin-heading h2 {
   display: inline-block; margin: 0; padding: 7px 20px;
@@ -1248,7 +1281,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   padding: 0; overflow: hidden;
   display: flex; align-items: stretch;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
-  background: #ffdfa0;
+  background: #fde59c;
 }
 /* An even, gapless share of the row's full width (`flex: 1 1 0%`, all five
    equal at rest) rather than a fixed-width tile with `justify-content`
@@ -1281,15 +1314,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   border: 0;
   transition: background .18s;
 }
-/* Line art at rest — muted brown stroke, no fill, same language every other
-   chrome icon in the file uses — and a solid silhouette in the tab's own
-   ink colour the instant it is active (below), no separate icon asset for
-   either state: every path in `HubIcon` is drawn once, with no `fill`/
-   `stroke` of its own, and inherits whichever of these two this element is
-   currently set to. */
+/* Line art at rest — brown stroke (`--wood-ink`, readable over the nav's own
+   pale-gold background below), no fill — and a solid silhouette in the tab's
+   own ink colour the instant it is active (below), no separate icon asset for
+   either state: every path in `HubIcon` is drawn once, with no `fill`/`stroke`
+   of its own, and inherits whichever of these two this element is currently
+   set to. Scoped to this class rather than repointing `--muted` itself, which
+   is shared with unrelated text elsewhere in this file. */
 .hub-nav-icon {
   display: block; width: 30px; height: 30px;
-  fill: none; stroke: var(--muted); stroke-width: 1.6;
+  fill: none; stroke: var(--wood-ink); stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
   transition: width .3s cubic-bezier(.34,1.56,.64,1), fill .16s, stroke .16s;
 }
@@ -1302,6 +1336,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    Selected with `[data-tab]` (already on the button for other reasons)
    rather than a `:nth-child` guess, so this stays correct if `HUB_TABS`'s
    order ever changes. */
+/* Home's active chip uses the shared `--accent` green (with its `--accent-ink`
+   partner for the icon), the same green used elsewhere for buttons/toggles —
+   the one exception among the five tabs, which otherwise get their own scoped
+   tokens below so they don't drag an unrelated colour along with them. */
 .hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: var(--accent); }
 .hub-nav button[data-tab="home"].is-active .hub-nav-icon { fill: var(--accent-ink); }
 .hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { background: var(--danger); }

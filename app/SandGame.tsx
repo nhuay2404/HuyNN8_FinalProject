@@ -885,6 +885,9 @@ export default function SandGame() {
         case "BOOSTER_ARMED":
           pushToast(`${BOOSTER_NAME[event.booster]} armed — next shot`, "good");
           break;
+        case "BOOSTER_DISARMED":
+          pushToast(`${BOOSTER_NAME[event.booster]} cancelled`, "warn");
+          break;
         default:
           break;
       }
@@ -1364,14 +1367,15 @@ export default function SandGame() {
               it rather than loose on the sides. No text (spec §6) — the icon
               alone, reusing the aim ring's and the chamber overlay's own
               visual language so a player who has seen either in play
-              recognises the button. Disabled rather than hidden while the
-              other booster is armed (spec §3: no cancel, no swap — the only
-              way out of an armed booster is to fire it), while input is
-              locked (`busy`, §21), or while the wallet is out of that
-              booster's charges — `armBooster` is a no-op in every one of
-              those cases regardless (the engine's own guard reads the same
-              wallet via `getBoosterCharges`), but a button that visibly
-              cannot respond is the whole point of §3.
+              recognises the button. Tapping the already-armed booster's own
+              button cancels it (`armBooster` toggles), so its button stays
+              enabled while armed; disabled only while the *other* booster is
+              armed instead (no swap mid-arm), while input is locked (`busy`,
+              §21), or while the wallet is out of that booster's charges —
+              `armBooster` is a no-op in every one of those cases regardless
+              (the engine's own guard reads the same wallet via
+              `getBoosterCharges`), but a button that visibly cannot respond
+              is the whole point of §3.
               Conditionally rendered on `playing` rather than `hidden`: this
               tray has no business appearing over the hub (a report said it
               was), and dropping the DOM node entirely mid-play leaves no
