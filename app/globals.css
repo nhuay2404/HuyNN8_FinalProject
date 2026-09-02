@@ -239,10 +239,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   /* One flat fill, not a gradient — the 3D canvas is transparent wherever
      nothing is drawn (renderer-pool.ts creates it with alpha:true), so
      whatever open sky shows above and around the picture and the cannon is
-     this exact colour. See SandCannonEngine's fog for the matching change so
-     the frame and cannon fade into this same colour as they recede, instead
-     of into a colour of their own. */
-  background: var(--bg);
+     this exact colour. `--ammo-bg` is set inline by SandGame.tsx from
+     whatever is chambered right now (`loadedAmmo`) — the sky tints to the
+     next shot instead of the cannon itself (see SandCannonEngine.ts's
+     `syncAmmoModel`, which used to repaint the muzzle band and base ring for
+     this); falls back to gameplay's own sky the instant nothing is loaded.
+     Distinct from SandCannonEngine's fog, which stays this same flat `--bg`
+     regardless — an ammo-tinted sky with an untinted fog line at the horizon
+     read worse than the small mismatch of the far background not tinting. */
+  background: var(--ammo-bg, var(--bg));
   /* Only at tablet/desktop width, where the frame is a card resting on
      `--wall` rather than the whole screen — the phone breakpoint below
      clears it along with the corners. */
@@ -341,6 +346,55 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   position: absolute; z-index: 31;
   top: 50%; right: max(14px, env(safe-area-inset-right));
   transform: translateY(-50%);
+}
+/* The hub's top-left corner — the wallet balance, always on screen so the
+   daily-login claim's flying coins (`.coin-fly` below) always have
+   somewhere real to land. Same inset as `.hud-top-left`'s ammo badge (only
+   ever shown mid-play, never alongside this) and `.settings-wrap`'s gear
+   opposite it, so all three corners read as one consistent HUD row. */
+.hub-gold-wrap {
+  position: absolute; z-index: 31;
+  top: max(var(--hud-inset), env(safe-area-inset-top));
+  left: max(14px, env(safe-area-inset-left));
+}
+.hub-gold-badge {
+  display: flex; align-items: center; gap: 8px; height: 44px;
+  padding: 0 16px 0 10px; border: 2px solid var(--line); border-radius: var(--r-pill);
+  background: var(--panel); box-shadow: var(--shadow-chip);
+}
+.hub-gold-badge .coin-icon { width: 18px; height: 18px; color: var(--gold-line); }
+.hub-gold-badge strong {
+  font-size: 17px; font-weight: 800; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+  display: inline-block;
+  /* Remounted (via a React `key`) the instant a daily-login claim's coins
+     land — see `tweenGoldTo` in SandGame.tsx — so this pops in step with
+     the count-up rather than the number just cutting over. */
+  animation: gold-badge-bump .4s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes gold-badge-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+/* One flying coin from a daily-login claim (`claimDailyLoginWithFlight`),
+   `position: fixed` so the `left`/`top` inline styles — real viewport
+   coordinates from `getBoundingClientRect` — place it correctly no matter
+   where in the tree it renders, and `--dx`/`--dy` (also inline, per coin)
+   carry it the rest of the way to the gold badge. */
+.coin-fly {
+  position: fixed; z-index: 60; width: 18px; height: 18px;
+  margin: -9px 0 0 -9px; pointer-events: none;
+  animation: coin-fly-move .65s cubic-bezier(.22,.61,.36,1) both;
+}
+.coin-fly .coin-icon {
+  width: 100%; height: 100%; color: var(--gold-line);
+  filter: drop-shadow(0 2px 3px rgba(122, 96, 70, .35));
+}
+@keyframes coin-fly-move {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  35% { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .5 - 26px)) scale(1.1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(.35); opacity: 0; }
 }
 .settings-backdrop {
   position: fixed; z-index: 11; inset: 0; border: 0; padding: 0;
@@ -485,51 +539,73 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
 
 /* ---- Top-left HUD stack ------------------------------------------------ */
-/* Coins sit above the ammo row, both hugging the same corner. Coins are
-   z-indexed above .hub-screen (30) so the balance still reads on the home
-   screen, not just mid-play; the ammo row stays play-only underneath it.
-   Both are now the same cream pill at the same height — they used to be two
-   different chips (a dark navy one and a white one) stacked on each other,
-   which read as two unrelated widgets rather than one HUD corner. */
+/* Just the ammo row now — the coin balance that used to sit above it (and
+   the z-index games that came with keeping it readable over every hub
+   screen) is gone; `.coin-icon`/`.coin-badge`-style chips still exist
+   elsewhere (shop, results, daily login) but not in this corner. */
 .hud-top-left {
   position: absolute; z-index: 31;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   left: max(14px, env(safe-area-inset-left));
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-.coin-badge, .shots-badge {
-  display: flex; align-items: center; gap: 7px; height: 36px;
-  padding: 0 15px 0 9px; border: 2px solid var(--line); border-radius: var(--r-pill);
-  background: var(--panel);
-  box-shadow: var(--shadow-chip);
-}
-.coin-badge strong, .shots-badge strong {
-  font-size: 17px; font-weight: 800; letter-spacing: -.01em;
-  font-variant-numeric: tabular-nums; color: var(--ink);
-}
 .coin-icon { width: 19px; height: 19px; flex: none; color: var(--gold-line); }
-.coin-badge .coin-icon { color: var(--gold); }
 
 /* ---- Ammo HUD ---------------------------------------------------------- */
 /* §23: just the number that changes every shot, small and to the edge —
-   a casual-game HUD reads at a glance, not as a panel to study. */
+   a casual-game HUD reads at a glance, not as a panel to study. Bigger than
+   the old shared coin/ammo pill size now that it is the only thing left in
+   this corner and has room to read as the headline stat it is. */
 .shots-badge {
+  display: flex; align-items: center; gap: 10px; height: 56px;
+  padding: 0 20px 0 12px; border: 2px solid var(--line); border-radius: var(--r-pill);
+  background: var(--panel);
+  box-shadow: var(--shadow-chip);
   /* Remounted (via a React `key`) the instant a shot leaves the barrel
      (`SHOT_FIRED`), same technique as `.shots-icon`'s own pop just below —
      so the whole badge gets a little jolt on every shot, not just when the
      number or the loaded colour changes. */
   animation: shots-badge-shake .3s ease-out;
 }
+.shots-badge strong {
+  font-size: 22px; font-weight: 800; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
 .shots-icon {
-  width: 15px; height: 15px; flex: none; border-radius: 50%;
+  /* The one colour every other part of this HUD (and the crosshair, and the
+     muzzle band) only ever echoes — sized to read as the headline of this
+     badge, not a bullet next to the number. */
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
   background: var(--gold);
   /* A single inset band along the bottom so the bullet reads as a little
      sphere rather than a flat dot — the only decoration on it. */
-  box-shadow: inset 0 -2px 0 rgba(122, 96, 70, .18);
+  box-shadow: inset 0 -3px 0 rgba(122, 96, 70, .18);
   /* Remounted (via a React `key`) every time the loaded colour actually
      changes, so this plays fresh each time rather than once ever. */
   animation: shots-icon-pop .42s cubic-bezier(.34,1.56,.64,1);
 }
+/* The queue behind the loaded round — what a chambered round rolling into
+   place used to preview in the model itself, before that view moved here
+   (see `updateAmmoModel`'s own comment in SandCannonEngine.ts). Smaller than
+   `.shots-icon` and fading out toward the end of the strip, so the one
+   about to fire (`.shots-icon`, full size) still reads as the important
+   number and this is clearly "later" rather than an equal second bullet. */
+.shots-upcoming {
+  display: flex; align-items: center; gap: 6px;
+  padding-left: 9px; margin-left: 1px;
+  border-left: 2px solid var(--line);
+}
+.shots-upcoming-dot {
+  width: 12px; height: 12px; flex: none; border-radius: 50%;
+  /* Remounted (via a React `key` on the bump, same trick as `.shots-icon`)
+     every time the queue moves, so every surviving slot visibly slides one
+     step down the strip in step with the round that just got promoted into
+     the chamber — see `shots-upcoming-advance`. */
+  animation: shots-upcoming-advance .32s ease-out;
+}
+.shots-upcoming-dot:nth-child(1) { opacity: .85; }
+.shots-upcoming-dot:nth-child(2) { opacity: .6; }
+.shots-upcoming-dot:nth-child(3) { opacity: .4; }
 
 /* ---- Scene and controls ------------------------------------------------ */
 /* The picture frame sits higher in this box than the raw geometry alone
@@ -1264,13 +1340,24 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* A squash-and-stretch swap for the shots-badge dot: it shrinks and twists
    down into the colour change, then overshoots big and wobbles back to rest
    — the same exaggerate-then-settle a cartoon "pop" reads as, rather than
-   the colour just cutting over. */
+   the colour just cutting over. Layered on top of the squash is a slide in
+   from the right, where `.shots-upcoming`'s first dot sits — the same "one
+   shot spent, one round advances" hop the 3D feed rail used to animate,
+   just read here as the round hopping out of the queue into the chamber. */
 @keyframes shots-icon-pop {
-  0% { transform: scale(.3) rotate(-20deg); }
-  40% { transform: scale(1.4) rotate(12deg); }
-  65% { transform: scale(.85) rotate(-6deg); }
-  85% { transform: scale(1.08) rotate(2deg); }
-  100% { transform: scale(1) rotate(0deg); }
+  0% { transform: translateX(20px) scale(.3) rotate(-20deg); }
+  40% { transform: translateX(5px) scale(1.4) rotate(12deg); }
+  65% { transform: translateX(-2px) scale(.85) rotate(-6deg); }
+  85% { transform: translateX(1px) scale(1.08) rotate(2deg); }
+  100% { transform: translateX(0) scale(1) rotate(0deg); }
+}
+/* Every surviving slot in the upcoming strip shifts one step closer to the
+   chamber on the same event `.shots-icon` pops for — this just slides each
+   dot in from where the slot after it used to sit, so the whole strip reads
+   as advancing together rather than colours cutting over in place. */
+@keyframes shots-upcoming-advance {
+  0% { transform: translateX(14px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
 }
 /* A quick side-to-side rattle for the whole shots-badge, fired at the moment
    a shot leaves the barrel — small and fast (recoil-sized, not the drama

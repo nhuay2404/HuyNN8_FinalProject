@@ -34,6 +34,7 @@ import {
   currentAmmo,
   expandLevelForPixelBoard,
   KEY_LETTER,
+  nextAmmo,
   SAND_COLOR_BY_LETTER,
 } from "./game/sand-rules";
 import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
@@ -56,6 +57,23 @@ const COLOR_NAME: Record<SandColor, string> = {
 
 function hex(color: SandColor) {
   return numHex(SAND_COLOR_HEX[color]);
+}
+
+/**
+ * The sky's own tint of whatever is chambered — `SAND_COLOR_HEX` is full
+ * candy saturation (right for a grain of sand, far too loud spread across
+ * the whole background), so this lightens it toward white by the same
+ * amount gameplay's flat cyan `--bg` (globals.css) sits lighter than the
+ * cyan sand colour it was pulled from, rather than painting the frame in a
+ * colour of its own.
+ */
+function ammoSky(color: SandColor) {
+  const value = SAND_COLOR_HEX[color];
+  const lighten = (channel: number) => Math.round(channel + (255 - channel) * 0.62);
+  const r = lighten((value >> 16) & 0xff);
+  const g = lighten((value >> 8) & 0xff);
+  const b = lighten(value & 0xff);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
 function numHex(value: number) {
@@ -615,10 +633,15 @@ export default function SandGame() {
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
   const [state, setState] = useState<SandGameState>(() => createSandGameState(level));
-  // The shots-badge dot's colour, kept one step behind `state.queue`: see the
-  // comment on `loadedAmmo` below for why.
-  const [ammoAnim, setAmmoAnim] = useState<{ color: SandColor | null; bump: number }>(
-    () => ({ color: currentAmmo(level, state), bump: 0 }),
+  // The shots-badge dot's colour and its upcoming strip, both kept one step
+  // behind `state.queue`: see the comment on `loadedAmmo` below for why.
+  // Bundled into one bump counter because the two only ever change together
+  // (both derive from `state.queue`, which only moves on a shot resolving or
+  // a level (re)start) — that shared bump is what lets the whole strip replay
+  // its "everything slides down one slot" animation in the same frame the
+  // chamber's own colour pops over.
+  const [ammoAnim, setAmmoAnim] = useState<{ color: SandColor | null; upcoming: SandColor[]; bump: number }>(
+    () => ({ color: currentAmmo(level, state), upcoming: nextAmmo(level, state), bump: 0 }),
   );
   // Remounts `.shots-badge` (via `key`) on every `SHOT_FIRED` so its shake
   // animation replays — the same trick `ammoAnim.bump` uses for the colour
@@ -635,6 +658,85 @@ export default function SandGame() {
   // truth (localStorage-backed); this just re-renders whenever it changes —
   // a level win, a Shop purchase, or a daily-login claim all call through it.
   const wallet = useSyncExternalStore(subscribeWallet, getWallet, () => SERVER_WALLET);
+  // The hub's persistent gold badge shows this instead of `wallet.gold`
+  // directly, so a daily-login claim can hold the old number on screen while
+  // the flying coins are still in the air and only tick it up once they
+  // land — every other change to `wallet.gold` (a Shop buy, a level win)
+  // still reaches it immediately via the effect below.
+  const [displayGold, setDisplayGold] = useState(() => wallet.gold);
+  const suppressGoldSyncRef = useRef(false);
+  const goldTweenRef = useRef<number | null>(null);
+  const [goldBump, setGoldBump] = useState(0);
+  const goldHudRef = useRef<HTMLDivElement | null>(null);
+  const todayCoinRef = useRef<HTMLSpanElement | null>(null);
+  const coinBurstId = useRef(0);
+  const [coinBursts, setCoinBursts] = useState<
+    Array<{ id: number; fromX: number; fromY: number; dx: number; dy: number; delay: number }>
+  >([]);
+  useEffect(() => {
+    if (suppressGoldSyncRef.current) return;
+    setDisplayGold(wallet.gold);
+  }, [wallet.gold]);
+  useEffect(() => () => {
+    if (goldTweenRef.current) cancelAnimationFrame(goldTweenRef.current);
+  }, []);
+  /** Eases `displayGold` up to `target` over half a second, then hands sync
+   * with `wallet.gold` back to the effect above. */
+  const tweenGoldTo = useCallback((target: number) => {
+    if (goldTweenRef.current) cancelAnimationFrame(goldTweenRef.current);
+    suppressGoldSyncRef.current = true;
+    setGoldBump((n) => n + 1);
+    const start = displayGold;
+    const duration = 500;
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - (1 - t) ** 3;
+      setDisplayGold(Math.round(start + (target - start) * eased));
+      if (t < 1) {
+        goldTweenRef.current = requestAnimationFrame(step);
+      } else {
+        goldTweenRef.current = null;
+        suppressGoldSyncRef.current = false;
+      }
+    };
+    goldTweenRef.current = requestAnimationFrame(step);
+  }, [displayGold]);
+  /** Claims today's reward, then flies a handful of coins from the day
+   * strip's highlighted cell to the hub's gold badge before the number
+   * there ticks up — the visual payoff `claimDailyLogin` itself has no
+   * opinion on, since `economy.ts` only deals in numbers. */
+  const claimDailyLoginWithFlight = useCallback(() => {
+    const goldBefore = wallet.gold;
+    const claimed = claimDailyLogin();
+    if (!claimed) return;
+    setDailyLoginOverride(claimed);
+    const fromEl = todayCoinRef.current;
+    const toEl = goldHudRef.current;
+    if (!fromEl || !toEl) {
+      tweenGoldTo(goldBefore + claimed.reward);
+      return;
+    }
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const fromX = fromRect.left + fromRect.width / 2;
+    const fromY = fromRect.top + fromRect.height / 2;
+    const dx = toRect.left + toRect.width / 2 - fromX;
+    const dy = toRect.top + toRect.height / 2 - fromY;
+    const spawned = Array.from({ length: 6 }, () => ({
+      id: coinBurstId.current++,
+      fromX,
+      fromY,
+      dx,
+      dy,
+      delay: Math.random() * 0.14,
+    }));
+    setCoinBursts((prev) => [...prev, ...spawned]);
+    window.setTimeout(() => {
+      setCoinBursts((prev) => prev.filter((b) => !spawned.some((s) => s.id === b.id)));
+      tweenGoldTo(goldBefore + claimed.reward);
+    }, 720);
+  }, [wallet.gold, tweenGoldTo]);
   // undefined: no action taken yet this page load, so the daily-login modal's
   // open/closed state defers entirely to `initialDailyLogin` below (open iff
   // unclaimed today). Claiming, dismissing, or reopening via the gift button
@@ -979,16 +1081,25 @@ export default function SandGame() {
    * `state.queue` itself advances the instant a shot resolves, but the
    * cannon's own chamber only takes on the new colour once the settle that
    * shot triggered has finished playing (`SandCannonEngine.advanceBeats`
-   * only assigns its internal `state` — what the 3D chamber ball reads —
-   * after the last settle beat). Reading `state.queue` straight through here
-   * would flip the badge to the next colour while the barrel on screen is
-   * still visibly loaded with the last one. Held at the last colour for
-   * every busy phase and only let through once play is idle again, so the
-   * two changes land in the same frame.
+   * only assigns its internal `state` after the last settle beat). Reading
+   * `state.queue` straight through here would flip the badge to the next
+   * colour while the shot that just left the barrel is still visibly
+   * settling. Held at the last colour for every busy phase and only let
+   * through once play is idle again, so the two changes land in the same
+   * frame.
    */
   const loadedAmmo = busy ? ammoAnim.color : currentAmmo(level, state);
+  /** The next few rounds behind the loaded one — the model itself no longer
+   * shows a chambered round or a queue rolling toward it (see the doc
+   * comment on `updateAmmoModel` in SandCannonEngine.ts), so the badge is
+   * the only place left that previews what is coming, and it now does both
+   * jobs: the dot for what is loaded, this strip for what is next. Held at
+   * the same busy-phase delay as `loadedAmmo`, for the same reason: without
+   * it the strip would shuffle forward while the shot that just emptied the
+   * chamber is still visibly settling, out of step with the dot it feeds. */
+  const upcomingAmmo = busy ? ammoAnim.upcoming : nextAmmo(level, state);
   if (loadedAmmo !== ammoAnim.color) {
-    setAmmoAnim({ color: loadedAmmo, bump: ammoAnim.bump + 1 });
+    setAmmoAnim({ color: loadedAmmo, upcoming: upcomingAmmo, bump: ammoAnim.bump + 1 });
   }
   // Measured against the sand this level actually started with, not the area of
   // the frame. A picture that does not fill its frame — which an editor level
@@ -1028,29 +1139,32 @@ export default function SandGame() {
           it, because the rig is drawn by the transparent canvas *below*
           that screen; a background on the screen would paint over the rig
           instead of showing through behind it. */}
-      <div className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}`}>
-        {/* Top-left HUD stack: the coin balance sits above the ammo row and,
-            unlike it, is not gated on `playing` — a balance is true on the
-            home screen too, not just mid-level. §22/§23: ammo, the 3D frame,
-            then the cannon and its aim zone. The ammo row is hidden on the
-            home screen — none of it is true until a level has actually been
-            started. A casual-game HUD reads at a glance: the number that
-            changes every shot (SHOTS) sits alone on the left, and everything
-            that is a menu — level pick, home, editor, restart, help — collapses
-            behind one settings button on the right so it is never in the way
-            of the picture or the cannon underneath it. */}
+      <div
+        className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}`}
+        style={playing && loadedAmmo ? ({ "--ammo-bg": ammoSky(loadedAmmo) } as React.CSSProperties) : undefined}
+      >
+        {/* Top-left HUD stack: §22/§23: ammo, the 3D frame, then the cannon
+            and its aim zone. The ammo row is hidden on the home screen — none
+            of it is true until a level has actually been started. A
+            casual-game HUD reads at a glance: the number that changes every
+            shot (SHOTS) sits alone on the left, and everything that is a
+            menu — level pick, home, editor, restart, help — collapses behind
+            one settings button on the right so it is never in the way of the
+            picture or the cannon underneath it. The coin balance used to sit
+            above this row — see `wallet.gold` for where it is still tracked —
+            but this corner is ammo-only now. */}
         <div className="hud-top-left">
-          <div className="coin-badge" role="status" aria-label={`${wallet.gold} coins`}>
-            <CoinIcon />
-            <strong>{wallet.gold}</strong>
-          </div>
           <header className="hud-top" hidden={!playing}>
             {/* The dot is the bullet in the chamber, not a generic "ammo" icon —
                 it takes the loaded colour so the badge answers "what am I about
-                to fire" at a glance, the same colour the chamber ball and the
-                crosshair already show. Falls back to the badge's gold when the
-                queue is empty (win/fail), which is the only time there is no
-                colour to show. */}
+                to fire" at a glance, the same colour the crosshair already
+                shows. Falls back to the badge's gold when the queue is empty
+                (win/fail), which is the only time there is no colour to show.
+                `.shots-upcoming` is the strip of what comes after it — the
+                model itself no longer previews a queue rolling toward the
+                chamber (see `updateAmmoModel` in SandCannonEngine.ts), so this
+                badge is now the only "what's next" this game shows, and it
+                widens to fit however many rounds `nextAmmo` hands back. */}
             <div
               // Keyed on the fire counter so `.shots-badge`'s shake replays
               // on every shot (see `shotBump`'s own comment) — unrelated to
@@ -1058,7 +1172,11 @@ export default function SandGame() {
               key={shotBump}
               className="shots-badge"
               role="status"
-              aria-label={loadedAmmo ? `${remaining} ${COLOR_NAME[loadedAmmo]} shots left` : `${remaining} shots left`}
+              aria-label={
+                loadedAmmo
+                  ? `${remaining} ${COLOR_NAME[loadedAmmo]} shots left, next up ${upcomingAmmo.map((color) => COLOR_NAME[color]).join(", ") || "nothing"}`
+                  : `${remaining} shots left`
+              }
             >
               <span
                 // Keyed on the change counter, not the colour: the wheel can
@@ -1070,6 +1188,23 @@ export default function SandGame() {
                 aria-hidden="true"
                 style={loadedAmmo ? { background: hex(loadedAmmo) } : undefined}
               />
+              {upcomingAmmo.length > 0 && (
+                <span className="shots-upcoming" aria-hidden="true">
+                  {upcomingAmmo.map((color, index) => (
+                    // Keyed on the bump too, not just `index`: every slot's
+                    // content shifts one step down the queue on the same
+                    // event that pops `.shots-icon` (see `ammoAnim`'s own
+                    // comment), and remounting is what replays the
+                    // "slide into place" animation instead of the colour
+                    // just cutting over in an already-mounted node.
+                    <span
+                      key={`${ammoAnim.bump}-${index}`}
+                      className="shots-upcoming-dot"
+                      style={{ background: hex(color) }}
+                    />
+                  ))}
+                </span>
+              )}
               <strong>{remaining}</strong>
             </div>
           </header>
@@ -1200,6 +1335,42 @@ export default function SandGame() {
             </button>
           </div>
         )}
+
+        {/* The hub's persistent gold balance — also the landing target for
+            the daily-login claim's flying coins (`claimDailyLoginWithFlight`
+            above), which is why it needs a stable ref rather than living
+            inside `.shop-balance` (only mounted on the Shop tab). */}
+        {!playing && (
+          <div className="hub-gold-wrap">
+            <div className="hub-gold-badge" ref={goldHudRef}>
+              <CoinIcon />
+              <strong key={goldBump}>{displayGold}</strong>
+            </div>
+          </div>
+        )}
+
+        {/* One `.coin-fly` span per airborne coin from the last daily-login
+            claim — `position: fixed` so `fromX`/`fromY`/`dx`/`dy` (viewport
+            coordinates from `getBoundingClientRect`) place and move it
+            correctly regardless of where in the tree this renders. Removed
+            by the timeout in `claimDailyLoginWithFlight` once the CSS
+            animation has had time to finish. */}
+        {coinBursts.map((burst) => (
+          <span
+            key={burst.id}
+            className="coin-fly"
+            aria-hidden="true"
+            style={{
+              left: burst.fromX,
+              top: burst.fromY,
+              animationDelay: `${burst.delay}s`,
+              "--dx": `${burst.dx}px`,
+              "--dy": `${burst.dy}px`,
+            } as React.CSSProperties}
+          >
+            <CoinIcon />
+          </span>
+        ))}
 
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
@@ -1663,7 +1834,11 @@ export default function SandGame() {
             and reopenable any time from the gift button in the hub's
             top-right. Gated on `!playing` on top of that — the very first
             render is always the hub, but this stays defensive rather than
-            relying on that ordering. */}
+            relying on that ordering.
+            The day strip already says everything a status line below it
+            used to repeat in words (which day, how much, whether it's
+            claimed — `.is-today`/`.is-past` carry that visually), so this
+            card is just the strip and the one action that matters. */}
         {!playing && dailyLogin && (
           <div className="result-screen" role="dialog" aria-modal="true" aria-label="Daily login reward">
             <div className="result-card daily-login-card">
@@ -1678,30 +1853,17 @@ export default function SandGame() {
                       className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
                     >
                       <span className="daily-login-label">Day {index + 1}</span>
-                      <CoinIcon />
+                      <span ref={isToday ? todayCoinRef : undefined}>
+                        <CoinIcon />
+                      </span>
                       <strong>{dailyLoginReward(index)}</strong>
                     </div>
                   );
                 })}
               </div>
-              {dailyLogin.claimedToday ? (
-                <p>
-                  Day {dailyLogin.day + 1} claimed — Day{" "}
-                  {((dailyLogin.day + 1) % DAILY_LOGIN_REWARDS.length) + 1} is worth{" "}
-                  {dailyLoginReward((dailyLogin.day + 1) % DAILY_LOGIN_REWARDS.length)} coins tomorrow.
-                </p>
-              ) : (
-                <p>Day {dailyLogin.day + 1} — come back every day to climb the streak.</p>
-              )}
               <div className="result-actions">
                 {!dailyLogin.claimedToday && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const claimed = claimDailyLogin();
-                      if (claimed) setDailyLoginOverride(claimed);
-                    }}
-                  >
+                  <button type="button" onClick={claimDailyLoginWithFlight}>
                     Claim {dailyLogin.reward} coins
                   </button>
                 )}

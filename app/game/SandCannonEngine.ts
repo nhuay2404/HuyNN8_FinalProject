@@ -283,12 +283,6 @@ const SPARKLE_COLORS = [0xffffff, 0xffd54a, 0xff8ad8, 0x9fe8ff];
  */
 const CHAMBER_POSITION = new THREE.Vector3(0, 0.4, -0.62);
 const CHAMBER_BALL_RADIUS = 0.19;
-/** Gap between queued rounds on the feed rail, and how far each sits above the last. */
-const FEED_SLOT_SPACING = 0.44;
-const FEED_SLOT_RISE = 0.075;
-const FEED_BALL_RADIUS = 0.15;
-/** How long a round takes to roll from its slot into the one ahead of it. */
-const FEED_ROLL_SECONDS = 0.28;
 /** Breathing rate of the chamber glow, in cycles per second. */
 const CHAMBER_GLOW_HZ = 1.5;
 /** Wider than the bore at that point, or the band is buried inside the barrel. */
@@ -578,25 +572,11 @@ export class SandCannonEngine {
   private boosterMuzzleRadiusRing: THREE.Mesh | null = null;
   private boosterMuzzlePrismRing: THREE.Group | null = null;
 
-  /** The live round in the breech, its halo, and the light it throws. */
-  private chamberBall: THREE.Mesh | null = null;
-  private chamberGlow: THREE.Mesh | null = null;
-  private chamberLight: THREE.PointLight | null = null;
   /** The colour band at the muzzle: what this cannon is about to fire. */
   private muzzleBand: THREE.Mesh | null = null;
   /** The collar around the base — the same colour as the muzzle band, so the
    * cannon reads its own next shot from any angle, not just head-on. */
   private baseRing: THREE.Mesh | null = null;
-  /** The feed rail/rim/throat's solid colour and the chamber housing's glass —
-   * one fixed steel-and-glass finish for every costume (`buildAmmoFeed`),
-   * built once and never retinted; `CostumeDef` carries no per-skin colour
-   * for it. */
-  private feedFrameMaterial: THREE.MeshLambertMaterial | null = null;
-  private feedGlassMaterial: THREE.MeshLambertMaterial | null = null;
-  /** The preview queue, nearest first, waiting on the rail. */
-  private feedBalls: THREE.Mesh[] = [];
-  /** 1 the moment a round is chambered, decaying to 0 as the queue rolls forward. */
-  private feedRoll = 0;
   /** Whether the breech is holding a round — false between firing and resolution. */
   private chamberLoaded = true;
   /** The queue the model is currently showing, so a change can be spotted. */
@@ -1116,9 +1096,8 @@ export class SandCannonEngine {
     // (ammo colour, boosters, radius) and stays the same for every skin.
     this.buildCostumeRig();
 
-    // Its own material, not the costume's — it starts gold, but it has to
-    // repaint independently of both the costume's shell and the muzzle ring
-    // once ammo starts cycling.
+    // Its own material, not the costume's — fixed gold, independent of both
+    // the costume's shell and the muzzle band.
     this.baseRing = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
       this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 })),
@@ -1127,17 +1106,17 @@ export class SandCannonEngine {
     this.baseRing.position.y = 0.27;
     this.cannonRoot.add(this.baseRing);
 
-    // The muzzle says what is about to come out of it. Thin enough to read as a
-    // painted line around the lip rather than a second ring of hardware, and
-    // unlit so the colour is the colour — the same hex the HUD names.
+    // A painted line around the lip, matching `baseRing`'s gold — fixed
+    // trim now rather than a preview of the chambered colour (see
+    // `syncAmmoModel`'s comment: that signal moved to the background).
     this.muzzleBand = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(MUZZLE_BAND_RADIUS, 0.045, 10, 32)),
-      this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })),
+      this.track(new THREE.MeshBasicMaterial({ color: 0xffc233 })),
     );
     this.muzzleBand.position.z = MUZZLE_Z + 0.2;
     this.barrelVisual.add(this.muzzleBand);
 
-    this.buildAmmoFeed();
+    this.syncAmmoModel();
     this.buildBoosterOverlay();
     this.applyCannonTransform();
   }
@@ -1329,117 +1308,6 @@ export class SandCannonEngine {
   }
 
   /**
-   * The breech chamber and the rail that feeds it.
-   *
-   * Both hang off `barrelPivot`, not the turret: they are part of the barrel
-   * assembly, so they swing and tilt with it and a round never appears to sit
-   * beside the gun it is about to be fired from. They do NOT hang off
-   * `barrelVisual`, which is the piece that slides back on recoil — the
-   * chamber holding the *next* round should not kick with the shot that just
-   * left.
-   *
-   * The rail/rim/throat's colour and the housing's glass are one fixed
-   * steel-and-glass finish (`this.feedFrameMaterial`, `this.feedGlassMaterial`)
-   * — built once here and never retinted on a skin swap, since `CostumeDef`
-   * carries no per-costume colour for it. The round inside, its glow and the
-   * feed queue's own balls stay ammo-tinted for every costume — see
-   * `syncAmmoModel`.
-   */
-  private buildAmmoFeed() {
-    // DoubleSide for every use, not just the ones that need it (the throat is
-    // open-ended and would otherwise cull to nothing from the inside) — free
-    // on a box or a torus, and one shared material is simpler than two.
-    this.feedFrameMaterial = this.track(
-      new THREE.MeshLambertMaterial({ color: 0x5468a0, side: THREE.DoubleSide }),
-    ) as THREE.MeshLambertMaterial;
-    this.feedGlassMaterial = this.track(
-      new THREE.MeshLambertMaterial({
-        color: 0xc3d2ff,
-        transparent: true,
-        opacity: 0.22,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    ) as THREE.MeshLambertMaterial;
-
-    // A groove for the queue to roll down, sloping up and back from the breech.
-    const railLength = FEED_SLOT_SPACING * 3.6;
-    const railGeometry = this.track(new THREE.BoxGeometry(0.07, 0.05, railLength));
-    for (const side of [-1, 1]) {
-      const rail = new THREE.Mesh(railGeometry, this.feedFrameMaterial);
-      rail.position.set(side * (FEED_BALL_RADIUS + 0.05), CHAMBER_POSITION.y - 0.1 + railLength * 0.5 * (FEED_SLOT_RISE / FEED_SLOT_SPACING), CHAMBER_POSITION.z + railLength * 0.5);
-      rail.rotation.x = -Math.atan2(FEED_SLOT_RISE, FEED_SLOT_SPACING);
-      this.barrelPivot.add(rail);
-    }
-
-    // The housing is see-through on purpose: the round inside it is the point,
-    // and a solid breech would hide the one thing this part exists to show.
-    const housing = new THREE.Mesh(
-      this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 1.5, CHAMBER_BALL_RADIUS * 2.4, 24, 1, true)),
-      this.feedGlassMaterial,
-    );
-    housing.rotation.x = Math.PI / 2;
-    housing.position.copy(CHAMBER_POSITION);
-    this.barrelPivot.add(housing);
-
-    const rimGeometry = this.track(new THREE.TorusGeometry(CHAMBER_BALL_RADIUS * 1.52, 0.035, 10, 26));
-    for (const offset of [-CHAMBER_BALL_RADIUS * 1.2, CHAMBER_BALL_RADIUS * 1.2]) {
-      const rim = new THREE.Mesh(rimGeometry, this.feedFrameMaterial);
-      rim.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y, CHAMBER_POSITION.z + offset);
-      this.barrelPivot.add(rim);
-    }
-
-    // A short throat down into the barrel, so the chamber reads as connected to
-    // the bore rather than parked on top of it.
-    const throat = new THREE.Mesh(
-      this.track(new THREE.CylinderGeometry(CHAMBER_BALL_RADIUS * 0.8, CHAMBER_BALL_RADIUS * 0.95, 0.3, 16, 1, true)),
-      this.feedFrameMaterial,
-    );
-    throat.position.set(CHAMBER_POSITION.x, CHAMBER_POSITION.y - 0.2, CHAMBER_POSITION.z);
-    this.barrelPivot.add(throat);
-
-    this.chamberBall = new THREE.Mesh(
-      this.track(new THREE.SphereGeometry(CHAMBER_BALL_RADIUS, 20, 14)),
-      this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })),
-    );
-    this.chamberBall.position.copy(CHAMBER_POSITION);
-    this.chamberBall.renderOrder = 4;
-    this.barrelPivot.add(this.chamberBall);
-
-    // The glow is a shell around the round, additive so it reads as light
-    // coming off it rather than a bigger ball of paint.
-    this.chamberGlow = new THREE.Mesh(
-      this.track(new THREE.SphereGeometry(CHAMBER_BALL_RADIUS * 1.9, 18, 12)),
-      this.track(new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.3,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })),
-    );
-    this.chamberGlow.position.copy(CHAMBER_POSITION);
-    this.chamberGlow.renderOrder = 5;
-    this.barrelPivot.add(this.chamberGlow);
-
-    // Real light, so the colour spills onto the breech around it.
-    this.chamberLight = new THREE.PointLight(0xffffff, 0, 2.6);
-    this.chamberLight.position.copy(CHAMBER_POSITION);
-    this.barrelPivot.add(this.chamberLight);
-
-    const feedGeometry = this.track(new THREE.SphereGeometry(FEED_BALL_RADIUS, 16, 12));
-    const count = Math.max(0, this.level.nextPreviewCount);
-    for (let index = 0; index < count; index += 1) {
-      const ball = new THREE.Mesh(feedGeometry, this.track(new THREE.MeshLambertMaterial({ color: 0xffffff })));
-      ball.visible = false;
-      this.barrelPivot.add(ball);
-      this.feedBalls.push(ball);
-    }
-
-    this.syncAmmoModel(false);
-  }
-
-  /**
    * A ring built from `PRISM_SPECTRUM_HEX.length` flat-coloured wedges rather
    * than one mesh, so it needs no shader to show several colours at once —
    * every other coloured surface on this cannon is a single flat
@@ -1535,64 +1403,33 @@ export class SandCannonEngine {
     this.callbacks.onEvent?.({ type: "BOOSTER_ARMED", booster: type });
   }
 
-  /** Where the queued round `slot` places along the rail — 0 is the chamber. */
-  private feedSlotPosition(slot: number) {
-    return new THREE.Vector3(
-      CHAMBER_POSITION.x,
-      CHAMBER_POSITION.y + FEED_SLOT_RISE * slot,
-      CHAMBER_POSITION.z + FEED_SLOT_SPACING * slot,
-    );
-  }
-
   /**
    * Point the model at whatever the queue now holds.
    *
    * Called every tick and cheap when nothing changed: the queue is compared as
-   * a string, and only a real change restarts the roll. `animate` is false for
-   * the first load and after a restart, where there is no previous round for
-   * the new one to have rolled in behind.
+   * a string, and only a real change updates anything.
    */
-  private syncAmmoModel(animate: boolean) {
+  private syncAmmoModel() {
     const current = currentAmmo(this.level, this.state);
     const upcoming = nextAmmo(this.level, this.state);
     const key = `${current ?? "-"}|${upcoming.join(",")}|${this.chamberLoaded}`;
     if (key === this.ammoKey) return;
-    // Only a chamber that has just gained a round rolls. Emptying it on the
-    // shot is a change too, and that one must not drag the queue forward.
-    const rolled = animate && this.ammoKey !== "" && this.chamberLoaded;
     this.ammoKey = key;
-    if (rolled) this.feedRoll = 1;
 
-    if (this.chamberBall) {
-      this.chamberBall.visible = current !== null && this.chamberLoaded;
-      if (current) (this.chamberBall.material as THREE.MeshBasicMaterial).color.setHex(SAND_COLOR_HEX[current]);
-    }
-    if (this.chamberGlow) {
-      this.chamberGlow.visible = current !== null && this.chamberLoaded;
-      if (current) (this.chamberGlow.material as THREE.MeshBasicMaterial).color.setHex(SAND_COLOR_HEX[current]);
-    }
-    if (this.chamberLight && current) this.chamberLight.color.setHex(SAND_COLOR_HEX[current]);
-    if (this.muzzleBand) {
-      // Grey once the wheel is spent: an empty cannon must not still be
-      // advertising a colour it can no longer fire.
-      (this.muzzleBand.material as THREE.MeshBasicMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x9fb3bb);
-    }
-    if (this.baseRing) {
-      (this.baseRing.material as THREE.MeshLambertMaterial).color.setHex(current ? SAND_COLOR_HEX[current] : 0x9fb3bb);
-    }
-    this.feedBalls.forEach((ball, index) => {
-      const color = upcoming[index];
-      ball.visible = color !== undefined;
-      if (color) (ball.material as THREE.MeshLambertMaterial).color.setHex(SAND_COLOR_HEX[color]);
-    });
+    // The muzzle band and base ring used to repaint to the chambered colour
+    // here — the cannon itself is fixed gold now (its construction colour,
+    // set once in `buildCannonModel` and never touched again) so the game's
+    // background carries that signal instead (see `.game-frame`'s
+    // `--ammo-bg` in globals.css, driven by `loadedAmmo` in SandGame.tsx).
+    //
     // The radius rings — reach preview (`aimRing`/`aimRingGlow`) and hit
     // flash (`sortRing`, drawn with `hitMaterial`) — used to be plain white
     // regardless of what was loaded. Tinting them to the chambered colour
-    // puts them in the same bullet-colour language as the chamber ball,
-    // muzzle band, base ring and feed queue this function already keeps in
-    // sync; the lower opacities on all three materials (set where they are
-    // constructed) are what keep a fully-saturated colour from reading as a
-    // solid disc instead of a soft radius indicator.
+    // puts them in the same bullet-colour language as the muzzle band and
+    // base ring this function already keeps in sync; the lower opacities on
+    // all three materials (set where they are constructed) are what keep a
+    // fully-saturated colour from reading as a solid disc instead of a soft
+    // radius indicator.
     if (current) {
       const hex = SAND_COLOR_HEX[current];
       if (this.aimRing) (this.aimRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
@@ -1602,47 +1439,21 @@ export class SandCannonEngine {
   }
 
   /**
-   * The roll, and the breathing of the chambered round.
-   *
-   * Every queued round is drawn one slot further back than it belongs while
-   * `feedRoll` runs down, so the whole line slides forward together and the new
-   * round grows into the chamber as it arrives — one shot spent, one round in.
+   * Keeps the ammo-tinted parts of the model (muzzle band, base ring, radius
+   * rings) and the booster overlay's idle pulse in step with the game clock.
+   * The queue itself is no longer shown in the model at all — see the HUD's
+   * own ammo badge for that preview instead.
    */
   private updateAmmoModel() {
     // The next round is only handed over once the board is at rest and the
     // player may fire again — the same moment §21 unlocks input.
     if (!this.projectile && this.state.phase === "READY") this.chamberLoaded = true;
-    this.syncAmmoModel(true);
+    this.syncAmmoModel();
     this.chamberAge += FIXED_STEP;
-    if (this.feedRoll > 0) this.feedRoll = Math.max(0, this.feedRoll - FIXED_STEP / FEED_ROLL_SECONDS);
-    // Ease-out: a round that has just been released moves fastest, then settles.
-    const eased = 1 - (1 - this.feedRoll) * (1 - this.feedRoll);
 
-    this.feedBalls.forEach((ball, index) => {
-      if (!ball.visible) return;
-      const slot = index + 1 + eased;
-      ball.position.copy(this.feedSlotPosition(slot));
-      // Rolling, not sliding: the spin is tied to the distance travelled, so it
-      // stops the moment the ball settles into its slot.
-      ball.rotation.x = -(slot * FEED_SLOT_SPACING) / FEED_BALL_RADIUS;
-    });
-
-    const seated = 1 - eased;
-    if (this.chamberBall?.visible) {
-      this.chamberBall.position.copy(this.feedSlotPosition(eased));
-      this.chamberBall.scale.setScalar(0.45 + 0.55 * seated);
-      this.chamberBall.rotation.x = -(eased * FEED_SLOT_SPACING) / CHAMBER_BALL_RADIUS;
-    }
-    // The halo breathes so a loaded cannon never looks frozen, and flares once
-    // as the round drops in.
+    // Still used below for the booster overlay's own idle pulse, even with
+    // no chamber halo left to breathe.
     const breath = 0.5 + 0.5 * Math.sin(this.chamberAge * Math.PI * 2 * CHAMBER_GLOW_HZ);
-    const strength = this.chamberBall?.visible ? 0.34 + 0.16 * breath + 0.5 * eased : 0;
-    if (this.chamberGlow) {
-      this.chamberGlow.position.copy(this.chamberBall?.position ?? CHAMBER_POSITION);
-      (this.chamberGlow.material as THREE.MeshBasicMaterial).opacity = strength;
-      this.chamberGlow.scale.setScalar((0.86 + 0.1 * breath + 0.2 * eased) * (0.45 + 0.55 * seated));
-    }
-    if (this.chamberLight) this.chamberLight.intensity = strength * 3.4;
 
     // The overlay rings breathe and spin so an armed booster never looks like
     // a static sticker slapped on the gun — same idle-never-frozen intent as
