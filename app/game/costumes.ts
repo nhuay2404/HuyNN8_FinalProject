@@ -66,9 +66,13 @@ const AMMO_RING_RADIUS = 0.86;
  */
 function buildClassicCannon(groups: CostumeRigGroups) {
   const { added, attach } = collector();
-  const body = new THREE.MeshLambertMaterial({ color: 0x66a9eb });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x4a5c8d });
-  const accent = new THREE.MeshLambertMaterial({ color: 0xffb70e });
+  // Unlit flat colour — no light-driven shading gradient across the
+  // cannon's surfaces, just the smooth, evenly-lit look the game wants.
+  const body = new THREE.MeshBasicMaterial({ color: 0x66a9eb });
+  const dark = new THREE.MeshBasicMaterial({ color: 0x4a5c8d });
+  // Dark gunmetal trim — was gold (0xffb70e); the shell now stays in cool
+  // dark tones (near-black, slate, navy) instead of mixing in yellow.
+  const accent = new THREE.MeshBasicMaterial({ color: 0x2b3140 });
 
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40), dark);
   attach(groups.cannonRoot, base);
@@ -100,8 +104,10 @@ function buildClassicCannon(groups: CostumeRigGroups) {
  */
 function buildRuneCannon(groups: CostumeRigGroups) {
   const { added, attach } = collector();
-  const stone = new THREE.MeshLambertMaterial({ color: 0x27214e });
-  const wood = new THREE.MeshLambertMaterial({ color: 0x4b386b });
+  // Same reasoning as the classic rig: flat, unlit colour so the stone and
+  // wood read as smooth surfaces rather than lit/shaded ones.
+  const stone = new THREE.MeshBasicMaterial({ color: 0x27214e });
+  const wood = new THREE.MeshBasicMaterial({ color: 0x4b386b });
   // Unlit, so these read as light sources rather than as painted plastic.
   const glow = new THREE.MeshBasicMaterial({ color: 0xac71ff });
   const spark = new THREE.MeshBasicMaterial({ color: 0xffdc75 });

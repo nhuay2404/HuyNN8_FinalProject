@@ -134,7 +134,7 @@ export type RadiusGameplayPolicy = {
    * `shotLimit` is the whole budget.
    */
   ammoRule: "CYCLE_UNTIL_COLOR_CLEARED_TEMP";
-  /** Open Decision 9. Three is enough to plan two turns out without a spreadsheet. */
+  /** Open Decision 9. Two is enough to plan the next turn without crowding the HUD. */
   nextPreviewCount: number;
   /** §20: the cannon keeps the pre-pivot prototype's control and ballistics. */
   cannonConfigRef: string;
@@ -149,7 +149,7 @@ export const RADIUS_GAMEPLAY: RadiusGameplayPolicy = {
   deadBulletPolicy: "VALIDATOR_ONLY_TEMP",
   shotRule: "RADIUS_SORT_TEMP",
   ammoRule: "CYCLE_UNTIL_COLOR_CLEARED_TEMP",
-  nextPreviewCount: 3,
+  nextPreviewCount: 2,
   cannonConfigRef: "prototype-classic-cannon",
 };
 

@@ -150,11 +150,19 @@ const IDLE_SHAKE_CYCLE = [
 ];
 const IDLE_SHAKE_CYCLE_SECONDS = IDLE_SHAKE_CYCLE.reduce((sum, beat) => sum + beat.seconds, 0);
 /** Peak rotation of the idle shake, in radians — a gentle nudge, not a jolt: this has to read as "look here" from across the frame without startling anyone mid-decision. */
-const IDLE_SHAKE_TILT = 0.02;
+const IDLE_SHAKE_TILT = 0.012;
 /** How many little left-right flinches happen within one `shake: true` beat above. */
-const IDLE_SHAKE_HZ = 7;
-/** How bright the current colour's outline pulses — see `redrawSand`'s highlight pass. */
-const IDLE_HIGHLIGHT_HZ = 1.6;
+const IDLE_SHAKE_HZ = 4.5;
+/** How bright the current colour's outline pulses — see `redrawSand`'s highlight pass.
+ * Slow enough to read as a breath (one full dim-bright-dim cycle every ~2.7s)
+ * rather than a blink — a nag that stays calm instead of jittering for attention. */
+const IDLE_HIGHLIGHT_HZ = 0.37;
+/** The outline's brightest and dimmest points, as a fraction of the way to white.
+ * The fade-in peaks at full solid white (1) so the "shoot here" beat actually
+ * reads; the fade-out only settles to 30%, never disappearing, so the outline
+ * stays visible as a calm, ever-present glow rather than blinking off. */
+const IDLE_HIGHLIGHT_FLOOR = 0.3;
+const IDLE_HIGHLIGHT_CEILING = 1;
 /** Orthogonal only — matches `adjacencyMode: "ORTHOGONAL_4"`, so a border pixel here is a border of the same body the solver reasons about, not a diagonal artifact. */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [1, 0],
@@ -1168,22 +1176,26 @@ export class SandCannonEngine {
     // (ammo colour, boosters, radius) and stays the same for every skin.
     this.buildCostumeRig();
 
-    // Its own material, not the costume's — fixed gold, independent of both
-    // the costume's shell and the muzzle band.
+    // Its own material, not the costume's — fixed dark slate, independent of
+    // both the costume's shell and the muzzle band.
     this.baseRing = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
-      this.track(new THREE.MeshLambertMaterial({ color: 0xffc233 })),
+      // Unlit flat slate, matching the costume shell's own materials — no
+      // light-driven shading gradient on the cannon's fixed trim either.
+      // Was gold (0xffc233); moved to a cool dark tone so the shell has no
+      // yellow left in it.
+      this.track(new THREE.MeshBasicMaterial({ color: 0x333c50 })),
     );
     this.baseRing.rotation.x = Math.PI / 2;
     this.baseRing.position.y = 0.27;
     this.cannonRoot.add(this.baseRing);
 
-    // A painted line around the lip, matching `baseRing`'s gold — fixed
+    // A painted line around the lip, matching `baseRing`'s slate — fixed
     // trim now rather than a preview of the chambered colour (see
     // `syncAmmoModel`'s comment: that signal moved to the background).
     this.muzzleBand = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(MUZZLE_BAND_RADIUS, 0.045, 10, 32)),
-      this.track(new THREE.MeshBasicMaterial({ color: 0xffc233 })),
+      this.track(new THREE.MeshBasicMaterial({ color: 0x333c50 })),
     );
     this.muzzleBand.position.z = MUZZLE_Z + 0.2;
     this.barrelVisual.add(this.muzzleBand);
@@ -2712,7 +2724,8 @@ export class SandCannonEngine {
 
     this.idleHintElapsed = (this.idleHintElapsed + deltaMs / 1000) % IDLE_SHAKE_CYCLE_SECONDS;
     this.idleHighlightColor = currentAmmo(this.level, this.state);
-    this.idleHighlightStrength = 0.5 + 0.5 * Math.sin(this.idleHintElapsed * IDLE_HIGHLIGHT_HZ * Math.PI * 2);
+    const breathe = 0.5 + 0.5 * Math.sin(this.idleHintElapsed * IDLE_HIGHLIGHT_HZ * Math.PI * 2);
+    this.idleHighlightStrength = IDLE_HIGHLIGHT_FLOOR + (IDLE_HIGHLIGHT_CEILING - IDLE_HIGHLIGHT_FLOOR) * breathe;
 
     let cursor = 0;
     for (const beat of IDLE_SHAKE_CYCLE) {

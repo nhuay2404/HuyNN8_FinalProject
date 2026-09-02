@@ -640,14 +640,12 @@ export default function SandGame() {
   // a level (re)start) — that shared bump is what lets the whole strip replay
   // its "everything slides down one slot" animation in the same frame the
   // chamber's own colour pops over.
-  const [ammoAnim, setAmmoAnim] = useState<{ color: SandColor | null; upcoming: SandColor[]; bump: number }>(
-    () => ({ color: currentAmmo(level, state), upcoming: nextAmmo(level, state), bump: 0 }),
-  );
-  // Remounts `.shots-badge` (via `key`) on every `SHOT_FIRED` so its shake
-  // animation replays — the same trick `ammoAnim.bump` uses for the colour
-  // pop, just keyed off "a shot left the barrel" instead of "the loaded
-  // colour changed".
-  const [shotBump, setShotBump] = useState(0);
+  const [ammoAnim, setAmmoAnim] = useState<{
+    color: SandColor | null;
+    upcoming: SandColor[];
+    bump: number;
+    shotsUsed: number;
+  }>(() => ({ color: currentAmmo(level, state), upcoming: nextAmmo(level, state), bump: 0, shotsUsed: state.shotsUsed }));
   const [toast, setToast] = useState<Toast | null>(null);
   // Mirrors `SandCannonEngine`'s own `armedBooster` — null means neither
   // booster is armed. The engine is the source of truth (it is what enforces
@@ -770,7 +768,6 @@ export default function SandGame() {
   // needs the engine's own renderer and there is no reason to pay for it
   // before a player has ever looked at the tray.
   const [costumeThumbnails, setCostumeThumbnails] = useState<Partial<Record<CostumeId, string>>>({});
-  const [menuOpen, setMenuOpen] = useState(false);
   // Read once: `isSoundEnabled()` is a plain module variable, and this is the
   // only place in the UI that ever writes it, so nothing else can go stale.
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
@@ -778,9 +775,9 @@ export default function SandGame() {
   // module's own stored preference.
   const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
   // The one unified Settings card (see globals.css's own comment on
-  // `.settings-screen`) — opened from the hub's gear (`.settings-wrap` while
-  // `!playing`) and from a row in the in-play menu, so there is exactly one
-  // place Sound/Vibration/the level editor live instead of two.
+  // `.settings-screen`) — opened from the same gear button either way,
+  // `!playing` (the hub) or mid-play (`.settings-wrap`'s in-play button),
+  // so there is exactly one place Sound/Vibration/the level editor live.
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Lags `playing` on the way in: the home screen stays mounted for one more
   // beat after Play is tapped so its CSS exit animation (Play button
@@ -888,12 +885,6 @@ export default function SandGame() {
         case "BOOSTER_ARMED":
           pushToast(`${BOOSTER_NAME[event.booster]} armed — next shot`, "good");
           break;
-        case "SHOT_FIRED":
-          // No toast — a shake on every single shot is feedback enough, and
-          // a toast that fired that often would drown out the ones that
-          // actually say something (NO_MATCH, MISS, ...).
-          setShotBump((bump) => bump + 1);
-          break;
         default:
           break;
       }
@@ -938,6 +929,18 @@ export default function SandGame() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [engine, playing]);
 
+  // Opening the in-play Settings card is a pause menu now, not just an
+  // overlay: the board underneath must not keep settling/animating while a
+  // player is looking at Sound/Vibration or about to tap Home/Restart. Only
+  // acts while `playing` — the hub's own gear opens the same card over
+  // nothing worth pausing. Skips the `resume()` half while the tab itself is
+  // still hidden, so this cannot undo the visibility effect's own pause.
+  useEffect(() => {
+    if (!engine || !playing) return;
+    if (settingsOpen) engine.pause();
+    else if (!document.hidden) engine.resume();
+  }, [engine, playing, settingsOpen]);
+
   const restart = useCallback(() => {
     setState(createSandGameState(level));
     setToast(null);
@@ -954,7 +957,6 @@ export default function SandGame() {
     setRunId((id) => id + 1);
     setPlaying(false);
     setTab("home");
-    setMenuOpen(false);
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -1098,8 +1100,21 @@ export default function SandGame() {
    * it the strip would shuffle forward while the shot that just emptied the
    * chamber is still visibly settling, out of step with the dot it feeds. */
   const upcomingAmmo = busy ? ammoAnim.upcoming : nextAmmo(level, state);
-  if (loadedAmmo !== ammoAnim.color) {
-    setAmmoAnim({ color: loadedAmmo, upcoming: upcomingAmmo, bump: ammoAnim.bump + 1 });
+  // Gated on `state.shotsUsed`, not on whether the colours actually differ:
+  // a single-colour level (Level 1's whole ammo queue is just "blue") shifts
+  // the queue on every shot without a single pixel of `loadedAmmo`/
+  // `upcomingAmmo` ever changing, and a content diff would call that "nothing
+  // happened" forever, silently skipping the slide replay for that level's
+  // entire run. `shotsUsed` advances once per shot resolved (`spend` in
+  // sand-rules.ts) regardless of colour, so it is the one signal that always
+  // means "the queue actually moved". Held off while `busy` for the same
+  // reason `loadedAmmo` is: `state.shotsUsed` ticks the instant a shot
+  // resolves, before the settle it triggered has finished playing, and
+  // replaying the animation that early would desync it from the dot/strip
+  // (which are still showing the pre-shot values at that point).
+  const ammoChanged = !busy && state.shotsUsed !== ammoAnim.shotsUsed;
+  if (ammoChanged) {
+    setAmmoAnim({ color: loadedAmmo, upcoming: upcomingAmmo, bump: ammoAnim.bump + 1, shotsUsed: state.shotsUsed });
   }
   // Measured against the sand this level actually started with, not the area of
   // the frame. A picture that does not fill its frame — which an editor level
@@ -1166,10 +1181,6 @@ export default function SandGame() {
                 badge is now the only "what's next" this game shows, and it
                 widens to fit however many rounds `nextAmmo` hands back. */}
             <div
-              // Keyed on the fire counter so `.shots-badge`'s shake replays
-              // on every shot (see `shotBump`'s own comment) — unrelated to
-              // `ammoAnim.bump` just below, which remounts only the dot.
-              key={shotBump}
               className="shots-badge"
               role="status"
               aria-label={
@@ -1210,101 +1221,35 @@ export default function SandGame() {
           </header>
         </div>
 
-        {/* Same top-right corner either way, but not the same button: mid-play
-            it opens the level-pick/Home/Restart/Settings dropdown below; on
-            the hub (`!playing`) that dropdown has nothing to say (no level
-            grid worth showing over the picture, no in-progress run to
-            restart), so this opens the unified Settings card directly
-            instead of a menu with one live item in it.
+        {/* Same top-right corner and the same gear either way now — mid-play
+            just adds the help button beside it. The old mid-play menu (level
+            grid, Home/Restart/Settings rows behind a hamburger) is gone: the
+            gear now opens the one unified Settings card directly, same as
+            the hub, and `.settings-round-actions` inside that card is what
+            covers Home/Restart while a level is open (see its own comment).
             Hidden on the skin tab for now — `.skin-screen`'s own close
             button already sits in that corner. */}
         <div className="settings-wrap" hidden={tab === "skin"}>
-          {playing ? (
-            <>
-              {(level.tutorial || level.ftueGesture) && (
-                <button
-                  type="button"
-                  className="icon-button help-button"
-                  onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
-                  aria-label="How to play this level"
-                  title="How to play"
-                >
-                  <Glyph name="help" />
-                </button>
-              )}
-              <button
-                type="button"
-                className="icon-button settings-button"
-                onClick={() => setMenuOpen((open) => !open)}
-                aria-label="Menu"
-                aria-haspopup="true"
-                aria-expanded={menuOpen}
-                title="Menu"
-              >
-                <Glyph name="menu" />
-              </button>
-            </>
-          ) : (
+          {playing && (level.tutorial || level.ftueGesture) && (
             <button
               type="button"
-              className="icon-button settings-button"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Settings"
-              title="Settings"
+              className="icon-button help-button"
+              onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
+              aria-label="How to play this level"
+              title="How to play"
             >
-              <Glyph name="gear" />
+              <Glyph name="help" />
             </button>
           )}
-          {menuOpen && (
-            <>
-              <button
-                type="button"
-                className="settings-backdrop"
-                onClick={() => setMenuOpen(false)}
-                aria-label="Close menu"
-              />
-              <div className="settings-menu" role="menu">
-                <div className="settings-level">
-                  <span className="level-name">{level.name}</span>
-                  <span className="level-cleared">{cleared}% cleared</span>
-                </div>
-                {/* Numbered rather than named: full level names do not fit this
-                    panel on a phone, and the one that matters is spelled out
-                    just above. */}
-                <div className="settings-levels">
-                  {playables.map((entry, index) => (
-                    <button
-                      key={entry.level.id}
-                      type="button"
-                      className={index === levelIndex ? "is-active" : ""}
-                      onClick={() => { openLevel(index); setMenuOpen(false); }}
-                      aria-label={`Level ${entry.level.id}: ${entry.level.name}`}
-                      aria-current={index === levelIndex ? "true" : undefined}
-                      title={entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name}
-                    >
-                      {entry.level.id}
-                    </button>
-                  ))}
-                </div>
-                <div className="settings-actions">
-                  <button type="button" onClick={goHome}>
-                    <Glyph name="home" /> Home
-                  </button>
-                  <button type="button" onClick={() => { restart(); setMenuOpen(false); }}>
-                    <Glyph name="restart" /> Restart
-                  </button>
-                  {/* Sound/Vibration and the level editor moved into the one
-                      unified Settings card (see its own comment in
-                      globals.css) — this just opens it, rather than
-                      duplicating an inline toggle and an editor link here
-                      too. */}
-                  <button type="button" onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>
-                    <Glyph name="gear" /> Settings
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+          <button
+            type="button"
+            className="icon-button settings-button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+            title="Settings"
+          >
+            <Glyph name="gear" />
+          </button>
         </div>
 
         {/* The hub's own control, on the right edge rather than the top-right
@@ -1694,10 +1639,12 @@ export default function SandGame() {
         )}
 
         {/* The one unified Settings card — see its own comment in
-            globals.css. Reachable from the hub's gear and from the in-play
-            menu's own "Settings" row (both just flip `settingsOpen`), so
+            globals.css. Reachable from the exact same gear button either
+            way, hub or mid-play (both just flip `settingsOpen`), so
             Sound/Vibration and the dev-only level editor live in exactly one
-            place instead of being split between a dropdown and nothing. */}
+            place. Opening it mid-play also pauses the engine (see the
+            `settingsOpen`/`playing` effect above `restart`) — the old
+            in-play menu doubled as a pause screen and this replaces it. */}
         {settingsOpen && (
           <div className="settings-screen" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div className="settings-card">
@@ -1712,6 +1659,32 @@ export default function SandGame() {
                   <CloseIcon />
                 </button>
               </div>
+              {/* Mid-play only: the hub has no in-progress run to leave or
+                  redo, so these two big round buttons — the old in-play
+                  menu's Home/Restart, minus the level-grid picker that used
+                  to sit beside them — only make sense while `playing`. */}
+              {playing && (
+                <div className="settings-round-actions">
+                  <button
+                    type="button"
+                    className="settings-round-button"
+                    onClick={() => { setSettingsOpen(false); goHome(); }}
+                    aria-label="Home"
+                    title="Home"
+                  >
+                    <Glyph name="home" />
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-round-button"
+                    onClick={() => { setSettingsOpen(false); restart(); }}
+                    aria-label="Restart"
+                    title="Restart"
+                  >
+                    <Glyph name="restart" />
+                  </button>
+                </div>
+              )}
               <div className="settings-body">
                 {soundSupported() && (
                   <div className="settings-row">
