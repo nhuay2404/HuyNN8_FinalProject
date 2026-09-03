@@ -361,6 +361,12 @@ const PRISM_BAND_GAP_RATIO = 0.08;
 const BOOSTER_PROJECTILE_SCALE = 1.6;
 /** Full hue cycles per second for a Prism Shot bullet in flight. */
 const PRISM_PROJECTILE_HUE_HZ = 1.4;
+/** How much bigger the projectile's black rim (`buildProjectileOutline`'s
+ * `BackSide` shell) sits than the ball's own scale — a fixed ratio, not a
+ * fixed world size, since it rides as a child of the ball mesh and has to
+ * stay proportionally the same rim whether Radius Overcharge has puffed the
+ * ball up to `BOOSTER_PROJECTILE_SCALE` or not. */
+const PROJECTILE_OUTLINE_SCALE = 1.22;
 
 // ---- board presentation --------------------------------------------------
 /** The painting is fitted into this opening whatever the authored grid is. */
@@ -675,6 +681,10 @@ export class SandCannonEngine {
 
   private projectile: Projectile | null = null;
   private projectileMesh: THREE.Mesh | null = null;
+  /** Shared by every projectile ball's own outline child, real shots and
+   * showcase demo shots alike — see `buildProjectileOutline`. */
+  private projectileOutlineGeometry: THREE.SphereGeometry | null = null;
+  private projectileOutlineMaterial: THREE.MeshBasicMaterial | null = null;
 
   private yaw = CANNON_NEUTRAL_YAW;
   private elevation = CANNON_NEUTRAL_ELEVATION;
@@ -862,6 +872,32 @@ export class SandCannonEngine {
   private track<T extends THREE.BufferGeometry | THREE.Material>(item: T) {
     this.disposables.push(item);
     return item;
+  }
+
+  /**
+   * A thin black rim for a projectile ball, as a child `Mesh` the caller
+   * adds to whichever sphere it belongs to (a real shot's `projectileMesh`,
+   * or one of the skin picker's showcase demo shots). The classic
+   * shader-free outline trick: the same sphere shape, scaled up a fixed
+   * ratio (`PROJECTILE_OUTLINE_SCALE`) and flipped to `BackSide` — at the
+   * silhouette edge the shell's far wall pokes out past the smaller fill
+   * sphere sitting in front of it; everywhere else the fill sphere occludes
+   * it, so what reads is a rim, not a solid black ball. Riding as a child
+   * means it follows the ball's own position/scale/visibility (including
+   * the Radius Overcharge puff-up) for free — nothing has to keep it in
+   * sync by hand. Geometry and material are both lazily built once and
+   * shared by every ball this ever gets called for, real or showcase.
+   */
+  private buildProjectileOutline(): THREE.Mesh {
+    if (!this.projectileOutlineGeometry) {
+      this.projectileOutlineGeometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
+    }
+    if (!this.projectileOutlineMaterial) {
+      this.projectileOutlineMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide }));
+    }
+    const outline = new THREE.Mesh(this.projectileOutlineGeometry, this.projectileOutlineMaterial);
+    outline.scale.setScalar(PROJECTILE_OUTLINE_SCALE);
+    return outline;
   }
 
   /**
@@ -1354,6 +1390,7 @@ export class SandCannonEngine {
     }
     const mesh = new THREE.Mesh(this.showcaseShotGeometry, this.showcaseMaterials[this.costume.flavor]);
     mesh.position.copy(start);
+    mesh.add(this.buildProjectileOutline());
     this.scene.add(mesh);
     this.showcaseShots.push({ mesh, start: start.clone(), velocity, time: 0, trailTicks: 0 });
   }
@@ -2367,6 +2404,7 @@ export class SandCannonEngine {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));
       const material = this.track(new THREE.MeshBasicMaterial({ color: 0xffffff }));
       this.projectileMesh = new THREE.Mesh(geometry, material);
+      this.projectileMesh.add(this.buildProjectileOutline());
       this.scene.add(this.projectileMesh);
     }
     const material = this.projectileMesh.material as THREE.MeshBasicMaterial;
@@ -2730,7 +2768,13 @@ export class SandCannonEngine {
    * eligibility itself.
    */
   private updateIdleHint(deltaMs: number): number {
-    const eligible = this.canInteract() && this.aimPointer === null;
+    // A gameplay nag, not a hub one — `canInteract()` alone doesn't rule the
+    // hub out (`phase` is READY there too, there is just no shot to take),
+    // so this needs its own `!this.idle` on top of it, or a player who
+    // leaves the hub open past `IDLE_HINT_DELAY_SECONDS` would see the
+    // picture's frame pick up the shake/highlight while nobody has even
+    // pressed Play yet.
+    const eligible = this.canInteract() && !this.idle && this.aimPointer === null;
     if (!eligible || (performance.now() - this.lastInputAt) / 1000 < IDLE_HINT_DELAY_SECONDS) {
       this.idleHintElapsed = 0;
       this.idleHighlightStrength = 0;
@@ -2909,6 +2953,17 @@ export class SandCannonEngine {
   setIdle(idle: boolean) {
     this.idle = idle;
     if (!idle) {
+      // The idle-hint clock (`updateIdleHint`) has been running the whole
+      // time the hub sat idle — nothing before this reset it, `lastInputAt`
+      // is just whenever the player last actually touched the aim zone,
+      // possibly minutes ago. Left alone, a player who reads the hub for
+      // more than `IDLE_HINT_DELAY_SECONDS` before tapping Play would see
+      // the "come back and shoot" hint fire on literally the first frame of
+      // play, for a shot they have not even had the chance to take yet.
+      // Bumping it here is what makes the countdown start counting from the
+      // moment play actually begins, the same way `setPhase` already bumps
+      // it every time a shot resolves and control returns to the player.
+      this.lastInputAt = performance.now();
       this.cannonRoot.visible = true;
       this.startCannonEntrance();
       startAmbience();

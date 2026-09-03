@@ -3,11 +3,12 @@
 Ghi lại mọi thay đổi từ lúc bắt đầu phiên làm việc (bản concept `update_concept`, khi
 `outputs/3d-cannon-sort.html` còn chưa tồn tại) tới bản hiện tại.
 
-**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 925.172 bytes, 9 màn campaign + 3 bài
-tutorial, một file HTML chạy offline bằng `file://`, không cần server và không cần mạng.
+**Bản hiện tại:** `outputs/3d-cannon-sort.html` — 932.486 bytes, 2 level cát (falling-sand pixel puzzle —
+xem mục 102 trở đi và bộ nhớ dự án về đợt pivot bỏ hẳn cơ chế Cannon Sort cũ), một file HTML chạy offline
+bằng static server/`file://`, không cần server và không cần mạng lúc chơi.
 
-**Trạng thái kiểm tra:** 169/169 test pass · lint sạch · build production sạch · preview cục bộ
-trả HTTP 200.
+**Trạng thái kiểm tra:** 123/123 test pass (`npm test`) · `tsc --noEmit` sạch · build standalone sạch,
+không log lỗi console khi mở bản xuất.
 
 ---
 
@@ -5112,3 +5113,392 @@ animation sớm trong lúc đạn đang settle). Thêm field `shotsUsed` vào st
 này — pointer event tổng hợp qua `javascript_tool`/`computer` không được engine coi là input hợp lệ (aim
 zone cần pointer event thật/trusted) — xác nhận đúng qua đọc lại code (`shotsUsed` tăng độc lập với màu sắc
 ở `spend()`).
+
+---
+
+## 102. Đổi bảng màu 10 màu cát theo palette designer gửi (02/09)
+
+Designer gửi 2 ảnh bảng màu (11 mã hex) yêu cầu áp cho màu tranh, màu đạn, màu chọn trong level editor.
+
+**Sửa:** `SAND_COLOR_HEX` (`SandCannonEngine.ts`) là nguồn duy nhất cho cả 3 chỗ (đã xác nhận qua import ở
+`LevelEditor.tsx`/`SandGame.tsx`), nên chỉ cần đổi 10 giá trị hex ở đây. Ánh xạ theo khoảng cách hue gần
+nhất, giữ thứ tự vòng tròn màu không chéo nhau ở nhóm xanh lá/cyan/xanh dương/tím (bảng gốc không có xanh lá
+hay xanh dương thuần): `red:#FF546C green:#67E0BA yellow:#F4D65E blue:#9692B8 purple:#A28FEA orange:#F69509
+cyan:#00A9F7 pink:#FF97B2 lime:#C1EC35 brown:#998757`. Mã `#EB8D62` (cam nhạt, trùng vùng màu `orange`)
+không dùng vì dư 1/11.
+
+**Test:** Verify trực tiếp trên dev server — tranh, đạn cannon, 10 ô màu trong level editor đều lên đúng
+bảng mới.
+
+---
+
+## 103. Màu thanh tác vụ hub (bottom nav): nền vàng nhạt, icon nâu, nút Home xanh lá khi active (02/09)
+
+**Sửa (`globals.css`):** `.hub-nav` nền đổi `#ffdfa0` → `#FDE59C`. `.hub-nav-icon` stroke đổi từ
+`#fde59c` (đồng màu nền cũ) sang `var(--wood-ink)` (nâu). Nút Home lúc active: bubble đổi từ vàng
+(`#fde59c`) sang `var(--accent)` (xanh lá dùng chung toàn app), icon dùng `var(--accent-ink)` — 4 tab còn
+lại (Skin/Shop/Gallery/Customize) giữ nguyên màu riêng từng tab như cũ.
+
+**Test:** Verify trên preview — nền vàng, icon nâu, riêng nút Home có nền xanh lá khi đang ở tab đó.
+
+---
+
+## 104. Khung tranh phẳng màu nâu (giống chất liệu ụ súng), nền tranh xám nâu nhạt (02/09)
+
+Yêu cầu 1: khung tranh 3D nên phẳng, không đổ bóng/ánh sáng như ụ súng, và màu nâu.
+
+**Nguyên nhân:** `buildFrame()` (`SandCannonEngine.ts`) dựng thanh viền khung bằng `MeshLambertMaterial`
+(phản ứng ánh sáng scene → có gradient sáng/tối), trong khi toàn bộ ụ súng dùng `MeshBasicMaterial` (phẳng,
+không đổ bóng).
+
+**Sửa:** đổi vật liệu viền khung sang `MeshBasicMaterial`, màu `0xb98a5e` (cùng tông `--wood` đã có trong
+`globals.css`).
+
+Yêu cầu 2 (lượt sau): nền phần tranh chưa có cát (mảng phía sau + lip trong khung) nên là xám nâu nhạt thay
+vì đen `#101114` cũ — rồi phản hồi tiếp "ánh nâu hơn 1 chút". Chỉnh 2 lần: `#101114` → `#D9D3C6` →
+`#D8C6A6` (chốt).
+
+**Test:** Verify trên preview sau mỗi lần đổi màu.
+
+---
+
+## 105. Booster: bấm lại nút đang armed để huỷ, không cần bắn mới thoát được (02/09)
+
+Trước đó spec §3 chỉ cho "bắn đi" là cách duy nhất thoát trạng thái armed (`armBooster` là no-op nếu đã có
+booster khác/chính nó đang armed).
+
+**Sửa (`SandCannonEngine.ts`):** `armBooster(type)` — nếu `type` đang chính là booster armed thì huỷ armed
+(`armedBooster = null`, không tốn viên vì viên chỉ trừ lúc bắn thật), phát event mới `BOOSTER_DISARMED`
+thay vì no-op. Vẫn giữ nguyên tắc không đổi trực tiếp giữa 2 loại booster khác nhau. `SandGame.tsx` thêm
+toast "{tên} cancelled" cho event mới. Cập nhật lại `docs/features/booster-radius-prism-spec.md` §3.
+
+**Test:** 123/123 test pass. Verify trên preview: bấm booster đang armed lần 2 → toast "Prism Shot
+cancelled", nút hết armed, không mất viên.
+
+---
+
+## 106. Currency HUD bỏ viền/shadow đổi vàng nhạt; nút Settings nền nâu sậm icon trắng (02/09)
+
+**Sửa (`globals.css`):**
+- `.hub-gold-badge`: bỏ `border`, bỏ `box-shadow`, nền đổi `var(--panel)` → `#fde59c`.
+- Thêm `.settings-button` (scoped riêng, không đụng `.icon-button` dùng chung với nút help/gift): nền
+  `var(--wood-ink)`, `color:#fff` (icon bánh răng dùng `currentColor` nên tự đổi trắng theo).
+
+**Test:** Verify trên preview — 2 nút hiện đúng, nút help/gift không bị ảnh hưởng.
+
+---
+
+## 107. Skin picker: model ụ súng nhỏ hơn không đè nút Select; tên/mô tả dời xuống dưới, không ngang hàng
+coin (02/09)
+
+**Sửa:**
+- `SandCannonEngine.ts` — `SHOWCASE_SCALE` 1.1 → 0.85, `SHOWCASE_POSITION.y` 1.19 → 1.55 (nâng rig lên,
+  chừa khoảng trống phía trên nút Select).
+- `globals.css` — `.skin-heading` margin-top cộng thêm 54px (đủ chiều cao badge coin + khoảng cách) thay vì
+  dùng chung offset với `.hub-gold-badge`.
+
+**Test:** Verify trên preview cả 2 costume ("Field Cannon"/"Rune Cannon") — không còn chồng đè, tên tách
+khỏi hàng coin.
+
+---
+
+## 108. Nền skin picker: hoạt ảnh sọc loop riêng từng skin, rồi đồng nhất pattern + giảm tốc (02/09)
+
+Yêu cầu 1: nền showroom trong skin picker nên có hoạt ảnh chạy loop (ví dụ sọc), mỗi skin một kiểu khác
+nhau.
+
+**Sửa:** `.game-frame.is-skin-classic`/`.is-skin-magic` (`globals.css`) thêm `repeating-linear-gradient` +
+`animation` đổi `background-position` liên tục (kỹ thuật giống nhau, chỉ khác góc/màu/tốc độ mỗi flavour).
+
+Yêu cầu 2 (lượt sau): đồng nhất kiểu pattern giống Rune Cannon cho cả 2 skin, nhưng giảm tốc độ.
+
+**Sửa:** gộp về đúng 1 góc/khoảng cách sọc (`-55deg`, 20px/42px) cho cả 2 (chỉ khác màu tint + nền), gộp về
+1 `@keyframes skin-bg-drift` dùng chung, tốc độ chậm hẳn lại còn 60s/vòng (trước 42s/30s).
+
+**Test:** Verify trên preview cả 2 costume sau mỗi lần đổi.
+
+---
+
+## 109. Shop: giao diện full-screen theo mockup (icon tròn, price pill), ẩn nút quà tặng ở Shop (02/09)
+
+Yêu cầu: Shop nên fill toàn màn hình giống Skin hub thay vì card nhỏ nổi ở đáy; mỗi sản phẩm trình bày theo
+mockup (hình tròn = icon booster, giá = mệnh giá + icon coin); ẩn nút login reward khi đang ở Shop.
+
+**Sửa (`SandGame.tsx`, `globals.css`):**
+- Tách Shop ra khỏi `.hub-screen`/`.hub-panel` (bottom-sheet card cũ), dựng `.shop-screen` full-bleed cùng
+  cấp `.skin-screen` — loại `tab==="shop"` khỏi điều kiện render `.hub-screen`.
+- Mỗi booster là 1 `.shop-card`: tên phía trên, `.shop-card-frame` (khung vuông bo góc) chứa
+  `.shop-card-icon` (hình tròn dùng lại `BoosterIcon` — icon gameplay thật, không vẽ icon riêng), badge số
+  lượng sở hữu góc trên-phải, và `.shop-buy-btn` (pill giá + icon coin) bên dưới khung.
+- `.hub-gift-wrap` thêm điều kiện `tab !== "shop"` để ẩn hẳn khi đang ở Shop.
+- Dọn code chết: CSS `.shop-balance/.shop-list/.shop-item*` cũ, và một lỗi TS còn sót (so sánh
+  `tab !== "shop"` thừa, vô nghĩa sau khi đã loại "shop" ở điều kiện ngoài) bị `tsc` bắt được, đã xoá.
+
+**Test:** 123/123 test pass, `tsc --noEmit` sạch. Verify trên preview: full-screen đúng, mua được, ẩn nút
+gift đúng lúc ở Shop.
+
+---
+
+## 110. Shop: thêm dialog xác nhận trước khi mua (02/09)
+
+Yêu cầu: bấm mua phải hiện dialog xác nhận — số lượng hiện có, số lượng muốn mua, vàng còn lại sau khi mua,
+hỏi lại rồi 2 nút Yes/No.
+
+**Sửa (`SandGame.tsx`, `globals.css`):** bấm price pill không mua ngay nữa, chỉ `setBuyConfirm(type)` mở
+dialog (tái dùng khung `.result-screen`/`.result-card` — cùng kiểu dialog thắng/thua, daily-login). Dialog
+hiện "Currently own"/"Buying: +1"/"Gold left after", 2 nút Yes ("Yes, buy" — mua rồi đóng)/No (đóng, không
+mua). Thêm effect đóng dialog khi rời tab Shop để tránh dialog cũ hiện lại.
+
+**Test:** 123/123 test pass. Verify trên preview: Yes trừ đúng vàng + cộng đúng số lượng, No không mua gì.
+
+---
+
+## 111. Dialog xác nhận mua: chọn số lượng bằng stepper, chặn theo ngân sách, Yes/No nằm ngang (02/09)
+
+4 yêu cầu trong 1 lượt:
+
+1. **Chặn tăng số lượng khi vượt quá vàng hiện có** — thêm `buyBoosterCharges(type, qty)` (`economy.ts`,
+   atomic — không đủ tiền thì không trừ gì). `buyQtyCap` (`SandGame.tsx`) tính `min(99, floor(gold/giá))`
+   thay vì cứng 99; nút "+" tự disable khi chạm trần.
+2. **Đổi hàng "Buying" từ text `+1` thành stepper** 2 nút tam giác 2 bên số lượng, min 0 max 99.
+3. **Nhấn giữ để tăng/giảm liên tục** — `startQtyHold`/`stopQtyHold` (`onPointerDown/Up/Leave/Cancel`): giữ
+   400ms thì bắt đầu lặp mỗi 90ms tới khi nhả; tap nhanh vẫn chỉ 1 bước qua `onClick`
+   (`stepQtyOnClick` chặn double-step bằng cờ `qtyHeldRef`).
+4. **Đổi "Gold left after" thành "Total cost"** = giá × số lượng.
+5. **Yes/No nằm ngang, Yes bên trái** — thêm `.result-actions.is-row` (`grid-template-columns: 1fr 1fr`),
+   chỉ áp cho dialog này (không đụng layout dọc của dialog thắng/thua).
+
+Bonus theo yêu cầu riêng ("nền dialog nên có hoạt ảnh loop giống skin, dạng dot vàng"): `.confirm-card`
+thêm `radial-gradient` chấm bi + animation đổi `background-position`, nền vàng nhạt `#fdf3c7`, chấm
+`#ffc933`.
+
+**Test:** `tsc --noEmit` sạch (dọn 1 lỗi so sánh union type thừa phát sinh từ #109), 123/123 test pass.
+Verify trên preview: cap đúng theo vàng, nút "+" disable khi chạm trần, tăng/giảm 1 bước đúng, nền dot hiện
+đúng.
+
+---
+
+## 112. Sửa lỗi vòng oval xanh lá còn sót quanh nút tam giác, tăng size dot nền (02/09)
+
+**Nguyên nhân:** `.confirm-qty-btn` (class đơn, specificity thấp) bị rule dùng chung `.result-card button`
+(class+element, specificity cao hơn) đè `background`/`width`/`padding` — chính là cái oval xanh lá + full
+width nhìn thấy trong ảnh báo lỗi, dù CSS "xoá nền" đã viết trước đó.
+
+**Sửa (`globals.css`):** nâng độ đặc hiệu selector thành `.confirm-card .confirm-qty-btn` (và các biến thể
+`:disabled`/`:active`/`::before`) để thắng `.result-card button` trong mọi trạng thái, kể cả lúc disabled
+(bug tương tự tái xuất hiện riêng ở state đó, đã thêm `background:none;border:0` tường minh). Màu tam giác
+đổi từ `var(--ink)` (đổi theo theme, có thể thành trắng ở dark mode) sang `var(--wood-ink)` (nâu cố định).
+Bán kính dot nền tăng `2.5px` → `4.5px`.
+
+**Test:** Verify trên preview — hết oval, dot to rõ hơn.
+
+---
+
+## 113. Canh giữa số lượng giữa 2 mũi tên trong dialog xác nhận mua (02/09)
+
+Lượt 1 (sai): đoán hình tam giác vẽ bằng CSS border-trick bị lệch khỏi tâm nút do "hộp neo" 0px chỉ có
+viền màu ở 1 phía, thêm `margin-left: ∓4px` để bù — hoá ra tính sai chiều/độ lớn, số vẫn không nằm giữa,
+người dùng báo lại.
+
+**Sửa đúng (lượt 2):** bỏ hẳn kỹ thuật CSS border-trick. Thêm component `StepperArrow` (`SandGame.tsx`) vẽ
+mũi tên bằng `<svg><polygon>` thật trong viewBox 10×10, toạ độ đối xứng tuyệt đối quanh tâm (`x: 2..8`, tâm
+`x=5`) cho cả 2 hướng — vì hộp SVG có kích thước khai báo rõ ràng (không phụ thuộc hình vẽ bên trong như
+border-trick), `place-items:center` của nút giờ canh giữa chính xác. `globals.css` bỏ toàn bộ CSS
+`::before`/margin cũ, thêm `.confirm-qty-arrow { width/height:10px }`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview ở nhiều giá trị số lượng (1, 2) —
+khoảng cách 2 bên số luôn bằng nhau.
+
+---
+
+## 114. Sửa lỗi hình hub (bức tranh xoay) lóe lên khi chuyển tab Skin → Shop (02/09)
+
+**Nguyên nhân:** `.shop-screen` dùng chung animation `hub-panel-in` với các panel nhỏ khác — animation này
+fade `opacity` từ 0 lên 1 trong 260ms. Khác với panel nhỏ (nổi trên lớp scrim đã làm tối sẵn), `.shop-screen`
+là lớp phủ toàn màn hình có nhiệm vụ tự che khung cảnh 3D phía dưới bằng chính nền đục của nó — nên lúc
+opacity đang fade từ 0, nền cũng trong suốt theo, để lộ hub phía sau trong chớp nhoáng mỗi lần vào Shop.
+
+**Sửa (`globals.css`):** tạo animation riêng `shop-screen-in` — chỉ animate `transform: translateY` (giữ
+hiệu ứng trượt lên), bỏ hẳn phần `opacity` để nền luôn đục 100% suốt animation.
+
+**Test:** 123/123 test pass. Verify: `getComputedStyle('.shop-screen').opacity === "1"` ngay khi màn hiện,
+xuyên suốt animation (đảm bảo bằng ngữ nghĩa CSS — property không nằm trong keyframes thì không bị nội suy).
+
+---
+
+## 115. Sửa pipeline build standalone (đường dẫn cũ), xuất lại bản HTML 1 file (02/09)
+
+`work/build-standalone.mjs`/`work/standalone-entry.tsx` là pipeline dựng sẵn để xuất toàn bộ game thành 1
+file HTML chạy offline (`outputs/3d-cannon-sort.html`), nhưng đã lỗi thời từ đợt pivot game trước (xem
+[Sand pivot] trong bộ nhớ) — không chạy được nữa.
+
+**Nguyên nhân:** 2 đường dẫn hard-code trong `build-standalone.mjs` trỏ vào vị trí cũ, đã dời chỗ từ đợt
+pivot: `../app/game/sand-levels.ts` (level data đã dời sang `design/levels/sand-levels.ts`), và
+`public/level-rewards.csv`/`public/economy.csv` (2 file cấu hình đã dời vào `public/design/`).
+
+**Sửa:** cập nhật cả 3 đường dẫn cho khớp vị trí hiện tại.
+
+**Kết quả build:** `outputs/3d-cannon-sort.html` — 932.486 bytes, 2 level, 1 level-reward override + 12
+economy-config override được nhúng thẳng lúc build (đọc CSV tại build time, không cần server lúc chạy).
+
+**Test:** Build chạy sạch không lỗi. Mở file qua static server cục bộ (giả lập offline, không dùng dev
+server) — không có log lỗi console nào, Daily Login/Shop/toàn bộ UI đã chỉnh trong phiên này (màu sắc, nút
+Settings nâu, Shop full-screen, dialog xác nhận mua...) đều lên đúng. Nút dev-only (link Level editor trong
+Settings) xác nhận không xuất hiện trong bản standalone.
+
+---
+
+## 116. Làm lại màn hình Complete Level (rays, pop-up, Continue/X, tiền chỉ bay khi về home); Gallery khoá theo tiến trình + badge phần thưởng mốc (02/09)
+
+Yêu cầu 1 — màn WIN: có tia sáng (rays) + hiệu ứng pop-up; nút "Continue" sang màn tiếp theo; nút "X" quay
+về home; hoạt ảnh bay tiền + số tiền chỉ hiện khi về home (không hiện ngay trên màn WIN, không hiện khi bấm
+Continue).
+
+**Sửa (`SandGame.tsx`, `globals.css`):**
+- WIN và FAIL giờ là 2 khối JSX tách riêng (trước là 1 card dùng chung, đổi tiêu đề theo `kind`). WIN có
+  `.result-rays` (conic-gradient quay chậm sau card) + `.result-card.is-win` (animation `win-pop`, bounce
+  overshoot) + nút tròn `.result-close-btn` (icon X, góc trên-phải) + nút "Continue" to (chỉ hiện nếu còn
+  màn kế tiếp — `hasNextLevel = levelIndex + 1 < playables.length`, gọi `openLevel(levelIndex + 1)`, ở lại
+  `playing` luôn, không qua home). FAIL giữ nguyên "Play again"/"Home" như cũ.
+- Gold vẫn được cộng ngay lúc thắng (`addGold`, không đổi) nhưng badge/hoạt ảnh của nó bị hoãn: thêm state
+  `pendingHomeReward` (cộng dồn qua nhiều lần Continue liên tiếp) và tái dùng `suppressGoldSyncRef` (cơ chế
+  daily-login sẵn có) để giữ `displayGold` không nhảy số ngay. Một effect mới, chỉ chạy khi
+  `!playing && tab === "home"`, mới thật sự bay coin (6 hạt, xuất phát giữa màn hình — WIN không có vị trí
+  cố định như ô ngày daily-login) rồi `tweenGoldTo(wallet.gold)`. Xoá hẳn `.result-reward`/"Already
+  cleared..." (không còn hiển thị số tiền trên màn WIN nữa).
+- Bug phát sinh giữa chừng: `.result-close-btn` (1 class) bị `.result-card button` (class+element,
+  specificity cao hơn) đè thành pill xanh full-width che luôn tiêu đề — cùng loại lỗi specificity đã gặp ở
+  mục 112, sửa bằng cách nâng thành `.result-card .result-close-btn`.
+
+Yêu cầu 2 — Gallery: chỉ màn "đã đi qua" mới mở khoá; hiện phần thưởng lớn ở các màn mốc 10/20/30/40/50.
+
+**Sửa:**
+- Mở khoá tuần tự: `hasClearedLevel(playables[index-1].level.id)` (hàm có sẵn trong `economy.ts`, chưa ai
+  dùng tới) — màn đầu tiên luôn mở, mỗi màn sau cần màn ngay trước nó (theo thứ tự trong `playables`, không
+  phải theo `id`) đã từng thắng. Card khoá: thumbnail xám + mờ (`filter: grayscale(1)`), icon ổ khoá
+  (`LockIcon`, SVG mới) đè giữa, chữ "Locked" thay tên, `disabled` (không bấm được).
+- Mốc thưởng lớn: `entry.level.id % 10 === 0` (theo id, tổng quát cho mọi mốc chục chứ không hard-code 5 số
+  10/20/30/40/50 — hiện game mới có 2 level nên chưa màn nào chạm mốc, nhưng cơ chế đã sẵn sàng khi thêm
+  level). Hiện badge tròn góc trên-phải (`.hub-gallery-milestone`, cùng ngôn ngữ "pill đè lên góc" với
+  `.shop-card-owned`) với đúng số tiền `getLevelRewardOverride(id) ?? levelGoldReward(...)` — số thật một
+  màn đó sẽ trả, không phải số tuỳ ý — hiện cả khi màn còn khoá, như một lời mời gọi.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trực tiếp trên dev server: tạm tăng `sortRadius`
+(2 → 50) và `shotLimit` (12 → 200) của Level 1/2 trong `design/levels/sand-levels.ts` để chơi thắng thật
+được trong hợp lý số lượt thao tác chuột (mặc định quá khó để thắng bằng thao tác giả lập), chơi qua toàn bộ
+luồng — thắng Level 1 thấy rays/pop/X đúng vị trí sau khi sửa bug, "Continue" nhảy thẳng sang Level 2 không
+hiện tiền, vào Settings bấm Home thấy gold cập nhật đúng số (100→120, +20) đúng lúc về home, Gallery mở khoá
+Level 2 sau khi thắng Level 1, thắng nốt Level 2 (màn cuối) chỉ thấy nút X (không có Continue vì hết màn),
+gold tiếp tục cộng đúng khi về home lần hai (120→145). Đã revert lại `sortRadius`/`shotLimit` về đúng giá trị
+gốc sau khi test xong (`git diff` xác nhận file level không còn thay đổi).
+
+---
+
+## 117. Daily Login: bỏ nút "Later", chỉ còn Claim + dấu X đóng ở góc (02/09)
+
+**Sửa (`SandGame.tsx`, `globals.css`):** bỏ hẳn nút "Later"/"Close" ở `.result-actions`; thêm nút tròn
+`.result-close-btn` (tái dùng nguyên component/class đã dựng cho màn WIN ở mục 116) góc trên-phải, gọi
+`setDailyLoginOverride(null)` — cùng hành động nút cũ vẫn làm. Card chỉ còn nút "Claim {N} coins" khi chưa
+claim hôm nay; đã claim rồi thì không còn nút nào dưới cả, chỉ có X.
+
+Nhân tiện tổng quát hoá: `position: relative` dời từ riêng `.result-card.is-win` lên `.result-card` gốc, để
+`.result-close-btn` định vị đúng trong BẤT KỲ card nào dùng nó (WIN, giờ thêm Daily Login), không phải khai
+báo lại cho từng biến thể.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview cả 2 trạng thái: đã claim hôm nay
+(chỉ X, không nút nào khác) và chưa claim (nút Claim + X).
+
+---
+
+## 118. Giao diện Shop: nền vân gỗ, bỏ mô tả booster, giá tiền đổi màu theme, bỏ viền/bóng (02/09)
+
+**Sửa (`SandGame.tsx`, `globals.css`):**
+- `.shop-screen` nền đổi từ cream (`var(--hub-navy)`) sang nâu gỗ `#775538` + 3 lớp
+  `repeating-linear-gradient` chồng nhau giả vân gỗ (1 vân tối mảnh, 1 vân sáng mờ lệch nhịp để không trùng
+  vân tối, 1 vân rộng hơi lệch góc 88deg thay vì thẳng 90deg cho tự nhiên hơn) — không cần ảnh, thuần CSS.
+- Bỏ dòng mô tả (`BOOSTER_DESC`) khỏi card, chỉ còn tên — giữ lại nội dung mô tả dưới dạng `title` tooltip
+  trên tên (hover vẫn xem được), không xoá hẳn.
+- `.shop-buy-btn` (box giá tiền): nền đổi từ xanh lá `var(--accent)` sang vàng `var(--gold)` — theo đúng
+  màu "tiền" mà `CoinIcon`/badge coin toàn app đang dùng — chữ đổi từ `var(--accent-ink)` sang nâu đậm
+  `var(--gold-ink)`.
+- Bỏ hết `border`/`box-shadow` trong toàn bộ Shop: `.shop-heading h2`, `.shop-card-frame`,
+  `.shop-card-icon`, `.shop-card-owned`. Vì tên booster giờ nằm trực tiếp trên nền gỗ tối (không còn dòng mô
+  tả ngăn cách), đổi màu chữ `.shop-card-name` từ `var(--ink)` (nâu, không đủ tương phản trên nền nâu) sang
+  kem sáng `#f7ecd8`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: nền vân gỗ hiện đúng, card không còn
+viền/bóng, giá tiền vàng chữ nâu, tên booster đọc rõ trên nền tối.
+
+---
+
+## 119. Vân gỗ Shop: giảm tần suất và độ đậm (02/09)
+
+Phản hồi ngay sau mục 118: vân gỗ dày/nhiều/đậm quá.
+
+**Sửa (`globals.css`, `.shop-screen`):** tăng gấp đôi khoảng cách giữa các đường vân ở cả 3 lớp
+`repeating-linear-gradient` (11→24px, 7→16px, 40→80px) và giảm gần một nửa opacity mỗi lớp (.12→.06,
+.05→.03, .06→.03). Vẫn 3 lớp, chỉ thưa và nhạt hơn hẳn.
+
+**Test:** Verify trên preview — vân gỗ giờ nhẹ nhàng, không còn rối mắt.
+
+---
+
+## 120. Sửa lỗi: hint idle (viền trắng) hiện ngay khi vào game nếu đã idle sẵn ở hub (02/09)
+
+Báo lỗi: nhấn Play sau khi đứng yên ở menu hub một lúc thì viền trắng "idle hint" hiện lên NGAY khi vừa vào
+game, thay vì chỉ hiện sau khi người chơi idle *trong lúc chơi*.
+
+**Nguyên nhân:** `lastInputAt` (mốc thời gian lần cuối có input, `SandCannonEngine.ts`) chỉ được set lúc
+constructor (một lần duy nhất, lúc engine dựng lần đầu — engine sống xuyên suốt cả phiên, không dựng lại mỗi
+lần vào level) và lúc có input thật (chạm màn hình, hoặc mỗi khi 1 phát bắn resolve xong). Không có chỗ nào
+reset nó lúc `setIdle(false)` (thời điểm rời hub vào chơi) — nên nếu người chơi đứng ở hub quá
+`IDLE_HINT_DELAY_SECONDS` (10s) trước khi bấm Play, đồng hồ đếm idle coi như đã hết hạn ngay từ trước, hint
+bắn ra ở khung hình đầu tiên của ván chơi. Thêm vào đó, điều kiện `eligible` của `updateIdleHint` chỉ dựa vào
+`canInteract()` (không loại trừ lúc đang ở hub qua field `idle`) — dù thực tế `canInteract()` đã tự chặn nhờ
+`pause()` được gọi trong `setIdle(true)`, đây vẫn là một lỗ hổng phòng thủ đáng vá.
+
+**Sửa (`SandCannonEngine.ts`):**
+- `setIdle(false)` (thời điểm bắt đầu chơi) giờ reset `this.lastInputAt = performance.now()` ngay đầu, cùng
+  logic với việc `setPhase` reset nó mỗi khi 1 phát bắn resolve xong — đồng hồ idle giờ luôn tính từ lúc
+  thật sự bắt đầu chơi.
+- `updateIdleHint`'s `eligible` thêm điều kiện `&& !this.idle` — chặn hẳn khả năng hint chạy lúc đang ở hub,
+  không chỉ dựa vào `canInteract()` gián tiếp qua `paused`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify bằng debug log tạm (`console.log` trong
+`updateIdleHint`, đã xoá sau khi test xong): đứng ở hub 13s rồi bấm Play — không hint, không log. Đứng yên
+tiếp trong lúc chơi 10s — hint xuất hiện đúng lúc (log ghi `secsSince: ~10.0`), viền trắng hiện đúng quanh
+mép bức tranh.
+
+---
+
+## 121. Thêm outline đen cho quả đạn bắn ra từ cannon (02/09)
+
+**Sửa (`SandCannonEngine.ts`):** thêm `buildProjectileOutline()` — mesh con dùng lại đúng hình cầu
+(`SphereGeometry`), phóng to theo tỉ lệ cố định (`PROJECTILE_OUTLINE_SCALE = 1.22`) và lật `side:
+THREE.BackSide`, đây là kỹ thuật outline kinh điển không cần shader: ở rìa silhouette, mặt sau của lớp vỏ
+to hơn ló ra ngoài quả cầu màu nhỏ hơn nằm phía trước; còn lại thì quả cầu màu che hết — kết quả đọc thành
+một viền mỏng, không phải một quả cầu đen đặc. Vì là mesh con nên tự động theo đúng vị trí/scale/visibility
+của quả đạn cha (kể cả lúc phồng to do Radius Overcharge), không cần đồng bộ tay ở đâu cả. Geometry + material
+outline dùng chung 1 bản duy nhất (lazy, cache lại), áp dụng cho cả đạn bắn thật (`fire()`) lẫn đạn demo ở
+showroom chọn skin (`launchShowcaseShot()`).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview — quả đạn bay ra có viền đen rõ quanh
+mép, cả lúc bắn thật lẫn lúc xem demo trong Skin picker.
+
+---
+
+## 122. Skin picker: thu nhỏ thumbnail card, bỏ viền/bóng khay chứa (02/09)
+
+Báo lỗi: card thumbnail đang preview bị "lấp" bởi phần vân sọc ngay phía trên — công thức chiều cao khay
+(`.skin-tray`) trước đó khít tuyệt đối (14px đệm trên + 78px card + 14px đệm dưới = đúng 106px, không dư),
+nên card gần như chạm hẳn mép trên của khay, đọc như bị đè bởi nền sọc ngay sát phía trên.
+
+**Sửa (`globals.css`):**
+- `.skin-grid` card size 78px → 64px (`grid-auto-columns`).
+- `.skin-tray` đệm trên tăng 14px → 20px (nhiều hơn đệm dưới 14px, có chủ đích — chừa khoảng thở rõ ràng
+  phía trên card), công thức chiều cao đổi theo (106px → 98px cho đúng tổng 20+64+14).
+- Bỏ `border-top: 2px solid var(--line)` và `box-shadow` của `.skin-tray` — theo đúng hướng "phẳng, không
+  viền/bóng" đang áp dụng dần cho toàn app.
+
+**Test:** 123/123 test pass. Verify trên preview cả 2 costume — card đủ khoảng thở phía trên, viền xanh
+preview hiện trọn vẹn không bị cắt, khay không còn viền/bóng.

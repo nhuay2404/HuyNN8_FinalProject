@@ -11,12 +11,13 @@ import { COSTUMES, COSTUME_ORDER, getSelectedCostume, setSelectedCostume, type C
 import {
   addGold,
   boosterPrice,
-  buyBoosterCharge,
+  buyBoosterCharges,
   claimDailyLogin,
   dailyLoginReward,
   DAILY_LOGIN_REWARDS,
   getDailyLoginState,
   getWallet,
+  hasClearedLevel,
   levelGoldReward,
   markLevelCleared,
   SERVER_WALLET,
@@ -282,6 +283,18 @@ function CloseIcon() {
   );
 }
 
+/** A plain padlock, drawn in currentColor like the other line-art icons here
+ * — the Gallery's own "not unlocked yet" badge, sat over a level thumbnail
+ * that has not been played to (see `hasClearedLevel` at the call site). */
+function LockIcon() {
+  return (
+    <svg className="lock-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" />
+    </svg>
+  );
+}
+
 /**
  * The chrome glyphs.
  *
@@ -385,6 +398,26 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
 /** A plain coin: a ringed disc with a face-value line, drawn in currentColor
  * like the other line-art icons here so `.coin-icon`'s colour (var(--gold))
  * is the only place the tint lives. */
+/**
+ * The Shop confirm dialog's quantity-stepper arrow — a real shape, not the
+ * CSS border trick this used to be. That trick's rendered box is only ever
+ * as wide as the border itself, sitting entirely to one side of the
+ * zero-width anchor it gets centred on, so centring the anchor never
+ * reliably centred the *shape* a player actually sees (however carefully the
+ * margin nudging it needed was tuned). An SVG's box is exactly its declared
+ * width no matter what's drawn inside it — `points` here is deliberately
+ * symmetric within the 10×10 viewBox (both directions span x:2..8, centred
+ * on x:5) — so `place-items: center` on the button centres the shape too,
+ * not just some off-to-one-side bounding box standing in for it.
+ */
+function StepperArrow({ direction }: { direction: "prev" | "next" }) {
+  return (
+    <svg className="confirm-qty-arrow" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+      <polygon points={direction === "prev" ? "8,1 8,9 2,5" : "2,1 2,9 8,5"} fill="currentColor" />
+    </svg>
+  );
+}
+
 function CoinIcon() {
   return (
     <svg className="coin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -656,11 +689,70 @@ export default function SandGame() {
   // truth (localStorage-backed); this just re-renders whenever it changes —
   // a level win, a Shop purchase, or a daily-login claim all call through it.
   const wallet = useSyncExternalStore(subscribeWallet, getWallet, () => SERVER_WALLET);
+  // Which booster the Shop is asking "buy this?" about, or null when no
+  // confirm dialog is up. A coin spend is real money in this economy (it
+  // took playing levels to earn), so tapping a price pill opens this instead
+  // of buying on the spot — the dialog itself reads straight from `wallet`
+  // and `boosterPrice`, so it never goes stale between opening and the
+  // player's Yes/No.
+  const [buyConfirm, setBuyConfirm] = useState<BoosterType | null>(null);
+  // The quantity the confirm dialog's own stepper is dialed to — reset to 1
+  // every time a price pill opens a fresh confirm (see that `onClick`), not
+  // carried over between boosters or reopenings. Clamped to [0, `qtyCap`] by
+  // the stepper's own buttons rather than here (`qtyCap`, computed where the
+  // dialog renders, is 99 or whatever fewer the wallet can actually afford —
+  // never let a player dial in a quantity they cannot pay for), so this can
+  // stay a plain number.
+  const [buyQty, setBuyQty] = useState(1);
+  // Hold-to-repeat for the stepper's two triangle buttons: pointerdown arms a
+  // one-shot delay, and only once that delay elapses does the first repeat
+  // fire and an interval take over — a quick tap never enters this path at
+  // all (`stopQtyHold` below cancels the still-pending delay before it can),
+  // so a tap keeps behaving like a plain click's `onClick` (see the button
+  // JSX) instead of double-stepping. `qtyHeldRef` is what tells that `onClick`
+  // to skip its own step once a hold-repeat has already run — the browser
+  // still fires a trailing click after a completed press-and-release, and
+  // without this it would step once more on top of whatever the hold already
+  // added.
+  const qtyHoldDelay = useRef<number | null>(null);
+  const qtyHoldInterval = useRef<number | null>(null);
+  const qtyHeldRef = useRef(false);
+  const stopQtyHold = useCallback(() => {
+    if (qtyHoldDelay.current !== null) { window.clearTimeout(qtyHoldDelay.current); qtyHoldDelay.current = null; }
+    if (qtyHoldInterval.current !== null) { window.clearInterval(qtyHoldInterval.current); qtyHoldInterval.current = null; }
+  }, []);
+  const startQtyHold = useCallback((step: () => void) => {
+    // Defensive: a stray second `pointerdown` before its predecessor's own
+    // `pointerup`/`pointerleave` (multi-touch, pointer-capture quirks) would
+    // otherwise stack a second timer on top of the first instead of just
+    // restarting the hold.
+    stopQtyHold();
+    qtyHeldRef.current = false;
+    qtyHoldDelay.current = window.setTimeout(() => {
+      qtyHeldRef.current = true;
+      step();
+      qtyHoldInterval.current = window.setInterval(step, 90);
+    }, 400);
+  }, []);
+  // A tap's own step, suppressed the one time it lands right after a
+  // hold-repeat let go (see the comment above `qtyHoldDelay`).
+  const stepQtyOnClick = useCallback((step: () => void) => {
+    if (qtyHeldRef.current) {
+      qtyHeldRef.current = false;
+      return;
+    }
+    step();
+  }, []);
+  // Timers are refs, not state — nothing here should ever survive the
+  // component unmounting mid-hold (a shot fired, a tab switched via some
+  // other input) with an interval still ticking against a dead component.
+  useEffect(() => stopQtyHold, [stopQtyHold]);
   // The hub's persistent gold badge shows this instead of `wallet.gold`
-  // directly, so a daily-login claim can hold the old number on screen while
-  // the flying coins are still in the air and only tick it up once they
-  // land — every other change to `wallet.gold` (a Shop buy, a level win)
-  // still reaches it immediately via the effect below.
+  // directly, so a daily-login claim (or a level win — see `pendingHomeReward`
+  // below) can hold the old number on screen while the flying coins are still
+  // in the air and only tick it up once they land. A Shop buy is the one
+  // change that still reaches it immediately via the effect below: the Shop
+  // is only ever open at home, badge already on screen, nothing to fly from.
   const [displayGold, setDisplayGold] = useState(() => wallet.gold);
   const suppressGoldSyncRef = useRef(false);
   const goldTweenRef = useRef<number | null>(null);
@@ -671,6 +763,20 @@ export default function SandGame() {
   const [coinBursts, setCoinBursts] = useState<
     Array<{ id: number; fromX: number; fromY: number; dx: number; dy: number; delay: number }>
   >([]);
+  /**
+   * Gold earned from level wins since the last time the player actually saw
+   * the hub's gold badge — the WIN screen's own coin-fly animation (its own
+   * effect, below `claimDailyLoginWithFlight`) is what pays this out, and
+   * that only ever happens once the player is looking at the badge it flies
+   * into. Tapping Continue straight into the next level keeps stacking this
+   * instead of paying it out — there is no badge on screen mid-play for a
+   * fly animation to land on, so a chain of Continues shows nothing until
+   * Home, then flies the whole stack at once. The gold itself is never held
+   * back this way (`addGold` still runs the instant a level is won, where
+   * the reward is granted); only the *badge's own number* and the flight
+   * that ticks it up wait for Home.
+   */
+  const [pendingHomeReward, setPendingHomeReward] = useState(0);
   useEffect(() => {
     if (suppressGoldSyncRef.current) return;
     setDisplayGold(wallet.gold);
@@ -744,6 +850,56 @@ export default function SandGame() {
   // The game opens on the home screen, the way it did before the pivot.
   const [playing, setPlaying] = useState(false);
   const [tab, setTab] = useState<HubTab>("home");
+  // Closes the Shop's buy-confirm dialog (`buyConfirm` above) the instant the
+  // player leaves the Shop tab, not just when the dialog's own render guard
+  // hides it — otherwise switching tabs mid-confirm and coming back to Shop
+  // later would resurrect a stale "buy this?" nobody asked to reopen.
+  useEffect(() => {
+    if (tab !== "shop") setBuyConfirm(null);
+  }, [tab]);
+  /**
+   * Pays out `pendingHomeReward` (see its own comment) the moment its badge
+   * is actually on screen to fly into — `!playing && tab === "home"`, the
+   * same condition `.hub-gold-badge` itself renders under. Fires once per
+   * arrival: the first thing this does is zero `pendingHomeReward`, so the
+   * guard fails on the very next render and the effect does not re-fire
+   * chasing its own state change. No specific "from" element the way
+   * `claimDailyLoginWithFlight` has one (the day strip's highlighted cell) —
+   * a level win has no fixed on-screen origin, so the coins simply spawn
+   * from the middle of the frame.
+   */
+  useEffect(() => {
+    if (playing || tab !== "home" || pendingHomeReward <= 0) return;
+    setPendingHomeReward(0);
+    // `wallet.gold` already includes this reward — `addGold` ran the instant
+    // the level was won (see that block's own comment) — so it is the tween's
+    // target as-is. `tweenGoldTo` reads its own start point from `displayGold`,
+    // which `suppressGoldSyncRef` has been holding back at the pre-reward
+    // number since the win, so there is still real ground to visibly cover.
+    const toEl = goldHudRef.current;
+    if (!toEl) {
+      tweenGoldTo(wallet.gold);
+      return;
+    }
+    const toRect = toEl.getBoundingClientRect();
+    const fromX = window.innerWidth / 2;
+    const fromY = window.innerHeight / 2;
+    const dx = toRect.left + toRect.width / 2 - fromX;
+    const dy = toRect.top + toRect.height / 2 - fromY;
+    const spawned = Array.from({ length: 6 }, () => ({
+      id: coinBurstId.current++,
+      fromX,
+      fromY,
+      dx,
+      dy,
+      delay: Math.random() * 0.14,
+    }));
+    setCoinBursts((prev) => [...prev, ...spawned]);
+    window.setTimeout(() => {
+      setCoinBursts((prev) => prev.filter((b) => !spawned.some((s) => s.id === b.id)));
+      tweenGoldTo(wallet.gold);
+    }, 720);
+  }, [playing, tab, pendingHomeReward, wallet.gold, tweenGoldTo]);
   // Read once, the same `useState(() => ...)` shape `soundOn` uses just below
   // — `getSelectedCostume()` is a plain localStorage read, and `selectCostume`
   // (the skin screen's Select button) is the only place in the UI that writes
@@ -796,7 +952,7 @@ export default function SandGame() {
   // shows it again immediately — no entrance animation was asked for, so
   // this does not wait for the effect below the way the delayed hide on the
   // way OUT does. Same "adjust state during render" shape `ammoAnim` (and
-  // `rewardFor`/`dailyLoginOverride`) already use elsewhere in this file:
+  // `lastHandledResult`/`dailyLoginOverride`) already use elsewhere in this file:
   // guarded so it only fires the render where `playing` has actually gone
   // false and `homeVisible` is not already true, so it converges instead of
   // looping, and it needs no `useEffect` (nor the `setState`-in-effect that
@@ -1056,27 +1212,32 @@ export default function SandGame() {
    *
    * Set during render, not in an effect — the same "adjust state when a
    * dependency changes" shape `ammoAnim` below already uses. The guard
-   * (`state.result !== rewardFor.result`) makes the whole block, side
+   * (`state.result !== lastHandledResult`) makes the whole block, side
    * effects included, run at most once per actual result transition — a
    * fresh WIN/FAIL object the engine publishes, not a re-render for an
    * unrelated reason — so `markLevelCleared`'s own idempotency is a second
    * line of defence rather than the only one. `restart`/`goHome`/`openLevel`
    * do not need to reset this themselves: they all reset `state.result` to
    * `null` via a fresh `createSandGameState`, which this guard already reads
-   * as a change and resolves back to `reward: null`.
+   * as a change.
+   *
+   * The gold itself is granted right here, immediately — `addGold` never
+   * waits on anything UI-side. What DOES wait is the badge: `pendingHomeReward`
+   * (own comment above) picks up the amount and `suppressGoldSyncRef` holds
+   * `displayGold` back, so the WIN screen's own fly-to-badge effect has real
+   * ground left to visibly cover once the player actually reaches Home,
+   * whether that is right after this level or several Continues later.
    */
-  const [rewardFor, setRewardFor] = useState<{ result: SandGameState["result"]; reward: number | null }>(
-    () => ({ result: null, reward: null }),
-  );
-  if (state.result !== rewardFor.result) {
-    let reward: number | null = null;
+  const [lastHandledResult, setLastHandledResult] = useState<SandGameState["result"]>(null);
+  if (state.result !== lastHandledResult) {
     if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
-      reward = getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score);
-      addGold(reward);
+      const granted = getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score);
+      addGold(granted);
+      suppressGoldSyncRef.current = true;
+      setPendingHomeReward((sum) => sum + granted);
     }
-    setRewardFor({ result: state.result, reward });
+    setLastHandledResult(state.result);
   }
-  const lastReward = rewardFor.reward;
 
   const remaining = ammoRemaining(level, state);
   const busy = BUSY_PHASES.has(state.phase);
@@ -1134,6 +1295,20 @@ export default function SandGame() {
   const cleared = startingCells === 0
     ? 100
     : Math.round(((startingCells - state.remainingCells) / startingCells) * 100);
+
+  // The Shop confirm dialog's own numbers — computed here rather than inside
+  // its JSX so `buyConfirm`'s null case (dialog closed) stays a single guard
+  // at the render site instead of leaking into every value it needs.
+  // `buyQtyCap` is 99 unless the wallet cannot even afford that many: the
+  // stepper's "+" button (see its `disabled` prop below) never lets a player
+  // dial past what `wallet.gold` could actually cover.
+  const buyConfirmPrice = buyConfirm ? boosterPrice(buyConfirm) : 0;
+  const buyQtyCap = buyConfirmPrice > 0 ? Math.min(99, Math.floor(wallet.gold / buyConfirmPrice)) : 99;
+
+  // The WIN screen's own "Continue" button needs to know whether there is
+  // anywhere to continue TO — the last playable gets no Continue, only the
+  // close button (see the result screen below).
+  const hasNextLevel = levelIndex + 1 < playables.length;
 
   /**
    * How much of each colour the player has already taken out of the frame.
@@ -1269,8 +1444,13 @@ export default function SandGame() {
             Reopens the daily-login modal on demand: `initialDailyLogin`
             above already opens it once automatically when unclaimed, this
             is just "let me look again" (before claiming, or after, to see
-            tomorrow's reward is not up yet). */}
-        {!playing && (
+            tomorrow's reward is not up yet).
+            Hidden on the Shop tab: `.shop-screen` is a full-bleed takeover
+            of the same top-right-ish real estate this button floats over
+            (see its own comment), so it covered the shop grid's own corner
+            instead of sitting beside it the way it does over every other
+            hub tab. */}
+        {!playing && tab !== "shop" && (
           <div className="hub-gift-wrap">
             <button
               type="button"
@@ -1287,7 +1467,7 @@ export default function SandGame() {
         {/* The hub's persistent gold balance — also the landing target for
             the daily-login claim's flying coins (`claimDailyLoginWithFlight`
             above), which is why it needs a stable ref rather than living
-            inside `.shop-balance` (only mounted on the Shop tab). */}
+            inside the Shop screen itself (only mounted on the Shop tab). */}
         {!playing && (
           <div className="hub-gold-wrap">
             <div className="hub-gold-badge" ref={goldHudRef}>
@@ -1436,8 +1616,11 @@ export default function SandGame() {
             scene underneath is still the level's own pixel painting, sitting
             idle in its frame, which is what the player is choosing to play.
             Stays mounted a beat past `playing` turning true so `is-leaving`
-            gets to animate it off instead of the screen just cutting out. */}
-        {homeVisible && tab !== "skin" && (
+            gets to animate it off instead of the screen just cutting out.
+            Excludes Shop too now, same reasoning as Skin below it: `.shop-screen`
+            is its own full-bleed takeover (see its own comment), not another
+            `.hub-panel` bottom sheet floating over the picture. */}
+        {homeVisible && tab !== "skin" && tab !== "shop" && (
           <div
             className={`hub-screen${playing ? " is-leaving" : ""}`}
             role="group"
@@ -1475,73 +1658,61 @@ export default function SandGame() {
               <div className="hub-panel" role="group" aria-label="Gallery">
                 <h3>Gallery</h3>
                 <div className="hub-gallery">
-                  {playables.map((entry, index) => (
-                    <button
-                      key={entry.level.id}
-                      type="button"
-                      className={index === levelIndex ? "is-active" : ""}
-                      onClick={() => pickFromGallery(index)}
-                      aria-current={index === levelIndex ? "true" : undefined}
-                      title={entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name}
-                    >
-                      <PixelThumb level={entry.level} />
-                      <b>{entry.level.name}</b>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {tab === "shop" && (
-              <div className="hub-panel" role="group" aria-label="Shop">
-                <h3>Shop</h3>
-                <p className="shop-balance">
-                  <CoinIcon /> <strong>{wallet.gold}</strong>
-                </p>
-                <div className="shop-list">
-                  {(["radiusOvercharge", "prismShot"] as const).map((type) => {
-                    const price = boosterPrice(type);
-                    const owned = wallet.boosters[type];
-                    const canAfford = wallet.gold >= price;
+                  {playables.map((entry, index) => {
+                    // Sequential unlock: the first level is always open, every
+                    // one after needs the level right before it (in this same
+                    // list, not level id order) actually cleared — "đã đi qua"
+                    // means played to the end, not just visited. Editor-authored
+                    // levels sit after the built-ins in `playables`, so they
+                    // fall in line behind clearing every built-in one too,
+                    // rather than needing a rule of their own.
+                    const unlocked = index === 0 || hasClearedLevel(playables[index - 1].level.id);
+                    // Every 10th level (by id, not position) is a milestone —
+                    // shown with its own reward pill so it reads as a goal
+                    // worth playing toward, using the exact number a win would
+                    // actually pay out (same lookup `raw`'s own reward uses
+                    // above: a designer's CSV override, or the difficulty
+                    // formula). Shown even before it unlocks, as a teaser.
+                    const isMilestone = entry.level.id % 10 === 0;
+                    const milestoneReward = isMilestone
+                      ? getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)
+                      : null;
                     return (
-                      <div key={type} className="shop-item">
-                        <span className={`shop-item-icon is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
-                          <BoosterIcon type={type} />
+                      <button
+                        key={entry.level.id}
+                        type="button"
+                        className={`${index === levelIndex ? "is-active" : ""}${unlocked ? "" : " is-locked"}`.trim()}
+                        onClick={() => pickFromGallery(index)}
+                        disabled={!unlocked}
+                        aria-current={index === levelIndex ? "true" : undefined}
+                        title={
+                          unlocked
+                            ? entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name
+                            : "Clear the level before this one to unlock"
+                        }
+                      >
+                        <span className="hub-gallery-thumb">
+                          <PixelThumb level={entry.level} />
+                          {!unlocked && (
+                            <span className="hub-gallery-lock" aria-hidden="true">
+                              <LockIcon />
+                            </span>
+                          )}
+                          {isMilestone && (
+                            <span className="hub-gallery-milestone" aria-hidden="true">
+                              <CoinIcon /> +{milestoneReward}
+                            </span>
+                          )}
                         </span>
-                        <span className="shop-item-info">
-                          <b>{BOOSTER_NAME[type]}</b>
-                          <span className="shop-item-desc">{BOOSTER_DESC[type]}</span>
-                          <span className="shop-item-owned">Owned: {owned}</span>
-                        </span>
-                        <button
-                          type="button"
-                          className="shop-buy-btn"
-                          disabled={!canAfford}
-                          onClick={() => {
-                            // The wallet notifies its own subscribers on a
-                            // successful buy, so `wallet.gold`/`.boosters`
-                            // above are already the post-purchase numbers by
-                            // the time this toast reads `owned` — but `owned`
-                            // was captured before the click, so the message
-                            // still has to add the one charge itself.
-                            if (buyBoosterCharge(type)) {
-                              pushToast(`Bought ${BOOSTER_NAME[type]} — ${owned + 1} owned`, "good");
-                            } else {
-                              pushToast("Not enough coins", "warn");
-                            }
-                          }}
-                          aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins`}
-                        >
-                          <CoinIcon /> {price}
-                        </button>
-                      </div>
+                        <b>{unlocked ? entry.level.name : "Locked"}</b>
+                      </button>
                     );
                   })}
                 </div>
               </div>
             )}
 
-            {tab !== "home" && tab !== "gallery" && tab !== "shop" && (
+            {tab !== "home" && tab !== "gallery" && (
               <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
                 <h3>{HUB_TAB_NAME[tab]}</h3>
                 <p>{HUB_TAB_BLURB[tab]}</p>
@@ -1609,6 +1780,162 @@ export default function SandGame() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The Shop: a full-screen takeover now, same footing as the skin
+            picker above rather than a small `.hub-panel` card floating over
+            the picture — the hub screen behind it is unmounted entirely
+            while this is up (see the `tab !== "shop"` guard on it). One card
+            per booster: the name, a rounded-square frame holding a circle
+            with that booster's own icon (`BoosterIcon`, the exact glyph the
+            in-play HUD tray and the aim ring already use — no separate shop
+            art), and a price pill below the frame (denomination + coin icon,
+            not a floating row) — the design as sketched, not the old
+            icon/name/price row. No close button of its own, same reasoning
+            as the skin picker: `.hub-nav` stays mounted over this screen
+            too, so tapping any other tab is how you leave. */}
+        {tab === "shop" && (
+          <div className="shop-screen" role="dialog" aria-label="Shop">
+            <div className="shop-heading">
+              <h2>Shop</h2>
+            </div>
+            <div className="shop-grid">
+              {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+                const price = boosterPrice(type);
+                const owned = wallet.boosters[type];
+                const canAfford = wallet.gold >= price;
+                return (
+                  <div key={type} className="shop-card">
+                    {/* The one-line pitch (`BOOSTER_DESC`) dropped out of the
+                        card itself — name only, per feedback that the card
+                        should read as clean as the sketch it started from —
+                        but stays reachable as a hover tooltip rather than
+                        disappearing outright. */}
+                    <b className="shop-card-name" title={BOOSTER_DESC[type]}>{BOOSTER_NAME[type]}</b>
+                    <div className={`shop-card-frame is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
+                      <span className="shop-card-icon">
+                        <BoosterIcon type={type} />
+                        {/* Owned count from the old row layout, kept as a
+                            small circle badge overlapping the icon's own
+                            top-right edge rather than dropped — still worth
+                            knowing at a glance, just not part of the
+                            sketch's three elements. A bare number, not
+                            "×N" — the circle shape is what says "count"
+                            now, the glyph doesn't have to. */}
+                        {owned > 0 && (
+                          <span className="shop-card-owned" aria-hidden="true">{owned}</span>
+                        )}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="shop-buy-btn"
+                      disabled={!canAfford}
+                      onClick={() => {
+                        setBuyQty(1);
+                        setBuyConfirm(type);
+                      }}
+                      aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins${owned > 0 ? `, ${owned} owned` : ""}`}
+                    >
+                      <CoinIcon /> {price}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* The Shop's own confirm step, one purchase at a time (§ the
+            `buyConfirm` state comment above): tapping a price pill no longer
+            spends gold on the spot, it opens this asking "buy this?" with a
+            quantity stepper (0-99, `buyQty`) and the numbers that quantity
+            implies — what they already have, and the total cost — then
+            Yes/No, side by side rather than stacked (`.result-actions.is-row`)
+            so this reads as a single either/or choice, not a primary action
+            with an escape hatch below it the way "Play again"/"Home" does.
+            Reuses `.result-screen`/`.result-card`, same "one card, centred,
+            everything else locked out" shape the win/loss and daily-login
+            dialogs already use, rather than a bespoke confirm of its own.
+            Gated on `tab === "shop"` too, not just `buyConfirm`, so a stale
+            confirm from before a tab switch can never reappear over a
+            different screen — see the effect that clears it on tab change. */}
+        {tab === "shop" && buyConfirm && (
+          <div className="result-screen" role="dialog" aria-modal="true" aria-label={`Buy ${BOOSTER_NAME[buyConfirm]}`}>
+            <div className="result-card confirm-card">
+              <h2>Buy {BOOSTER_NAME[buyConfirm]}?</h2>
+              <div className="confirm-info">
+                <div className="confirm-info-row">
+                  <span>Currently own</span>
+                  <strong>{wallet.boosters[buyConfirm]}</strong>
+                </div>
+                <div className="confirm-info-row">
+                  <span>Buying</span>
+                  <span className="confirm-qty-stepper">
+                    <button
+                      type="button"
+                      className="confirm-qty-btn is-prev"
+                      disabled={buyQty <= 0}
+                      onPointerDown={() => startQtyHold(() => setBuyQty((qty) => Math.max(0, qty - 1)))}
+                      onPointerUp={stopQtyHold}
+                      onPointerLeave={stopQtyHold}
+                      onPointerCancel={stopQtyHold}
+                      onClick={() => stepQtyOnClick(() => setBuyQty((qty) => Math.max(0, qty - 1)))}
+                      aria-label="Decrease quantity"
+                    >
+                      <StepperArrow direction="prev" />
+                    </button>
+                    <strong className="confirm-qty-value">{buyQty}</strong>
+                    <button
+                      type="button"
+                      className="confirm-qty-btn is-next"
+                      disabled={buyQty >= buyQtyCap}
+                      onPointerDown={() => startQtyHold(() => setBuyQty((qty) => Math.min(buyQtyCap, qty + 1)))}
+                      onPointerUp={stopQtyHold}
+                      onPointerLeave={stopQtyHold}
+                      onPointerCancel={stopQtyHold}
+                      onClick={() => stepQtyOnClick(() => setBuyQty((qty) => Math.min(buyQtyCap, qty + 1)))}
+                      aria-label="Increase quantity"
+                    >
+                      <StepperArrow direction="next" />
+                    </button>
+                  </span>
+                </div>
+                <div className="confirm-info-row">
+                  <span>Total cost</span>
+                  <strong><CoinIcon /> {buyConfirmPrice * buyQty}</strong>
+                </div>
+              </div>
+              <div className="result-actions is-row">
+                <button
+                  type="button"
+                  disabled={buyQty <= 0}
+                  onClick={() => {
+                    const type = buyConfirm;
+                    const qty = buyQty;
+                    const owned = wallet.boosters[type];
+                    // The wallet notifies its own subscribers on a
+                    // successful buy, so `wallet.gold`/`.boosters` above are
+                    // already the post-purchase numbers by the time this
+                    // toast reads `owned` — but `owned` was captured before
+                    // the click, so the message still has to add the batch
+                    // itself.
+                    if (buyBoosterCharges(type, qty)) {
+                      pushToast(`Bought ${BOOSTER_NAME[type]} ×${qty} — ${owned + qty} owned`, "good");
+                    } else {
+                      pushToast("Not enough coins", "warn");
+                    }
+                    setBuyConfirm(null);
+                  }}
+                >
+                  Yes, buy
+                </button>
+                <button type="button" className="is-quiet" onClick={() => setBuyConfirm(null)}>
+                  No
+                </button>
               </div>
             </div>
           </div>
@@ -1747,28 +2074,38 @@ export default function SandGame() {
           </div>
         )}
 
-        {state.result && (
+        {/* WIN and FAIL are two different screens now, not one card with a
+            swapped headline — WIN is the celebration (rays, a bouncier pop,
+            Continue straight into the next level, an X to leave instead of a
+            second full-width button) and FAIL stays the plain status readout
+            it always was (Play again / Home). Reward money and its fly-to-
+            badge animation never appear here either way — see
+            `pendingHomeReward`'s own comment for why that waits for Home. */}
+        {state.result?.kind === "WIN" && (
+          <div className="result-screen is-win" role="dialog" aria-modal="true">
+            <div className="result-rays" aria-hidden="true" />
+            <div className="result-card is-win">
+              <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
+                <CloseIcon />
+              </button>
+              <h2>FRAME CLEARED</h2>
+              <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
+              {hasNextLevel && (
+                <div className="result-actions">
+                  <button type="button" onClick={() => openLevel(levelIndex + 1)}>
+                    Continue
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {state.result?.kind === "FAIL" && (
           <div className="result-screen" role="dialog" aria-modal="true">
             <div className="result-card">
-              <h2>{state.result.kind === "WIN" ? "FRAME CLEARED" : "OUT OF SHOTS"}</h2>
-              <p>
-                {state.result.kind === "WIN"
-                  ? `Every grain gone with ${remaining} shot${remaining === 1 ? "" : "s"} to spare.`
-                  : `${cleared}% cleared — ${state.remainingCells} grains still in the frame.`}
-              </p>
-              {state.result.kind === "WIN" && (
-                lastReward !== null ? (
-                  <p className="result-reward" role="status">
-                    <CoinIcon /> <strong>+{lastReward}</strong>
-                  </p>
-                ) : (
-                  // Honest about why there is no number here rather than just
-                  // omitting it: a level pays out once, ever (economy.ts) —
-                  // silently showing nothing would read as a bug the first
-                  // time a player replays a level they already cleared.
-                  <p className="result-reward is-replay">Already cleared — no coins this time</p>
-                )
-              )}
+              <h2>OUT OF SHOTS</h2>
+              <p>{cleared}% cleared — {state.remainingCells} grains still in the frame.</p>
               <div className="result-actions">
                 <button type="button" onClick={restart}>
                   Play again
@@ -1815,10 +2152,23 @@ export default function SandGame() {
             The day strip already says everything a status line below it
             used to repeat in words (which day, how much, whether it's
             claimed — `.is-today`/`.is-past` carry that visually), so this
-            card is just the strip and the one action that matters. */}
+            card is just the strip and the one action that matters — Claim,
+            full stop. No "Later"/"Close" text button any more: the corner
+            `.result-close-btn` is the dismiss action now, same as the WIN
+            card's own X, so a player who does not want to claim today just
+            closes the card instead of choosing between two ways to say the
+            same thing. */}
         {!playing && dailyLogin && (
           <div className="result-screen" role="dialog" aria-modal="true" aria-label="Daily login reward">
             <div className="result-card daily-login-card">
+              <button
+                type="button"
+                className="result-close-btn"
+                onClick={() => setDailyLoginOverride(null)}
+                aria-label="Close"
+              >
+                <CloseIcon />
+              </button>
               <h2>Daily Login</h2>
               <div className="daily-login-strip">
                 {DAILY_LOGIN_REWARDS.map((_, index) => {
@@ -1838,16 +2188,17 @@ export default function SandGame() {
                   );
                 })}
               </div>
-              <div className="result-actions">
-                {!dailyLogin.claimedToday && (
+              {/* Claim only — no "Later"/"Close" text button any more, the
+                  corner X above is the one dismiss action every card gets
+                  for free. Already claimed today: nothing to claim, so no
+                  bottom action at all, just the X. */}
+              {!dailyLogin.claimedToday && (
+                <div className="result-actions">
                   <button type="button" onClick={claimDailyLoginWithFlight}>
                     Claim {dailyLogin.reward} coins
                   </button>
-                )}
-                <button type="button" className="is-quiet" onClick={() => setDailyLoginOverride(null)}>
-                  {dailyLogin.claimedToday ? "Close" : "Later"}
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -159,7 +159,7 @@ body {
    label, and every number that changes. Anything that is prose or a micro
    label stays on the body face. */
 h1, h2, h3, button, strong, b, .hub-play-btn, .settings-row-label, .settings-select,
-.daily-login-label, .shop-item-owned, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
+.daily-login-label, .shop-card-owned, .hub-gallery-milestone, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
   font-family: var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
 }
 button { font: inherit; -webkit-tap-highlight-color: transparent; }
@@ -891,7 +891,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   padding: 24px; background: var(--scrim); animation: overlay-in .24s ease-out both;
 }
 .result-card {
-  width: 100%; max-width: 304px; padding: 28px 24px; text-align: center;
+  position: relative; width: 100%; max-width: 304px; padding: 28px 24px; text-align: center;
   border: 3px solid var(--line-strong); border-radius: var(--r-xl);
   background: var(--panel);
   box-shadow: var(--shadow-modal);
@@ -899,19 +899,46 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .result-card h2 { margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--ink); }
 .result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-/* The gold a WIN just paid — sits between the result line and the buttons,
-   its own row rather than folded into the `<p>` above so the number reads
-   like a receipt line, not prose. */
-.result-reward {
-  display: flex; align-items: center; justify-content: center; gap: 7px;
-  margin: -8px 0 18px; font-size: 15px; color: var(--ink);
+/* ---- WIN celebration ------------------------------------------------- */
+/* Only the WIN half of the result screen gets this — FAIL stays the plain
+   status readout it always was. Sunburst rays turning slowly behind the
+   card, and a punchier bounce-in (`win-pop`, an overshoot spring) than the
+   flat `result-pop` every other dialog in this file (including FAIL) uses:
+   this is the one screen meant to feel like a reward, not a status report. */
+.result-screen.is-win { overflow: hidden; }
+.result-rays {
+  position: absolute; inset: -60% -20%; z-index: 0;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 214, 84, .4) 0deg 9deg, transparent 9deg 18deg);
+  animation: result-rays-spin 30s linear infinite;
+  pointer-events: none;
 }
-.result-reward .coin-icon { width: 19px; height: 19px; color: var(--gold-line); }
-.result-reward strong { font-variant-numeric: tabular-nums; color: var(--accent-line); }
-/* A replayed win: no number to show, said outright instead of just omitting
-   the row (see the comment at the call site). Smaller and muted — a note,
-   not a receipt. */
-.result-reward.is-replay { font-size: 12px; color: var(--muted); }
+@keyframes result-rays-spin { to { transform: rotate(360deg); } }
+.result-card.is-win {
+  z-index: 1;
+  animation: win-pop .5s cubic-bezier(.34,1.56,.64,1) both;
+}
+@keyframes win-pop { from { opacity: 0; transform: scale(.55); } }
+/* A `.result-card`'s own way out when it has no bottom "dismiss" button of
+   its own to fall back to (the WIN card's Continue, the Daily Login card's
+   Claim) — a small round icon button in the corner instead of a second
+   full-width button stacked underneath, since the two are not equally
+   weighted: the bottom action is what the card is *for*, X is the plain
+   escape hatch every card gets for free regardless of what that action is.
+   Scoped as `.result-card .result-close-btn` (class+class), not the bare
+   `.result-close-btn` this used to be — `.result-card button` (element+class)
+   otherwise outranks a single class on specificity and wins the cascade,
+   the exact "full-width green pill behind a control that should stay small"
+   bug already hit once before with the Shop confirm's own stepper buttons. */
+.result-card .result-close-btn {
+  position: absolute; top: 14px; right: 14px; z-index: 2;
+  width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--locked); color: var(--ink); cursor: pointer;
+  display: grid; place-items: center;
+  transition: background .18s, transform .18s;
+}
+.result-card .result-close-btn:hover { background: var(--panel); }
+.result-card .result-close-btn:active { transform: translateY(2px); }
+.result-close-btn .close-icon { width: 16px; height: 16px; }
 /* Flat leaf green — no border, gradient or shadow on any button in this
    pass, the primary result action included. */
 .result-card button {
@@ -921,15 +948,99 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 15px; font-weight: 800; letter-spacing: .03em; cursor: pointer;
   transition: transform .16s;
 }
-.result-card button:active { transform: translateY(3px); }
+.result-card button:active:not(:disabled) { transform: translateY(3px); }
+.result-card button:disabled {
+  background: var(--panel); color: var(--muted);
+  opacity: .7; cursor: default;
+}
 .result-actions { display: grid; gap: 10px; }
-/* "Home" leaves the level the way "quit" does — coral, not the neutral grey a
-   merely-secondary action would get. */
+/* The Shop confirm's own Yes/No, side by side (Yes on the left) instead of
+   stacked — a single either/or choice, not a primary action with a stacked
+   escape hatch below it the way "Play again"/"Home" reads. */
+.result-actions.is-row { grid-template-columns: 1fr 1fr; }
+/* "Home"/"No" leave without doing the thing this card offered, the way "quit"
+   does — coral, not the neutral grey a merely-secondary action would get. */
 .result-card button.is-quiet {
   background: var(--danger);
   color: var(--danger-ink);
   border: 0; font-weight: 700;
 }
+
+/* ---- Shop buy confirm ----------------------------------------------------- */
+/* Also `.result-screen`/`.result-card` underneath (see the tutorial/daily-login
+   comments below for the same reasoning) — a receipt-style info block standing
+   in for the numbered steps/day strip.
+   The card itself gets its own looping wash — pale yellow with a drifting dot
+   field, the same technique `.game-frame.is-skin-*` uses for its diagonal
+   stripes (an animated `background-position` under a `background-size` bigger
+   than the card), just a dot pattern instead of stripes and scoped to this one
+   card rather than the whole screen behind it. */
+.confirm-card {
+  position: relative; overflow: hidden;
+  background-color: #fdf3c7;
+  background-image: radial-gradient(#ffc933 4.5px, transparent 4.5px);
+  background-size: 20px 20px;
+  animation: confirm-dot-drift 18s linear infinite;
+}
+@keyframes confirm-dot-drift {
+  from { background-position: 0 0; }
+  to { background-position: -200px 200px; }
+}
+.confirm-card h2 { font-size: 20px; }
+.confirm-info {
+  display: grid; gap: 8px; margin: 0 0 20px;
+  padding: 12px 14px; border-radius: var(--r-md); background: var(--locked);
+}
+.confirm-info-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--muted);
+}
+.confirm-info-row strong {
+  display: flex; align-items: center; gap: 4px;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.confirm-info-row .coin-icon { width: 14px; height: 14px; color: var(--gold-line); }
+/* The quantity stepper on the "Buying" row: a triangle on each side of the
+   number (0-99, further capped by whatever the wallet can afford — see the
+   `disabled` props and the hold-to-repeat handlers in SandGame.tsx), not a
+   typed-in field. No button chrome (no circle, no fill) — just the triangle
+   shape itself sized as a real tap target via padding, per feedback that a
+   filled chip around it read as heavier than this control needs to be. The
+   number's own column is a fixed width so it never nudges the triangles
+   apart as it goes from one digit to two. */
+.confirm-qty-stepper { display: flex; align-items: center; gap: 4px; }
+.confirm-qty-value { display: inline-block; width: 22px; text-align: center; color: var(--ink); }
+/* Scoped as `.confirm-card .confirm-qty-btn` (class+class), not the bare
+   `.confirm-qty-btn` this used to be — `.result-card button` (element+class)
+   otherwise outranks a single class on specificity and wins the cascade,
+   which is what was putting that rule's green pill/full-width/padding back
+   underneath the triangle instead of leaving it bare. */
+.confirm-card .confirm-qty-btn {
+  width: 28px; height: 28px; padding: 0; border: 0; background: none;
+  display: grid; place-items: center; cursor: pointer; color: var(--wood-ink);
+  transition: transform .12s, opacity .12s;
+  /* Long-press (SandGame.tsx's hold-to-repeat) needs the browser's own
+     press-and-hold gestures (text selection, callout menus) out of the way,
+     or a held finger triggers those instead of repeating. */
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+}
+/* The arrow itself is `StepperArrow` (SandGame.tsx), a real SVG polygon
+   sized here rather than the CSS border trick this used to be — that
+   trick's rendered box was only ever as wide as the border itself, offset
+   entirely to one side of the zero-width anchor it got centred on, so no
+   amount of margin-nudging it reliably centred the *shape* a player actually
+   sees. An SVG's box is exactly its declared width regardless of what's
+   drawn inside it, so centring the element (via the button's own
+   `place-items: center` above) centres the shape too. */
+.confirm-card .confirm-qty-arrow { width: 10px; height: 10px; display: block; }
+.confirm-card .confirm-qty-btn:active:not(:disabled) { transform: scale(.85); }
+/* Explicit background/border, not just opacity: `.result-card button:disabled`
+   (globals.css, shared by every dialog's buttons) outranks this on
+   specificity for those two properties and was putting its pale panel chip
+   back behind a disabled arrow otherwise — the exact "green pill" bug the
+   base rule above was already fixed for, just re-appearing only in the
+   disabled state. */
+.confirm-card .confirm-qty-btn:disabled { background: none; border: 0; color: var(--muted); opacity: .5; cursor: default; }
 
 /* ---- Tutorial overlay ---------------------------------------------------- */
 /* Reuses `.result-screen`/`.result-card` for the backdrop and pop-in — it is
@@ -1065,40 +1176,133 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-gallery button.is-active b { color: var(--accent-ink); }
 .hub-gallery button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .hub-gallery b { font-size: 11px; font-weight: 700; text-align: center; line-height: 1.3; }
-
-/* ---- Shop ---------------------------------------------------------------- */
-/* One row per booster: icon, name/blurb/owned-count, and a price button —
-   the same three-part row shape `.settings-row` already uses, widened into a
-   card since a price needs more room than a label. */
-.shop-balance {
-  display: flex; align-items: center; justify-content: center; gap: 7px;
-  margin: 0 0 14px; font-size: 17px; font-weight: 800; color: var(--ink);
+/* A locked card: same tile, no hover lift, no active press — a disabled
+   `<button>` already blocks the tap itself, this just makes it read that way
+   before a finger gets there. The thumbnail dims under its own lock badge
+   instead of being swapped for a blank tile, so the shape of what is coming
+   still reads through — a silhouette, not a mystery box. */
+.hub-gallery button:disabled { cursor: default; }
+.hub-gallery button:disabled:hover { background: var(--locked); transform: none; }
+.hub-gallery button.is-locked .pixel-thumb { opacity: .35; filter: grayscale(1); }
+.hub-gallery button.is-locked b { color: var(--muted); }
+.hub-gallery-thumb { position: relative; width: 100%; }
+.hub-gallery-lock {
+  position: absolute; inset: 0; z-index: 1;
+  display: grid; place-items: center;
 }
-.shop-balance .coin-icon { width: 19px; height: 19px; color: var(--gold-line); }
-.shop-list { display: flex; flex-direction: column; gap: 10px; }
-.shop-item {
-  display: flex; align-items: center; gap: 12px; padding: 11px 13px;
-  border: 2px solid var(--line); border-radius: var(--r-md); background: var(--locked);
+.lock-icon { width: 22px; height: 22px; fill: currentColor; color: var(--muted); }
+/* The milestone reward pill — every 10th level by id (see the JSX comment at
+   the call site) gets one, shown even locked as a teaser of what is waiting
+   a few clears from now. Sits on the thumbnail's own top-right corner, same
+   "small pill overlapping an edge" language `.shop-card-owned` already uses,
+   so this reads as the same family of badge rather than a one-off. */
+.hub-gallery-milestone {
+  position: absolute; top: -6px; right: -6px; z-index: 2;
+  display: flex; align-items: center; gap: 3px;
+  padding: 3px 7px; border-radius: var(--r-pill);
+  background: var(--gold); color: var(--gold-ink);
+  font-size: 10px; font-weight: 800;
   box-shadow: var(--shadow-chip);
 }
-.shop-item-icon {
-  flex: none; width: 42px; height: 42px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--panel); border: 2px solid var(--line);
+.hub-gallery-milestone .coin-icon { width: 11px; height: 11px; color: inherit; }
+
+/* ---- Shop ---------------------------------------------------------------- */
+/* A full-screen takeover, same footing as the skin picker (`.skin-screen`
+   below) — see the JSX comment on `.shop-screen` for why this stopped being
+   a `.hub-panel` card. A wood-panel wall now, not the plain hub cream: a flat
+   base colour (`#775538`) with three layered `repeating-linear-gradient`s
+   standing in for grain — a fine dark stripe, a fainter light one at an
+   offset spacing so the two never line up into one flat pattern, and a
+   wider, very slightly off-vertical (88deg, not a dead-straight 90deg) third
+   layer for the bigger plank-to-plank waviness real wood grain has. Opaque,
+   not transparent like `.skin-screen`: there is no 3D rig drawn behind this
+   one for anything to frame, so painting a real background here directly
+   keeps the takeover self-contained instead of relying on what happens to
+   sit behind it. */
+.shop-screen {
+  position: absolute; z-index: 30; inset: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
+  overflow: auto;
+  background-color: #775538;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 2px, transparent 2px 24px),
+    repeating-linear-gradient(90deg, rgba(255,224,181,.03) 0 1px, transparent 1px 16px),
+    repeating-linear-gradient(88deg, rgba(0,0,0,.03) 0 2px, transparent 2px 80px);
+  /* `shop-screen-in`, not `hub-panel-in` — that one fades `opacity` from 0,
+     and unlike `.hub-panel` (a small card already sitting over the hub's own
+     dimming scrim) this element's opaque background IS what hides the
+     picture/rig underneath (see the comment above). Animating its opacity
+     let the scene flash through for the first ~100ms of every switch into
+     Shop — the takeover was translucent while it faded in. Same slide-up
+     motion, just without ever letting the background go anything but fully
+     opaque. */
+  animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
-.shop-item-icon .booster-icon { width: 21px; height: 21px; }
+/* Same chip the skin picker's own title uses (`.skin-heading h2`) — one
+   consistent "screen title" language across both full-screen hub takeovers.
+   No border/shadow, per feedback that nothing in this screen should carry
+   either any more — every other rule below drops them too. */
+.shop-heading { margin: 0 0 24px; text-align: center; }
+.shop-heading h2 {
+  display: inline-block; margin: 0; padding: 7px 20px;
+  border-radius: var(--r-pill); background: var(--panel); border: 0;
+  font-size: 20px; font-weight: 800; color: var(--ink);
+}
+.shop-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 24px; width: 100%; max-width: 420px;
+}
+.shop-card { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+/* Sits directly on the wood background now (the description line under it
+   used to visually separate it from the frame below, but is gone — see the
+   JSX comment), so `--ink`'s usual warm brown — legible on this screen's old
+   pale wall — would read as brown-on-brown here. Cream instead, the same
+   family the frame itself (`--panel`) is already in. */
+.shop-card-name { font-size: 14px; font-weight: 800; color: #f7ecd8; text-align: center; }
+/* The rounded-square frame from the sketch, holding a circle with the
+   booster's own icon — the exact glyph the in-play HUD tray already uses,
+   not separate shop art. Flat, no border/shadow. */
+.shop-card-frame {
+  position: relative; width: 100%; max-width: 168px; aspect-ratio: 1;
+  display: grid; place-items: center;
+  border: 0; border-radius: var(--r-lg); background: var(--panel);
+}
+.shop-card-icon {
+  position: relative; width: 62%; aspect-ratio: 1; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--locked); border: 0;
+}
+.shop-card-icon .booster-icon { width: 34px; height: 34px; }
 /* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
-   here is recognisably the same thing armed in the HUD tray. */
-.shop-item-icon.is-radius { color: #23557f; border-color: #4a95dd; }
-.shop-item-icon.is-prism { color: #5b3f8f; border-color: #a07be8; }
-.shop-item-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.shop-item-info b { font-size: 14px; font-weight: 700; color: var(--ink); }
-.shop-item-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
-.shop-item-owned { font-size: 11px; font-weight: 700; color: var(--accent-line); }
+   here is recognisably the same thing armed in the HUD tray — the tint on
+   the icon glyph itself now that the ring border it used to sit on is gone. */
+.shop-card-frame.is-radius .shop-card-icon { color: #23557f; }
+.shop-card-frame.is-prism .shop-card-icon { color: #5b3f8f; }
+/* The old row layout's "Owned: N" text, kept as a small circle badge rather
+   than dropped — still worth knowing at a glance, just not part of the
+   sketch's own three elements (name/frame/price). Overlaps the icon
+   circle's own top-right edge (negative offsets, relative to
+   `.shop-card-icon` above, not the square frame around it) — a bare number,
+   no "×", the circle shape itself is what says "count" now. */
+.shop-card-owned {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 20px; height: 20px; padding: 0 4px;
+  display: grid; place-items: center; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); border: 0;
+  font-size: 11px; font-weight: 800;
+}
+/* The price pill: gold, not the green every other primary action in the
+   game uses — this one is money, and gold is the colour the rest of the
+   game already spends on money everywhere else (the coin badge, `CoinIcon`
+   itself). Dark brown text (`--gold-ink`, the same ink `.hub-gold-badge`'s
+   own number never needed because that badge sits on cream, but this pill
+   is gold-on-gold and needs the contrast). No border/shadow. */
 .shop-buy-btn {
-  flex: none; display: flex; align-items: center; gap: 5px;
-  padding: 10px 15px; border-radius: var(--r-sm); border: 0;
-  background: var(--accent);
-  color: var(--accent-ink);
+  display: flex; align-items: center; gap: 5px;
+  padding: 10px 18px; border-radius: var(--r-pill); border: 0;
+  background: var(--gold);
+  color: var(--gold-ink);
   font-size: 13px; font-weight: 800; cursor: pointer;
   transition: transform .16s, opacity .16s;
 }
@@ -1179,35 +1383,40 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   cursor: default;
 }
 
-/* Rounded at the top and lifted with its own shadow instead of cut off by a
-   hard rule — the tray reads as a drawer sliding up over the showroom rather
-   than as the bottom half of a split screen. Bottom padding reserves room
-   for `.hub-nav`, which now stays mounted over this whole screen (see its
-   own comment) and would otherwise sit on top of the last row of cards —
-   `height` has to add that same amount back on top of the visible ~106px
-   (14px top padding + a 78px card row + 14px breathing room), or that
-   padding just eats into the row instead of sitting below it. A fixed
-   height, not `min-height`: held to one row on purpose — a low strip of
-   cards, not the big gallery panel an earlier pass had this as — so the
-   showroom above it (the rig and its background wash) gets the bulk of the
-   screen. More costumes than fit in that one row scroll horizontally rather
-   than wrapping to a second row (`.skin-grid`'s own `grid-auto-flow`) — a
-   taller tray is exactly what this is trying to avoid. */
+/* Rounded at the top instead of cut off by a hard rule — the tray reads as
+   a drawer sliding up over the showroom rather than as the bottom half of a
+   split screen. No border/shadow any more (per feedback, same flat
+   direction the rest of this pass has been taking every panel in) — a flat
+   fill is what separates it from the showroom now. Bottom padding reserves
+   room for `.hub-nav`, which now stays mounted over this whole screen (see
+   its own comment) and would otherwise sit on top of the last row of cards —
+   `height` has to add that same amount back on top of the visible ~98px
+   (20px top padding — more than the bottom's 14px, on purpose: a previewed
+   card's own ring sat close enough to the tray's top edge to read as
+   crowded by the showroom's stripes right above it — plus a 64px card row
+   plus 14px breathing room below), or that padding just eats into the row
+   instead of sitting below it. A fixed height, not `min-height`: held to one
+   row on purpose — a low strip of cards, not the big gallery panel an
+   earlier pass had this as — so the showroom above it (the rig and its
+   background wash) gets the bulk of the screen. More costumes than fit in
+   that one row scroll horizontally rather than wrapping to a second row
+   (`.skin-grid`'s own `grid-auto-flow`) — a taller tray is exactly what this
+   is trying to avoid. */
 .skin-tray {
   pointer-events: auto; position: relative; z-index: 1;
-  padding: 14px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 14px);
-  border-top: 2px solid var(--line);
+  padding: 20px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 14px);
+  border: 0;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--panel);
-  box-shadow: 0 -4px 0 rgba(122, 96, 70, .08), 0 -10px 26px rgba(92, 74, 58, .18);
-  height: calc(106px + var(--hub-nav-height) + env(safe-area-inset-bottom));
+  height: calc(98px + var(--hub-nav-height) + env(safe-area-inset-bottom));
 }
 /* One row, fixed-width columns rather than `auto-fill`'s stretchy ones — a
    card has to stay the same size whether there are two costumes or twenty,
    since it's the row that grows (scrolling sideways) instead of the cards
-   themselves or a second row. */
+   themselves or a second row. 64px, smaller than this used to be — see
+   `.skin-tray`'s own comment on why the row needed more headroom above it. */
 .skin-grid {
-  display: grid; grid-auto-flow: column; grid-auto-columns: 78px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: 64px;
   gap: 10px; height: 100%; overflow-x: auto; overflow-y: hidden;
 }
 .skin-card {
@@ -1390,6 +1599,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
 @keyframes hub-nav-exit { to { transform: translateY(130%); opacity: 0; } }
 @keyframes hub-panel-in { from { opacity: 0; transform: translateY(16px); } }
+/* `.shop-screen`'s own entrance — same slide-up as `hub-panel-in`, minus the
+   opacity fade that would otherwise let the scene behind it show through
+   while a fully-opaque takeover is still becoming one. */
+@keyframes shop-screen-in { from { transform: translateY(16px); } }
 @keyframes settle-dot-bounce {
   0%, 80%, 100% { opacity: .35; transform: translateY(0) scale(.8); }
   40% { opacity: 1; transform: translateY(-4px) scale(1); }

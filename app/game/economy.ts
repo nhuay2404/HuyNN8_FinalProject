@@ -294,6 +294,23 @@ export function buyBoosterCharge(type: BoosterType): boolean {
 }
 
 /**
+ * Same as `buyBoosterCharge`, but for `qty` at once — the Shop's confirm
+ * dialog lets a player dial in a quantity (its own stepper, 0-99) before
+ * committing. Atomic across the whole batch, same as the single-charge
+ * version: either the full `qty × boosterPrice(type)` goes through and all
+ * `qty` charges land, or (short wallet) nothing changes at all — never a
+ * partial buy that spends some gold for fewer charges than asked. A `qty`
+ * of 0 is a no-op that still reports success: nothing was asked for, so
+ * nothing failed.
+ */
+export function buyBoosterCharges(type: BoosterType, qty: number): boolean {
+  if (qty <= 0) return true;
+  if (!spendGold(boosterPrice(type) * qty)) return false;
+  addBoosterCharges(type, qty);
+  return true;
+}
+
+/**
  * Resets the in-memory wallet (and, in a browser, clears it from storage) —
  * a test-only seam so `sand-economy.test.ts` can start every case from a
  * known state instead of whatever an earlier test in the same process left
