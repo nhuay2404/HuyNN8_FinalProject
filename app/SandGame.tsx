@@ -96,6 +96,44 @@ const BOOSTER_DESC: Record<BoosterType, string> = {
   prismShot: "One shot takes every colour in reach, not just the one loaded.",
 };
 
+/**
+ * The Shop's Gems tab — real-money offers, none of it wired to an actual
+ * payment processor yet (see `notifyIapComingSoon` at the call site).
+ * `wallet.gems` itself is a display-only starter balance (`STARTER_GEMS` in
+ * economy.ts) until something in the game actually spends it, same as gold
+ * before boosters made it real.
+ */
+type SpecialOffer = { id: string; name: string; tag: string; gems: number; coins?: number; bonus?: string; price: string };
+const SPECIAL_OFFERS: readonly SpecialOffer[] = [
+  { id: "starter", name: "Islander's Starter Pack", tag: "First purchase", gems: 500, coins: 1200, price: "$4.99" },
+  { id: "weekend", name: "Weekend Gem Rush", tag: "Weekend only", gems: 1400, bonus: "+35% extra", price: "$9.99" },
+];
+
+/** Each bundle sells both currencies together — gems, the hard currency the
+ * Gems tab otherwise sells alone, plus a coin top-up so a single purchase
+ * also covers something spendable today. */
+type Bundle = { id: string; gems: number; coins: number; bonus?: string; flag?: string; price: string };
+const BUNDLES: readonly Bundle[] = [
+  { id: "b1", gems: 80, coins: 400, price: "$0.99" },
+  { id: "b2", gems: 500, coins: 2500, bonus: "+10%", price: "$4.99" },
+  { id: "b3", gems: 1200, coins: 6000, bonus: "+20%", flag: "Most popular", price: "$9.99" },
+  { id: "b4", gems: 2600, coins: 13000, bonus: "+35%", price: "$19.99" },
+  { id: "b5", gems: 7000, coins: 35000, bonus: "+50%", flag: "Best value", price: "$49.99" },
+];
+
+/** Coin-only packs, priced the way mobile-game coin ladders usually are:
+ * $0.99 up to $99.99, each tier's bonus a little steeper than the last. */
+type CoinPack = { id: string; coins: number; bonus?: string; flag?: string; price: string };
+const COIN_PACKS: readonly CoinPack[] = [
+  { id: "c1", coins: 1_000, price: "$0.99" },
+  { id: "c2", coins: 2_200, price: "$1.99" },
+  { id: "c3", coins: 6_000, bonus: "+10%", price: "$4.99" },
+  { id: "c4", coins: 13_000, bonus: "+20%", price: "$9.99" },
+  { id: "c5", coins: 28_000, bonus: "+30%", flag: "Popular", price: "$19.99" },
+  { id: "c6", coins: 80_000, bonus: "+45%", price: "$49.99" },
+  { id: "c7", coins: 180_000, bonus: "+60%", flag: "Best value", price: "$99.99" },
+];
+
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
 const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
 
@@ -138,56 +176,63 @@ const HUB_TAB_BLURB: Record<HubTab, string> = {
   customize: "Where the frame, the sand texture and the board's colours would be set.",
 };
 
-/** One small shape set per tab, line art at rest and filled solid the
- * instant its tab is active — a single toggle in globals.css
+/** One small shape set per tab (Gallery and Customize — the other three now
+ * use a real photographic asset instead, see `TAB_PHOTO_ICON` below), line
+ * art at rest and filled solid the instant its tab is active — a single
+ * toggle in globals.css
  * (`.hub-nav-icon`'s `fill`/`stroke`, flipped by `.is-active`) rather than
  * two different icons, so every path here is drawn once and has to work
  * both ways: recognisable as an outline (no individual `fill`/`stroke` on
  * any path — they inherit the toggle from the `<svg>` itself) and still
  * read as a solid silhouette once filled, even though the odd fine line
- * (the bag's handle, the palette's paint dabs) is only ever going to show
- * up in the outline version — normal for an outline/filled icon pair, the
- * same way a filled Material icon carries less line detail than its own
- * outline variant. Shapes stay off-centre/off-angle on purpose (a roof with
- * an uneven overhang, a door pushed to one side, a cannon canted at an
- * angle) rather than built from a mirrored primitive. */
-function HubIcon({ tab }: { tab: HubTab }) {
+ * (the palette's paint dabs) is only ever going to show up in the outline
+ * version — normal for an outline/filled icon pair, the same way a filled
+ * Material icon carries less line detail than its own outline variant.
+ * Shapes stay off-centre/off-angle on purpose rather than built from a
+ * mirrored primitive. */
+/** Tabs whose icon is a real photographic asset (`/public/icons/*.png`)
+ * rather than the hand-drawn line art `HubIcon` draws for the rest —
+ * Customize is the only one still on that shared path below. Home got the
+ * reference house artwork first; Shop, Skin and Gallery followed with their
+ * own matching pieces (a shopping cart, a cannon on a coat hanger, a framed
+ * picture). */
+const TAB_PHOTO_ICON: Partial<Record<HubTab, string>> = {
+  home: "/icons/HomeIcon.png",
+  shop: "/icons/ShoppingCartIcon.png",
+  skin: "/icons/CannonSkinIcon.png",
+  gallery: "/icons/GalleryIcon.png",
+};
+
+/**
+ * A tab icon backed by one of `TAB_PHOTO_ICON`'s real images, not a
+ * hand-drawn stand-in. Active, it is just that PNG at full colour. Idle, it
+ * is the exact same PNG turned into a flat one-colour silhouette via a CSS
+ * `mask-image` (a `<span>` filled with `--wood-ink`, masked by the
+ * artwork's own alpha channel) rather than a second hand-authored asset —
+ * so the idle shape is guaranteed to trace the real artwork's outline, not
+ * an approximation of it, and the two states can never drift out of sync
+ * with each other the way two independently drawn assets could. This is why
+ * these three tabs cannot join `HubIcon`'s shared "one `<svg>`, toggle
+ * `fill`/`stroke`" trick below: that trick needs plain line art with no
+ * colour of its own, and a photographic asset has none to strip out. */
+function PhotoTabIcon({ src, active }: { src: string; active: boolean }) {
+  if (active) {
+    return <img className="hub-nav-icon photo-tab-icon" src={src} alt="" aria-hidden="true" />;
+  }
+  return (
+    <span
+      className="hub-nav-icon photo-tab-icon is-silhouette"
+      aria-hidden="true"
+      style={{ WebkitMaskImage: `url(${src})`, maskImage: `url(${src})` } as React.CSSProperties}
+    />
+  );
+}
+
+function HubIcon({ tab, active }: { tab: HubTab; active: boolean }) {
+  const photoSrc = TAB_PHOTO_ICON[tab];
+  if (photoSrc) return <PhotoTabIcon src={photoSrc} active={active} />;
   return (
     <svg className="hub-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {tab === "shop" && (
-        <g transform="rotate(-6 12 12)">
-          <path d="M5.2 9h13.2l-1.3 10.8H6.6z" />
-          <path d="M9 8.6V6.6a3 3 0 0 1 6 0v2" />
-          <circle cx="13.2" cy="14.6" r="1.8" />
-        </g>
-      )}
-      {tab === "skin" && (
-        // The same barrel/breech/base CostumeIcon draws for the skin-card
-        // cannon above (proven at that size already) — the "skin" tab picks
-        // the cannon's skin, so its icon is a cannon. Kept horizontal:
-        // canting it, tried earlier, made both the outline and the filled
-        // silhouette read as a boot instead.
-        <g transform="rotate(-4 12 13)">
-          <rect x="5.6" y="10.2" width="10.8" height="4.6" rx="1.6" />
-          <circle cx="17.2" cy="12.5" r="3.4" />
-          <rect x="7" y="15.6" width="10" height="2.4" rx="1.2" />
-        </g>
-      )}
-      {tab === "home" && (
-        <>
-          <path d="M3.4 11.6 12 4.6l9 6.8-1.3 1.8L12 7.2l-7 5.8z" />
-          <path d="M5.4 11h12.6v8.6a1 1 0 0 1-1 1H6.4a1 1 0 0 1-1-1z" />
-          <rect x="13.6" y="14.4" width="3.2" height="6.2" rx=".6" />
-          <rect x="7.2" y="14.2" width="3" height="3" rx=".6" />
-        </>
-      )}
-      {tab === "gallery" && (
-        <>
-          <rect x="3.4" y="4.6" width="17.2" height="15.4" rx="2.4" />
-          <circle cx="15.6" cy="8.6" r="1.5" />
-          <path d="M5.2 15.6 9.8 10.8l3.6 3.4 2.2-2.8 4.4 4v.2H5.2Z" />
-        </>
-      )}
       {tab === "customize" && (
         <>
           <path d="M12 4.2c4.6 0 7.8 3.2 7.8 7 0 2.6-1.8 3.6-3.4 3.6h-2c-.9 0-1.5.7-1.2 1.5.2.5.6.9.6 1.6 0 1.1-1 1.9-2.2 1.9C7 19.8 4 16.2 4 11.6c0-4.2 3.4-7.4 8-7.4Z" />
@@ -310,20 +355,11 @@ function LockIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "gear" | "menu" | "help" | "gift" | "home" | "restart" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
+type ChromeGlyph = "menu" | "help" | "home" | "restart" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {name === "gear" && (
-        <>
-          {/* Six soft lobes rather than the usual eight sharp teeth — a
-              rounder gear reads friendlier at this size and survives the
-              2px stroke without the teeth merging into a blob. */}
-          <path d="M12 3.4l1.9.9 2-.5 1 1.8 1.8 1-.5 2 .9 1.9-.9 1.9.5 2-1.8 1-1 1.8-2-.5-1.9.9-1.9-.9-2 .5-1-1.8-1.8-1 .5-2-.9-1.9.9-1.9-.5-2 1.8-1 1-1.8 2 .5z" />
-          <circle cx="12" cy="12" r="3.1" />
-        </>
-      )}
       {name === "menu" && (
         <>
           {/* Three level strokes rather than the gear — mid-play this button
@@ -339,13 +375,6 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
         <>
           <path d="M9.3 9.1a2.8 2.8 0 0 1 5.4.9c0 1.9-2.7 2.2-2.7 4" />
           <path d="M12 17.4v.1" strokeWidth="2.6" />
-        </>
-      )}
-      {name === "gift" && (
-        <>
-          <rect x="4.2" y="10.4" width="15.6" height="9" rx="1.8" />
-          <path d="M3.2 7.2h17.6v3.2H3.2zM12 7.2v12.2" />
-          <path d="M12 7.2c-1-2.6-2.2-3.6-3.5-3.6a1.9 1.9 0 0 0 0 3.6zM12 7.2c1-2.6 2.2-3.6 3.5-3.6a1.9 1.9 0 0 1 0 3.6z" />
         </>
       )}
       {name === "home" && (
@@ -418,13 +447,32 @@ function StepperArrow({ direction }: { direction: "prev" | "next" }) {
   );
 }
 
+/** The soft-currency glyph everywhere it appears — the wallet badge, every
+ * price pill, the daily-login strip, the flying-coin claim animation. A real
+ * image (`/public/icons/CoinIcon.png`) now, not hand-drawn line art: unlike
+ * the nav tabs' `PhotoTabIcon`, this one has no idle/active states to worry
+ * about (a price is a price, it does not go "unselected"), so it is just an
+ * `<img>` — every `.coin-icon` sizing rule in globals.css keyed to the class
+ * rather than the element, so they keep applying unchanged. */
 function CoinIcon() {
+  return <img className="coin-icon" src="/icons/CoinIcon.png" alt="" aria-hidden="true" />;
+}
+
+/** The Shop's hard-currency glyph — a faceted gem, drawn the same way
+ * `CoinIcon` is (a flat `currentColor` fill plus a darker line for the
+ * facets) so the two currencies read as one family at a glance despite the
+ * different shape. */
+function GemIcon() {
   return (
-    <svg className="coin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle cx="12" cy="12" r="9" fill="currentColor" />
-      <circle cx="12" cy="12" r="9" fill="none" stroke="#b17919" strokeWidth="1.4" />
-      <circle cx="12" cy="12" r="6.2" fill="none" stroke="#b17919" strokeWidth="1.2" />
-      <path d="M12 8.4v7.2M10.2 9.9c0-.9.8-1.5 1.8-1.5s1.8.5 1.8 1.3-.7 1.1-1.8 1.3-1.8.5-1.8 1.3.8 1.3 1.8 1.3 1.8-.6 1.8-1.5" stroke="#b17919" strokeWidth="1" fill="none" strokeLinecap="round" />
+    <svg className="gem-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.2 18.4 8 15 20.4H9L5.6 8Z" fill="currentColor" />
+      <path
+        d="M12 3.2 18.4 8H5.6ZM5.6 8 9 20.4M18.4 8 15 20.4M12 3.2 9 8M12 3.2 15 8"
+        fill="none"
+        stroke="#1c4d54"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -704,6 +752,23 @@ export default function SandGame() {
   // never let a player dial in a quantity they cannot pay for), so this can
   // stay a plain number.
   const [buyQty, setBuyQty] = useState(1);
+  // The Shop's two tabs — Gems (real-money offers/bundles/coin packs, none
+  // of it wired to a payment processor yet) and Coins (the booster store
+  // above, spending the real, earned-by-playing currency). Coins is the
+  // default: it is the one tab that actually does something today.
+  const [shopTab, setShopTab] = useState<"gems" | "coins">("coins");
+  // A small "not live yet" notice for every Gems-tab buy button — there is no
+  // payment processor behind any of them, so tapping one cannot silently do
+  // nothing; it has to say why. Its own state rather than reusing `toast`
+  // above: `toast` renders inside `.scene-wrap`, which sits underneath the
+  // Shop screen's own opaque background and would never be seen from here.
+  const [iapNotice, setIapNotice] = useState(false);
+  const iapNoticeTimer = useRef<number | null>(null);
+  const notifyIapComingSoon = useCallback(() => {
+    if (iapNoticeTimer.current) window.clearTimeout(iapNoticeTimer.current);
+    setIapNotice(true);
+    iapNoticeTimer.current = window.setTimeout(() => setIapNotice(false), 1800);
+  }, []);
   // Hold-to-repeat for the stepper's two triangle buttons: pointerdown arms a
   // one-shot delay, and only once that delay elapses does the first repeat
   // fire and an interval take over — a quick tap never enters this path at
@@ -855,7 +920,10 @@ export default function SandGame() {
   // hides it — otherwise switching tabs mid-confirm and coming back to Shop
   // later would resurrect a stale "buy this?" nobody asked to reopen.
   useEffect(() => {
-    if (tab !== "shop") setBuyConfirm(null);
+    if (tab !== "shop") {
+      setBuyConfirm(null);
+      setIapNotice(false);
+    }
   }, [tab]);
   /**
    * Pays out `pendingHomeReward` (see its own comment) the moment its badge
@@ -1116,6 +1184,13 @@ export default function SandGame() {
     setRunId((id) => id + 1);
     setPlaying(false);
     setTab("home");
+    // Both overlays are already gated on `playing` at the call site, so
+    // leaving either `true` here could not leak onto the hub screen — this
+    // is just so a level left mid-tutorial/mid-FTUE doesn't quietly resume
+    // showing it the instant Play is tapped again, the way it would if a
+    // player had actually dismissed it before leaving.
+    setTutorialOpen(false);
+    setFtueGestureOpen(false);
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -1405,9 +1480,11 @@ export default function SandGame() {
             gear now opens the one unified Settings card directly, same as
             the hub, and `.settings-round-actions` inside that card is what
             covers Home/Restart while a level is open (see its own comment).
-            Hidden on the skin tab for now — `.skin-screen`'s own close
-            button already sits in that corner. */}
-        <div className="settings-wrap" hidden={tab === "skin"}>
+            Shown on every hub tab, Skin included now — none of the
+            full-screen takeovers (Skin, Shop, Gallery) have a close button
+            of their own, so this gear is the one settings entry point that
+            has to stay reachable no matter which one is open. */}
+        <div className="settings-wrap">
           {playing && (level.tutorial || level.ftueGesture) && (
             <button
               type="button"
@@ -1426,7 +1503,7 @@ export default function SandGame() {
             aria-label="Settings"
             title="Settings"
           >
-            <Glyph name="gear" />
+            <img className="settings-button-icon" src="/icons/SettingIcon.png" alt="" aria-hidden="true" />
           </button>
         </div>
 
@@ -1445,12 +1522,16 @@ export default function SandGame() {
             above already opens it once automatically when unclaimed, this
             is just "let me look again" (before claiming, or after, to see
             tomorrow's reward is not up yet).
-            Hidden on the Shop tab: `.shop-screen` is a full-bleed takeover
-            of the same top-right-ish real estate this button floats over
-            (see its own comment), so it covered the shop grid's own corner
-            instead of sitting beside it the way it does over every other
-            hub tab. */}
-        {!playing && tab !== "shop" && (
+            Home only now, not every hub tab: Shop and Gallery are full-bleed
+            takeovers of the same right-edge real estate this button floats
+            over (`.shop-screen`/`.gallery-screen`), so it covered their own
+            grid; Skin and Customize dropped it on request, to keep those two
+            screens free of anything that is not about the thing they are
+            showing. Also hidden the instant the daily-login card itself is
+            open (`dailyLogin` below) — a button that opens a card it is
+            currently sitting behind would just be dead chrome until the
+            card closes. */}
+        {!playing && tab === "home" && !dailyLogin && (
           <div className="hub-gift-wrap">
             <button
               type="button"
@@ -1459,7 +1540,7 @@ export default function SandGame() {
               aria-label="Daily login reward"
               title="Daily login reward"
             >
-              <Glyph name="gift" />
+              <img className="gift-button-icon" src="/icons/LoginIcon.png" alt="" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -1520,22 +1601,22 @@ export default function SandGame() {
               and that is what actually closes this — not a button here.
               No enclosing card: two dashed "tap here" rings (the same dashed
               marker language `.aim-joystick::after` already draws on the real
-              pad, borrowed rather than invented) with a properly-built hand —
-              palm, thumb, one pointing finger, all rounded primitives, same
-              construction technique as `BoosterIcon` above — gliding between
-              them: press at the first ring, drag to the second, release. */}
-          {ftueGestureOpen && level.ftueGesture && (
+              pad, borrowed rather than invented) with the real reference
+              tapping-hand artwork (`/public/icons/FTUEicon.png`, an SVG
+              `<image>` rather than a hand-drawn shape now) gliding between
+              them: press at the first ring, drag to the second, release. The
+              image sits inside the same `<g>` `ftue-gesture-drag` (in
+              globals.css) already animates, offset so the fingertip in the
+              artwork — not the image's own top-left corner — lands on that
+              `<g>`'s local origin, the same "fingertip at (0,0)" contract
+              the old hand-drawn shapes used. */}
+          {playing && ftueGestureOpen && level.ftueGesture && (
             <div className="ftue-gesture" role="status" aria-label="Drag to aim, release to fire">
               <svg className="ftue-gesture-glyph" viewBox="0 0 220 190" aria-hidden="true">
                 <circle className="ftue-gesture-ring ftue-gesture-ring-a" cx="90" cy="135" r="17" />
                 <circle className="ftue-gesture-ring ftue-gesture-ring-b" cx="140" cy="100" r="17" />
                 <g className="ftue-gesture-hand">
-                  <g transform="rotate(20)">
-                    <rect x="-15" y="-58" width="30" height="28" rx="13" />
-                    <circle cx="-14" cy="-40" r="9" />
-                    <rect x="-7" y="-32" width="14" height="32" rx="7" />
-                    <line className="ftue-gesture-hand-crease" x1="-2" y1="-33" x2="-2" y2="-23" />
-                  </g>
+                  <image href="/icons/FTUEicon.png" x={-33} y={-69} width={72} height={83} />
                 </g>
               </svg>
               <span className="ftue-gesture-caption">Drag to aim · release to fire</span>
@@ -1620,7 +1701,7 @@ export default function SandGame() {
             Excludes Shop too now, same reasoning as Skin below it: `.shop-screen`
             is its own full-bleed takeover (see its own comment), not another
             `.hub-panel` bottom sheet floating over the picture. */}
-        {homeVisible && tab !== "skin" && tab !== "shop" && (
+        {homeVisible && tab !== "skin" && tab !== "shop" && tab !== "gallery" && (
           <div
             className={`hub-screen${playing ? " is-leaving" : ""}`}
             role="group"
@@ -1654,65 +1735,7 @@ export default function SandGame() {
                 turning, which is the one thing this screen is meant to show off. */}
             {tab !== "home" && <h2 className="hub-level-name">{level.name}</h2>}
 
-            {tab === "gallery" && (
-              <div className="hub-panel" role="group" aria-label="Gallery">
-                <h3>Gallery</h3>
-                <div className="hub-gallery">
-                  {playables.map((entry, index) => {
-                    // Sequential unlock: the first level is always open, every
-                    // one after needs the level right before it (in this same
-                    // list, not level id order) actually cleared — "đã đi qua"
-                    // means played to the end, not just visited. Editor-authored
-                    // levels sit after the built-ins in `playables`, so they
-                    // fall in line behind clearing every built-in one too,
-                    // rather than needing a rule of their own.
-                    const unlocked = index === 0 || hasClearedLevel(playables[index - 1].level.id);
-                    // Every 10th level (by id, not position) is a milestone —
-                    // shown with its own reward pill so it reads as a goal
-                    // worth playing toward, using the exact number a win would
-                    // actually pay out (same lookup `raw`'s own reward uses
-                    // above: a designer's CSV override, or the difficulty
-                    // formula). Shown even before it unlocks, as a teaser.
-                    const isMilestone = entry.level.id % 10 === 0;
-                    const milestoneReward = isMilestone
-                      ? getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)
-                      : null;
-                    return (
-                      <button
-                        key={entry.level.id}
-                        type="button"
-                        className={`${index === levelIndex ? "is-active" : ""}${unlocked ? "" : " is-locked"}`.trim()}
-                        onClick={() => pickFromGallery(index)}
-                        disabled={!unlocked}
-                        aria-current={index === levelIndex ? "true" : undefined}
-                        title={
-                          unlocked
-                            ? entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name
-                            : "Clear the level before this one to unlock"
-                        }
-                      >
-                        <span className="hub-gallery-thumb">
-                          <PixelThumb level={entry.level} />
-                          {!unlocked && (
-                            <span className="hub-gallery-lock" aria-hidden="true">
-                              <LockIcon />
-                            </span>
-                          )}
-                          {isMilestone && (
-                            <span className="hub-gallery-milestone" aria-hidden="true">
-                              <CoinIcon /> +{milestoneReward}
-                            </span>
-                          )}
-                        </span>
-                        <b>{unlocked ? entry.level.name : "Locked"}</b>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {tab !== "home" && tab !== "gallery" && (
+            {tab !== "home" && (
               <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
                 <h3>{HUB_TAB_NAME[tab]}</h3>
                 <p>{HUB_TAB_BLURB[tab]}</p>
@@ -1785,6 +1808,76 @@ export default function SandGame() {
           </div>
         )}
 
+        {/* The Gallery: a full-screen takeover, same footing as the skin
+            picker and Shop either side of it rather than the small
+            `.hub-panel` bottom sheet this used to be — the hub screen behind
+            it is unmounted entirely while this is up (see the
+            `tab !== "gallery"` guard on it above). Four thumbnails per row
+            (`.hub-gallery`'s own `grid-template-columns`), same card content
+            as before (name, lock badge, milestone reward) — only the frame
+            around them changed size. No close button of its own, same
+            reasoning as the skin picker and Shop: `.hub-nav` stays mounted
+            over this screen too, so tapping any other tab is how you leave. */}
+        {tab === "gallery" && (
+          <div className="gallery-screen" role="dialog" aria-label="Gallery">
+            <div className="gallery-heading">
+              <h2>Gallery</h2>
+            </div>
+            <div className="hub-gallery">
+              {playables.map((entry, index) => {
+                // Sequential unlock: the first level is always open, every
+                // one after needs the level right before it (in this same
+                // list, not level id order) actually cleared — "đã đi qua"
+                // means played to the end, not just visited. Editor-authored
+                // levels sit after the built-ins in `playables`, so they
+                // fall in line behind clearing every built-in one too,
+                // rather than needing a rule of their own.
+                const unlocked = index === 0 || hasClearedLevel(playables[index - 1].level.id);
+                // Every 10th level (by id, not position) is a milestone —
+                // shown with its own reward pill so it reads as a goal
+                // worth playing toward, using the exact number a win would
+                // actually pay out (same lookup `raw`'s own reward uses
+                // above: a designer's CSV override, or the difficulty
+                // formula). Shown even before it unlocks, as a teaser.
+                const isMilestone = entry.level.id % 10 === 0;
+                const milestoneReward = isMilestone
+                  ? getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)
+                  : null;
+                return (
+                  <button
+                    key={entry.level.id}
+                    type="button"
+                    className={`${index === levelIndex ? "is-active" : ""}${unlocked ? "" : " is-locked"}`.trim()}
+                    onClick={() => pickFromGallery(index)}
+                    disabled={!unlocked}
+                    aria-current={index === levelIndex ? "true" : undefined}
+                    title={
+                      unlocked
+                        ? entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name
+                        : "Clear the level before this one to unlock"
+                    }
+                  >
+                    <span className="hub-gallery-thumb">
+                      <PixelThumb level={entry.level} />
+                      {!unlocked && (
+                        <span className="hub-gallery-lock" aria-hidden="true">
+                          <LockIcon />
+                        </span>
+                      )}
+                      {isMilestone && (
+                        <span className="hub-gallery-milestone" aria-hidden="true">
+                          <CoinIcon /> +{milestoneReward}
+                        </span>
+                      )}
+                    </span>
+                    <b>{unlocked ? entry.level.name : "Locked"}</b>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* The Shop: a full-screen takeover now, same footing as the skin
             picker above rather than a small `.hub-panel` card floating over
             the picture — the hub screen behind it is unmounted entirely
@@ -1801,51 +1894,196 @@ export default function SandGame() {
           <div className="shop-screen" role="dialog" aria-label="Shop">
             <div className="shop-heading">
               <h2>Shop</h2>
+              {/* Only shown on the Gems tab — gems have no other readout
+                  anywhere else in the game yet (unlike gold's persistent
+                  `.hub-gold-badge`, top-left on every hub screen including
+                  this one), so there is no "always on" corner for it to
+                  live in instead. */}
+              {shopTab === "gems" && (
+                <div className="shop-gem-badge" aria-label={`${wallet.gems} gems`}>
+                  <GemIcon />
+                  <strong>{wallet.gems}</strong>
+                </div>
+              )}
             </div>
-            <div className="shop-grid">
-              {(["radiusOvercharge", "prismShot"] as const).map((type) => {
-                const price = boosterPrice(type);
-                const owned = wallet.boosters[type];
-                const canAfford = wallet.gold >= price;
-                return (
-                  <div key={type} className="shop-card">
-                    {/* The one-line pitch (`BOOSTER_DESC`) dropped out of the
-                        card itself — name only, per feedback that the card
-                        should read as clean as the sketch it started from —
-                        but stays reachable as a hover tooltip rather than
-                        disappearing outright. */}
-                    <b className="shop-card-name" title={BOOSTER_DESC[type]}>{BOOSTER_NAME[type]}</b>
-                    <div className={`shop-card-frame is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
-                      <span className="shop-card-icon">
-                        <BoosterIcon type={type} />
-                        {/* Owned count from the old row layout, kept as a
-                            small circle badge overlapping the icon's own
-                            top-right edge rather than dropped — still worth
-                            knowing at a glance, just not part of the
-                            sketch's three elements. A bare number, not
-                            "×N" — the circle shape is what says "count"
-                            now, the glyph doesn't have to. */}
-                        {owned > 0 && (
-                          <span className="shop-card-owned" aria-hidden="true">{owned}</span>
-                        )}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="shop-buy-btn"
-                      disabled={!canAfford}
-                      onClick={() => {
-                        setBuyQty(1);
-                        setBuyConfirm(type);
-                      }}
-                      aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins${owned > 0 ? `, ${owned} owned` : ""}`}
-                    >
-                      <CoinIcon /> {price}
-                    </button>
+
+            <div className="shop-tabs" role="tablist" aria-label="Shop currency tabs">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={shopTab === "gems"}
+                className={`shop-tab-btn is-gems${shopTab === "gems" ? " is-active" : ""}`}
+                onClick={() => setShopTab("gems")}
+              >
+                Gems
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={shopTab === "coins"}
+                className={`shop-tab-btn is-coins${shopTab === "coins" ? " is-active" : ""}`}
+                onClick={() => setShopTab("coins")}
+              >
+                Coins
+              </button>
+            </div>
+
+            {/* Its own scroll container, separate from `.shop-screen` itself
+                (which no longer scrolls — see that class's own comment) — so
+                the heading/tabs above stay put while a tab's content scrolls
+                underneath, and `.shop-iap-toast` below can pin to the screen
+                without scrolling away with whatever panel is open. */}
+            <div className="shop-scroll">
+            {/* The Gems tab: real-money offers, bundles and coin packs. None
+                of it is wired to an actual payment processor — there is no
+                account or server in this prototype (see economy.ts's own
+                top-of-file note) — so every price pill here just surfaces
+                `notifyIapComingSoon`'s toast instead of charging anything or
+                moving a balance. Gems themselves are the one currency nothing
+                in the game spends yet, per the brief: sold, not spendable. */}
+            {shopTab === "gems" && (
+              <div className="shop-panel">
+                <div className="shop-section">
+                  <div className="shop-section-head">
+                    <h3>Special Offers</h3>
+                    <p>Limited-time bundles</p>
                   </div>
-                );
-              })}
+                  {/* Stacked top to bottom, not a side-scrolling rail — every
+                      offer is visible without a swipe, the same "no hidden
+                      shelf" reasoning the Bundles list below already follows. */}
+                  <div className="offer-stack">
+                    {SPECIAL_OFFERS.map((offer) => (
+                      <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
+                        <span className="offer-tag">{offer.tag}</span>
+                        <h4>{offer.name}</h4>
+                        <div className="offer-contents">
+                          <GemIcon /> {offer.gems.toLocaleString("en-US")}
+                          {offer.coins != null && (
+                            <>
+                              <span className="offer-plus">+</span>
+                              <CoinIcon /> {offer.coins.toLocaleString("en-US")}
+                            </>
+                          )}
+                          {offer.bonus && <span className="offer-plus">{offer.bonus}</span>}
+                        </div>
+                        <button type="button" className="buy-btn" onClick={notifyIapComingSoon}>
+                          {offer.price}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="shop-section">
+                  <div className="shop-section-head">
+                    <h3>Bundles</h3>
+                    <p>Gems and coins together</p>
+                  </div>
+                  <div className="bundle-list">
+                    {BUNDLES.map((bundle) => (
+                      <div key={bundle.id} className={`bundle-row${bundle.flag ? " is-best" : ""}`}>
+                        <div className="bundle-icon"><GemIcon /></div>
+                        <div className="bundle-mid">
+                          {bundle.flag && <div className="bundle-flag">{bundle.flag}</div>}
+                          <div className="bundle-amount">
+                            {bundle.gems.toLocaleString("en-US")} Gems
+                            {bundle.bonus && <span className="bundle-bonus">{bundle.bonus}</span>}
+                          </div>
+                          <div className="bundle-sub">
+                            <CoinIcon /> {bundle.coins.toLocaleString("en-US")} Coins
+                          </div>
+                        </div>
+                        <button type="button" className="bundle-price" onClick={notifyIapComingSoon}>
+                          {bundle.price}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="shop-section">
+                  <div className="shop-section-head">
+                    <h3>Coins</h3>
+                    <p>Buy coins directly — no gems needed</p>
+                  </div>
+                  <div className="pack-grid">
+                    {COIN_PACKS.map((pack) => (
+                      <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag}>
+                        <CoinIcon />
+                        <div className="pack-amount">
+                          {pack.coins.toLocaleString("en-US")}
+                          {pack.bonus && <span className="pack-bonus">{pack.bonus}</span>}
+                        </div>
+                        <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
+                          {pack.price}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* The Coins tab: the original booster shop, unchanged — the one
+                real, spendable purchase flow in the game. */}
+            {shopTab === "coins" && (
+              <div className="shop-panel">
+                <div className="shop-grid">
+                  {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+                    const price = boosterPrice(type);
+                    const owned = wallet.boosters[type];
+                    const canAfford = wallet.gold >= price;
+                    return (
+                      <div key={type} className="shop-card">
+                        {/* The one-line pitch (`BOOSTER_DESC`) dropped out of the
+                            card itself — name only, per feedback that the card
+                            should read as clean as the sketch it started from —
+                            but stays reachable as a hover tooltip rather than
+                            disappearing outright. */}
+                        <b className="shop-card-name" title={BOOSTER_DESC[type]}>{BOOSTER_NAME[type]}</b>
+                        <div className={`shop-card-frame is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
+                          <span className="shop-card-icon">
+                            <BoosterIcon type={type} />
+                          </span>
+                          {/* Owned count from the old row layout, kept as a
+                              small circle badge overlapping the square frame's
+                              own top-right corner rather than dropped — still
+                              worth knowing at a glance, just not part of the
+                              sketch's three elements. A bare number, not
+                              "×N" — the circle shape is what says "count"
+                              now, the glyph doesn't have to. */}
+                          {owned > 0 && (
+                            <span className="shop-card-owned" aria-hidden="true">{owned}</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="shop-buy-btn"
+                          disabled={!canAfford}
+                          onClick={() => {
+                            setBuyQty(1);
+                            setBuyConfirm(type);
+                          }}
+                          aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins${owned > 0 ? `, ${owned} owned` : ""}`}
+                        >
+                          <CoinIcon /> {price}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             </div>
+
+            {/* Pinned to the screen itself, outside `.shop-scroll` above —
+                `pushToast`'s own `.sand-toast` cannot be reused here (it
+                renders inside `.scene-wrap`, underneath this screen's opaque
+                background), and a snackbar that scrolled away with whatever
+                panel is open would miss the tap that triggered it. */}
+            {iapNotice && (
+              <div className="shop-iap-toast" role="status">Real-money purchases aren't live in this build yet.</div>
+            )}
           </div>
         )}
 
@@ -1962,7 +2200,7 @@ export default function SandGame() {
                 title={HUB_TAB_NAME[entry]}
               >
                 <span className="hub-nav-bubble">
-                  <HubIcon tab={entry} />
+                  <HubIcon tab={entry} active={entry === tab} />
                 </span>
               </button>
             ))}
@@ -2083,20 +2321,23 @@ export default function SandGame() {
             `pendingHomeReward`'s own comment for why that waits for Home. */}
         {state.result?.kind === "WIN" && (
           <div className="result-screen is-win" role="dialog" aria-modal="true">
-            <div className="result-rays" aria-hidden="true" />
             <div className="result-card is-win">
-              <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
-                <CloseIcon />
-              </button>
-              <h2>FRAME CLEARED</h2>
-              <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
-              {hasNextLevel && (
-                <div className="result-actions">
-                  <button type="button" onClick={() => openLevel(levelIndex + 1)}>
-                    Continue
-                  </button>
-                </div>
-              )}
+              <div className="result-card-header">
+                <h2>FRAME CLEARED</h2>
+                <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="result-card-body">
+                <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
+                {hasNextLevel && (
+                  <div className="result-actions">
+                    <button type="button" onClick={() => openLevel(levelIndex + 1)}>
+                      Continue
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -2125,7 +2366,7 @@ export default function SandGame() {
             (result screen included, though the two are never open together —
             a fresh board has no result yet) so the very first shot is never
             taken blind. */}
-        {tutorialOpen && level.tutorial && (
+        {playing && tutorialOpen && level.tutorial && (
           <div className="result-screen" role="dialog" aria-modal="true" aria-label={level.tutorial.title}>
             <div className="result-card tutorial-card">
               <h2>{level.tutorial.title}</h2>
@@ -2159,7 +2400,19 @@ export default function SandGame() {
             closes the card instead of choosing between two ways to say the
             same thing. */}
         {!playing && dailyLogin && (
-          <div className="result-screen" role="dialog" aria-modal="true" aria-label="Daily login reward">
+          <div
+            className="result-screen"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Daily login reward"
+            // A tap on the scrim itself (not one that bubbled up from the
+            // card) dismisses the same way the corner X does — the standard
+            // "tap outside a sheet to close it" gesture, on top of that X
+            // rather than instead of it.
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setDailyLoginOverride(null);
+            }}
+          >
             <div className="result-card daily-login-card">
               <button
                 type="button"

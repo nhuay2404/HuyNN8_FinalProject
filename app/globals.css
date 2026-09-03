@@ -71,6 +71,13 @@
   --sky-ink: #1f4c5c;
   --sky-line: #5fafc9;
 
+  /* Teal gem — the Shop's hard currency. Its own hue rather than a reuse of
+     `--sky` (close in family, but the two sit side by side on the Shop's
+     Gems tab and need to read as two different things, not one pill twice). */
+  --gem: #84dbe6;
+  --gem-deep: #4fb9c9;
+  --gem-ink: #164048;
+
   /* Warm wood — the Customize tab's active fill, the one hub-nav colour with
      no other job in the file (every other tab reuses a hue that already
      means something elsewhere: green is the primary action, coral is
@@ -118,6 +125,14 @@
   --r-xl: 34px;
   --r-frame: 36px;
   --r-pill: 999px;
+  /* Not a step of the ladder above — measured off `/public/icons/
+     SettingIcon.png`'s own baked-in corner curve (its rounded-square
+     backdrop is ~18% of its width), scaled to this file's usual 44px chrome
+     button. Every rounded-rectangle chrome piece sitting next to that icon
+     (`.gift-button`, `.hub-gold-badge`, `.hub-play-btn`) matches this
+     exactly, on purpose, rather than any of `--r-xs`../`--r-lg` above — see
+     `.gift-button`'s own comment. */
+  --r-chrome: 8px;
 
   /* ---- Depth ------------------------------------------------------------- */
   /* Always warm-brown tinted, never neutral grey and never black — a grey
@@ -341,8 +356,33 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* The gear button on its own: dark brown chip with a white glyph (via
    `currentColor`, same as every other `.icon-glyph`), instead of the pale
    panel the rest of `.icon-button` shares. */
-.settings-button { background: var(--wood-ink); color: #fff; }
-.settings-button:hover { background: #5c3a20; }
+/* The gear button now holds a real icon (`/public/icons/SettingIcon.png`)
+ * that already ships with its own dark rounded-square backdrop baked into
+ * the artwork — so unlike `.icon-button`'s shared circle/panel, this one
+ * goes fully transparent and lets the image supply all of its own colour
+ * and shape. No `overflow: hidden`/clipping radius of any kind here — a
+ * clip that cut even 1px into the art would read as the button chewing on
+ * its own icon, so `object-fit: contain` (never anything cropping, like
+ * `cover`) is the only sizing rule this needs. */
+.settings-button { background: transparent; }
+.settings-button:hover { opacity: .85; }
+.settings-button-icon { width: 44px; height: 44px; object-fit: contain; display: block; }
+/* The daily-login button on its own: a square with a slight round to its
+   corners rather than `.icon-button`'s shared circle — it now holds a real
+   calendar photo (`/public/icons/LoginIcon.png`), and a square frame reads
+   as "a little card" the way a circle crop never would for that artwork.
+   Mint rather than the plain cream every other `.icon-button` shares, so it
+   still reads as its own thing at a glance despite the shape change.
+   `var(--r-chrome)` here is the one corner radius every other
+   rounded-rectangle chrome piece now matches on purpose — `.hub-gold-badge`
+   and `.hub-play-btn` both dropped `--r-pill`'s full capsule for this exact
+   value (measured off the Settings icon's own art, see that variable's own
+   comment), so a player's eye reads one consistent "how round is a button"
+   across the hub rather than a mix of pills, squares and one photo's own
+   baked-in curve. */
+.gift-button { border-radius: var(--r-chrome); background: #c9f2e1; }
+.gift-button:hover { background: #b3ecd4; }
+.gift-button-icon { width: 30px; height: 30px; object-fit: contain; }
 /* Every hand-drawn chrome icon in SandGame.tsx shares these stroke settings —
    round caps and joins are most of what makes a line icon read as soft. */
 .icon-glyph {
@@ -370,14 +410,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   top: max(var(--hud-inset), env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
 }
-/* The hub's right edge, vertically centred — deliberately NOT the top-right
-   corner `.settings-wrap` occupies mid-play (see the JSX comment: sharing
-   that spot read as the daily-login button overlapping the in-game settings
-   gear). */
+/* Stacked directly under `.settings-wrap`'s gear, same right edge — on
+   request, in place of the old vertically-centred spot (this button only
+   ever shows on the Home tab now anyway, so there is no risk of the two
+   colliding the way sharing this corner mid-play once did). `44px` is the
+   gear button's own height (`.icon-button`), `12px` the gap between them. */
 .hub-gift-wrap {
   position: absolute; z-index: 31;
-  top: 50%; right: max(14px, env(safe-area-inset-right));
-  transform: translateY(-50%);
+  top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 44px + 12px);
+  right: max(14px, env(safe-area-inset-right));
 }
 /* The hub's top-left corner — the wallet balance, always on screen so the
    daily-login claim's flying coins (`.coin-fly` below) always have
@@ -391,7 +432,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .hub-gold-badge {
   display: flex; align-items: center; gap: 8px; height: 44px;
-  padding: 0 16px 0 10px; border: 0; border-radius: var(--r-pill);
+  padding: 0 16px 0 10px; border: 0; border-radius: var(--r-chrome);
   background: #fde59c;
 }
 .hub-gold-badge .coin-icon { width: 18px; height: 18px; color: var(--gold-line); }
@@ -560,7 +601,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   left: max(14px, env(safe-area-inset-left));
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-.coin-icon { width: 19px; height: 19px; flex: none; color: var(--gold-line); }
+.coin-icon { width: 19px; height: 19px; flex: none; object-fit: contain; }
 
 /* ---- Ammo HUD ---------------------------------------------------------- */
 /* §23: just the number that changes every shot, small and to the edge —
@@ -745,17 +786,13 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .ftue-gesture-ring-a { animation: ftue-gesture-ring-a 3.2s ease-in-out infinite; }
 .ftue-gesture-ring-b { animation: ftue-gesture-ring-b 3.2s ease-in-out infinite; }
-/* Palm, thumb, one pointing finger — three rounded primitives, same
-   construction as `BoosterIcon`'s circle-and-rect icons, rather than a
-   hand-drawn silhouette. `transform` (not an SVG attribute) animates the
-   whole hand so the same keyframes can carry both the translate and the
-   press/release squash together. */
+/* The reference tapping-hand artwork (an SVG `<image>` in the JSX), not a
+   hand-drawn silhouette, so no `fill`/`stroke` of its own to set here any
+   more. `transform` (not an SVG attribute) animates the whole hand so the
+   same keyframes can carry both the translate and the press/release squash
+   together. */
 .ftue-gesture-hand {
-  fill: var(--panel); stroke: var(--ink); stroke-width: 3; stroke-linejoin: round;
   animation: ftue-gesture-drag 3.2s ease-in-out infinite;
-}
-.ftue-gesture-hand-crease {
-  stroke: var(--line); stroke-width: 2; stroke-linecap: round;
 }
 .ftue-gesture-caption {
   font-size: 13px; font-weight: 700; white-space: nowrap;
@@ -854,16 +891,18 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .settle-badge {
   /* Tracks the frame's own move up (FRAME_CENTER_Y in SandCannonEngine.ts) so
      the two shift together instead of the dots staying pinned to the old
-     gap — see the reserved band note on .scene-wrap above. */
-  position: absolute; z-index: 7; top: 6px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px; pointer-events: none;
+     gap — see the reserved band note on .scene-wrap above. Sits low in that
+     gap now, just above the frame's own top edge, instead of up by the HUD —
+     closer to the picture the settling is actually happening in. */
+  position: absolute; z-index: 7; top: 118px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; pointer-events: none;
 }
 .settle-badge i {
   /* Warm brown, not --accent: these sit right over the open sky above the
      frame with no panel behind them, and that sky is light — a pale dot on
      it would be invisible instead of just quiet. */
   width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
-  animation: settle-dot-bounce 1s ease-in-out infinite both;
+  animation: settle-dot-grow 1s ease-in-out infinite both;
 }
 .settle-badge i:nth-child(2) { animation-delay: .15s; }
 .settle-badge i:nth-child(3) { animation-delay: .3s; }
@@ -901,23 +940,30 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 /* ---- WIN celebration ------------------------------------------------- */
 /* Only the WIN half of the result screen gets this — FAIL stays the plain
-   status readout it always was. Sunburst rays turning slowly behind the
-   card, and a punchier bounce-in (`win-pop`, an overshoot spring) than the
-   flat `result-pop` every other dialog in this file (including FAIL) uses:
-   this is the one screen meant to feel like a reward, not a status report. */
-.result-screen.is-win { overflow: hidden; }
-.result-rays {
-  position: absolute; inset: -60% -20%; z-index: 0;
-  background: repeating-conic-gradient(from 0deg, rgba(255, 214, 84, .4) 0deg 9deg, transparent 9deg 18deg);
-  animation: result-rays-spin 30s linear infinite;
-  pointer-events: none;
-}
-@keyframes result-rays-spin { to { transform: rotate(360deg); } }
+   status readout it always was: a two-tone card (mint header band naming
+   the win, cream body underneath for the copy/actions) instead of the
+   flat single-tone card every other dialog in this file uses, plus a
+   punchier bounce-in (`win-pop`, an overshoot spring) than the flat
+   `result-pop` those other dialogs get. The screen behind it is the plain
+   `--scrim` every result screen uses — no rays, no tinted/patterned wash —
+   the card itself is the celebration. */
 .result-card.is-win {
-  z-index: 1;
+  z-index: 1; padding: 0; overflow: hidden;
   animation: win-pop .5s cubic-bezier(.34,1.56,.64,1) both;
 }
 @keyframes win-pop { from { opacity: 0; transform: scale(.55); } }
+.result-card-header {
+  position: relative;
+  padding: 16px 44px 14px;
+  background: #7bcaa6;
+}
+.result-card-header h2 {
+  margin: 0; color: #fbe98f;
+  text-shadow: 0 2px 0 rgba(94, 64, 34, .35);
+}
+.result-card-body { padding: 24px; }
+.result-card.is-win .result-close-btn { background: rgba(255, 255, 255, .35); color: #2f4a3d; }
+.result-card.is-win .result-close-btn:hover { background: rgba(255, 255, 255, .55); }
 /* A `.result-card`'s own way out when it has no bottom "dismiss" button of
    its own to fall back to (the WIN card's Continue, the Daily Login card's
    Claim) — a small round icon button in the corner instead of a second
@@ -1114,9 +1160,9 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    to something resting than to something demanding attention. */
 .hub-play-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 18px 48px; border-radius: var(--r-pill);
+  padding: 26px 64px; border-radius: var(--r-chrome);
   background: #ffcad3; border: 0;
-  color: #725653; font-size: 17px; font-weight: 800; letter-spacing: .03em;
+  color: #725653; font-size: 22px; font-weight: 800; letter-spacing: .03em;
   animation: hub-play-breathe 2.8s ease-in-out infinite;
 }
 .hub-tap:active .hub-play-btn { transform: translateY(3px); animation: none; }
@@ -1163,7 +1209,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 11px !important; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
 }
 
-.hub-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+/* Four to a row, always — a fixed column count now that this lives in its
+   own full-screen `.gallery-screen` (see that class's own comment) rather
+   than a narrow `.hub-panel` bottom sheet that had to fit however many
+   `minmax(96px, 1fr)` let it. `width`/`max-width` match `.shop-grid`'s own
+   so every full-screen takeover's content sits at the same column width. */
+.hub-gallery {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  width: 100%; max-width: 420px;
+}
 .hub-gallery button {
   display: grid; justify-items: center; gap: 8px; padding: 10px 8px; cursor: pointer;
   border: 0; border-radius: var(--r-md);
@@ -1206,6 +1260,30 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .hub-gallery-milestone .coin-icon { width: 11px; height: 11px; color: inherit; }
 
+/* ---- Gallery screen ------------------------------------------------------ */
+/* A full-screen takeover, same footing as `.shop-screen`/`.skin-screen`
+   either side of it in the nav (see the JSX comment on `.gallery-screen`
+   itself for why this stopped being a `.hub-panel` bottom sheet). The hub's
+   own plain ivory wall (`--hub-navy`), not Shop's wood shelf — Gallery is
+   still browsing hub content, not a monetised surface, so it keeps the
+   room's own colour rather than borrowing Shop's. */
+.gallery-screen {
+  position: absolute; z-index: 30; inset: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
+  overflow: auto;
+  background: var(--hub-navy);
+  animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
+}
+/* Same chip `.shop-heading h2`/`.skin-heading h2` use — one consistent
+   "screen title" language across every full-screen hub takeover. */
+.gallery-heading { margin: 0 0 24px; text-align: center; }
+.gallery-heading h2 {
+  display: inline-block; margin: 0; padding: 7px 20px;
+  border-radius: var(--r-pill); background: var(--panel); border: 0;
+  font-size: 20px; font-weight: 800; color: var(--ink);
+}
+
 /* ---- Shop ---------------------------------------------------------------- */
 /* A full-screen takeover, same footing as the skin picker (`.skin-screen`
    below) — see the JSX comment on `.shop-screen` for why this stopped being
@@ -1222,8 +1300,8 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .shop-screen {
   position: absolute; z-index: 30; inset: 0;
   display: flex; flex-direction: column; align-items: center;
-  padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
-  overflow: auto;
+  padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px 0;
+  overflow: hidden;
   background-color: #775538;
   background-image:
     repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 2px, transparent 2px 24px),
@@ -1243,11 +1321,160 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    consistent "screen title" language across both full-screen hub takeovers.
    No border/shadow, per feedback that nothing in this screen should carry
    either any more — every other rule below drops them too. */
-.shop-heading { margin: 0 0 24px; text-align: center; }
+.shop-heading {
+  position: relative; margin: 0 0 16px; width: 100%; max-width: 420px;
+  display: flex; align-items: center; justify-content: center;
+}
 .shop-heading h2 {
   display: inline-block; margin: 0; padding: 7px 20px;
   border-radius: var(--r-pill); background: var(--panel); border: 0;
   font-size: 20px; font-weight: 800; color: var(--ink);
+}
+/* Only mounted on the Gems tab (see the JSX) — gems have no other readout
+   anywhere in the game, unlike gold's persistent top-left `.hub-gold-badge`,
+   so this is the one place their balance is ever shown. Pinned to the
+   heading's right edge rather than centred with the title so the two never
+   collide at narrow widths. */
+.shop-gem-badge {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px 7px 9px; border-radius: var(--r-pill);
+  background: var(--gem); color: var(--gem-ink);
+  font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.shop-gem-badge .gem-icon { width: 18px; height: 18px; }
+/* The Gems/Coins segmented switch. Flat pill-in-a-pill, same shape language
+   `.tabs`-style controls use everywhere else in this file — the active
+   segment takes its currency's own colour (teal for Gems, gold for Coins) so
+   the tab itself previews what is inside before it is even open. */
+.shop-tabs {
+  width: 100%; max-width: 420px; margin: 0 0 20px;
+  padding: 5px; border-radius: var(--r-pill); background: rgba(0, 0, 0, .18);
+  display: flex; gap: 4px;
+}
+.shop-tab-btn {
+  flex: 1; border: 0; padding: 11px 0; border-radius: var(--r-pill);
+  font-size: 15px; font-weight: 800; cursor: pointer;
+  background: transparent; color: #e6d8bf;
+}
+.shop-tab-btn.is-active.is-gems { background: var(--gem); color: var(--gem-ink); }
+.shop-tab-btn.is-active.is-coins { background: var(--gold); color: var(--gold-ink); }
+
+/* Everything below the heading/tabs scrolls in here instead of on
+   `.shop-screen` itself — see that class's own comment for why (short
+   version: `.shop-iap-toast` needs a non-scrolling box to pin itself to). */
+.shop-scroll {
+  flex: 1; min-height: 0; width: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  overflow-y: auto; padding-bottom: calc(var(--hub-nav-height) + 24px);
+}
+.shop-panel { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 26px; }
+.shop-section-head { margin: 0 0 12px; }
+.shop-section-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: #f7ecd8; }
+.shop-section-head p { margin: 2px 0 0; font-size: 12px; font-weight: 700; color: #d8c3a4; }
+
+/* ---- Special Offers ---- */
+/* Stacked top to bottom rather than a side-scrolling rail — every offer
+   reads without a swipe, same reasoning the Bundles list below follows. */
+.offer-stack { display: flex; flex-direction: column; gap: 12px; }
+.offer-card {
+  border-radius: var(--r-lg); padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.offer-card.is-teal { background: var(--gem-deep); color: #eafcff; }
+.offer-card.is-green { background: var(--accent); color: var(--accent-ink); }
+.offer-tag {
+  align-self: flex-start; padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--danger); color: var(--danger-ink);
+  font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+}
+.offer-card h4 { margin: 0; font-size: 17px; font-weight: 800; }
+.offer-contents { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
+.offer-contents .gem-icon, .offer-contents .coin-icon { width: 20px; height: 20px; color: currentColor; }
+.offer-plus { opacity: .75; font-size: 13px; }
+.buy-btn {
+  margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 10px 0;
+  font-weight: 800; font-size: 15px; cursor: pointer;
+  background: var(--panel); color: var(--ink); width: 100%;
+  transition: transform .16s;
+}
+.buy-btn:active { transform: translateY(3px); }
+
+/* ---- Bundles: coins + gems together ---- */
+.bundle-list { display: flex; flex-direction: column; gap: 10px; }
+.bundle-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--panel); border-radius: var(--r-md); padding: 10px 12px;
+}
+.bundle-icon {
+  flex: none; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--gem); color: var(--gem-ink); display: grid; place-items: center;
+}
+.bundle-icon .gem-icon { width: 24px; height: 24px; }
+.bundle-mid { flex: 1; min-width: 0; }
+.bundle-flag {
+  font-size: 11px; font-weight: 800; color: var(--gem-deep);
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px;
+}
+.bundle-amount { font-weight: 800; font-size: 15.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bundle-bonus {
+  display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: var(--r-pill);
+  background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 800;
+}
+.bundle-sub {
+  display: flex; align-items: center; gap: 4px; margin-top: 2px;
+  font-size: 12.5px; font-weight: 700; color: var(--muted);
+}
+.bundle-sub .coin-icon { width: 13px; height: 13px; color: var(--gold-line); }
+.bundle-price {
+  flex: none; border: 0; border-radius: var(--r-pill); padding: 9px 16px;
+  font-weight: 800; font-size: 14px; cursor: pointer;
+  background: var(--gem); color: var(--gem-ink); font-variant-numeric: tabular-nums;
+  transition: transform .16s;
+}
+.bundle-row.is-best .bundle-price { background: var(--gold); color: var(--gold-ink); }
+.bundle-price:active { transform: translateY(3px); }
+
+/* ---- Coin packs — unchanged content, just this screen's own card shape ---- */
+.pack-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.pack-card {
+  position: relative;
+  background: var(--panel); border-radius: var(--r-md); padding: 14px 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+}
+.pack-card .coin-icon { width: 32px; height: 32px; }
+.pack-amount { font-weight: 800; font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pack-bonus {
+  margin-left: 4px; font-size: 10.5px; font-weight: 800; color: var(--accent-ink);
+  background: var(--accent); padding: 2px 8px; border-radius: var(--r-pill);
+}
+.pack-price {
+  margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 8px 18px;
+  font-weight: 800; font-size: 13.5px; cursor: pointer;
+  background: var(--gold); color: var(--gold-ink); width: 100%; font-variant-numeric: tabular-nums;
+  transition: transform .16s;
+}
+.pack-price:active { transform: translateY(3px); }
+.pack-card.is-flag::before {
+  content: attr(data-flag); position: absolute; top: 8px; right: 8px;
+  background: var(--danger); color: var(--danger-ink);
+  font-size: 9px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: var(--r-pill);
+}
+
+/* A snackbar for every Gems-tab price pill — none of them are wired to a
+   real purchase (see the JSX), so a tap has to say why nothing happened.
+   Pinned to the screen itself, not inside the scrolling `.shop-panel`, so it
+   never scrolls away from the tap that opened it, and it sits above
+   `.hub-nav` (z-index 31) the same way `.sand-toast` sits above the aim
+   zone during play. */
+.shop-iap-toast {
+  position: absolute; z-index: 32; left: 50%; bottom: calc(var(--hub-nav-height) + 18px);
+  transform: translateX(-50%); max-width: 84%;
+  padding: 10px 18px; border-radius: var(--r-pill);
+  background: var(--panel); color: var(--ink);
+  font-size: 12.5px; font-weight: 700; text-align: center;
+  animation: toast-in .22s ease-out both;
 }
 .shop-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -1269,7 +1496,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   border: 0; border-radius: var(--r-lg); background: var(--panel);
 }
 .shop-card-icon {
-  position: relative; width: 62%; aspect-ratio: 1; border-radius: 50%;
+  position: relative; width: 84%; aspect-ratio: 1; border-radius: 50%;
   display: grid; place-items: center;
   background: var(--locked); border: 0;
 }
@@ -1286,11 +1513,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    `.shop-card-icon` above, not the square frame around it) — a bare number,
    no "×", the circle shape itself is what says "count" now. */
 .shop-card-owned {
-  position: absolute; top: -4px; right: -4px;
-  min-width: 20px; height: 20px; padding: 0 4px;
+  position: absolute; top: -6px; right: -6px;
+  min-width: 22px; height: 22px; padding: 0 4px;
   display: grid; place-items: center; border-radius: 50%;
-  background: var(--accent); color: var(--accent-ink); border: 0;
-  font-size: 11px; font-weight: 800;
+  background: var(--ink); color: #fff; border: 2px solid var(--gold-line);
+  font-size: 12px; font-weight: 800;
 }
 /* The price pill: gold, not the green every other primary action in the
    game uses — this one is money, and gold is the colour the rest of the
@@ -1537,6 +1764,26 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   transition: width .3s cubic-bezier(.34,1.56,.64,1), fill .16s, stroke .16s;
 }
 .hub-nav button.is-active .hub-nav-icon { width: 35px; stroke: none; }
+/* Home/Shop/Skin's icons are real PNGs (`TAB_PHOTO_ICON` in SandGame.tsx),
+   not line art, so they opt out of the `fill`/`stroke` toggle above via
+   their own `object-fit`/`mask-*` rules instead — see `PhotoTabIcon` there
+   for why. Active is just the artwork itself, full colour; idle is a
+   `<span>` filled with `--wood-ink` and masked by that same artwork's own
+   alpha channel (`mask-image` set inline per instance, since each of the
+   three points at a different file — nothing here names one), so the
+   silhouette traces the real image outline rather than an approximation of
+   it. `height` is pinned to `width` on both rules (`.hub-nav-icon` above
+   only ever sets `width`, relying on an SVG's own `viewBox` to keep its
+   content square) since neither an `<img>` nor a masked `<span>` has a
+   viewBox to do that for them. */
+.photo-tab-icon { height: 30px; object-fit: contain; }
+.hub-nav button.is-active .photo-tab-icon { height: 35px; }
+.photo-tab-icon.is-silhouette {
+  display: inline-block; background-color: var(--wood-ink);
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+}
 /* Each tab fills its own tile with its own colour when active, rather than
    one shared accent for all five — Home green, Skin coral, Shop gold,
    Gallery sky, Customize wood — and fills its own icon with that colour's
@@ -1548,15 +1795,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* Home's active chip uses the shared `--accent` green (with its `--accent-ink`
    partner for the icon), the same green used elsewhere for buttons/toggles —
    the one exception among the five tabs, which otherwise get their own scoped
-   tokens below so they don't drag an unrelated colour along with them. */
+   tokens below so they don't drag an unrelated colour along with them.
+   Home, Skin, Shop and Gallery no longer pair their bubble with an icon
+   `fill` line the way Customize below still does — their icon is a
+   full-colour photo the instant it is active (`PhotoTabIcon` in
+   SandGame.tsx), not a silhouette this bubble colour would show through. */
 .hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: var(--accent); }
-.hub-nav button[data-tab="home"].is-active .hub-nav-icon { fill: var(--accent-ink); }
 .hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { background: var(--danger); }
-.hub-nav button[data-tab="skin"].is-active .hub-nav-icon { fill: var(--danger-ink); }
 .hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { background: var(--gold); }
-.hub-nav button[data-tab="shop"].is-active .hub-nav-icon { fill: var(--gold-ink); }
 .hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { background: var(--sky); }
-.hub-nav button[data-tab="gallery"].is-active .hub-nav-icon { fill: var(--sky-ink); }
 .hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { background: var(--wood); }
 .hub-nav button[data-tab="customize"].is-active .hub-nav-icon { fill: var(--wood-ink); }
 
@@ -1603,9 +1850,9 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    opacity fade that would otherwise let the scene behind it show through
    while a fully-opaque takeover is still becoming one. */
 @keyframes shop-screen-in { from { transform: translateY(16px); } }
-@keyframes settle-dot-bounce {
-  0%, 80%, 100% { opacity: .35; transform: translateY(0) scale(.8); }
-  40% { opacity: 1; transform: translateY(-4px) scale(1); }
+@keyframes settle-dot-grow {
+  0%, 80%, 100% { opacity: .35; transform: scale(.6); }
+  40% { opacity: 1; transform: scale(1.6); }
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
 @keyframes overlay-in { from { opacity: 0; } }

@@ -393,6 +393,13 @@ const IDLE_SPIN_SECONDS_PER_TURN = 10;
  * player taps Play. Gameplay stays paused for this stretch — a shot resolved mid-spin would
  * hit the wrong cell, since the aim math assumes frameRoot is unrotated. */
 const SPIN_RETURN_SECONDS = 1;
+/** How much smaller the picture sits on the home screen than it does during
+ * play — shrunk so the frame's own right edge clears the daily-login button
+ * floating over that corner of the hub (`.hub-gift-wrap` in globals.css;
+ * with the frame at full size its edge sat right under it). Eases back to 1
+ * over the same `SPIN_RETURN_SECONDS` stretch the picture's rotation already
+ * eases back over once Play is tapped — see `updateFrameSpin`. */
+const HUB_FRAME_SCALE = 0.74;
 
 // SAND_SATURATION_JITTER / SAND_LIGHTNESS_JITTER live in ./sand-color, shared
 // with the editor's preview so a level textures the same in both places.
@@ -914,6 +921,7 @@ export class SandCannonEngine {
     const depth = this.cell * 1.75;
 
     this.frameRoot.position.set(0, FRAME_CENTER_Y, SAND_PLANE_Z);
+    this.frameRoot.scale.setScalar(this.idle ? HUB_FRAME_SCALE : 1);
     this.scene.add(this.frameRoot);
 
     const backing = this.track(
@@ -2617,17 +2625,20 @@ export class SandCannonEngine {
       { kind: "HOLD", ms: SETTLE_TAIL_MS },
     );
     this.settleLandings = 0;
-    // The falling/settling that follows is purely cosmetic — the next shot
-    // does not wait on it. Only the clear-flash-and-dissolve beat itself
-    // holds the trigger: firing mid-dissolve would land a shot against a
-    // board the player can't fully read yet, so the cooldown is stretched to
-    // cover just that (never shortened — SHOT_COOLDOWN_MS still applies if
-    // it's already longer, e.g. nothing was cleared).
+    // Firing stays locked for the whole clear-flash-and-dissolve-and-fall
+    // sequence, not just the clear beat: landing a shot on a board that is
+    // still pouring sand would aim it at grains that haven't reached their
+    // final cell yet. `setPhase("SETTLING")` below is what actually blocks
+    // `canInteract()`; this floor just keeps the ordinary cooldown from being
+    // shorter than that lock (never longer — SHOT_COOLDOWN_MS still applies
+    // on top if it's already longer, e.g. nothing was cleared).
     this.nextShotAt = Math.max(this.nextShotAt, performance.now() + CLEAR_DURATION_MS);
     // State applies immediately so the board, ammo count, etc. are correct
-    // the instant the outcome is known, even though input stays held off
-    // until the clear beat above finishes.
-    this.state = resolution.state;
+    // the instant the outcome is known — but the phase it carries is
+    // overridden to SETTLING (unless the shot already ended the level) so
+    // `canInteract()` stays closed and the "still moving" dots (see
+    // `.settle-badge`) show until `advanceBeats` clears the queue below.
+    this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
     this.callbacks.onState(this.cloneState());
     if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); }
     if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
@@ -2799,12 +2810,13 @@ export class SandCannonEngine {
   }
 
   /**
-   * Plays the queued beats purely as a cosmetic animation track — the clear
-   * flash, pixel dissolve and settle fall. `handleImpact` applies gameplay
-   * state (and unblocks the next shot) the instant a shot resolves, so this
-   * no longer gates anything; it just keeps the board's visuals catching up
-   * to whatever `this.state` already is, even while later shots queue more
-   * beats on top (appended, never replacing what is already animating).
+   * Plays the queued beats — the clear flash, pixel dissolve and settle
+   * fall. `handleImpact` applies gameplay state the instant a shot resolves,
+   * but while `this.state.phase` is SETTLING that state's own `canInteract()`
+   * stays closed, so the last beat draining the queue is what hands the
+   * player their next shot back (never replacing what is already animating —
+   * a later shot can't queue more beats on top since firing is locked until
+   * this queue is empty).
    */
   private advanceBeats(deltaMs: number) {
     if (!this.beats.length) return;
@@ -2820,7 +2832,13 @@ export class SandCannonEngine {
       if (!this.beats.length) break;
       this.startBeat(this.beats[0]);
     }
-    if (!this.beats.length) this.beatStarted = false;
+    if (!this.beats.length) {
+      this.beatStarted = false;
+      if (this.state.phase === "SETTLING" && !this.state.result) {
+        this.setPhase("READY");
+        this.callbacks.onState(this.cloneState());
+      }
+    }
   }
 
   // ---- loop --------------------------------------------------------------
@@ -2840,9 +2858,11 @@ export class SandCannonEngine {
   }
 
   private step(deltaMs: number) {
-    // Both run every tick now, not either/or: a settle animation queued by
-    // an earlier shot keeps playing in the background even while a later
-    // shot's bullet is still in the air, instead of freezing until it lands.
+    // Unconditional, not either/or: `this.projectile` is only ever set while
+    // there is no settle queue to advance (firing is locked for the whole
+    // SETTLING phase — see `handleImpact`/`advanceBeats`), but both are cheap
+    // no-ops when idle, so there is no reason to make that mutual exclusion
+    // explicit here too.
     if (this.projectile) this.updateProjectile(this.projectile);
     this.advanceBeats(deltaMs);
 
@@ -2981,6 +3001,12 @@ export class SandCannonEngine {
     // finish playing towards.
     this.cannonEntranceStart = null;
     this.spinReturnStart = null;
+    // Shrinks back down instantly, same treatment as the cannon vanishing
+    // above rather than the eased grow `updateFrameSpin` plays on the way
+    // INTO play — nothing about arriving back at the hub is worth animating,
+    // the player is not looking at this frame while a level's own result
+    // screen or the hub nav is what just fired this.
+    this.frameRoot.scale.setScalar(HUB_FRAME_SCALE);
     this.pause();
     stopAmbience();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
@@ -3037,8 +3063,14 @@ export class SandCannonEngine {
       const t = Math.min(1, (performance.now() - this.spinReturnStart) / (SPIN_RETURN_SECONDS * 1000));
       const eased = 1 - (1 - t) ** 3;
       this.frameRoot.rotation.y = this.spinReturnFrom * (1 - eased);
+      // The picture growing back to full size rides the same timer/easing as
+      // its rotation straightening out — always FROM `HUB_FRAME_SCALE` TO 1
+      // (unlike rotation, there is no varying "from" to capture, since the
+      // hub always leaves it shrunk by exactly that fixed amount).
+      this.frameRoot.scale.setScalar(HUB_FRAME_SCALE + (1 - HUB_FRAME_SCALE) * eased);
       if (t >= 1) {
         this.frameRoot.rotation.y = 0;
+        this.frameRoot.scale.setScalar(1);
         this.spinReturnStart = null;
         this.resume();
       }

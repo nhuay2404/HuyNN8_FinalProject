@@ -60,6 +60,16 @@ function starterGold(): number {
  * coin — the shop should be something they discover by running out, not a
  * wall in front of a mechanic they have never seen work.
  */
+/**
+ * The hard-currency balance shown on the Shop's Gems tab. Purely a display
+ * number for now — nothing in the game spends or earns gems yet, and the
+ * Gems tab's own bundles/offers are not wired to a real payment processor
+ * (see `SandGame.tsx`'s Shop screen) — so this is a starter prop, the gem
+ * equivalent of what `STARTER_GOLD` was before gold became real and
+ * spendable.
+ */
+export const STARTER_GEMS = 240;
+
 export const STARTER_BOOSTER_CHARGES: Record<BoosterType, number> = {
   radiusOvercharge: 1,
   prismShot: 1,
@@ -137,12 +147,14 @@ export function dailyLoginReward(dayIndex: number): number {
 
 export type Wallet = {
   gold: number;
+  gems: number;
   boosters: Record<BoosterType, number>;
 };
 
 function defaultWallet(): Wallet {
   return {
     gold: starterGold(),
+    gems: STARTER_GEMS,
     boosters: {
       radiusOvercharge: starterBoosterCharges("radiusOvercharge"),
       prismShot: starterBoosterCharges("prismShot"),
@@ -191,6 +203,7 @@ function readWallet(): Wallet {
     const boosters = (parsed?.boosters ?? {}) as Partial<Record<BoosterType, number>>;
     cachedWallet = {
       gold: sanitiseCount(parsed?.gold, starterGold()),
+      gems: sanitiseCount(parsed?.gems, STARTER_GEMS),
       boosters: {
         radiusOvercharge: sanitiseCount(boosters.radiusOvercharge, starterBoosterCharges("radiusOvercharge")),
         prismShot: sanitiseCount(boosters.prismShot, starterBoosterCharges("prismShot")),
@@ -249,6 +262,10 @@ export function getWallet(): Wallet {
 
 export function getGold(): number {
   return readWallet().gold;
+}
+
+export function getGems(): number {
+  return readWallet().gems;
 }
 
 export function getBoosterCount(type: BoosterType): number {
@@ -320,6 +337,7 @@ export function __resetWalletForTests(overrides?: Partial<Wallet>) {
   const base = defaultWallet();
   cachedWallet = {
     gold: overrides?.gold ?? base.gold,
+    gems: overrides?.gems ?? base.gems,
     boosters: { ...base.boosters, ...(overrides?.boosters ?? {}) },
   };
   // A test's own known-state wallet, not "nothing was here yet" — must never
