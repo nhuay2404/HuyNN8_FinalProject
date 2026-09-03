@@ -317,15 +317,13 @@ function CostumeIcon({ id }: { id: CostumeId }) {
   );
 }
 
-/** A plain X, drawn in currentColor like the other line-art icons here — the
- * skin screen's own close button, since it is a full-screen takeover with no
- * hub nav bar of its own to fall back to `home` on. */
-function CloseIcon() {
-  return (
-    <svg className="close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M6 6l12 12M18 6 6 18" />
-    </svg>
-  );
+/** Every "cancel/dismiss this card" button shares this one mark — real
+ * artwork (`/public/icons/CancelIcon.png`) rather than a hand-drawn X, same
+ * as Home/Restart's `ReturnMainHubIcon.png`/`ReplayIcon.png`. The art already
+ * carries its own filled red-pink circle, so callers go bare (no button
+ * background of their own) and just size/position this. */
+function CancelIcon() {
+  return <img className="close-icon" src="/icons/CancelIcon.png" alt="" aria-hidden="true" />;
 }
 
 /** A plain padlock, drawn in currentColor like the other line-art icons here
@@ -355,7 +353,7 @@ function LockIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "menu" | "help" | "home" | "restart" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
+type ChromeGlyph = "menu" | "help" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
@@ -375,18 +373,6 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
         <>
           <path d="M9.3 9.1a2.8 2.8 0 0 1 5.4.9c0 1.9-2.7 2.2-2.7 4" />
           <path d="M12 17.4v.1" strokeWidth="2.6" />
-        </>
-      )}
-      {name === "home" && (
-        <>
-          <path d="M4.4 10.6 12 4.4l7.6 6.2" />
-          <path d="M6.4 12v7.6h11.2V12" />
-        </>
-      )}
-      {name === "restart" && (
-        <>
-          <path d="M19.2 12a7.2 7.2 0 1 1-2.4-5.4" />
-          <path d="M18.6 3.6v3.6h-3.6" />
         </>
       )}
       {name === "sound-on" && (
@@ -456,6 +442,14 @@ function StepperArrow({ direction }: { direction: "prev" | "next" }) {
  * rather than the element, so they keep applying unchanged. */
 function CoinIcon() {
   return <img className="coin-icon" src="/icons/CoinIcon.png" alt="" aria-hidden="true" />;
+}
+
+/** The hub currency HUD's own "buy more" mark — real artwork
+ * (`/public/icons/PlusIcon.png`), same as `CoinIcon`/`CancelIcon`. Already
+ * carries its own filled green circle, so `.hub-gold-plus` just sizes and
+ * positions it rather than drawing a circle of its own behind it. */
+function PlusIcon() {
+  return <img className="hub-gold-plus-icon" src="/icons/PlusIcon.png" alt="" aria-hidden="true" />;
 }
 
 /** The Shop's hard-currency glyph — a faceted gem, drawn the same way
@@ -822,7 +816,7 @@ export default function SandGame() {
   const suppressGoldSyncRef = useRef(false);
   const goldTweenRef = useRef<number | null>(null);
   const [goldBump, setGoldBump] = useState(0);
-  const goldHudRef = useRef<HTMLDivElement | null>(null);
+  const goldHudRef = useRef<HTMLSpanElement | null>(null);
   const todayCoinRef = useRef<HTMLSpanElement | null>(null);
   const coinBurstId = useRef(0);
   const [coinBursts, setCoinBursts] = useState<
@@ -925,6 +919,27 @@ export default function SandGame() {
       setIapNotice(false);
     }
   }, [tab]);
+
+  // The hub's own currency HUD (`.hub-gold-wrap`) doubles as a shortcut to
+  // buying more — tapping it jumps straight to the Gems tab's own "Coins"
+  // section (real-money packs, `COIN_PACKS`), not just the tab itself, since
+  // that section sits below Special Offers and would otherwise need a manual
+  // scroll to find. `coinPackSectionRef` is what gets scrolled into view;
+  // `scrollToCoinPacks` just remembers the intent across the tab switch
+  // (`shopTab` flipping to "gems" unmounts/remounts the Coins tab's content,
+  // so the scroll can only happen once that new content exists).
+  const coinPackSectionRef = useRef<HTMLDivElement | null>(null);
+  const [scrollToCoinPacks, setScrollToCoinPacks] = useState(false);
+  const openCoinPacks = useCallback(() => {
+    setTab("shop");
+    setShopTab("gems");
+    setScrollToCoinPacks(true);
+  }, []);
+  useEffect(() => {
+    if (!scrollToCoinPacks || tab !== "shop" || shopTab !== "gems") return;
+    coinPackSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScrollToCoinPacks(false);
+  }, [scrollToCoinPacks, tab, shopTab]);
   /**
    * Pays out `pendingHomeReward` (see its own comment) the moment its badge
    * is actually on screen to fly into — `!playing && tab === "home"`, the
@@ -1545,17 +1560,29 @@ export default function SandGame() {
           </div>
         )}
 
-        {/* The hub's persistent gold balance — also the landing target for
-            the daily-login claim's flying coins (`claimDailyLoginWithFlight`
-            above), which is why it needs a stable ref rather than living
-            inside the Shop screen itself (only mounted on the Shop tab). */}
+        {/* The hub's persistent gold balance — also a shortcut to buying more
+            (`openCoinPacks`, its own comment above) and the landing target
+            for the daily-login claim's flying coins
+            (`claimDailyLoginWithFlight` above), which is why the pill itself
+            needs a stable ref rather than living inside the Shop screen
+            (only mounted on the Shop tab). The coin art sits half outside
+            the pill on purpose — a big coin overlapping the chip's own edge,
+            not a small icon tucked inside it, per the reference layout. */}
         {!playing && (
-          <div className="hub-gold-wrap">
-            <div className="hub-gold-badge" ref={goldHudRef}>
-              <CoinIcon />
+          <button
+            type="button"
+            className="hub-gold-wrap"
+            onClick={openCoinPacks}
+            aria-label={`${displayGold} coins — buy more`}
+          >
+            <CoinIcon />
+            <span className="hub-gold-badge" ref={goldHudRef}>
               <strong key={goldBump}>{displayGold}</strong>
-            </div>
-          </div>
+              <span className="hub-gold-plus" aria-hidden="true">
+                <PlusIcon />
+              </span>
+            </span>
+          </button>
         )}
 
         {/* One `.coin-fly` span per airborne coin from the last daily-login
@@ -1710,14 +1737,19 @@ export default function SandGame() {
           >
 
             {tab === "home" ? (
-              <button
-                className="hub-tap"
-                type="button"
-                onClick={startPlaying}
-                aria-label={`Play ${level.name}`}
-              >
-                <span className="hub-play-hint"><span className="hub-play-btn">Play Level {level.id}</span></span>
-              </button>
+              <div className="hub-actions">
+                <button
+                  type="button"
+                  className="hub-play-btn"
+                  onClick={startPlaying}
+                  aria-label={`Play ${level.name}`}
+                >
+                  Level {level.id}
+                </button>
+                <button type="button" className="hub-modes-btn" aria-label="Modes">
+                  Modes
+                </button>
+              </div>
             ) : (
               // Not a click-through backdrop: while a section is open, tapping
               // anywhere off it goes back to the picture rather than starting a
@@ -2001,7 +2033,7 @@ export default function SandGame() {
                   </div>
                 </div>
 
-                <div className="shop-section">
+                <div className="shop-section" ref={coinPackSectionRef}>
                   <div className="shop-section-head">
                     <h3>Coins</h3>
                     <p>Buy coins directly — no gems needed</p>
@@ -2215,7 +2247,19 @@ export default function SandGame() {
             `settingsOpen`/`playing` effect above `restart`) — the old
             in-play menu doubled as a pause screen and this replaces it. */}
         {settingsOpen && (
-          <div className="settings-screen" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <div
+            className="settings-screen"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            // A tap on the scrim itself (not one that bubbled up from the
+            // card) dismisses the same way the corner cancel icon does — the
+            // same "tap outside a sheet to close it" gesture the daily-login
+            // card below already uses.
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setSettingsOpen(false);
+            }}
+          >
             <div className="settings-card">
               <div className="settings-card-header">
                 <h2 id="settings-title">Settings</h2>
@@ -2225,7 +2269,7 @@ export default function SandGame() {
                   onClick={() => setSettingsOpen(false)}
                   aria-label="Close settings"
                 >
-                  <CloseIcon />
+                  <CancelIcon />
                 </button>
               </div>
               {/* Mid-play only: the hub has no in-progress run to leave or
@@ -2241,7 +2285,7 @@ export default function SandGame() {
                     aria-label="Home"
                     title="Home"
                   >
-                    <Glyph name="home" />
+                    <img className="settings-round-button-icon" src="/icons/ReturnMainHubIcon.png" alt="" aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -2250,7 +2294,7 @@ export default function SandGame() {
                     aria-label="Restart"
                     title="Restart"
                   >
-                    <Glyph name="restart" />
+                    <img className="settings-round-button-icon" src="/icons/ReplayIcon.png" alt="" aria-hidden="true" />
                   </button>
                 </div>
               )}
@@ -2325,7 +2369,7 @@ export default function SandGame() {
               <div className="result-card-header">
                 <h2>FRAME CLEARED</h2>
                 <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
-                  <CloseIcon />
+                  <CancelIcon />
                 </button>
               </div>
               <div className="result-card-body">
@@ -2420,7 +2464,7 @@ export default function SandGame() {
                 onClick={() => setDailyLoginOverride(null)}
                 aria-label="Close"
               >
-                <CloseIcon />
+                <CancelIcon />
               </button>
               <h2>Daily Login</h2>
               <div className="daily-login-strip">

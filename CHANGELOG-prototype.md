@@ -5502,3 +5502,418 @@ nên card gần như chạm hẳn mép trên của khay, đọc như bị đè b
 
 **Test:** 123/123 test pass. Verify trên preview cả 2 costume — card đủ khoảng thở phía trên, viền xanh
 preview hiện trọn vẹn không bị cắt, khay không còn viền/bóng.
+
+---
+
+## 123. Shop redesign: 2 tab Gems (real-money, hiện chỉ để trưng) / Coins (booster shop cũ), dựng từ wireframe (03/09)
+
+Yêu cầu: dựng wireframe Shop lấy cảm hứng Animal Crossing (màu trơn, không gradient/viền/bóng), chia 2 tab
+theo loại tiền tệ, sau khi duyệt thì áp thẳng vào code thật (không dừng ở mockup).
+
+**Wallet (`economy.ts`):** thêm `gems: number` vào `Wallet`, hằng số `STARTER_GEMS = 240` — hard currency
+mới, thuần hiển thị, chưa có gì tiêu được nó (giống gold hồi trước khi có booster). `getGems()`,
+`readWallet()`/`defaultWallet()`/`__resetWalletForTests` cập nhật theo. Không hook qua `economy.csv` vì chưa
+cần cấu hình gì (đơn giản hoá có chủ đích).
+
+**Shop screen (`SandGame.tsx`, `globals.css`):**
+- State `shopTab: "gems" | "coins"`, mặc định `"coins"` (giữ đúng hành vi hiện có, tab mới là phần thêm).
+- Tab **Gems**: Special Offers (2 gói, mỗi gói gems+coins), Gem Bundles (5 mốc 80→7.000 gems, $0.99→$49.99,
+  tag "Most popular"/"Best value"), Coins (7 mốc $0.99→$99.99 mua coin trực tiếp). Toàn bộ nút mua chỉ gọi
+  `notifyIapComingSoon()` — chưa có payment processor thật, hiện toast "Real-money purchases aren't live in
+  this build yet." (`.shop-iap-toast`).
+- Tab **Coins**: y nguyên shop booster cũ (Radius Overcharge/Prism Shot), không đổi logic mua.
+- `.shop-scroll` tách riêng khỏi `.shop-screen` (screen hết `overflow:auto`, chuyển `overflow:hidden`) — lý
+  do: heading/tab-switcher cần đứng yên không cuộn theo, và `.shop-iap-toast` cần một box không-cuộn để ghim
+  vào, nếu để chung 1 vùng cuộn thì toast cuộn mất khỏi màn hình cùng nội dung (bug tự phát hiện khi test).
+- Token màu mới `--gem`/`--gem-deep`/`--gem-ink` (xanh ngọc/mint) cho hard currency, tách biệt với `--gold`.
+- `GemIcon` component mới (kiểu vẽ giống `CoinIcon`: fill phẳng + facet line).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: chuyển tab, cuộn, bấm mua ở tab Gems
+ra đúng toast, tab Coins mua booster vẫn hoạt động như cũ không đổi gì.
+
+---
+
+## 124. Shop: Special Offers xếp dọc, Bundle đổi thành gems+coins gộp chung (03/09)
+
+Phản hồi ngay sau mục 123.
+
+**Sửa (`SandGame.tsx`, `globals.css`):**
+- `.offer-stack` đổi từ dải cuộn ngang (`overflow-x`) sang xếp dọc từ trên xuống — mỗi offer đọc được không
+  cần vuốt ngang.
+- Data `BUNDLES` đổi cấu trúc: trước chỉ có `gems`, giờ mỗi gói có cả `gems` **và** `coins` (route qua 1 lần
+  mua nhận cả 2 loại tiền) — card bundle hiện thêm dòng phụ `.bundle-sub` (icon coin nhỏ + số coin) dưới số
+  gems chính. Section **Coins** (mua coin thuần bằng tiền thật) giữ nguyên không đổi.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass.
+
+---
+
+## 125. Home tab: import ảnh thật `HomeIcon.png` thay icon vector (03/09)
+
+Yêu cầu: thay icon Home ở thanh nav dưới bằng đúng ảnh tham khảo (ngôi nhà mái đỏ), không vẽ lại bằng vector.
+
+**`SandGame.tsx`:** `HomeIcon({ active })` — active thì render thẳng `<img src="/icons/HomeIcon.png">` full
+màu; không active thì render `<span>` nền `--wood-ink` dùng CSS `mask-image` trỏ **đúng file ảnh đó** để cắt
+theo alpha thật của ảnh — silhouette 1 màu nâu sẫm luôn khớp chính xác hình dạng ảnh gốc, không phải bản vẽ
+tay gần đúng, và 2 trạng thái không bao giờ lệch nhau vì cùng xuất phát từ 1 file. `HubIcon` tách case
+`"home"` ra khỏi khối `<svg>` dùng chung của 4 tab còn lại (kỹ thuật cũ "1 path, CSS toggle fill/stroke"
+không áp dụng được cho ảnh raster nhiều màu).
+
+**`globals.css`:** `.home-icon-photo`/`.is-silhouette` mới (kích thước ăn theo `.hub-nav-icon` sẵn có,
+`object-fit: contain`, `mask-size/repeat/position: contain/no-repeat/center`).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify: active hiện đủ màu, các tab khác vẫn active/inactive
+đúng như cũ.
+
+---
+
+## 126. Áp ảnh thật cho tab Shop & Skin, refactor icon-ảnh dùng chung (03/09)
+
+**`SandGame.tsx`:** tổng quát hoá mục 125 — map `TAB_PHOTO_ICON: Partial<Record<HubTab, string>>` (tab →
+đường dẫn ảnh) và component dùng chung `PhotoTabIcon({ src, active })` thay cho `HomeIcon` riêng. Thêm
+`shop: "/icons/ShoppingCartIcon.png"`, `skin: "/icons/CannonSkinIcon.png"`. `HubIcon` giờ tra `TAB_PHOTO_ICON`
+trước, có thì trả `PhotoTabIcon`, không thì mới vẽ `<svg>` như cũ (Gallery, Customize).
+
+**`globals.css`:** `.home-icon-photo`/`.is-silhouette` đổi tên thành `.photo-tab-icon` (dùng chung), bỏ
+`mask-image` cứng theo 1 file (mỗi tab trỏ ảnh khác nhau) — set qua inline style `WebkitMaskImage`/`maskImage`
+theo từng instance. Dọn 3 dòng CSS `fill` chết (Home/Skin/Shop không còn dùng `fill` để tô icon nữa).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify: Shop active hiện xe đẩy hàng đủ màu, Skin active
+hiện cannon-trên-móc-áo đủ màu, cả hai inactive đều ra đúng silhouette nâu sẫm.
+
+---
+
+## 127. Áp ảnh thật cho tab Gallery + icon Coin currency (03/09)
+
+**`SandGame.tsx`:**
+- Thêm `gallery: "/icons/GalleryIcon.png"` vào `TAB_PHOTO_ICON`, bỏ case `"gallery"` khỏi `<svg>` dùng chung
+  (Customize giờ là tab cuối cùng còn icon vector).
+- `CoinIcon()` đổi hẳn từ SVG vẽ tay sang `<img src="/icons/CoinIcon.png">` — icon này không có trạng thái
+  active/inactive (giá tiền không "được chọn"), nên chỉ là ảnh tĩnh; mọi nơi dùng `.coin-icon` (badge ví,
+  giá booster, gói coin, daily login, coin bay khi nhận thưởng) tự động ăn theo vì đều style qua class, không
+  qua element.
+
+**`globals.css`:** dọn nốt dòng `fill` chết còn lại cho Gallery; `.coin-icon` gốc bỏ `color: var(--gold-line)`
+(không còn tác dụng với `<img>`), thêm `object-fit: contain`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass.
+
+---
+
+## 128. Nút Daily Login: đổi sang `LoginIcon.png`, hộp vuông bo góc nền mint (03/09)
+
+Yêu cầu: dùng đúng ảnh lịch tham khảo; hộp chứa đổi từ tròn sang vuông bo góc nhẹ, nền mint.
+
+**`SandGame.tsx`:** nút gift render `<img src="/icons/LoginIcon.png">` thay `<Glyph name="gift" />`. Xoá case
+`"gift"` khỏi `Glyph`/`ChromeGlyph` (không còn nơi nào dùng).
+
+**`globals.css`:** `.gift-button` mới (override `.icon-button` dùng chung) — `border-radius: var(--r-md)`,
+nền mint `#93e6c4`, hover `#7ed8b3`. `.gift-button-icon` 30px, `object-fit: contain`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass.
+
+---
+
+## 129. Gallery: full-screen như Shop/Skin, grid 4 level/hàng (03/09)
+
+Yêu cầu: Gallery đang là bottom-sheet nhỏ (`.hub-panel`) nổi trên hình nền — đổi thành full-screen takeover
+giống Shop/Skin, và ép 4 thumbnail/hàng thay vì tự co giãn.
+
+**`SandGame.tsx`:** thêm `.gallery-screen` (cùng tầng `.shop-screen`/`.skin-screen`, loại khỏi điều kiện render
+của `.hub-screen`), chuyển nguyên nội dung gallery (thumbnail, khoá theo tiến trình, badge mốc thưởng — logic
+không đổi, chỉ đổi khung chứa) sang đó. Ẩn `.hub-gift-wrap` (nút daily login nổi) khi ở tab Gallery, giống
+cách Shop đã ẩn — full-screen giờ chiếm đúng góc nút đó từng nổi.
+
+**`globals.css`:** `.hub-gallery` đổi `grid-template-columns` từ `repeat(auto-fill, minmax(96px, 1fr))` sang
+`repeat(4, 1fr)` cố định + `width/max-width` khớp `.shop-grid`. `.gallery-screen`/`.gallery-heading` mới, nền
+`var(--hub-navy)` (tường cream của hub, không mượn màu gỗ của Shop vì Gallery không phải bề mặt kiếm tiền).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify: Gallery chiếm hết màn hình, đúng 4 thumbnail/hàng,
+nút quà tặng không còn đè lên grid.
+
+---
+
+## 130. Bố cục Hub: thu nhỏ bức tranh, logic đóng Daily Login, ẩn ở Skin/Customize, Settings hiện mọi hub (03/09)
+
+4 yêu cầu trong 1 lượt.
+
+**1. Thu nhỏ bức tranh ở hub, phóng to lại khi Play (`SandCannonEngine.ts`):** hằng số `HUB_FRAME_SCALE =
+0.74` — lý do: mép phải bức tranh cỡ thật chạm đúng vào nút daily login nổi bên phải. `buildFrame()` set
+scale ban đầu theo `this.idle`. `setIdle(true)` (về hub) co ngay lập tức, cùng kiểu snap-tức-thì với cannon
+biến mất (không animate). `setIdle(false)` (bấm Play) tận dụng animation "xoay tranh về góc thẳng" có sẵn
+(`spinReturnStart`/`SPIN_RETURN_SECONDS`) — `updateFrameSpin` giờ nội suy thêm `scale` cùng lúc với
+`rotation.y`, từ `HUB_FRAME_SCALE` lên 1 trong đúng 1 giây, cùng easing.
+
+**2. Logic nút Daily Login (`SandGame.tsx`):**
+- Nút tự ẩn khi modal đang mở (đỡ đè lên card của chính nó).
+- Thêm đóng bằng bấm ra ngoài hộp: `onClick` trên `.result-screen` (scrim), chỉ đóng nếu
+  `event.target === event.currentTarget` (không đóng khi bấm bên trong card, tránh bấm nhầm khi tương tác nội
+  dung). Nút X góc (đã có sẵn) vẫn hoạt động như cũ.
+
+**3. Ẩn nút Daily Login ở Skin & Customize:** gộp điều kiện hiện nút xuống còn đúng 1 dòng `tab === "home"`
+(trước đó chỉ loại trừ Shop/Gallery).
+
+**4. Settings hiện ở mọi hub:** bỏ `hidden={tab === "skin"}` trên `.settings-wrap` — lý do ẩn cũ ("Skin có
+nút đóng riêng ở góc đó") đã lỗi thời, Skin screen hiện không còn nút đóng riêng nào (chỉ dựa vào `.hub-nav`
+để rời màn), nên ẩn gear đi là để trống góc không cần thiết.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: bức tranh nhỏ hẳn ở hub không đè icon,
+phóng to mượt khi bấm Play; mở Daily Login rồi bấm ra ngoài đóng được; Skin/Customize không còn nút daily
+login; Settings xuất hiện đúng ở Skin.
+
+---
+
+## 131. Sửa lỗi: FTUE gesture / tutorial còn hiện đè lên Home hub sau khi Settings → Home (03/09)
+
+Báo lỗi: mở gợi ý FTUE (kéo-thả) giữa màn, vào Settings bấm Home mà chưa thao tác/đóng gợi ý — gợi ý vẫn tiếp
+tục hiện đè lên Home hub.
+
+**Nguyên nhân:** `{ftueGestureOpen && level.ftueGesture && (...)}` và `{tutorialOpen && level.tutorial &&
+(...)}` không hề kiểm tra `playing` — 2 overlay này chỉ tắt khi người chơi thật sự chạm vùng ngắm
+(`AIM_TOUCHED`) hoặc bấm "Got it", không có đường nào tắt khi rời màn chơi bằng cách khác (nút Home trong
+Settings, X màn WIN, Home màn FAIL).
+
+**Sửa (`SandGame.tsx`):** thêm `playing &&` vào cả 2 điều kiện render. Đồng thời reset cả
+`setTutorialOpen(false)`/`setFtueGestureOpen(false)` ngay trong `goHome()` (hàm chung mọi đường về Home đều
+gọi qua) — không chỉ chặn hiển thị mà còn dọn state, tránh còn "mở ngầm" khi quay lại chơi.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Tái hiện đúng lỗi rồi xác nhận đã hết: mở FTUE giữa màn →
+Settings → Home → không còn overlay nào trên Home hub.
+
+---
+
+## 132. Nút Settings: đổi sang `SettingIcon.png`, sửa lỗi bị cắt góc (03/09)
+
+**`SandGame.tsx`:** `<img src="/icons/SettingIcon.png">` thay `<Glyph name="gear" />`. Xoá case `"gear"` khỏi
+`Glyph`/`ChromeGlyph` (không còn nơi nào dùng).
+
+**`globals.css`:** `.settings-button` chuyển nền trong suốt (ảnh đã có sẵn nền vuông bo góc xám đậm riêng),
+`.settings-button-icon` 44px `object-fit: contain`. Bug phát sinh ngay lượt đầu: có thêm `border-radius` +
+`overflow: hidden` làm "safety clip" — bị báo cắt mất góc ảnh. Sửa: bỏ hẳn `overflow: hidden`/border-radius
+khỏi `.settings-button`, không clip gì cả, để `object-fit: contain` (không phải `cover`) là quy tắc kích
+thước duy nhất — ảnh hiện nguyên vẹn 100%.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify: icon hiện đủ 4 góc vuông, không góc nào bị cắt.
+
+---
+
+## 133. FTUE: đổi bàn tay vẽ tay sang ảnh thật `FTUEicon.png` (03/09)
+
+**`SandGame.tsx`:** trong `<svg className="ftue-gesture-glyph">`, thay group `<rect>/<circle>/<rect>/<line>`
+dựng tay bằng 1 thẻ `<image href="/icons/FTUEicon.png" x={-33} y={-69} width={72} height={83} />` lồng trong
+đúng `<g className="ftue-gesture-hand">` mà animation glide giữa 2 vòng tròn (`ftue-gesture-drag` trong
+`globals.css`) đã và đang chạy — không viết lại animation, chỉ đổi nội dung bên trong group. Offset x/y chọn
+sao cho đầu ngón trỏ trong ảnh rơi đúng vào gốc toạ độ cục bộ (0,0) của group — đúng quy ước "fingertip tại
+gốc" mà các keyframe `translate(ring.cx, ring.cy)` có sẵn đang dùng, nên tay bấm đúng vào 2 vòng tròn không
+cần đổi số trong keyframe.
+
+**`globals.css`:** `.ftue-gesture-hand` bỏ `fill`/`stroke` (vô nghĩa với ảnh raster), chỉ còn giữ
+`animation`. Xoá `.ftue-gesture-hand-crease` (chi tiết chỉ có ở bản vẽ tay cũ, không còn dùng).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: tay ảnh thật lướt đúng từ vòng A sang
+vòng B theo animation gốc, không cần chỉnh lại keyframe.
+
+---
+
+## 134. Đồng bộ mức bo góc mọi nút chrome theo đúng icon Settings (03/09)
+
+Yêu cầu: Daily Login/Coin badge/Play button phải bo góc **cùng mức** với `SettingIcon.png`, không phải đoán
+bằng mắt.
+
+**Đo bằng script tạm (`sharp`, xoá sau khi đo xong):** quét kênh alpha của `SettingIcon.png`, tìm bounding
+box nội dung thật (1100×1057px trong canvas 1254×1254px), dò điểm chiều rộng dòng ngang chạm mốc "phẳng"
+(hết cong góc) — bán kính góc đo được ≈ 200px trên 1100px chiều rộng (~18,2%). Quy đổi sang nút chuẩn 44px
+của app: **8px**.
+
+**`globals.css`:** thêm token riêng `--r-chrome: 8px` (không sửa `--r-md` vì token đó dùng chung nhiều chỗ
+không liên quan). Áp `var(--r-chrome)` cho `.gift-button`, `.hub-gold-badge`, `.hub-play-btn` (trước đó cả 3
+đang dùng `--r-md` = 20px, bo tròn hơn hẳn so với icon Settings thật).
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: coin badge, daily login, Play button
+và Settings đọc cùng một "độ bo góc" nhất quán.
+
+---
+
+## 135. Bố cục Hub: dời Daily Login xuống dưới Settings, mint nhạt hơn, Play to hơn (03/09)
+
+**`globals.css`:**
+- `.hub-gift-wrap` đổi từ căn giữa theo chiều dọc ở mép phải sang nằm ngay dưới `.settings-wrap`
+  (`top: calc(hud-inset + 44px + 12px)`, cùng `right`) — 44px là chiều cao nút gear, 12px là khoảng cách.
+- `.gift-button` nền `#93e6c4` → `#c9f2e1` (nhạt hơn hẳn), hover `#7ed8b3` → `#b3ecd4`.
+- `.hub-play-btn` padding `18px 48px` → `26px 64px`, `font-size` `17px` → `22px`.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview: Daily Login xếp đúng dưới Settings,
+màu mint nhạt rõ rệt, nút Play to hẳn ra so với trước.
+
+---
+
+## 136. Shop: bỏ vân gỗ, đổi nền phẳng nâu nhạt (03/09)
+
+Đảo ngược một phần mục 118/119: bỏ hẳn kỹ thuật vân gỗ (3 lớp `repeating-linear-gradient`), theo yêu cầu đổi
+sang 1 màu phẳng, sáng hơn.
+
+**`globals.css`:**
+- `.shop-screen` nền đổi từ `#775538` (nâu gỗ đậm) + 3 lớp vân sang phẳng `#dcc7a8` (nâu nhạt), không
+  `background-image` nào cả.
+- Kéo theo đổi màu chữ vốn được chọn riêng cho nền tối: `.shop-tab-btn` (tab không active) `#e6d8bf` →
+  `var(--ink)`; `.shop-section-head h3` `#f7ecd8` → `var(--ink)`; `.shop-section-head p` `#d8c3a4` →
+  `var(--muted)`; `.shop-card-name` `#f7ecd8` → `var(--ink)`. `.shop-tabs` (track chứa tab switcher, nền đen
+  mờ `rgba(0,0,0,.18)`) giữ nguyên — vẫn đủ tương phản trên nền mới.
+
+**Test:** `tsc --noEmit` sạch, 123/123 test pass. Verify trên preview cả 2 tab Gems/Coins: nền phẳng không
+còn vân, mọi label/badge/card đều đọc rõ trên nền mới.
+
+---
+
+## 137. Khoá bắn trong lúc cát settling; badge 3 chấm hiện đúng suốt animation (03/09)
+
+Trước đây `handleImpact()` trả `phase` về `"READY"` ngay khi shot vừa resolve — animation rơi/settle
+(clear flash → grain fall → hold) chỉ là cosmetic, không chặn input. Người chơi có thể bắn tiếp trong lúc
+cát còn đang rơi, và badge 3 chấm "đang settling" (`.settle-badge`, đã có sẵn CSS/markup) không bao giờ
+hiện vì `phase` không bao giờ thật sự là `SETTLING`.
+
+**`SandCannonEngine.ts`:**
+- `handleImpact()`: khi shot phá được cát (`resolution.removed.length > 0`), ghi đè `phase` của state thành
+  `"SETTLING"` thay vì giữ nguyên `"READY"` mà `resolveShot` trả về (bỏ qua nếu shot đã kết thúc màn —
+  `result` đã có WIN/FAIL thì giữ nguyên).
+- `advanceBeats()`: khi hàng đợi beat rỗng (tức animation settle đã chạy xong hết — clear + mọi bước rơi +
+  hold), mới chuyển `phase` về `"READY"` và phát lại state. Đây là nơi thật sự trả quyền bắn lại cho người
+  chơi, vì `canInteract()`/`canStartAim()` vốn đã chặn theo `phase === "READY"`.
+- Sửa lại các comment cũ mô tả sai hành vi ("settle thuần cosmetic, shot sau không cần chờ") cho khớp với
+  cơ chế mới.
+
+Không cần sửa UI: `busy` trong `SandGame.tsx` đã tính theo `BUSY_PHASES` (có sẵn `"SETTLING"`) từ trước, nên
+badge 3 chấm tự động hiện đúng lúc mà không cần đổi gì ở tầng React.
+
+**Test:** `tsc --noEmit` sạch (không phát sinh lỗi ở `SandCannonEngine.ts`/`SandGame.tsx`/`sand-rules.ts`).
+Verify trên preview: bắn một phát trúng cát → badge 3 chấm hiện ngay trên chỗ vừa vỡ; bắn tiếp trong lúc
+đang settling bị bơ hoàn toàn (ammo không đổi, không có phát bắn mới); đợi animation rơi xong, badge biến
+mất, bắn lại hoạt động bình thường.
+
+---
+
+## 138. Nút Home/Restart trong Settings: dùng `ReturnMainHubIcon.png`/`ReplayIcon.png`, bỏ shape tròn nền (03/09)
+
+`.settings-round-button` (Home/Restart mid-play) đổi từ glyph `Glyph name="home"`/`Glyph name="restart"` vẽ
+tay sang ảnh thật, rồi theo yêu cầu tiếp theo bỏ luôn shape hình tròn bọc ngoài — art đã tự mang theo nền
+riêng nên nút chỉ còn là vùng chạm trong suốt định vị ảnh.
+
+**`SandGame.tsx`:**
+- Hai `<img src="/icons/ReturnMainHubIcon.png">`/`<img src="/icons/ReplayIcon.png">` thay cho `<Glyph
+  name="home"/>`/`<Glyph name="restart"/>`.
+- Xoá hẳn case `"home"`/`"restart"` khỏi `Glyph()` và khỏi type `ChromeGlyph` — không còn nơi nào dùng nữa.
+
+**`globals.css`:**
+- `.settings-round-button`: bỏ `border-radius: 50%`, `border`, `background` — giờ chỉ còn kích thước/canh
+  giữa, không còn shape tròn riêng.
+- `.settings-round-button-icon`: `width/height` 40px cố định → `100%` (lấp đầy nút, để `object-fit: contain`
+  lo phần không crop).
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: hai nút Home/Restart trong Settings chỉ còn hiện đúng
+icon vuông-bo-góc riêng của từng ảnh, không còn viền tròn nền bọc ngoài.
+
+---
+
+## 139. Hub: nút Play → "Level N" thu nhỏ bỏ hiệu ứng breathe, thêm nút Modes cạnh bên (03/09)
+
+Theo yêu cầu đổi bố cục màn Home: nút Play to, màu hồng, tự thở (breathe) và chữ "Play Level N" đổi thành
+hai nút nhỏ nằm cạnh nhau — Level bên trái (giữ màu hồng, bỏ animation, chỉ còn "Level N"), Modes bên phải
+(nút mới, cùng cỡ, nền `#EEC17E`, hiện chưa có hành vi vì tính năng Modes chưa tồn tại).
+
+**`SandGame.tsx`:**
+- `.hub-tap` (button full-bleed bọc `.hub-play-hint > .hub-play-btn`) thay bằng `.hub-actions` (div định vị,
+  không phải nút) chứa hai `<button>` thật: `.hub-play-btn` (`onClick={startPlaying}`, text `Level {id}`) và
+  `.hub-modes-btn` (text `Modes`, chưa gắn `onClick`).
+
+**`globals.css`:**
+- `.hub-play-btn`: bỏ `animation: hub-play-breathe`; `padding`/`font-size` thu nhỏ (26px 64px/22px →
+  14px→22px 30px/16px→20px qua vài lượt chỉnh); nền hồng giữ nguyên `#ffcad3`.
+- `.hub-modes-btn` (mới): cùng kích thước với `.hub-play-btn`, nền `#EEC17E`, chữ cùng màu `#725653`.
+- `.hub-actions`: `display:flex; justify-content:center; gap` (chỉnh qua vài lượt theo phản hồi — 4px quá
+  sát, chốt ở 14px), `flex:0 0 auto; white-space:nowrap` trên hai nút con để "Level 1" không bị wrap dòng.
+- Xoá `@keyframes hub-play-breathe` (không còn ai dùng); cập nhật animation "thoát màn" (`is-leaving`) trỏ
+  sang `.hub-actions`/hai nút mới thay vì `.hub-tap`/`.hub-play-btn` cũ.
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: hai nút "Level 1"/"Modes" đứng cạnh nhau, cỡ bằng nhau,
+không còn hiệu ứng thở nhấp nháy, bấm "Level 1" vẫn vào màn chơi bình thường.
+
+---
+
+## 140. Mở rộng guideline "không stroke/shadow/gradient" ra toàn bộ HUD tĩnh, không chỉ nút bấm (03/09)
+
+Guideline gốc ở đầu `globals.css` chỉ cấm border/box-shadow/gradient trên các nút bấm — panel/modal/badge/
+toast tĩnh vẫn được giữ `border`+`--shadow-*`. Audit lại cho thấy mọi nút bấm trong game đã tuân thủ đúng
+rule cũ; theo yêu cầu mở rộng, bỏ luôn ngoại lệ đó — toàn bộ chrome tĩnh giờ cũng phẳng, phân biệt bằng màu
+nền thay vì viền/đổ bóng. Ngoại lệ duy nhất giữ lại: aim-crosshair/joystick trong lúc chơi (viền cần thiết để
+đọc được trên mọi màu cát, không phải hiệu ứng chiều sâu trang trí) và toàn bộ Level Editor (tool dev riêng,
+theme tối, ngoài phạm vi).
+
+**`globals.css`:** bỏ `border`/`box-shadow`/`text-shadow`/`filter: drop-shadow` khỏi: `.loading-track`,
+`.game-frame` (đổ bóng ở breakpoint tablet/desktop), `.coin-fly .coin-icon`, `.settings-card`/
+`.settings-card-header`/`.settings-select`/hàng `.settings-row` (bỏ luôn đường kẻ phân cách), `.shots-badge`
++ highlight nổi trên `.shots-icon` + đường kẻ `.shots-upcoming`, `.ftue-gesture-caption`, `.booster-hud` +
+`.booster-badge`, `.sand-toast` (hai biến thể `is-warn`/`is-good` đổi từ border-color sang nền phẳng
+`--danger`/`--accent` để vẫn giữ được tín hiệu màu), `.result-card` + `.result-card-header h2` (text-shadow),
+`.daily-login-day` (cả biến thể `is-today`), `.hub-level-name`, `.hub-panel`, `.hub-gallery-milestone`,
+`.shop-card-owned`, `.skin-heading h2` (đồng bộ với `.shop-heading`/`.gallery-heading` vốn đã phẳng sẵn),
+`.skin-card-tick`, `.pixel-thumb`. Xoá luôn 5 token `--shadow-chip/btn/panel/modal/press` ở `:root` (không
+còn nơi nào trong game thật dùng tới, override "về none" trong theme Level Editor vẫn giữ nguyên, không ảnh
+hưởng).
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: hub, Settings, Skin picker, panel Customize — mọi
+badge/panel/toast đều phẳng, không còn viền/đổ bóng ở đâu ngoài aim reticle lúc bắn.
+
+---
+
+## 141. Thay 3 nút Cancel/X bằng `CancelIcon.png`; Settings đóng được khi tap ra ngoài panel (03/09)
+
+**`SandGame.tsx`:**
+- `CloseIcon()` (svg X vẽ tay) đổi tên/nội dung thành `CancelIcon()`, render `<img src="/icons/
+  CancelIcon.png">` — dùng ở cả 3 chỗ: nút X của Settings, nút X của thẻ WIN, nút X của Daily Login.
+- `.settings-screen` (backdrop Settings) thêm `onClick` kiểu "tap ra ngoài đóng lại" y hệt pattern đã có sẵn
+  ở Daily Login (`event.target === event.currentTarget` mới đóng, tap vào card bên trong không bị ăn theo).
+
+**`globals.css`:** `.settings-close`/`.result-card .result-close-btn` bỏ `background`/hover-highlight — ảnh
+`CancelIcon` đã tự mang theo hình tròn đỏ-hồng riêng nên nút chỉ còn là vùng chạm trong suốt (cùng pattern
+với Home/Restart ở mục 138); `.close-icon` (rule size dùng chung) đổi từ style svg stroke sang
+`object-fit: contain` cho `<img>`, cỡ 26px.
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: mở Settings mid-play → tap CancelIcon đóng được, tap ra
+vùng tối ngoài card cũng đóng được; thẻ WIN/Daily Login vẫn dùng đúng icon mới.
+
+---
+
+## 142. Làm lại Hub currency HUD: coin đè lên pill, thêm nút "+" dẫn tới mua Coin bằng tiền thật (03/09)
+
+Theo layout tham khảo người dùng gửi: đồng xu to đè lên pill số dư thay vì icon nhỏ nằm trong, cộng thêm nút
+"+" ở cuối pill. Qua nhiều vòng chỉnh theo phản hồi, chốt lại các thông số cuối cùng dưới đây.
+
+**`SandGame.tsx`:**
+- `.hub-gold-wrap` đổi từ `<div>` định vị thuần sang `<button>` thật (`onClick={openCoinPacks}`), bọc
+  `<CoinIcon />` (không còn nằm trong `.hub-gold-badge`) và `.hub-gold-badge` (số dư + `.hub-gold-plus`).
+- `openCoinPacks`: `setTab("shop")` + `setShopTab("gems")` + cờ `scrollToCoinPacks`; một `useEffect` sau đó
+  cuộn mượt (`scrollIntoView`) tới đúng section "Coins" (gói mua bằng tiền thật, `coinPackSectionRef`) —
+  không chỉ mở tab Gems mà còn cuộn thẳng tới chỗ mua, vì section đó nằm dưới Special Offers/Bundles.
+- `goldHudRef` đổi type từ `HTMLDivElement` sang `HTMLSpanElement` (đích bay của coin daily-login) do
+  `.hub-gold-badge` đổi từ `div` sang `span`.
+- `PlusIcon()`: ban đầu là svg `+` vẽ tay trên nền tròn xanh lá tự vẽ, sau đổi hẳn sang ảnh thật
+  `/icons/PlusIcon.png` (đã có sẵn hình tròn xanh riêng) theo yêu cầu dùng icon có sẵn trong thư mục.
+
+**`globals.css`:**
+- `.hub-gold-wrap`: height cố định 44px = đúng chiều cao `.icon-button` (nút Settings), cùng `top` inset —
+  để hai HUD hai góc luôn ngang hàng, cùng cỡ (verify bằng `getBoundingClientRect()`: `top`/`height` khớp
+  tuyệt đối 14/44).
+- `.hub-gold-wrap .coin-icon`: 44px (khớp chiều cao hàng, không tràn trên/dưới nữa), `margin-right: -42px` —
+  đè sâu vào pill tới mức che kín hoàn toàn phần bo tròn đầu pill (không còn hở viền vàng cong ra ngoài, đã
+  verify bằng cách phóng to 6x phần tử để soi).
+- `.hub-gold-badge`: nền đổi từ `var(--panel)` (kem) sang vàng nhạt `#fde59c`; `border-radius` từ
+  `var(--r-chrome)` (8px) sang `var(--r-pill)` (bo tròn hoàn toàn, khớp dáng tròn của đồng xu); `padding-left`
+  tăng dần qua các lượt chỉnh (26px → 48px) để số dư không bị đồng xu che và có khoảng cách rõ với icon.
+  `padding-right` 6px.
+- `.hub-gold-plus`: từ hình tròn nền xanh lá tự vẽ (30px, `background: var(--accent)`) rút gọn thành khung
+  bare 22px chỉ để định vị `<img>` `PlusIcon.png` (đã tự mang nền tròn riêng).
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: HUD tiền tệ ngang hàng và cao bằng nút Settings; nền pill
+vàng nhạt, bo tròn hết cỡ; đồng xu đè kín phần bo góc bên trái pill (soi ở zoom 6x không còn hở viền); bấm
+vào HUD mở đúng Shop → tab Gems → cuộn tới section "Coins" (mua bằng tiền thật); số dư "160" có khoảng cách
+rõ với đồng xu.
