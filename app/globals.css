@@ -117,7 +117,7 @@
      wall (`--hub-navy` below — the name is a leftover, see the top-of-file
      note), the same cream panels the rest of the game uses, and one flat
      coral Play button as the single thing that pops against it. */
-  --hub-navy: #fff7e7;
+  --hub-navy: #e5ebd1;
   --hub-navy-deep: #6a9080;
   --hub-panel-navy: #fffbf0;
   --hub-line-navy: #557a6a;
@@ -281,31 +281,37 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    need its own per-costume constant. Overrides `.is-hub` above (same
    specificity, later in the file) since the skin screen is itself a
    `!playing` hub tab and always carries both classes together. */
-/* Each wash gets the same looping stripe pattern on top of the flat colour —
-   same angle/spacing either way now (only the tint and the flat base colour
-   still differ per flavour), drifting slowly behind the rig so the showroom
-   reads as alive rather than a static poster behind the model. Both share one
-   duration too, kept slow — a fast drift behind a slowly-turning showcase rig
-   read as busier than the rig itself. `background-position` is what animates
-   (not `background-color`, which stays on the transition above so a flavour
-   swap still crossfades); `background-size` bigger than the viewport is what
-   gives the position animation room to travel before it has to loop back to
-   its start point. */
-.game-frame.is-skin-classic {
-  background-color: #d8edf4;
-  background-image: repeating-linear-gradient(-55deg, rgba(255, 255, 255, .4) 0 20px, transparent 20px 42px);
-  background-size: 300% 300%;
-  animation: skin-bg-drift 60s linear infinite;
-}
+/* Same wash for both flavours now: a tiled field of `MocIcon` (the hanger —
+   this whole screen is a wardrobe), not a per-flavour tint. The tile is its
+   own tiny SVG (`MocIconTile.svg`) rather than the PNG directly — a plain
+   `background-repeat` of the icon on its own would butt copies edge to edge,
+   and `background-repeat: space`'s auto-gaps ignore `background-position`
+   entirely (per spec), which would leave the drift below unable to move
+   anything. The SVG bakes a fixed margin of transparent padding around each
+   icon instead, so a normal `repeat` already reads as evenly spaced icons,
+   and `background-position` is free to animate for the drift.
+   The tile is two rows tall (170x358), not one (170x179) — the second row's
+   icon sits offset by half the tile's width from the first (split across the
+   tile's left/right edges so it reads as one icon once tiled), which is what
+   staggers every row against the one above it into a brick/diagonal
+   arrangement instead of a plain grid. `background-size` matches the tile's
+   own authored size exactly so the loop lines up pixel-for-pixel with no
+   visible seam; drifting slowly behind the rig so the showroom reads as alive
+   rather than a static poster behind the model — a fast drift behind a
+   slowly-turning showcase rig would read as busier than the rig itself.
+   `background-color` stays on `.is-hub`'s own transition above so a flavour
+   swap still crossfades under the tiled icons. */
+.game-frame.is-skin-classic,
 .game-frame.is-skin-magic {
-  background-color: #e9def6;
-  background-image: repeating-linear-gradient(-55deg, rgba(172, 113, 255, .3) 0 20px, transparent 20px 42px);
-  background-size: 300% 300%;
-  animation: skin-bg-drift 60s linear infinite;
+  background-color: #fff5fb;
+  background-image: url("/icons/MocIconTile.svg");
+  background-repeat: repeat;
+  background-size: 170px 358px;
+  animation: skin-bg-drift 20s linear infinite;
 }
 @keyframes skin-bg-drift {
   from { background-position: 0 0; }
-  to { background-position: 300% 300%; }
+  to { background-position: 170px 358px; }
 }
 /* Phone-width viewports: full-bleed, not a rounded card floating with a
    coloured gutter around it. `.page-shell`'s 18px padding and `.game-frame`'s
@@ -526,11 +532,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .settings-card-header {
   position: relative; flex: none; padding: 16px 52px;
-  text-align: center; background: var(--accent);
+  text-align: center; background: #474747;
 }
 .settings-card-header h2 {
   margin: 0; font-size: 17px; font-weight: 800; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--accent-ink);
+  text-transform: uppercase; color: #ffffff;
 }
 /* Bare — the real artwork (`CancelIcon`) already carries its own filled
    circle, so this is just a 34px hit target positioning it, no button
@@ -621,7 +627,9 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   background: var(--locked); color: var(--ink); text-decoration: none;
   font-size: 14px; font-weight: 700;
   transition: background .18s, transform .16s;
+  width: 100%; text-align: left; cursor: pointer;
 }
+.settings-devlink + .settings-devlink { margin-top: 8px; }
 .settings-devlink:hover { background: #e5d6bd; }
 .settings-devlink:active { transform: translateY(2px); }
 .settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
@@ -884,7 +892,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* Spec §3: locked, not hidden — the other booster is armed and this one
    cannot respond until it is fired. `disabled` already blocks the tap. */
 .booster-btn:disabled { opacity: .4; cursor: default; }
-.booster-icon { display: block; width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.booster-icon { display: block; width: 24px; height: 24px; object-fit: contain; }
 
 /* Radius Overcharge armed: the same blue as the chamber/muzzle overlay ring
    (BOOSTER_RADIUS_RING_HEX in SandCannonEngine.ts — kept in sync by hand,
@@ -974,9 +982,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    the win, cream body underneath for the copy/actions) instead of the
    flat single-tone card every other dialog in this file uses, plus a
    punchier bounce-in (`win-pop`, an overshoot spring) than the flat
-   `result-pop` those other dialogs get. The screen behind it is the plain
-   `--scrim` every result screen uses — no rays, no tinted/patterned wash —
-   the card itself is the celebration. */
+   `result-pop` those other dialogs get. Dressed up further now with the two
+   party horns + cannon badge poking above the card (`.win-decor`) and slow
+   falling paper behind it (`.win-confetti`) — both purely decorative, the
+   card underneath still carries the actual win copy/actions on its own. */
 .result-card.is-win {
   z-index: 1; padding: 0; overflow: hidden;
   animation: win-pop .5s cubic-bezier(.34,1.56,.64,1) both;
@@ -991,6 +1000,121 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   margin: 0; color: #fbe98f;
 }
 .result-card-body { padding: 24px; }
+
+/* Wraps the card and `.win-decor` together so the decor can sit above the
+   card's own top edge without fighting `.result-card`'s `overflow: hidden`
+   (needed to keep the header band's corners clipped to the card radius) —
+   same width as the card so the decor lines up with it either side. */
+.win-frame { position: relative; width: 100%; max-width: 304px; }
+/* Covers the whole card, not just a strip above it — the cannon sits on the
+   top edge, the two horns anchor to the bottom corners, so this needs the
+   full `.win-frame` box rather than a thin flex row. Each child positions
+   itself; this element is just their shared, click-through coordinate
+   space.
+   There are two of these, straddling the card in depth (`.result-card.is-win`
+   is `z-index: 1`): the cannon layer goes UNDER it so the card's own mint
+   header hides the cannon's base — that overlap is what makes the cannon
+   read as standing behind the card, and it also keeps the headline clear,
+   which a single shared layer above the card did not — while the horn layer
+   goes OVER it so the two horns can overlap the card's bottom corners. */
+.win-decor { position: absolute; inset: 0; pointer-events: none; }
+.win-decor.is-behind { z-index: 0; }
+.win-decor.is-front { z-index: 2; }
+/* Entrance lives on the outer `<span>`, the idle wiggle loop on the `<img>`
+   inside it — two different things animating `transform` on the same
+   element would just fight each other, so each gets its own.
+   All four offsets are percentages, not pixels: the widths are a share of
+   the card's own width and the vertical offsets a share of each asset's own
+   (square) box via `translateY`, so the whole arrangement keeps the
+   reference layout's proportions when the card shrinks on a narrow phone
+   instead of the assets creeping out of place. */
+.win-decor-horn {
+  /* How far past the card's side each horn hangs. The reference layout's own
+     34% of the card width only fits when there is that much room beside the
+     card, and there usually isn't: `.game-frame` is `min(100%, 430px)` and
+     clips (`overflow: hidden`), while the card is up to 304px wide inside a
+     24px-padded result screen. So this takes whatever gap the frame actually
+     leaves beside the card, plus 14px of deliberate bleed past the frame
+     edge (only the bell/handle tip, never the pennant), and never more than
+     the reference 34%. */
+  --horn-out: min(34%, calc(max(24px, (min(100vw, 430px) - 304px) / 2) + 14px));
+  position: absolute; bottom: 0; display: block; width: 62%;
+  transform-origin: bottom center;
+  animation: win-decor-pop .5s cubic-bezier(.34,1.56,.64,1) .3s both;
+}
+.win-decor-horn img {
+  display: block; width: 100%; height: auto;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,.2));
+  transform-origin: 80% 80%;
+  animation: win-decor-honk 1.6s ease-in-out .7s infinite;
+}
+/* Neither image is mirrored — `DecorateFInishLevel2.png` (left) already
+   flares up-left and `DecorateFInishLevel1.png` (right, with its pennant)
+   already flares up-right, same as the reference layout, so a small
+   opposing tilt is all either one needs.
+   `translateY(42%)` sits a little lower than the reference's own ~32%,
+   because the card here is not the reference's empty placeholder rectangle —
+   Continue lives in its bottom row, and at 32% the two bells sat straight
+   across it. The decor layer is click-through either way, but a half-covered
+   CTA still reads as broken. */
+.win-decor-horn.is-left { left: calc(-1 * var(--horn-out)); transform: translateY(42%) rotate(-6deg); }
+.win-decor-horn.is-right { right: calc(-1 * var(--horn-out)); transform: translateY(42%) rotate(6deg); }
+.win-decor-horn.is-right img { animation-delay: .95s; }
+/* `-88%` of its own height, so ~12% of the cannon (its base) stays tucked
+   behind the card — see `.win-decor`'s note on the two layers. */
+.win-decor-cannon {
+  position: absolute; top: 0; left: 50%;
+  display: block; width: 40%; transform: translate(-50%, -88%);
+  animation: win-decor-pop-center .5s cubic-bezier(.34,1.56,.64,1) .1s both;
+}
+.win-decor-cannon img {
+  display: block; width: 100%; height: auto;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,.2));
+}
+/* Each `from` repeats its element's resting translate, because the implicit
+   `to` is the base style value — drop it here and the asset would pop in
+   from the wrong spot and then jump. */
+@keyframes win-decor-pop {
+  from { opacity: 0; transform: translateY(42%) scale(.4); }
+}
+@keyframes win-decor-pop-center {
+  from { opacity: 0; transform: translate(-50%, -88%) scale(.4); }
+}
+/* A small back-and-forth tilt, like the horn is still being honked — kept
+   gentle, not a full swing, since this loops for as long as the WIN card is
+   up. */
+@keyframes win-decor-honk {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+
+/* Slow paper drifting down over the whole screen — ambient dressing, not a
+   confetti-cannon burst, so it stays gentle (long durations, small drift)
+   per feedback ("rơi nhẹ thôi"), just spread wide enough to read as filling
+   the screen rather than a single strip. Animates `top` (a % of this
+   element's own full-screen height) rather than a `transform: translateY`
+   percentage, which resolves against the tiny piece itself and would barely
+   move it — that was the earlier bug where pieces only drifted a few
+   pixels. Sits behind `.win-frame` (default z-index 0 vs. the card's own
+   z-index 1) and is clipped to the result screen so pieces never spill past
+   the dialog's edges. */
+.win-confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.win-confetti-piece {
+  position: absolute; top: -8%; border-radius: 2px;
+  opacity: 0; animation: win-confetti-fall linear infinite;
+}
+@keyframes win-confetti-fall {
+  0% { top: -8%; transform: translateX(0) rotate(0deg); opacity: 0; }
+  8% { opacity: .85; }
+  88% { opacity: .85; }
+  100% { top: 112%; transform: translateX(var(--drift, 12px)) rotate(220deg); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .win-decor-horn, .win-decor-horn img, .win-decor-cannon, .win-confetti-piece {
+    animation: none;
+  }
+  .win-confetti { display: none; }
+}
 /* A `.result-card`'s own way out when it has no bottom "dismiss" button of
    its own to fall back to (the WIN card's Continue, the Daily Login card's
    Claim) — a small round icon button in the corner instead of a second
@@ -1051,8 +1175,17 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    card rather than the whole screen behind it. */
 .confirm-card {
   position: relative; overflow: hidden;
+  /* Bigger than the plain `.result-card` max-width, and more side/vertical
+     padding than that base rule's own 28px/24px — this card carries more to
+     read at once (three info rows, a stepper, a price) than a one-line
+     result card does, so it gets more room to make all of that clearer. */
+  max-width: 340px; padding: 32px 26px;
   background-color: #fdf3c7;
-  background-image: radial-gradient(#ffc933 4.5px, transparent 4.5px);
+  /* Much paler than the original `#ffc933` dot (per feedback — it read as
+     too saturated against the card's own pale-yellow base): the same hue at
+     low opacity instead of a lighter solid, so the dots still read as the
+     same wash, just faint. */
+  background-image: radial-gradient(rgba(255, 201, 51, 0.22) 4.5px, transparent 4.5px);
   background-size: 20px 20px;
   animation: confirm-dot-drift 18s linear infinite;
 }
@@ -1060,20 +1193,20 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   from { background-position: 0 0; }
   to { background-position: -200px 200px; }
 }
-.confirm-card h2 { font-size: 20px; }
+.confirm-card h2 { font-size: 26px; }
 .confirm-info {
-  display: grid; gap: 8px; margin: 0 0 20px;
-  padding: 12px 14px; border-radius: var(--r-md); background: var(--locked);
+  display: grid; gap: 14px; margin: 0 0 24px;
+  padding: 16px 18px; border-radius: var(--r-md); background: var(--locked);
 }
 .confirm-info-row {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 13px; color: var(--muted);
+  font-size: 16px; color: var(--muted);
 }
 .confirm-info-row strong {
-  display: flex; align-items: center; gap: 4px;
-  font-variant-numeric: tabular-nums; color: var(--ink);
+  display: flex; align-items: center; gap: 6px;
+  font-size: 18px; font-variant-numeric: tabular-nums; color: var(--ink);
 }
-.confirm-info-row .coin-icon { width: 14px; height: 14px; color: var(--gold-line); }
+.confirm-info-row .coin-icon { width: 17px; height: 17px; color: var(--gold-line); }
 /* The quantity stepper on the "Buying" row: a triangle on each side of the
    number (0-99, further capped by whatever the wallet can afford — see the
    `disabled` props and the hold-to-repeat handlers in SandGame.tsx), not a
@@ -1083,14 +1216,14 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    number's own column is a fixed width so it never nudges the triangles
    apart as it goes from one digit to two. */
 .confirm-qty-stepper { display: flex; align-items: center; gap: 4px; }
-.confirm-qty-value { display: inline-block; width: 22px; text-align: center; color: var(--ink); }
+.confirm-qty-value { display: inline-block; width: 28px; text-align: center; font-size: 18px; color: var(--ink); }
 /* Scoped as `.confirm-card .confirm-qty-btn` (class+class), not the bare
    `.confirm-qty-btn` this used to be — `.result-card button` (element+class)
    otherwise outranks a single class on specificity and wins the cascade,
    which is what was putting that rule's green pill/full-width/padding back
    underneath the triangle instead of leaving it bare. */
 .confirm-card .confirm-qty-btn {
-  width: 28px; height: 28px; padding: 0; border: 0; background: none;
+  width: 32px; height: 32px; padding: 0; border: 0; background: none;
   display: grid; place-items: center; cursor: pointer; color: var(--wood-ink);
   transition: transform .12s, opacity .12s;
   /* Long-press (SandGame.tsx's hold-to-repeat) needs the browser's own
@@ -1106,7 +1239,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    sees. An SVG's box is exactly its declared width regardless of what's
    drawn inside it, so centring the element (via the button's own
    `place-items: center` above) centres the shape too. */
-.confirm-card .confirm-qty-arrow { width: 10px; height: 10px; display: block; }
+.confirm-card .confirm-qty-arrow { width: 12px; height: 12px; display: block; }
 .confirm-card .confirm-qty-btn:active:not(:disabled) { transform: scale(.85); }
 /* Explicit background/border, not just opacity: `.result-card button:disabled`
    (globals.css, shared by every dialog's buttons) outranks this on
@@ -1115,6 +1248,10 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    base rule above was already fixed for, just re-appearing only in the
    disabled state. */
 .confirm-card .confirm-qty-btn:disabled { background: none; border: 0; color: var(--muted); opacity: .5; cursor: default; }
+/* Yes/No a step bigger than `.result-card button`'s shared 15px — scoped to
+   this card alone so the other result dialogs (win/fail/daily-login/tutorial)
+   keep their own sizing. */
+.confirm-card button { padding: 16px; font-size: 17px; }
 
 /* ---- Tutorial overlay ---------------------------------------------------- */
 /* Reuses `.result-screen`/`.result-card` for the backdrop and pop-in — it is
@@ -1131,15 +1268,45 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 /* ---- Daily login overlay ------------------------------------------------- */
 /* Also `.result-screen`/`.result-card` underneath, same reasoning as the
    tutorial overlay above — a seven-chip strip standing in for the numbered
-   steps. */
-.daily-login-card { max-width: 324px; }
+   steps. Dressed as a hanging banner now — a mint header naming the card, a
+   red ribbon edge under it, two dark pegs pinning it to the hub behind it —
+   same two-tone-card-plus-decor language as the WIN card's `.win-frame`. */
+.daily-login-frame { position: relative; width: 100%; max-width: 324px; }
+/* One short peg, not a thumbtack: a dark pill with a cream ring around it,
+   sitting low in the mint header so its bottom tip just crosses the red
+   strip and stops — the reference layout. Nothing pokes above the card any
+   more (the earlier mint head + long pin version overshot the header in
+   both directions, which read as two black bars laid over the card rather
+   than two pegs set into it). Ringed rather than bare so the dark pill
+   stays legible against both the mint header and the red strip it ends on.
+   Still z-index above the card (unlike a silhouette peeking out from behind
+   it) since the peg has to draw over the header and the strip. */
+.daily-login-tab {
+  position: absolute; z-index: 2; top: 44px;
+  width: 14px; height: 30px; border-radius: 999px;
+  background: #2e2a26; box-shadow: 0 0 0 2px #fffdf5;
+}
+/* Threaded between the centred title and the corner close button — this is
+   the one horizontal band where the peg clears both: any further out
+   towards the corner and it runs into the close button's box, any further
+   in towards the middle and it runs into the title. */
+.daily-login-tab.is-left { left: 17%; }
+.daily-login-tab.is-right { right: 17%; }
+.daily-login-card { position: relative; z-index: 1; max-width: 324px; padding: 0; overflow: hidden; }
+.daily-login-header {
+  position: relative; padding: 16px 44px 14px; text-align: center;
+  background: #bdf0da;
+}
+.daily-login-header h2 { margin: 0; color: #3a2b20; }
+.daily-login-header-strip { height: 7px; background: #e2483f; }
+.daily-login-body { padding: 20px; }
 .daily-login-strip {
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
   margin: 0 0 16px;
 }
 .daily-login-day {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 8px 2px; border-radius: var(--r-sm); background: var(--locked);
+  padding: 8px 2px; border-radius: var(--r-md); background: var(--locked);
 }
 .daily-login-day .coin-icon { width: 15px; height: 15px; color: var(--gold-line); }
 .daily-login-day strong { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); }
@@ -1186,7 +1353,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; align-items: flex-end; justify-content: center; gap: 14px;
   padding: 0 24px calc(var(--hub-nav-height) + 28px);
 }
-.hub-actions > button { pointer-events: auto; flex: 0 0 auto; white-space: nowrap; }
+.hub-actions > * { pointer-events: auto; flex: 0 0 auto; white-space: nowrap; }
 /* Sized back up and pushed shoulder-to-shoulder with the Modes pill (`gap:
    4px` above) rather than spread to the two edges — no border, gradient or
    shadow, same as every other button in this pass, and no more breathing
@@ -1195,17 +1362,16 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-play-btn {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 22px 46px; border-radius: var(--r-chrome);
-  background: #ffcad3; border: 0;
-  color: #725653; font-size: 20px; font-weight: 800; letter-spacing: .03em;
+  background: #5c9f5c; border: 0;
+  color: #fcf9e8; font-size: 20px; font-weight: 800; letter-spacing: .03em;
 }
-/* Same size as `.hub-play-btn` so the pair sits flush, same text colour so
-   the two labels read as one family — `#EEC17E` (warm gold) instead of pink
-   so the two halves still stay tellable apart. */
+/* Same size as `.hub-play-btn` so the pair sits flush — its own dark/gold
+   pairing is what still keeps the two halves tellable apart. */
 .hub-modes-btn {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 22px 46px; border-radius: var(--r-chrome);
-  background: #EEC17E; border: 0;
-  color: #725653; font-size: 20px; font-weight: 800; letter-spacing: .03em;
+  background: #4d3c35; border: 0;
+  color: #e6b638; font-size: 20px; font-weight: 800; letter-spacing: .03em;
 }
 .hub-play-btn:active, .hub-modes-btn:active { transform: translateY(3px); }
 .hub-play-btn:focus-visible, .hub-modes-btn:focus-visible {
@@ -1264,13 +1430,13 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-gallery button {
   display: grid; justify-items: center; gap: 8px; padding: 10px 8px; cursor: pointer;
   border: 0; border-radius: var(--r-md);
-  background: var(--locked); color: var(--ink);
+  background: #d7ddf3; color: #ffffff;
   transition: background .18s, transform .18s;
 }
 .hub-gallery button:hover { background: #e5d6bd; transform: translateY(-2px); }
 .hub-gallery button:active { transform: translateY(2px); }
-.hub-gallery button.is-active { background: var(--accent); }
-.hub-gallery button.is-active b { color: var(--accent-ink); }
+.hub-gallery button.is-active { background: #597cd4; }
+.hub-gallery button.is-active b { color: #c2cff2; }
 .hub-gallery button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .hub-gallery b { font-size: 11px; font-weight: 700; text-align: center; line-height: 1.3; }
 /* A locked card: same tile, no hover lift, no active press — a disabled
@@ -1279,7 +1445,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    instead of being swapped for a blank tile, so the shape of what is coming
    still reads through — a silhouette, not a mystery box. */
 .hub-gallery button:disabled { cursor: default; }
-.hub-gallery button:disabled:hover { background: var(--locked); transform: none; }
+.hub-gallery button:disabled:hover { background: #d7ddf3; transform: none; }
 .hub-gallery button.is-locked .pixel-thumb { opacity: .35; filter: grayscale(1); }
 .hub-gallery button.is-locked b { color: var(--muted); }
 .hub-gallery-thumb { position: relative; width: 100%; }
@@ -1314,16 +1480,15 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; flex-direction: column; align-items: center;
   padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
   overflow: auto;
-  background: var(--hub-navy);
+  background: #c2cff2;
   animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
 /* Same chip `.shop-heading h2`/`.skin-heading h2` use — one consistent
    "screen title" language across every full-screen hub takeover. */
 .gallery-heading { margin: 0 0 24px; text-align: center; }
 .gallery-heading h2 {
-  display: inline-block; margin: 0; padding: 7px 20px;
-  border-radius: var(--r-pill); background: var(--panel); border: 0;
-  font-size: 20px; font-weight: 800; color: var(--ink);
+  display: inline-block; margin: 0;
+  font-size: 20px; font-weight: 800; color: #597cd4;
 }
 
 /* ---- Shop ---------------------------------------------------------------- */
@@ -1359,8 +1524,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: flex; align-items: center; justify-content: center;
 }
 .shop-heading h2 {
-  display: inline-block; margin: 0; padding: 7px 20px;
-  border-radius: var(--r-pill); background: var(--panel); border: 0;
+  display: inline-block; margin: 0;
   font-size: 20px; font-weight: 800; color: var(--ink);
 }
 /* Only mounted on the Gems tab (see the JSX) — gems have no other readout
@@ -1532,7 +1696,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   display: grid; place-items: center;
   background: var(--locked); border: 0;
 }
-.shop-card-icon .booster-icon { width: 34px; height: 34px; }
+.shop-card-icon .booster-icon { width: 72px; height: 72px; }
 /* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
    here is recognisably the same thing armed in the HUD tray — the tint on
    the icon glyph itself now that the ring border it used to sit on is gone. */
@@ -1617,8 +1781,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   padding: 0 24px; text-align: center;
 }
 .skin-heading h2 {
-  display: inline-block; margin: 0; padding: 7px 20px;
-  border-radius: var(--r-pill); background: var(--panel); border: 0;
+  display: inline-block; margin: 0;
   font-size: 20px; font-weight: 800; color: var(--ink);
 }
 .skin-tagline { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--ink); }
@@ -1634,15 +1797,44 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   pointer-events: auto;
   align-self: center; margin-bottom: 18px;
   padding: 14px 44px; border-radius: var(--r-pill);
-  background: var(--accent);
-  border: 0; color: var(--accent-ink);
+  /* "Select" (clickable, not yet equipped): a solid filled button. Border
+     matches the fill so it stays invisible here — it only reads once
+     `:disabled` below removes the fill and the border underneath it. */
+  background: #bf7178;
+  border: 2px solid #bf7178; color: #ffffff;
   font-size: 15px; font-weight: 800; letter-spacing: .03em; cursor: pointer;
-  transition: transform .16s, opacity .16s;
+  position: relative; overflow: hidden;
+  /* The colour swap itself is instant except for the label, which waits out
+     most of `.is-just-selected`'s own sweep below before flipping colour —
+     going same-colour-as-background the moment `disabled` lands (before the
+     white sweep has caught up) would flash the label invisible for a beat. */
+  transition: transform .16s, opacity .16s, color .15s ease .12s;
 }
+.skin-equip-label { position: relative; z-index: 1; }
 .skin-equip:active:not(:disabled) { transform: translateY(3px); }
+/* "Selected" (equipped, disabled, static): the inverse — no fill, no border,
+   just the label in colour, per the ask that the two states mirror each
+   other. */
 .skin-equip:disabled {
-  background: var(--panel); color: var(--muted);
+  background: #ffffff; color: #bf7178; border-color: transparent;
   cursor: default;
+}
+/* The left-to-right colour sweep that plays only the instant Select becomes
+   Selected — `.is-just-selected` is added by `selectCostume` and removed on
+   `animationend` (see SandGame.tsx), so it never plays on mount for a skin
+   that was already equipped, and never plays in reverse: nothing un-equips a
+   skin in place, picking a different one just moves which card is disabled. */
+.skin-equip.is-just-selected::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: #ffffff;
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: skin-equip-sweep .3s cubic-bezier(.4, 0, .2, 1) forwards;
+}
+@keyframes skin-equip-sweep {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
 }
 
 /* Rounded at the top instead of cut off by a hard rule — the tray reads as
@@ -1669,8 +1861,14 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   padding: 20px 16px calc(var(--hub-nav-height) + env(safe-area-inset-bottom) + 14px);
   border: 0;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
-  background: var(--panel);
+  background: #f8c9c2;
   height: calc(98px + var(--hub-nav-height) + env(safe-area-inset-bottom));
+  /* `.skin-grid`'s own `overflow-y: hidden` only clips to its own square-cornered
+     box, not the tray's rounded one around it — a card's hover lift
+     (`.skin-card:hover`'s `translateY(-2px)`) could still paint a sliver of
+     itself past the tray's own top edge. Clipping here as well pins
+     everything to the tray's actual rounded silhouette, hover included. */
+  overflow: hidden;
 }
 /* One row, fixed-width columns rather than `auto-fill`'s stretchy ones — a
    card has to stay the same size whether there are two costumes or twenty,
@@ -1684,7 +1882,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .skin-card {
   position: relative; aspect-ratio: 1; padding: 0; cursor: pointer;
   border: 0; border-radius: var(--r-md); overflow: hidden;
-  background: var(--locked);
+  background: #ffe7e3;
   transition: outline-color .16s, transform .16s;
 }
 .skin-card:hover { transform: translateY(-2px); }
@@ -1693,7 +1891,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    shadow would sit underneath and never show — an inset outline is the only
    ring that still paints on top of that content. Not a border: it doesn't
    affect layout and isn't the "viền" the rest of this pass avoids. */
-.skin-card.is-previewing { outline: 3px solid var(--accent-line); outline-offset: -3px; }
+.skin-card.is-previewing { outline: 3px solid #3e7871; outline-offset: -3px; }
 /* A data URL rendered from the rig itself: fills the card, like a photo. */
 .skin-card img { display: block; width: 100%; height: 100%; object-fit: contain; }
 /* Only shown for the instant before the picker's first thumbnail capture
@@ -1703,7 +1901,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .skin-card-icon.is-magic { color: #8a5fd6; }
 .skin-card-tick {
   position: absolute; right: 6px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--accent); color: var(--accent-ink);
+  background: #ffffff; color: #3e7871;
   display: grid; place-items: center; font-size: 11px; font-weight: 800;
 }
 
@@ -1751,7 +1949,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   padding: 0; overflow: hidden;
   display: flex; align-items: stretch;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
-  background: #fde59c;
+  background: #fbf7de;
 }
 /* An even, gapless share of the row's full width (`flex: 1 1 0%`, all five
    equal at rest) rather than a fixed-width tile with `justify-content`
@@ -1826,18 +2024,18 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    Selected with `[data-tab]` (already on the button for other reasons)
    rather than a `:nth-child` guess, so this stays correct if `HUB_TABS`'s
    order ever changes. */
-/* Home's active chip uses the shared `--accent` green (with its `--accent-ink`
-   partner for the icon), the same green used elsewhere for buttons/toggles —
-   the one exception among the five tabs, which otherwise get their own scoped
-   tokens below so they don't drag an unrelated colour along with them.
+/* Home's active chip used to reuse the shared `--accent` green (the same one
+   buttons/toggles use elsewhere) — now its own scoped colour instead, same
+   footing as Skin/Shop/Gallery/Customize below, so it can be tuned on its
+   own without dragging every other green control along with it.
    Home, Skin, Shop and Gallery no longer pair their bubble with an icon
    `fill` line the way Customize below still does — their icon is a
    full-colour photo the instant it is active (`PhotoTabIcon` in
    SandGame.tsx), not a silhouette this bubble colour would show through. */
-.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: var(--accent); }
+.hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: #8ac688; }
 .hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { background: var(--danger); }
 .hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { background: var(--gold); }
-.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { background: var(--sky); }
+.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { background: #8a9bf3; }
 .hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { background: var(--wood); }
 .hub-nav button[data-tab="customize"].is-active .hub-nav-icon { fill: var(--wood-ink); }
 

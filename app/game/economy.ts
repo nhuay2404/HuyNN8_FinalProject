@@ -288,6 +288,15 @@ export function spendGold(amount: number): boolean {
   return true;
 }
 
+/** Dev-only: drops gold straight to 0 — the Settings screen's GameDevOption
+ * "reset gold" button, for putting the wallet in a known state while testing
+ * the Shop rather than spending it down shot by shot. */
+export function resetGold() {
+  const wallet = readWallet();
+  walletIsFreshDefault = false;
+  writeWallet({ ...wallet, gold: 0 });
+}
+
 export function addBoosterCharges(type: BoosterType, amount: number) {
   if (amount <= 0) return;
   const wallet = readWallet();

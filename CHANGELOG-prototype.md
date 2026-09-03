@@ -5917,3 +5917,160 @@ Theo layout tham khảo người dùng gửi: đồng xu to đè lên pill số 
 vàng nhạt, bo tròn hết cỡ; đồng xu đè kín phần bo góc bên trái pill (soi ở zoom 6x không còn hở viền); bấm
 vào HUD mở đúng Shop → tab Gems → cuộn tới section "Coins" (mua bằng tiền thật); số dư "160" có khoảng cách
 rõ với đồng xu.
+
+---
+
+## 143. Booster: đạn Radius Overcharge phồng cố định 350%, vệt Prism Shot dài hơn (03/09)
+
+Bản đầu cho quả bóng Radius Overcharge phồng to bằng đúng bán kính hiệu lực của phát bắn
+(`effectiveSortRadius`) — theo phản hồi, cách này quá lố mỗi khi bán kính level lớn ("1 ý tồi"). Đổi sang
+một hệ số phồng cố định, dễ đọc và không phụ thuộc dữ liệu level.
+
+**`SandCannonEngine.ts`:**
+- `BOOSTER_PROJECTILE_SCALE`: 1.6 → **3.5** (đạn phồng thêm 350% kích thước gốc lúc bay tới khung);
+  `radiusBoosterMaxProjectileScale()` bỏ hẳn phần tính theo `effectiveSortRadius`/`this.cell`, trả thẳng
+  hằng số.
+- Prism Shot: `PRISM_TRAIL_INTERVAL` 0.025 → 0.016 (rơi mảnh vệt dày hơn); `spawnPrismTrail` — `life` 0.32 →
+  0.6, `speed` 0.3 → 0.16, `rise` 0.05 → 0.02, `gravity` −0.7 → −0.35, `spread` 0.4 → 0.28 (vệt dài, bám sát
+  đường bay thay vì toả rộng thành đám mây); `SPARKLE_POOL_SIZE` 40 → 100 để pool đủ chỗ cho vệt dày + sống
+  lâu hơn (dùng chung pool với hiệu ứng costume magic).
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: bắn Radius Overcharge — đạn phồng đúng 3.5x, không còn ăn
+theo bán kính level; bắn Prism Shot — vệt cầu vồng dài, liền mạch hơn hẳn bản cũ.
+
+---
+
+## 144. Radius bắn: cát trong tầm bắn trồi lên (lift) — làm lại 2 lần theo phản hồi (03/09)
+
+Thêm hiệu ứng: trong lúc ngắm, những ô cát vừa nằm trong bán kính phát bắn hiện tại, vừa thực sự sẽ bị quét
+(đúng màu đạn đang cầm — hoặc mọi màu nếu đang armed Prism Shot — và không bị khoá) được làm nổi bật, dùng
+đúng công thức bán kính/màu/khoá mà `resolveShot` sẽ dùng khi bắn thật.
+
+Bản đầu tiên mô phỏng thuần bằng thủ thuật 2D ngay trên texture cát: brighten màu về trắng + dịch pixel lên
+theo trục Y (`LIFT_DRAW_OFFSET_PX`), y hệt cách `shake` vốn có. Bị phản hồi lại đúng 3 điểm, sửa toàn bộ:
+
+1. **Không làm nhạt màu** — bỏ hẳn phần brighten (rồi phản hồi tiếp: phải **đậm hơn** màu gốc, không phải
+   giữ nguyên).
+2. **Trồi theo trục Z thật** (chiều sâu, hướng ra camera), không phải dịch trục Y trên một mặt phẳng phẳng.
+3. **Có shadow mỏng ở rìa** phần cát được nhấc.
+
+**`SandCannonEngine.ts`:**
+- `PixelCell.lift: number` (0→1) — mục tiêu (`liftTarget`: tâm/bán kính/màu) tính lại mỗi lần
+  `updateAimPreview` chạy; `step()` ease `lift` của từng cell tới mục tiêu đó (`LIFT_RISE_SECONDS` 0.12 lúc
+  lên / `LIFT_FALL_SECONDS` 0.22 lúc xuống).
+- Render: bỏ hẳn phần brighten+dịch-Y trong `redrawSand` (texture vẽ cát y hệt bình thường, không còn biết
+  gì về `lift`). Thay bằng hai `THREE.InstancedMesh` mới (`liftFaceMesh`/`liftShadowMesh`, dựng 1 lần trong
+  `buildLiftBlocks()`, cập nhật mỗi frame trong `updateLiftBlocks()`): mỗi ô đang lift vẽ bằng 1 quad nhỏ
+  đúng màu gốc (`cell.rgb`, tối thêm `LIFT_FACE_DARKEN` 18% theo phản hồi "phải đậm hơn"), trồi ra phía
+  trước theo local Z (`LIFT_Z_DEPTH` 0.16, cùng trục +Z đạn bay lùi về khi rời nòng) — cộng 1 quad shadow to
+  hơn (`LIFT_SHADOW_SCALE` 1.4x, tối `LIFT_SHADOW_DARKEN` 55%) nằm sát mặt cát (`LIFT_SHADOW_Z_EPSILON`),
+  rìa nhô ra ngoài quad chính tạo viền bóng mỏng.
+- 2 bug phát sinh lúc build InstancedMesh, đã sửa: (a) bật nhầm `material.vertexColors: true` trong khi
+  geometry dùng chung không có vertex-color attribute → WebGL đọc attribute rỗng về 0, toàn bộ ô lift ra
+  màu ĐEN; bỏ cờ đó, per-instance color vẫn chạy đúng qua `setColorAt` (tự dùng path riêng
+  `USE_INSTANCING_COLOR`, không cần `vertexColors`). (b) `THREE.Color.setRGB()` mặc định hiểu 3 số đầu vào
+  là **linear color space**, trong khi `cell.rgb` là byte sRGB thô (giống hệt mọi giá trị ghi vào texture
+  cát, vốn khai báo rõ `colorSpace = SRGBColorSpace`) → màu bị đẩy sáng lên, ra NHẠT thay vì đúng tông —
+  đây chính là bug người dùng chỉ ra qua ảnh chụp màn hình; sửa bằng cách truyền rõ `THREE.SRGBColorSpace`
+  làm tham số thứ 4 của `setRGB`.
+
+**Test:** `tsc --noEmit` sạch mỗi lượt. Verify trên preview: giữ chuột ngắm — cát đúng màu đạn trong bán
+kính trồi rõ theo chiều sâu, đậm hơn hẳn cát xung quanh (không nhạt), có viền bóng mỏng quanh rìa; cát khác
+màu hoặc đang khoá không đổi gì.
+
+---
+
+## 145. Skin hub: đổi bảng màu + đổi hẳn pattern nền loop sang MocIcon (03/09)
+
+**Bảng màu (`globals.css`), qua nhiều vòng chỉnh theo phản hồi — giá trị chốt cuối cùng in đậm:**
+- `.skin-card` (nền thumbnail): `var(--locked)` → `#ffe7e3`.
+- `.skin-card.is-previewing` (viền thumbnail đang xem): `var(--accent-line)` → `#ce4f3d` → **`#3e7871`**.
+- `.skin-card-tick` (dấu tick): nền `var(--accent)`/chữ `var(--accent-ink)` → nền `#ffffff`/chữ `#ce4f3d` →
+  chữ **`#3e7871`** (đồng bộ với viền thumbnail).
+- `.skin-equip` (nút Select/Selected) — "Select" (chưa chọn): nền `var(--accent)`/chữ `var(--accent-ink)` →
+  nền `#ce4f3d` → nền **`#bf7178`**, chữ trắng giữ nguyên xuyên suốt. "Selected" (đã chọn, đảo ngược): ban
+  đầu nền `var(--panel)`/chữ `var(--muted)` → nền trắng/chữ+viền `#ce4f3d` → chữ **`#bf7178`**, **bỏ hẳn
+  viền** (`border-color: transparent`).
+- Thêm anim `.is-just-selected`: mảng trắng quét trái→phải phủ kín nút đúng lúc bấm Select chuyển thành
+  Selected — chỉ chạy 1 chiều (không có chiều ngược, vì không có thao tác "bỏ chọn" tại chỗ — chọn skin
+  khác chỉ chuyển ô nào đang disabled), tự gỡ class qua `onAnimationEnd` nên không tự chạy lại khi mở lại
+  màn hình với skin đã sẵn có. Thời lượng 0.45s → **0.3s** theo yêu cầu.
+- `.hub-nav` (nền wash skin `.is-skin-classic`/`.is-skin-magic`): áp `#f8c9c2` cho cả 2 skin (trước đó mỗi
+  skin một tông riêng), sau đổi tiếp sang `#fff5fb` cùng lúc đổi hẳn pattern nền (mục dưới). `.skin-tray`
+  (khay thumbnail) đổi theo 2 lần đó (`#f8c9c2` rồi `#fff5fb`) nhưng bị phản hồi lại: khay **không được** tự
+  ý đổi theo nền — trả về cố định **`#f8c9c2`**, tách hẳn khỏi màu nền wash phía trên (2 màu khác nhau có
+  chủ đích, không đồng bộ).
+
+**`SandGame.tsx`:** bọc chữ nút trong `<span className="skin-equip-label">` (để pseudo-element sweep vẽ ở
+dưới, chữ luôn nổi lên trên); state `justEquippedPulse` bật khi bấm `selectCostume`, tắt qua
+`onAnimationEnd`.
+
+**Pattern nền loop → MocIcon (thay hẳn sọc chéo cũ):**
+- Nền `#fff5fb`; pattern lặp: icon móc áo `MocIcon.png` (`public/icons`) thay cho sọc chéo.
+- `MocIcon.png` gần như không có viền trong suốt quanh hình nên lặp thẳng bằng `background-repeat` sẽ dính
+  sát nhau; `background-repeat: space` (tự chia khoảng cách đều) lại bỏ qua `background-position` hoàn toàn
+  theo spec nên không animate được nữa. Giải quyết bằng cách dựng riêng 1 tile SVG
+  (`public/icons/MocIconTile.svg`) chứa icon + khoảng đệm trong suốt quanh nó, rồi lặp chính tile đó bằng
+  `repeat` bình thường — vừa có khoảng cách, vừa animate `background-position` được như cũ.
+- SVG dùng làm `background-image` của CSS bị trình duyệt chặn không cho tải thêm ảnh ngoài (một SVG ở
+  "image context" không được phép tự fetch resource khác) — icon PNG bên trong không hiện ra ở lần dựng
+  đầu; sửa bằng cách nhúng thẳng PNG dưới dạng base64 vào trong SVG, không còn phụ thuộc request mạng nào.
+- Theo yêu cầu "xếp xéo nhau": dựng lại tile thành khối 2 hàng (170×358 thay vì 170×179) — icon hàng dưới
+  lệch nửa chiều rộng tile so với hàng trên (tách đôi ở rìa trái/phải, ghép lại thành 1 icon liền khi tile
+  lặp lại theo chiều ngang) → các hàng tự nhiên so le kiểu gạch/xéo thay vì thẳng lưới.
+- `overflow: hidden` thêm vào `.skin-tray`: `.skin-grid` chỉ tự clip theo khung hình chữ nhật của chính nó,
+  không theo góc bo tròn của tray bao ngoài — khi hover khiến thumbnail nhích lên (`.skin-card:hover`'s
+  `translateY(-2px)`) một phần góc có thể lộ ra ngoài mép bo tròn của tray; thêm overflow ở tray đảm bảo mọi
+  thứ (kể cả lúc hover) luôn bị cắt đúng theo hình dạng bo góc thật của tray.
+
+**Test:** `tsc --noEmit` sạch mỗi lượt. Verify trên preview qua từng vòng chỉnh: cả 2 skin cùng bảng
+màu/pattern; bấm Select → Selected chạy đúng sweep 0.3s rồi hết viền, chữ đổi màu đúng lúc; hover thumbnail
+không còn lộ ra ngoài mép tray.
+
+---
+
+## 146. Home hub: đổi bảng màu theo ảnh mock người dùng gửi (03/09)
+
+**`globals.css`:**
+- `--hub-navy` (nền chung mọi màn hub, dùng cả ở Home lẫn Gallery): `#fff7e7` → `#e5ebd1`.
+- `.hub-nav button[data-tab="home"].is-active .hub-nav-bubble`: tách khỏi `--accent` dùng chung (biến này
+  còn dùng ở nhiều nút/toggle khác), đặt riêng `#8ac688`.
+- `.hub-nav` (nền thanh tác vụ dưới cùng): `#fde59c` → `#fbf7de`.
+- `.hub-play-btn` (nút "Level X"): nền `#ffcad3` → `#5c9f5c`, chữ `#725653` → `#fcf9e8`.
+- `.hub-modes-btn` (nút "Modes"): nền `#e07988` → `#4d3c35`, chữ `#725653` → `#e6b638`.
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: khớp đúng ảnh mock — nền xanh be, nút Home active xanh
+lá, thanh tác vụ kem, nút Level xanh lá chữ kem, nút Modes nâu chữ vàng.
+
+---
+
+## 147. Gallery hub: đổi bảng màu theo ảnh mock người dùng gửi (03/09)
+
+**`globals.css`:**
+- `.hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble`: tách khỏi `var(--sky)` dùng chung, đặt
+  riêng `#8a9bf3`.
+- `.gallery-screen` (nền màn Gallery): tách khỏi `var(--hub-navy)` dùng chung, đặt riêng `#c2cff2`.
+- `.hub-gallery button` (thumbnail level chưa chọn): nền `var(--locked)`/chữ `var(--ink)` → nền
+  `#d7ddf3`/chữ `#ffffff` (đồng bộ luôn state `:disabled:hover`, vốn cũng trỏ `var(--locked)`).
+- `.hub-gallery button.is-active` (thumbnail đang chọn): nền `var(--accent)` → `#597cd4`; chữ (`b`)
+  `var(--accent-ink)` → `#c2cff2`.
+- `.gallery-heading h2` (chữ "Gallery"): `var(--ink)` → `#597cd4`.
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: khớp đúng ảnh mock.
+
+---
+
+## 148. Shop buy-confirm dialog: phóng to + làm rõ chữ, dot nền nhạt hẳn (03/09)
+
+**`globals.css`, `.confirm-card` (dialog "Buy ... ?"):**
+- Kích thước: `max-width` (thừa hưởng từ `.result-card`) 304px → riêng 340px; `padding` 28px/24px →
+  32px/26px.
+- Chữ to hơn: tiêu đề 20px → 26px; 3 dòng info (Currently own/Buying/Total cost) 13px → 16px, giá trị
+  (`strong`) 18px; icon coin 14px → 17px; số lượng stepper rộng hơn (22px→28px) ở 18px, mũi tên 10px→12px,
+  nút mũi tên 28px→32px; nút Yes/No riêng cho card này 15px→17px (scope theo `.confirm-card button`, không
+  ảnh hưởng các dialog result khác).
+- Hoạ tiết dot nền: `#ffc933` đặc → cùng tông màu nhưng chỉ còn opacity 22% (`rgba(255, 201, 51, .22)`) —
+  theo phản hồi "dot đang quá đậm".
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: dialog to rõ hơn hẳn, chữ dễ đọc; hoạ tiết dot mờ hẳn,
+không còn nổi bật như trước.

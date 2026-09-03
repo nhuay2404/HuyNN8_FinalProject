@@ -69,6 +69,17 @@ bắn thực sự resolve theo không bao giờ lệch nhau.
 
 ## Hiệu ứng hình ảnh khi armed
 
-Đạn phóng lớn hơn khi Radius Overcharge armed (`BOOSTER_PROJECTILE_SCALE = 1.6` trong
-`SandCannonEngine.ts`). Ring overlay quay/nhấp nháy liên tục khi một booster đang armed, để trạng
-thái armed không bao giờ trông đứng yên/dễ bị bỏ quên.
+Ring overlay quay/nhấp nháy liên tục khi một booster đang armed, để trạng thái armed không bao giờ
+trông đứng yên/dễ bị bỏ quên.
+
+### Trong lúc bay
+
+Đạn Radius Overcharge rời nòng ở kích thước bình thường rồi phình to dần trong lúc bay, đúng lúc
+chạm khung thì đạt kích thước lớn nhất — bằng đúng bán kính hiệu lực của phát bắn đó (mép ngoài của
+`sortRing`, xem `radiusBoosterMaxProjectileScale` trong `SandCannonEngine.ts`), không phải một hằng
+số cố định như `BOOSTER_PROJECTILE_SCALE` (vẫn giữ lại làm fallback cho level không có `sortRadius`).
+Tiến độ phồng to tính theo trục z từ nòng súng tới mặt phẳng khung tranh.
+
+Đạn Prism Shot đổi màu theo vòng quang phổ suốt đường bay (`PRISM_PROJECTILE_HUE_HZ`) và để lại một
+vệt cầu vồng — các mảnh nhỏ cùng màu với đạn tại thời điểm đó, rơi rớt lại phía sau
+(`spawnPrismTrail`, dùng chung pool shard với hiệu ứng costume ma thuật).

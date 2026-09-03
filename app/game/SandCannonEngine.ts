@@ -307,8 +307,11 @@ const SAND_SPRAY_MAX_SCALE = 1.6;
 // The rune costume's extra layer on top of the always-on smoke/sand-spray
 // above: a burst of faceted light shards at the muzzle, a thin trickle while
 // a shot is in flight, and a burst again on impact. Shards leave the pool by
-// shrinking, same as smoke — see `updateSparkles`.
-const SPARKLE_POOL_SIZE = 40;
+// shrinking, same as smoke — see `updateSparkles`. Also where a Prism Shot's
+// own rainbow trail draws from (`spawnPrismTrail`); sized generously enough
+// that its dense, long-lived shards don't round-robin over each other and
+// cut the ribbon short, even with a magic-costume trail alive at the same time.
+const SPARKLE_POOL_SIZE = 100;
 const SPARKLE_DRAG = 0.94;
 /** Roughly how often the flight trail spawns a shard — not every tick, or a
  * shot's whole arc would be one continuous smear rather than a trail. */
@@ -356,11 +359,19 @@ export const PRISM_SPECTRUM_HEX = [0xff2541, 0xff750e, 0xffb70e, 0x31b950, 0x178
 /** Gap between spectrum bands, as a fraction of one band's arc — enough that
  * seven flat-coloured wedges actually read as seven, not as one ring. */
 const PRISM_BAND_GAP_RATIO = 0.08;
-/** How large the projectile reads while Radius Overcharge is riding on it —
- * spec §6 asks the bullet itself to look different, not just the chamber. */
-const BOOSTER_PROJECTILE_SCALE = 1.6;
+/** How large the Radius Overcharge projectile grows to by the time it
+ * reaches the frame — 350% of its normal size, ramped up over the flight by
+ * `updateProjectile` rather than matching the shot's actual reach (that read
+ * as far too big once a level's own `sortRadius` grew past a modest size). */
+const BOOSTER_PROJECTILE_SCALE = 3.5;
 /** Full hue cycles per second for a Prism Shot bullet in flight. */
 const PRISM_PROJECTILE_HUE_HZ = 1.4;
+/** How often a Prism Shot drops a rainbow trail shard along its flight —
+ * spec §6's "vệt cầu vồng", a streak of small colour-cycling shards left
+ * behind the ball rather than the ball's own hue-cycle alone. Shorter than
+ * `SPARKLE_TRAIL_INTERVAL` so the streak reads as one continuous ribbon
+ * rather than a dotted line. */
+const PRISM_TRAIL_INTERVAL = 0.016;
 /** How much bigger the projectile's black rim (`buildProjectileOutline`'s
  * `BackSide` shell) sits than the ball's own scale — a fixed ratio, not a
  * fixed world size, since it rides as a child of the ball mesh and has to
@@ -461,6 +472,43 @@ const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
 const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
 const KEY_GLINT_RGB: readonly [number, number, number] = [255, 250, 214];
 const THAW_SECONDS = 0.5;
+/** How quickly a grain eases up to full lift once the aim radius reaches it —
+ * brisk, so the highlight reads as tracking the crosshair rather than lagging
+ * behind it. See `PixelCell.lift` and `updateLiftBlocks`. */
+const LIFT_RISE_SECONDS = 0.12;
+/** Slower than the rise, so a grain the crosshair just drifted past fades
+ * rather than snapping off — same "settle back down" feel as `THAW_SECONDS`. */
+const LIFT_FALL_SECONDS = 0.22;
+/** How far a fully-lifted grain pokes forward along local Z (toward the
+ * camera, out of the painting — `+z` is the camera side of `frameRoot`, the
+ * same axis a shot's own flight travels back along) — world units, on the
+ * same scale as `this.cell`. Real depth, not a texture trick, per the ask
+ * that this read as a Z-axis pop rather than the sand texture's own y-shift
+ * the first version used. */
+const LIFT_Z_DEPTH = 0.16;
+/** The shadow quad's own tiny Z nudge above the flat sand plane — just
+ * enough that it never z-fights with the texture it sits on, well short of
+ * `LIFT_Z_DEPTH` so the lifted face always reads as further forward. */
+const LIFT_SHADOW_Z_EPSILON = 0.004;
+/** How much bigger than one cell the shadow quad grows at full lift — sized
+ * so its corners peek out past the smaller, fully-forward face above it,
+ * which is what reads as a thin shadow rimming the lifted grain rather than
+ * a shadow-coloured cell in its own right. */
+const LIFT_SHADOW_SCALE = 1.4;
+/** How far the shadow quad's colour sits toward black — a shadow, not a
+ * colour swap, so it stays a dark tint of the grain's own colour. */
+const LIFT_SHADOW_DARKEN = 0.55;
+/** How far the raised face itself sits toward black, on top of its own true
+ * colour — the highlight is meant to read as a deeper, more raised shade of
+ * the grain's colour, not a lighter/washed-out one. Much lighter than
+ * `LIFT_SHADOW_DARKEN` so the face still reads as clearly closer to the
+ * grain's own colour than the shadow rimming it. */
+const LIFT_FACE_DARKEN = 0.18;
+/** Never rotated — every lift-block instance faces the same way the flat
+ * sand plane already does, so composing its matrix each frame only ever
+ * needs a fresh position and scale. Shared rather than a `new THREE.Quaternion()`
+ * per lifted cell per frame. */
+const LIFT_IDENTITY_QUATERNION = new THREE.Quaternion();
 
 export type SandEngineEvent =
   | { type: "AIM_TOUCHED" }
@@ -503,6 +551,14 @@ type PixelCell = {
   locked: boolean;
   /** 1 -> 0 right after a lock opened, so the sand that came free is seen to. */
   thaw: number;
+  /** 0 -> 1 while this grain sits inside the shot the crosshair currently
+   * reaches and would actually be swept (right colour, unlocked) — eased by
+   * `step()` toward whatever `liftTarget` says each fixed step, drawn by
+   * `updateLiftBlocks` as a small instanced quad in the grain's own true
+   * colour that pops forward along Z in front of the flat sand texture, plus
+   * a darker shadow quad rimming it, so sortable sand visibly pokes toward
+   * the camera while aiming rather than just glowing in place. */
+  lift: number;
 };
 
 type Projectile = {
@@ -516,6 +572,11 @@ type Projectile = {
    * spent (spec §7.1), just riding along so `handleImpact` can hand it to
    * `resolveShot` once the flight ends. */
   booster: BoosterType | null;
+  /** Radius Overcharge only: the scale the ball grows to by the time it
+   * reaches the frame, computed once at launch by
+   * `radiusBoosterMaxProjectileScale` — see `updateProjectile`'s growth
+   * ramp. Undefined for every other shot, including a plain Prism Shot. */
+  growTargetScale?: number;
 };
 
 type Beat =
@@ -654,6 +715,19 @@ export class SandCannonEngine {
   /** The same picture, facing the opposite way, so the frame is never blank
    * from behind while it turns on the home screen. */
   private readonly sandMeshBack: THREE.Mesh;
+  /** One instance per currently-lifted grain, its true colour, popped forward
+   * along Z in front of the flat sand texture — see `updateLiftBlocks`. */
+  private liftFaceMesh: THREE.InstancedMesh | null = null;
+  /** The darker, larger quad sitting just behind each `liftFaceMesh` instance
+   * — its corners peek out past the smaller face above it, reading as a thin
+   * shadow rimming the lifted grain. */
+  private liftShadowMesh: THREE.InstancedMesh | null = null;
+  /** Scratch objects `updateLiftBlocks` reuses every frame rather than
+   * allocating fresh ones per lifted cell. */
+  private readonly liftMatrix = new THREE.Matrix4();
+  private readonly liftPosition = new THREE.Vector3();
+  private readonly liftScale = new THREE.Vector3();
+  private readonly liftColor = new THREE.Color();
 
   /** Live pixels by "x,y". Rebuilt on every settle step so lookups stay exact. */
   private cells = new Map<string, PixelCell>();
@@ -729,6 +803,11 @@ export class SandCannonEngine {
   private displayedAimArmed = false;
   private displayedLaunch: BallisticSolution | null = null;
   private aimPreviewDirty = false;
+  /** Centre/radius/colour-rule of the shot the crosshair currently reaches,
+   * or null whenever the player is not actively aiming at a valid target —
+   * set once per `updateAimPreview` call, read every fixed step by the lift
+   * loop in `step()` rather than recomputed there. */
+  private liftTarget: { x: number; y: number; radius: number; color: SandColor; matchColor: boolean } | null = null;
   private aimDragSensitivity = 1;
   /** Non-null while the pointer is currently outside `host` mid-drag — see
    * `AIM_OUTSIDE_ZONE_CANCEL_MS`. Cleared the instant the pointer comes back
@@ -765,8 +844,10 @@ export class SandCannonEngine {
   private readonly sandSprayGrains: SandSprayGrain[] = [];
 
   /** Pool of magic shards `spawnSparkles` recycles — the rune costume's
-   * muzzle burst, flight trail and impact burst, see `buildSparkles`. Only
-   * ever spawned from while `isMagicCostume()` is true. */
+   * muzzle burst, flight trail and impact burst, see `buildSparkles`. Also
+   * where a Prism Shot's own rainbow trail (`spawnPrismTrail`) draws from,
+   * since both are the same "small coloured shard trickling behind a shot"
+   * effect and there is never more than one projectile in flight at once. */
   private readonly sparkleShards: SparkleShard[] = [];
   /** Rolling cursor into `sparkleShards` — a plain round-robin rather than
    * "reuse the first N" (`spawnSandSpray`'s pattern) because a muzzle burst,
@@ -777,6 +858,10 @@ export class SandCannonEngine {
   /** Time since the last flight-trail shard, throttling `updateProjectile`'s
    * trickle to roughly `SPARKLE_TRAIL_INTERVAL` instead of once a tick. */
   private sparkleTrailAge = 0;
+  /** Same throttle as `sparkleTrailAge`, kept separate so a Prism Shot fired
+   * while wearing the magic costume gets both trails at their own cadence
+   * rather than one starving the other. */
+  private prismTrailAge = 0;
 
   /** The skin picker's full-screen preview — see `setShowcase`. Off for the
    * entire rest of the game's life; only the picker ever turns it on. */
@@ -844,6 +929,7 @@ export class SandCannonEngine {
     this.buildLighting();
     this.buildFrame();
     this.buildSand();
+    this.buildLiftBlocks();
     this.buildCannon();
     this.buildSortRings();
     this.buildMuzzleSmoke();
@@ -996,6 +1082,7 @@ export class SandCannonEngine {
           shake: 0,
           locked: frozen.has(cellKey(cell.x, cell.y)),
           thaw: 0,
+          lift: 0,
         });
       }
     }
@@ -1015,6 +1102,119 @@ export class SandCannonEngine {
     this.frameRoot.add(this.sandMeshBack);
 
     this.redrawSand();
+  }
+
+  /**
+   * Two instanced meshes, sized to the largest number of grains this level
+   * could ever have lifted at once (every cell) — cheap to over-allocate,
+   * since an unused instance costs nothing beyond `count` itself, which
+   * `updateLiftBlocks` shrinks back down every frame to just what is
+   * actually lifted right now.
+   *
+   * A single shared unit `PlaneGeometry`, same as `sandMesh`'s own, so both
+   * instanced meshes face the camera the same way with no rotation to carry
+   * per instance — only position and scale ever change.
+   */
+  private buildLiftBlocks() {
+    const maxInstances = Math.max(1, this.level.frame.width * this.level.frame.height);
+    const geometry = this.track(new THREE.PlaneGeometry(1, 1));
+
+    this.liftFaceMesh = new THREE.InstancedMesh(
+      // Plain white base material, deliberately without `vertexColors` — that
+      // flag pulls in a per-vertex `color` geometry attribute this shared
+      // plane doesn't have, multiplying every instance to black. Per-instance
+      // colour alone (`setColorAt` below) is its own shader path
+      // (`USE_INSTANCING_COLOR`) that needs no such attribute.
+      geometry,
+      this.track(new THREE.MeshBasicMaterial()),
+      maxInstances,
+    );
+    this.liftFaceMesh.count = 0;
+    // These move every rendered frame the instant anything is lifted — a
+    // frustum culled purely off the (0,0,0)-centred geometry bounds would
+    // clip out instances that have walked away from it via their own matrix.
+    this.liftFaceMesh.frustumCulled = false;
+    this.frameRoot.add(this.liftFaceMesh);
+
+    this.liftShadowMesh = new THREE.InstancedMesh(
+      geometry,
+      this.track(new THREE.MeshBasicMaterial()),
+      maxInstances,
+    );
+    this.liftShadowMesh.count = 0;
+    this.liftShadowMesh.frustumCulled = false;
+    this.frameRoot.add(this.liftShadowMesh);
+  }
+
+  /**
+   * Places one face+shadow instance pair per currently-lifted grain, and
+   * shrinks both meshes' `count` down to exactly that many — called once per
+   * rendered frame (alongside `redrawSand`, right after `step()`), since it
+   * only ever needs to reflect where `cell.lift` ended up this frame, not
+   * anything mid-fixed-step.
+   *
+   * The face quad pops forward along local Z by `cell.lift * LIFT_Z_DEPTH`,
+   * in the grain's own true colour — see `PixelCell.lift`'s own comment for
+   * why this replaced the first version's texture-side brighten-and-offset.
+   * The shadow quad sits almost flush with the sand plane and grows from
+   * nothing up to `LIFT_SHADOW_SCALE` cells wide as `lift` rises, so only its
+   * corners show past the smaller face above it — a rim, not a full tile.
+   */
+  private updateLiftBlocks() {
+    const faceMesh = this.liftFaceMesh;
+    const shadowMesh = this.liftShadowMesh;
+    if (!faceMesh || !shadowMesh) return;
+    const maxInstances = faceMesh.instanceMatrix.count;
+    const baseZ = this.sandMesh.position.z;
+    let index = 0;
+    for (const cell of this.cells.values()) {
+      if (cell.lift <= 0 || index >= maxInstances) continue;
+      const { x: worldX, y: worldY } = this.cellWorld(cell.x, cell.y);
+
+      this.liftPosition.set(worldX, worldY, baseZ + cell.lift * LIFT_Z_DEPTH);
+      this.liftScale.set(this.cell, this.cell, 1);
+      this.liftMatrix.compose(this.liftPosition, LIFT_IDENTITY_QUATERNION, this.liftScale);
+      faceMesh.setMatrixAt(index, this.liftMatrix);
+      // `cell.rgb` is plain sRGB-encoded 0-255 bytes, same as every value this
+      // engine ever writes into the sand canvas (that texture is explicitly
+      // marked `SRGBColorSpace` for exactly this reason) — `setRGB` defaults
+      // to treating its input as already-linear, which reads these bytes too
+      // bright/washed out. Naming the colour space here is what keeps a
+      // lifted grain matching the shade of the flat sand right next to it,
+      // before `LIFT_FACE_DARKEN` deepens it a step further on purpose.
+      faceMesh.setColorAt(
+        index,
+        this.liftColor.setRGB(
+          (cell.rgb[0] * (1 - LIFT_FACE_DARKEN)) / 255,
+          (cell.rgb[1] * (1 - LIFT_FACE_DARKEN)) / 255,
+          (cell.rgb[2] * (1 - LIFT_FACE_DARKEN)) / 255,
+          THREE.SRGBColorSpace,
+        ),
+      );
+
+      const shadowSize = this.cell * LIFT_SHADOW_SCALE * cell.lift;
+      this.liftPosition.z = baseZ + LIFT_SHADOW_Z_EPSILON;
+      this.liftScale.set(shadowSize, shadowSize, 1);
+      this.liftMatrix.compose(this.liftPosition, LIFT_IDENTITY_QUATERNION, this.liftScale);
+      shadowMesh.setMatrixAt(index, this.liftMatrix);
+      shadowMesh.setColorAt(
+        index,
+        this.liftColor.setRGB(
+          (cell.rgb[0] * (1 - LIFT_SHADOW_DARKEN)) / 255,
+          (cell.rgb[1] * (1 - LIFT_SHADOW_DARKEN)) / 255,
+          (cell.rgb[2] * (1 - LIFT_SHADOW_DARKEN)) / 255,
+          THREE.SRGBColorSpace,
+        ),
+      );
+
+      index += 1;
+    }
+    faceMesh.count = index;
+    shadowMesh.count = index;
+    faceMesh.instanceMatrix.needsUpdate = true;
+    shadowMesh.instanceMatrix.needsUpdate = true;
+    if (faceMesh.instanceColor) faceMesh.instanceColor.needsUpdate = true;
+    if (shadowMesh.instanceColor) shadowMesh.instanceColor.needsUpdate = true;
   }
 
   /**
@@ -1075,7 +1275,10 @@ export class SandCannonEngine {
       }
       // A canvas has no sub-pixel space, so a "shake" is a whole-pixel wobble
       // in where a grain is drawn this frame — its true grid position, which
-      // gameplay reasons about, never moves.
+      // gameplay reasons about, never moves. A lifted grain (`cell.lift`) is
+      // drawn here at its normal flat colour and position, unchanged — the
+      // actual rise is a real Z-axis pop handled entirely by `updateLiftBlocks`'s
+      // instanced meshes, which sit in front of this texture and cover it.
       const offset = cell.shake > 0 ? Math.round(Math.sin(cell.shake * 46) * cell.shake * SHAKE_DRAW_OFFSET_PX) : 0;
       // Row 0 of the canvas is the top of the image; grid y counts up from the
       // floor, so the row a pixel lands on is the mirror of its grid y.
@@ -1523,6 +1726,15 @@ export class SandCannonEngine {
     return effectiveSortRadius(this.level, booster) / this.sortRadius;
   }
 
+  /** The projectile scale a Radius Overcharge shot grows to by the time it
+   * reaches the frame. A flat multiplier (`BOOSTER_PROJECTILE_SCALE`) rather
+   * than matching the shot's actual reach (`effectiveSortRadius`) — that
+   * read as far too large once the disc itself grows past a level's own
+   * `sortRadius`, ballooning the ball to match. */
+  private radiusBoosterMaxProjectileScale(): number {
+    return BOOSTER_PROJECTILE_SCALE;
+  }
+
   /**
    * Arms `type` for the next shot, toggling it back off if it is already the
    * one armed — a second tap on the same booster button cancels it rather
@@ -1886,7 +2098,19 @@ export class SandCannonEngine {
    */
   private spawnSparkles(
     origin: THREE.Vector3,
-    options: { count: number; size: number; speed: number; rise: number; life: number; gravity: number; spread?: number },
+    options: {
+      count: number;
+      size: number;
+      speed: number;
+      rise: number;
+      life: number;
+      gravity: number;
+      spread?: number;
+      /** Overrides the random `SPARKLE_COLORS` pick with one exact colour —
+       * `spawnPrismTrail` uses this to paint every shard the ball's own
+       * in-flight hue instead of the magic costume's random bling colours. */
+      colorHex?: number;
+    },
   ) {
     if (!this.sparkleShards.length) return;
     const spread = options.spread ?? 1;
@@ -1916,7 +2140,7 @@ export class SandCannonEngine {
       slot.size = size;
       slot.age = 0;
       slot.life = options.life;
-      slot.material.color.setHex(SPARKLE_COLORS[Math.floor(Math.random() * SPARKLE_COLORS.length)]);
+      slot.material.color.setHex(options.colorHex ?? SPARKLE_COLORS[Math.floor(Math.random() * SPARKLE_COLORS.length)]);
       slot.material.opacity = 1;
       slot.mesh.visible = true;
     }
@@ -1930,6 +2154,19 @@ export class SandCannonEngine {
   /** The thin trail a magic shot leaves along its whole flight. */
   private spawnSparkleTrail(point: THREE.Vector3) {
     this.spawnSparkles(point, { count: 2, size: 0.09, speed: 0.35, rise: 0.1, life: 0.26, gravity: -1.2, spread: 0.5 });
+  }
+
+  /** The rainbow streak a Prism Shot leaves along its whole flight — spec
+   * §6's "vệt cầu vồng". `hue` is the ball's own hue at this instant
+   * (`updateProjectile`'s `prismHue`), so the trail always reads as the same
+   * spectrum the ball itself is cycling through, not an unrelated colour.
+   * A long `life` against a slow `speed`/tight `spread` is what makes the
+   * streak read as one long ribbon following the ball rather than a puff of
+   * confetti at each spawn point — `PRISM_TRAIL_INTERVAL`'s dense spawn rate
+   * does the rest. */
+  private spawnPrismTrail(point: THREE.Vector3, hue: number) {
+    const colorHex = new THREE.Color().setHSL(hue, 0.85, 0.6).getHex();
+    this.spawnSparkles(point, { count: 2, size: 0.11, speed: 0.16, rise: 0.02, life: 0.6, gravity: -0.35, spread: 0.28, colorHex });
   }
 
   /** Bling: the landing itself, floating outward rather than dropping. */
@@ -2334,6 +2571,9 @@ export class SandCannonEngine {
     this.crosshair.classList.toggle("is-visible", this.canInteract());
     if (this.aimRing) this.aimRing.visible = false;
     if (this.aimRingGlow) this.aimRingGlow.visible = false;
+    // No crosshair, no radius to preview — every lifted grain eases back down
+    // via the loop in `step()`.
+    this.liftTarget = null;
   }
 
   private updateAimPreview() {
@@ -2378,6 +2618,21 @@ export class SandCannonEngine {
         this.aimRingGlow.scale.setScalar(armedScale);
       }
     }
+    // What the disc this shot would resolve against actually reaches — same
+    // centre/radius/colour-rule `handleImpact` hands `resolveShot`, just read
+    // here instead of spent, so the lift loop in `step()` can preview it.
+    // Gated on `aimArmed` like `is-target-valid` above: a bare touch-down
+    // with no drag yet shows no ring, so it should light up no sand either.
+    const ammo = currentAmmo(this.level, this.state);
+    this.liftTarget = solved?.grid && this.aimArmed && ammo
+      ? {
+          x: solved.grid.x,
+          y: solved.grid.y,
+          radius: effectiveSortRadius(this.level, this.armedBooster),
+          color: ammo,
+          matchColor: this.armedBooster !== "prismShot",
+        }
+      : null;
     this.aimPreviewDirty = false;
   }
 
@@ -2420,9 +2675,12 @@ export class SandCannonEngine {
     this.projectileMesh.visible = true;
     this.projectileMesh.position.copy(launch.start);
     // Spec §6: the bullet itself has to look different, not just the chamber
-    // it left — bigger for Radius Overcharge; Prism Shot's hue-cycle is
-    // applied per frame in `updateProjectile` instead, since it moves in time.
-    this.projectileMesh.scale.setScalar(booster === "radiusOvercharge" ? BOOSTER_PROJECTILE_SCALE : 1);
+    // it left. Radius Overcharge starts life-size and grows in flight (see
+    // `updateProjectile`'s growth ramp) rather than jumping straight to its
+    // final size here; Prism Shot's hue-cycle and rainbow trail are both
+    // applied per frame in `updateProjectile` instead, since they move in time.
+    this.projectileMesh.scale.setScalar(1);
+    if (booster === "prismShot") this.prismTrailAge = 0;
 
     this.projectile = {
       mesh: this.projectileMesh,
@@ -2432,6 +2690,7 @@ export class SandCannonEngine {
       time: 0,
       color,
       booster,
+      growTargetScale: booster === "radiusOvercharge" ? this.radiusBoosterMaxProjectileScale() : undefined,
     };
     this.setPhase("PROJECTILE_FLYING");
     // Published, not just recorded: the flight is the first stretch of the
@@ -2443,13 +2702,13 @@ export class SandCannonEngine {
 
   private updateProjectile(projectile: Projectile) {
     projectile.time += FIXED_STEP;
-    // Spec §6's "vệt cầu vồng": a full trail of lingering particles is more
-    // than one bullet's flight needs, so the bullet's own colour cycles
-    // through the spectrum instead — still unmistakably not a normal round,
-    // for as long as it is in the air.
+    // The bullet's own colour cycles through the spectrum for as long as
+    // it's in the air — still unmistakably not a normal round even before
+    // the rainbow trail below is accounted for.
+    let prismHue: number | null = null;
     if (projectile.booster === "prismShot") {
-      const hue = (projectile.time * PRISM_PROJECTILE_HUE_HZ) % 1;
-      (projectile.mesh.material as THREE.MeshBasicMaterial).color.setHSL(hue, 0.85, 0.6);
+      prismHue = (projectile.time * PRISM_PROJECTILE_HUE_HZ) % 1;
+      (projectile.mesh.material as THREE.MeshBasicMaterial).color.setHSL(prismHue, 0.85, 0.6);
     }
     const next = this.positionAt(projectile.start, projectile.velocity, projectile.time);
 
@@ -2461,12 +2720,37 @@ export class SandCannonEngine {
       }
     }
 
+    // Spec §6's "vệt cầu vồng": a streak of colour-cycling shards trickling
+    // behind the ball, same cadence idea as the magic trail just above but
+    // its own throttle so the two never starve each other.
+    if (prismHue !== null) {
+      this.prismTrailAge += FIXED_STEP;
+      if (this.prismTrailAge >= PRISM_TRAIL_INTERVAL) {
+        this.prismTrailAge = 0;
+        this.spawnPrismTrail(next, prismHue);
+      }
+    }
+
     const hit = this.planeHit(projectile.previous, next.clone().sub(projectile.previous).normalize(), true);
     // planeHit solves against the infinite plane along a ray; confirm the
     // crossing actually falls inside this tick's travelled segment before
     // trusting it, since a ray can cross the plane far outside the step taken.
     const segmentLength = projectile.previous.distanceTo(next);
     const validHit = hit && hit.t >= 0 && hit.t <= segmentLength + PROJECTILE_RADIUS;
+
+    // Radius Overcharge: the ball puffs up from life-size at the muzzle to
+    // `growTargetScale` (`radiusBoosterMaxProjectileScale`) by the moment it
+    // reaches the frame's plane, so it visibly grows in flight rather than
+    // arriving pre-inflated. Progress rides the same z-axis the miss check
+    // below already uses to know "reached the frame", since velocity.z is
+    // unaffected by `GRAVITY` and so travels at a constant rate.
+    if (projectile.growTargetScale) {
+      const planeZ = this.frameRoot.position.z + this.sandMesh.position.z;
+      const totalDist = projectile.start.z - planeZ;
+      const point = validHit ? hit.point : next;
+      const progress = totalDist > 0 ? THREE.MathUtils.clamp((projectile.start.z - point.z) / totalDist, 0, 1) : 1;
+      projectile.mesh.scale.setScalar(THREE.MathUtils.lerp(1, projectile.growTargetScale, progress));
+    }
 
     if (validHit) {
       const contact = hit.point;
@@ -2866,8 +3150,20 @@ export class SandCannonEngine {
     if (this.projectile) this.updateProjectile(this.projectile);
     this.advanceBeats(deltaMs);
 
+    const liftTarget = this.liftTarget;
     for (const cell of this.cells.values()) {
       if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);
+      // Same radius/colour rule `resolveShot` sweeps by (see `liftTarget`'s
+      // own comment) — a locked grain never lifts, since a locked grain can
+      // never actually be swept either.
+      let target = 0;
+      if (liftTarget && !cell.locked && (liftTarget.matchColor ? cell.color === liftTarget.color : true)) {
+        const dx = cell.x - liftTarget.x;
+        const dy = cell.y - liftTarget.y;
+        if (dx * dx + dy * dy <= liftTarget.radius * liftTarget.radius) target = 1;
+      }
+      if (cell.lift < target) cell.lift = Math.min(target, cell.lift + FIXED_STEP / LIFT_RISE_SECONDS);
+      else if (cell.lift > target) cell.lift = Math.max(target, cell.lift - FIXED_STEP / LIFT_FALL_SECONDS);
     }
 
     this.recoil = Math.max(0, this.recoil - FIXED_STEP * 4.2);
@@ -2940,7 +3236,10 @@ export class SandCannonEngine {
       }
       // Once per rendered frame regardless of how many fixed ticks ran in it —
       // the canvas only needs to reflect where things ended up this frame.
-      if (steps > 0) this.redrawSand();
+      if (steps > 0) {
+        this.redrawSand();
+        this.updateLiftBlocks();
+      }
     }
     this.renderer.render(this.scene, this.camera);
     if (!this.firstFrameSent) {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  PRISM_SPECTRUM_HEX,
   SandCannonEngine,
   SAND_COLOR_HEX,
   type SandEngineEvent,
@@ -20,6 +19,7 @@ import {
   hasClearedLevel,
   levelGoldReward,
   markLevelCleared,
+  resetGold,
   SERVER_WALLET,
   subscribeWallet,
   type DailyLoginState,
@@ -248,51 +248,17 @@ function HubIcon({ tab, active }: { tab: HubTab; active: boolean }) {
 
 /**
  * No text on a booster button (spec §6) — just an icon reusing gameplay
- * language the player already knows: Radius Overcharge is the aim ring
- * (`SandCannonEngine`'s own `aimRing`) blown up with outward arrows at the
- * four corners; Prism Shot is a bullet wrapped in the same seven-band
- * spectrum as the 3D chamber/muzzle overlay (`PRISM_SPECTRUM_HEX`), so the
- * button and the gun agree on what "prism" looks like.
+ * language the player already knows. Real artwork now
+ * (`/public/icons/RadiusIncreaseIcon.png`, `/public/icons/PrismChargeIcon.png`)
+ * rather than hand-drawn SVG, same as `CancelIcon`/`ReturnMainHubIcon` — one
+ * component so the in-play HUD tray and the Shop cards stay on the same
+ * glyph automatically.
  */
 function BoosterIcon({ type }: { type: BoosterType }) {
-  if (type === "radiusOvercharge") {
-    return (
-      <svg className="booster-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="12" r="6.2" strokeDasharray="2.6 2.2" />
-        {[0, 90, 180, 270].map((deg) => (
-          <g key={deg} transform={`rotate(${deg} 12 12)`}>
-            <path d="M17.6 6.4 20.6 3.4" />
-            <path d="M20.6 3.4h-3" />
-            <path d="M20.6 3.4v3" />
-          </g>
-        ))}
-      </svg>
-    );
-  }
-  // Seven stroked circles at the same radius, each dashed down to its own
-  // 1/7 arc and rotated into place — a ring built of bands rather than one
-  // multi-colour stroke, the same construction `buildSpectrumRing` uses in
-  // three.js. The bullet on top is a plain capsule in the button's own colour.
-  const radius = 8;
-  const circumference = 2 * Math.PI * radius;
-  const band = circumference / PRISM_SPECTRUM_HEX.length;
-  const gap = band * 0.16;
+  const src = type === "radiusOvercharge" ? "/icons/RadiusIncreaseIcon.png" : "/icons/PrismChargeIcon.png";
   return (
-    <svg className="booster-icon is-prism" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {PRISM_SPECTRUM_HEX.map((value, index) => (
-        <circle
-          key={value}
-          cx="12"
-          cy="12"
-          r={radius}
-          stroke={numHex(value)}
-          strokeWidth={3}
-          strokeDasharray={`${band - gap} ${circumference - (band - gap)}`}
-          strokeDashoffset={-index * band}
-        />
-      ))}
-      <rect x="9.6" y="7.2" width="4.8" height="9.6" rx="2.4" fill="currentColor" stroke="none" />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className={`booster-icon${type === "prismShot" ? " is-prism" : ""}`} src={src} alt="" aria-hidden="true" />
   );
 }
 
@@ -666,6 +632,31 @@ function markFtueGestureShown(id: number) {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
+/** Falling paper pieces covering the whole WIN screen (`.win-confetti` in
+ * globals.css) — a fixed hand-picked set rather than `Math.random()` so the
+ * layout doesn't reshuffle every re-render while the result screen is up.
+ * Slow and staggered on purpose ("rơi nhẹ thôi") — gentle drift over a long
+ * duration, not a confetti-cannon burst — but spread across the full width
+ * (and a few different sizes) so the screen reads as filled rather than a
+ * single thin band of pieces. */
+const WIN_CONFETTI = [
+  { left: 2, delay: 0, duration: 7.2, drift: 16, size: 7, color: "var(--gold)" },
+  { left: 9, delay: 2.4, duration: 8.4, drift: -12, size: 6, color: "var(--sky)" },
+  { left: 16, delay: 1.1, duration: 6.6, drift: 20, size: 9, color: "var(--danger)" },
+  { left: 23, delay: 3.2, duration: 7.8, drift: -18, size: 6, color: "var(--gem)" },
+  { left: 30, delay: 0.5, duration: 8.0, drift: 10, size: 8, color: "var(--accent)" },
+  { left: 37, delay: 2.0, duration: 6.9, drift: -14, size: 7, color: "var(--wood)" },
+  { left: 44, delay: 0.9, duration: 7.5, drift: 18, size: 6, color: "var(--gold)" },
+  { left: 51, delay: 3.6, duration: 8.6, drift: -10, size: 9, color: "var(--danger)" },
+  { left: 58, delay: 1.6, duration: 7.0, drift: 14, size: 7, color: "var(--sky)" },
+  { left: 65, delay: 0.2, duration: 8.2, drift: -20, size: 6, color: "var(--gem)" },
+  { left: 72, delay: 2.8, duration: 7.4, drift: 12, size: 8, color: "var(--accent)" },
+  { left: 79, delay: 1.4, duration: 6.7, drift: -16, size: 7, color: "var(--gold)" },
+  { left: 86, delay: 3.0, duration: 8.5, drift: 20, size: 6, color: "var(--wood)" },
+  { left: 93, delay: 0.7, duration: 7.1, drift: -12, size: 9, color: "var(--danger)" },
+  { left: 98, delay: 2.2, duration: 7.9, drift: 10, size: 7, color: "var(--sky)" },
+] as const;
+
 
 export default function SandGame() {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -1002,6 +993,9 @@ export default function SandGame() {
   // every time the screen opens, and only diverges while a card is being
   // looked at but not yet confirmed with Select.
   const [previewCostume, setPreviewCostume] = useState<CostumeId>(costume);
+  // True for the one animation's worth of time right after tapping Select —
+  // see `selectCostume` and `.skin-equip.is-just-selected` in globals.css.
+  const [justEquippedPulse, setJustEquippedPulse] = useState(false);
   // Rendered once per page load by `SandCannonEngine.captureCostumeThumbnails`
   // — empty until the skin screen first opens, since capturing a thumbnail
   // needs the engine's own renderer and there is no reason to pay for it
@@ -1260,6 +1254,11 @@ export default function SandGame() {
   const selectCostume = useCallback(() => {
     setSelectedCostume(previewCostume);
     setCostume(previewCostume);
+    // Plays the button's own left-to-right sweep exactly once, for this tap
+    // only — cleared by `onAnimationEnd` below, never re-added on mount, so a
+    // skin that was already equipped never replays it just by opening the
+    // picker back up.
+    setJustEquippedPulse(true);
   }, [previewCostume]);
 
   /**
@@ -1746,9 +1745,9 @@ export default function SandGame() {
                 >
                   Level {level.id}
                 </button>
-                <button type="button" className="hub-modes-btn" aria-label="Modes">
+                <div className="hub-modes-btn">
                   Modes
-                </button>
+                </div>
               </div>
             ) : (
               // Not a click-through backdrop: while a section is open, tapping
@@ -1802,12 +1801,13 @@ export default function SandGame() {
             <div className="skin-stage" aria-hidden="true" />
 
             <button
-              className="skin-equip"
+              className={`skin-equip${justEquippedPulse ? " is-just-selected" : ""}`}
               type="button"
               onClick={selectCostume}
               disabled={previewCostume === costume}
+              onAnimationEnd={() => setJustEquippedPulse(false)}
             >
-              {previewCostume === costume ? "Selected" : "Select"}
+              <span className="skin-equip-label">{previewCostume === costume ? "Selected" : "Select"}</span>
             </button>
 
             <div className="skin-tray">
@@ -2351,6 +2351,12 @@ export default function SandGame() {
                 <a href="/editor" className="settings-devlink">
                   <Glyph name="pencil" /> Level editor
                 </a>
+                <button type="button" className="settings-devlink" onClick={() => addGold(500)}>
+                  <CoinIcon /> +500 gold
+                </button>
+                <button type="button" className="settings-devlink" onClick={() => resetGold()}>
+                  <CoinIcon /> Reset gold
+                </button>
               </div>
             </div>
           </div>
@@ -2365,22 +2371,77 @@ export default function SandGame() {
             `pendingHomeReward`'s own comment for why that waits for Home. */}
         {state.result?.kind === "WIN" && (
           <div className="result-screen is-win" role="dialog" aria-modal="true">
-            <div className="result-card is-win">
-              <div className="result-card-header">
-                <h2>FRAME CLEARED</h2>
-                <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
-                  <CancelIcon />
-                </button>
+            {/* Purely ambient — behind the card (`.result-card.is-win` keeps
+                its own `z-index: 1`), so it never competes with the card for
+                taps. Covers the whole screen, not just the strip behind the
+                card — see WIN_CONFETTI's own comment. */}
+            <div className="win-confetti" aria-hidden="true">
+              {WIN_CONFETTI.map((piece, i) => (
+                <span
+                  key={i}
+                  className="win-confetti-piece"
+                  style={{
+                    left: `${piece.left}%`,
+                    width: `${piece.size}px`,
+                    height: `${piece.size * 1.5}px`,
+                    animationDelay: `${piece.delay}s`,
+                    animationDuration: `${piece.duration}s`,
+                    background: piece.color,
+                    "--drift": `${piece.drift}px`,
+                  } as React.CSSProperties}
+                />
+              ))}
+            </div>
+
+            <div className="win-frame">
+              {/* The two party horns and the cannon badge from
+                  `/public/decorate` — purely decorative dressing for the
+                  frame-cleared moment, so all three sit outside the card's
+                  own `overflow: hidden` in sibling layers instead of inside
+                  it. Two layers, not one, because the reference layout puts
+                  the assets on either side of the card in depth: the cannon
+                  is BEHIND it (centred on the top edge, its base tucked out
+                  of sight behind the mint header so it reads as standing
+                  behind the card — it must never cover the headline), the
+                  horns are IN FRONT (anchored past the bottom corners,
+                  overlapping the card's lower edge, firing outward/up).
+                  Neither horn is mirrored — each is already drawn facing the
+                  right way for its own corner. */}
+              <div className="win-decor is-behind" aria-hidden="true">
+                <span className="win-decor-cannon">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/decorate/DecorateFInishLevel3.png" alt="" />
+                </span>
               </div>
-              <div className="result-card-body">
-                <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
-                {hasNextLevel && (
-                  <div className="result-actions">
-                    <button type="button" onClick={() => openLevel(levelIndex + 1)}>
-                      Continue
-                    </button>
-                  </div>
-                )}
+
+              <div className="win-decor is-front" aria-hidden="true">
+                <span className="win-decor-horn is-left">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/decorate/DecorateFInishLevel2.png" alt="" />
+                </span>
+                <span className="win-decor-horn is-right">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/decorate/DecorateFInishLevel1.png" alt="" />
+                </span>
+              </div>
+
+              <div className="result-card is-win">
+                <div className="result-card-header">
+                  <h2>FRAME CLEARED!</h2>
+                  <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
+                    <CancelIcon />
+                  </button>
+                </div>
+                <div className="result-card-body">
+                  <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
+                  {hasNextLevel && (
+                    <div className="result-actions">
+                      <button type="button" onClick={() => openLevel(levelIndex + 1)}>
+                        Continue
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -2457,45 +2518,58 @@ export default function SandGame() {
               if (event.target === event.currentTarget) setDailyLoginOverride(null);
             }}
           >
-            <div className="result-card daily-login-card">
-              <button
-                type="button"
-                className="result-close-btn"
-                onClick={() => setDailyLoginOverride(null)}
-                aria-label="Close"
-              >
-                <CancelIcon />
-              </button>
-              <h2>Daily Login</h2>
-              <div className="daily-login-strip">
-                {DAILY_LOGIN_REWARDS.map((_, index) => {
-                  const isToday = index === dailyLogin.day;
-                  const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
-                  return (
-                    <div
-                      key={index}
-                      className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
-                    >
-                      <span className="daily-login-label">Day {index + 1}</span>
-                      <span ref={isToday ? todayCoinRef : undefined}>
-                        <CoinIcon />
-                      </span>
-                      <strong>{dailyLoginReward(index)}</strong>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Claim only — no "Later"/"Close" text button any more, the
-                  corner X above is the one dismiss action every card gets
-                  for free. Already claimed today: nothing to claim, so no
-                  bottom action at all, just the X. */}
-              {!dailyLogin.claimedToday && (
-                <div className="result-actions">
-                  <button type="button" onClick={claimDailyLoginWithFlight}>
-                    Claim {dailyLogin.reward} coins
+            <div className="daily-login-frame">
+              {/* Two dark pegs pinning the card to the hub behind it, poking
+                  above the header — purely decorative, so they sit outside
+                  the card's own `overflow: hidden` in this sibling wrapper
+                  rather than inside it. */}
+              <span className="daily-login-tab is-left" aria-hidden="true" />
+              <span className="daily-login-tab is-right" aria-hidden="true" />
+              <div className="result-card daily-login-card">
+                <div className="daily-login-header">
+                  <h2>Daily Login</h2>
+                  <button
+                    type="button"
+                    className="result-close-btn"
+                    onClick={() => setDailyLoginOverride(null)}
+                    aria-label="Close"
+                  >
+                    <CancelIcon />
                   </button>
                 </div>
-              )}
+                <div className="daily-login-header-strip" />
+                <div className="daily-login-body">
+                  <div className="daily-login-strip">
+                    {DAILY_LOGIN_REWARDS.map((_, index) => {
+                      const isToday = index === dailyLogin.day;
+                      const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
+                      return (
+                        <div
+                          key={index}
+                          className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
+                        >
+                          <span className="daily-login-label">Day {index + 1}</span>
+                          <span ref={isToday ? todayCoinRef : undefined}>
+                            <CoinIcon />
+                          </span>
+                          <strong>{dailyLoginReward(index)}</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Claim only — no "Later"/"Close" text button any more, the
+                      corner X above is the one dismiss action every card gets
+                      for free. Already claimed today: nothing to claim, so no
+                      bottom action at all, just the X. */}
+                  {!dailyLogin.claimedToday && (
+                    <div className="result-actions">
+                      <button type="button" onClick={claimDailyLoginWithFlight}>
+                        Claim {dailyLogin.reward} coins
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
