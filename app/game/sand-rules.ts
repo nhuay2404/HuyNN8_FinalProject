@@ -309,10 +309,25 @@ export function runGrainSettle(
   bodies: SandBody[],
   frame: SandFrame,
   fixtures: Fixtures = {},
+  /** Where a shot bit its hole, in case `settleWorldFromHole` can start
+   * narrow instead of sweeping the whole frame every pass — see its own
+   * comment. Ignored whenever there are keys on the board: a key can carry a
+   * lock's whole region loose from anywhere, so only the plain, keyless case
+   * gets to assume the cascade stays near the hole. */
+  hint?: { x: number; y: number; radius: number },
 ): SettleOutcome {
   const world = buildWorld(bodies, fixtures);
   const steps: SettleStep[] = [];
-  settleWorld(world, frame, steps);
+  // A hinted, keyless settle only ever has to watch the neighbourhood of the
+  // hole a shot bit — see `settleWorldFromHole`'s own comment on why a
+  // full-frame rescan every pass is wasted work there. Anything else (no
+  // hint, or keys on the board that a lock could free from anywhere) gets
+  // the unrestricted sweep, unchanged.
+  if (hint && !fixtures.keys?.length) {
+    settleWorldFromHole(world, frame, steps, hint);
+  } else {
+    settleWorld(world, frame, steps);
+  }
   return finishWorld(world, frame, steps);
 }
 
@@ -373,6 +388,16 @@ function occupied(world: World, frame: SandFrame, x: number, y: number) {
   return world.grid.has(key) || world.keyAt.has(key);
 }
 
+/** Where the grain at (x, y) would fall this pass, or null if nothing gives. */
+function grainTarget(world: World, frame: SandFrame, x: number, y: number): CellCoord | null {
+  if (!occupied(world, frame, x, y - 1)) return { x, y: y - 1 };
+  for (const dx of SLIDE_ORDER) {
+    if (occupied(world, frame, x + dx, y) || occupied(world, frame, x + dx, y - 1)) continue;
+    return { x: x + dx, y: y - 1 };
+  }
+  return null;
+}
+
 /** One pass of falling sand. Returns whether anything moved. */
 function sandPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
@@ -381,17 +406,7 @@ function sandPass(world: World, frame: SandFrame, steps: SettleStep[]) {
       const from = cellKey(x, y);
       const color = world.grid.get(from);
       if (color === undefined || world.locked.has(from)) continue;
-
-      let to: CellCoord | null = null;
-      if (!occupied(world, frame, x, y - 1)) {
-        to = { x, y: y - 1 };
-      } else {
-        for (const dx of SLIDE_ORDER) {
-          if (occupied(world, frame, x + dx, y) || occupied(world, frame, x + dx, y - 1)) continue;
-          to = { x: x + dx, y: y - 1 };
-          break;
-        }
-      }
+      const to = grainTarget(world, frame, x, y);
       if (!to) continue;
 
       world.grid.delete(from);
@@ -402,6 +417,83 @@ function sandPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   if (!moves.length) return false;
   steps.push({ kind: "GRAIN_PASS", moves });
   return true;
+}
+
+/** Bottom-up, left-to-right scan order — the order `sandPass`'s own nested
+ * loop visits cells in, and the order a candidate queue has to stay sorted by
+ * for `sandPassCandidates` to reproduce it exactly. */
+function compareScanOrder(a: CellCoord, b: CellCoord): number {
+  return a.y - b.y || a.x - b.x;
+}
+
+/** Insert `cell` into `queue` (kept sorted by `compareScanOrder`) at its
+ * correct position, via binary search. */
+function insertInScanOrder(queue: CellCoord[], cell: CellCoord) {
+  let lo = 0;
+  let hi = queue.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (compareScanOrder(queue[mid], cell) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  queue.splice(lo, 0, cell);
+}
+
+/**
+ * `sandPass`, but only ever checking cells reachable from `candidates` —
+ * still sorted and processed in `sandPass`'s own bottom-up, left-to-right
+ * order, so a board with nothing to watch outside `candidates` settles into
+ * exactly the same board, in exactly the same pass groupings, `sandPass`
+ * itself would have (see `settleWorldFromHole`'s own comment for why that
+ * grouping is not just cosmetic — a whole column has to read as falling
+ * together, not as a wave crossing it one row at a time). A move can unblock
+ * a cell `sandPass`'s single linear scan would still reach *this same pass*
+ * (the row directly above, or a same-row neighbour further along the scan) —
+ * those go back into the queue this function is still working through, via
+ * `insertInScanOrder`; a move can only ever unblock something *behind* where
+ * the scan already is (a moved grain's own new position, always one row
+ * below where it just was) for those, and only those, does `sandPass` itself
+ * wait for its next call — collected into the returned set instead.
+ */
+function sandPassCandidates(world: World, frame: SandFrame, steps: SettleStep[], candidates: Set<string>): Set<string> {
+  const queue = [...candidates]
+    .map(parseCellKey)
+    .filter((cell) => cell.x >= 0 && cell.x < frame.width && cell.y >= 1 && cell.y < frame.height)
+    .sort(compareScanOrder);
+  const moves: Array<{ from: CellCoord; to: CellCoord }> = [];
+  const visited = new Set<string>();
+  const next = new Set<string>();
+  let index = 0;
+  while (index < queue.length) {
+    const cell = queue[index];
+    index += 1;
+    const from = cellKey(cell.x, cell.y);
+    if (visited.has(from)) continue;
+    visited.add(from);
+    const color = world.grid.get(from);
+    if (color === undefined || world.locked.has(from)) continue;
+    const to = grainTarget(world, frame, cell.x, cell.y);
+    if (!to) continue;
+
+    world.grid.delete(from);
+    world.grid.set(cellKey(to.x, to.y), color);
+    moves.push({ from: { x: cell.x, y: cell.y }, to });
+    // `to` is always one row below `cell` — behind the scan wherever it
+    // currently sits — so it always waits for the next pass, same as
+    // `sandPass`'s own "moved once per pass" rule.
+    next.add(cellKey(to.x, to.y));
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue;
+        const neighbour = { x: cell.x + dx, y: cell.y + dy };
+        if (neighbour.x < 0 || neighbour.x >= frame.width || neighbour.y < 1 || neighbour.y >= frame.height) continue;
+        if (compareScanOrder(neighbour, cell) > 0) insertInScanOrder(queue, neighbour);
+        else next.add(cellKey(neighbour.x, neighbour.y));
+      }
+    }
+  }
+  if (moves.length) steps.push({ kind: "GRAIN_PASS", moves });
+  return next;
 }
 
 /** Whether every cell of key `id` would land somewhere legal at (dx, dy). */
@@ -532,6 +624,46 @@ function settleWorld(world: World, frame: SandFrame, steps: SettleStep[]) {
     const keys = keyPass(world, frame, steps);
     const unlocked = unlockPass(world, steps);
     if (!sand && !keys && !unlocked) break;
+  }
+}
+
+/**
+ * `settleWorld`, but for a keyless board where only the neighbourhood of one
+ * shot's hole can possibly still be moving — see `runGrainSettle`'s `hint`.
+ *
+ * A full `sandPass` rescans every cell of the frame whether or not anything
+ * near it changed, which is what a solid, fully-packed picture (Level 2/3's
+ * "drawn as a solid rectangle" style — see their own doc comments in
+ * sand-levels.ts) pays for on every single shot: dozens of passes, each one
+ * a pass over the *whole* board, purely to re-confirm that sand nowhere near
+ * the hole never moved. `sandPassCandidates` instead only ever looks at
+ * cells `settleWorldFromHole` already has reason to suspect could move —
+ * seeded from the hole itself, then grown pass by pass from whatever the
+ * previous pass actually touched. Locks and keys still run unrestricted
+ * (`keyPass`/`unlockPass` take no bounds), which is exactly why this path is
+ * only ever taken on a board with no keys at all — see `runGrainSettle`.
+ */
+function settleWorldFromHole(
+  world: World,
+  frame: SandFrame,
+  steps: SettleStep[],
+  hint: { x: number; y: number; radius: number },
+) {
+  const limit = frame.width * frame.height;
+  // Seeded from just the hole itself — not the whole column above it. Nothing
+  // above the hole is a candidate yet; each pass's own `sandPassCandidates`
+  // is what carries the frontier upward, one row at a time, exactly as far as
+  // it turns out to actually be needed.
+  let active = new Set<string>();
+  const minX = Math.max(0, Math.floor(hint.x - hint.radius));
+  const maxX = Math.min(frame.width - 1, Math.ceil(hint.x + hint.radius));
+  const minY = Math.max(1, Math.floor(hint.y - hint.radius));
+  const maxY = Math.min(frame.height - 1, Math.ceil(hint.y + hint.radius));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) active.add(cellKey(x, y));
+  }
+  for (let pass = 0; pass < limit && active.size; pass += 1) {
+    active = sandPassCandidates(world, frame, steps, active);
   }
 }
 
@@ -905,8 +1037,26 @@ function withResult(level: SandLevelConfig, state: SandGameState): SandGameState
  * is nothing to normalise first: the labels it hands back are already true of
  * the settled grid.
  */
-function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures: Fixtures) {
-  const settle = runGrainSettle(bodies, level.frame, fixtures);
+function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures: Fixtures, removed: CellCoord[]) {
+  // The hole a radius shot bites is one contiguous disc, so its own bounding
+  // box (plus a little slack for the fall's own sideways roll) is where every
+  // bit of the cascade it triggers actually starts — see `runGrainSettle`'s
+  // `hint` and `settleWorldFromHole`'s own comment. A big, mostly-static
+  // board (a solid Level 2/3 picture) would otherwise pay for a full-frame
+  // rescan on every settle pass just to confirm the far side never moved.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const cell of removed) {
+    if (cell.x < minX) minX = cell.x;
+    if (cell.x > maxX) maxX = cell.x;
+    if (cell.y < minY) minY = cell.y;
+    if (cell.y > maxY) maxY = cell.y;
+  }
+  const hint = {
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
+    radius: Math.max(maxX - minX, maxY - minY) / 2 + 1,
+  };
+  const settle = runGrainSettle(bodies, level.frame, fixtures, hint);
   return { settle, steps: settle.steps };
 }
 /**
@@ -973,7 +1123,7 @@ export function resolveShot(
   const left = state.bodies
     .map((body) => ({ ...body, cells: body.cells.filter((cell) => !taken.has(cellKey(cell.x, cell.y))) }))
     .filter((body) => body.cells.length);
-  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(level, state));
+  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(level, state), removed);
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
   const sorted: SandGameState = {
     ...state,

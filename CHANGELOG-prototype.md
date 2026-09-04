@@ -6074,3 +6074,39 @@ lá, thanh tác vụ kem, nút Level xanh lá chữ kem, nút Modes nâu chữ v
 
 **Test:** `tsc --noEmit` sạch. Verify trên preview: dialog to rõ hơn hẳn, chữ dễ đọc; hoạ tiết dot mờ hẳn,
 không còn nổi bật như trước.
+
+---
+
+## 149. Tăng tốc nhịp chơi: đạn bay nhanh hơn, cát rơi/settle nhanh hơn hẳn (03/09)
+
+Theo yêu cầu tăng tốc process in-game.
+
+**`SandCannonEngine.ts`:**
+- `FIXED_LAUNCH_SPEED` (tốc độ đạn rời nòng): 13.2 → **19** — hằng số này thuộc block "kế thừa từ cannon
+  tiền-pivot, không được tự bịa số" (§20), nhưng đây là ngoại lệ chủ đích duy nhất theo yêu cầu người dùng;
+  ghi chú lại trong comment. Bộ giải đường bay (`solveAimAtScreenPoint`) tính lại góc bắn cho từng phát dựa
+  theo tốc độ hiện tại nên đổi tốc độ không làm lệch điểm rơi, chỉ rút ngắn thời gian bay.
+- `SETTLE_TOTAL_MS` (tổng thời gian toàn bộ chuỗi cát rơi/sập được co giãn vừa khít vào, bất kể cascade lớn
+  hay nhỏ): 800 → **350** — đây là nút chỉnh tốc độ rơi thực sự của hệ mô phỏng cát dạng lưới (grid-based),
+  không phải physics gia tốc liên tục nên "tăng gravity" ở đây tương đương giảm cửa sổ thời gian này.
+- `SAND_SPRAY_GRAVITY_SCALE` (lực kéo mảnh cát văng ra lúc trúng đạn, vốn đã mạnh hơn gravity đường đạn):
+  3.2 → **5** — mảnh vỡ rơi xuống nhanh/mạnh hơn nữa, đúng nghĩa đen "tăng mạnh gravity" người dùng yêu cầu.
+
+**Test:** `tsc --noEmit` sạch. Verify trên preview: bắn thử — đạn tới đích nhanh hơn hẳn, chuỗi cát
+rơi/settle sau khi trúng đạn rút ngắn rõ rệt, không lỗi console phát sinh từ thay đổi.
+
+---
+
+## 150. Dời "3 chấm" báo cát đang settling lên cao hơn, ra ngoài khung tranh (03/09)
+
+`.settle-badge` (3 thẻ `<i />` báo "đang khoá bắn" khi đạn bay/cát rơi) trước đó nằm ở `top: 118px` — sát mép
+trên khung tranh, đọc như đang nằm *trên* bức tranh chứ không phải *phía trên* nó. Cần hỏi lại người dùng
+một lượt để xác định đúng cụm "3 chấm" nào (repo có nhiều loại chấm khác nhau — `shots-upcoming-dot` của HUD
+đạn, và đang có phiên làm việc khác chạy song song thêm hẳn UI rương/gem riêng) trước khi sửa.
+
+**`globals.css`:** `.settle-badge`: `top` 118px → **70px** — kéo hẳn lên vùng trời trống phía trên khung,
+gần hơn với `.sand-toast` (46px) nhưng vẫn chừa khoảng cách để hai badge không đụng nhau nếu cùng hiện một
+lúc.
+
+**Test:** `tsc --noEmit` sạch. Xác nhận qua computed stylesheet + `getBoundingClientRect()` lúc bắn thử: rule
+`top: 70px` áp dụng đúng, badge hiện cao hơn hẳn vị trí cũ.
