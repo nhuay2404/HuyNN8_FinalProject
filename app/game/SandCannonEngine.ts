@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { buildChest, type ChestRig } from "./chest-model.ts";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   disposeCostumeParts,
@@ -79,9 +80,15 @@ export const SAND_COLOR_HEX: Record<SandColor, number> = {
 // §20 is explicit that this pivot does not get to invent cannon numbers. Every
 // constant in this block is carried over unchanged from the pre-pivot
 // prototype's cannon; nothing here was re-tuned for sand.
+// (`FIXED_LAUNCH_SPEED` is the one deliberate exception — sped up per a later
+// pacing pass, see its own comment.)
 const PROJECTILE_RADIUS = 0.15;
 const FIXED_STEP = 1 / 60;
-const FIXED_LAUNCH_SPEED = 13.2;
+/** Bumped up from the inherited 13.2 — per feedback the shot's own flight
+ * read as too slow, and the ballistic solver re-aims every shot from scratch
+ * (`solveAimAtScreenPoint`), so a faster muzzle speed still hits whatever the
+ * crosshair is over, just with less hang time getting there. */
+const FIXED_LAUNCH_SPEED = 19;
 const SHOT_COOLDOWN_MS = 400;
 const JOYSTICK_RADIUS = 64;
 const JOYSTICK_RESPONSE_DEAD_ZONE = 14;
@@ -187,6 +194,35 @@ export const MUZZLE_Z = -2.18;
  */
 const CANNON_MODEL_SCALE = 0.8;
 
+// ---- reward chest showcase -----------------------------------------------
+// The reward screen's chest is a real 3D rig (`chest-model.ts`), shown the same
+// way the skin picker's cannon is: drawn by this engine's own renderer behind a
+// transparent DOM screen, because the page keeps exactly one WebGL context and
+// a second canvas for one overlay would eventually cost the game its own.
+//
+// Held far enough back, and high enough, to leave the lower half of the frame
+// to the screen's own caption, amount and Collect button.
+const CHEST_POSITION = new THREE.Vector3(0, 1.35, 5.05);
+const CHEST_FOV = 43;
+/** Full turns the chest makes before it settles, and how long that takes. Ends
+ * on a whole number of turns, so the settle lands square to camera with no
+ * separate snap. */
+const CHEST_SPIN_TURNS = 3;
+const CHEST_SPIN_SECONDS = 1.5;
+/** How far the lid swings, and how long it takes. Just past a right angle:
+ * far enough to read as thrown open, not so far that it folds back down over
+ * the front of the chest and hides what is coming out of it. */
+const CHEST_LID_OPEN = -1.72;
+const CHEST_LID_SECONDS = 0.55;
+/** The gentle bob the open chest settles into, so the reward screen is never
+ * a still image while the player reads the number. */
+const CHEST_IDLE_BOB = 0.045;
+const CHEST_IDLE_BOB_SPEED = 0.55;
+
+/** Which beat of the opening the chest is on, or `null` for "not on screen".
+ * Mirrors the reward screen's own state machine in SandGame.tsx. */
+export type ChestPhase = "spinning" | "opening" | "revealed";
+
 // ---- showcase (skin picker) ----------------------------------------------
 // The picker's full-screen preview: the rig moves out to where the camera can
 // see it up close, turns slowly and fires demo shots on a loop, so the skin a
@@ -243,6 +279,14 @@ const SHOWCASE_FIRE_INTERVAL = 1.5;
 const SHOWCASE_SHOT_FLIGHT = 0.6;
 const SHOWCASE_SHOT_SPEED = 9;
 
+// ---- unlock celebration (skin picker) -------------------------------------
+// Plays over the showcase rig the instant a new cannon is bought — see
+// `playUnlockCelebration`. A full spin rather than the showcase's own gentle
+// sway, so buying a skin visibly reads as a different moment from just
+// browsing one.
+const UNLOCK_SPIN_TURNS_PER_SECOND = 0.75;
+const UNLOCK_GLOW_COLOR = 0xffdc75;
+
 // ---- cannon entrance (home screen -> gameplay) ---------------------------
 // The gun is hidden entirely on the home screen (`buildCannon`) so the
 // picture is the only thing on screen while it turns. The moment the player
@@ -296,8 +340,9 @@ const SAND_SPRAY_JITTER_MAX_SPEED = 0.45;
 const SAND_SPRAY_UP_SPEED = 0.55;
 /** Pulled down several times harder than the shot's own ballistic gravity —
  * this is what actually sells "strong pull straight down" rather than a
- * lazy, floaty arc. */
-const SAND_SPRAY_GRAVITY_SCALE = 3.2;
+ * lazy, floaty arc. Bumped again (3.2 -> 5) per feedback asking for a
+ * stronger, faster drop overall. */
+const SAND_SPRAY_GRAVITY_SCALE = 5;
 // Chunky on purpose — small values here render as a couple of stray pixels
 // and are effectively invisible against sand of their own colour.
 const SAND_SPRAY_MIN_SCALE = 0.9;
@@ -422,7 +467,11 @@ const HUB_FRAME_SCALE = 0.74;
 // falling sand always reads at one consistent speed rather than crawling for
 // big cascades and snapping for small ones. Nothing is ever skipped, just
 // spread thinner across more steps.
-const SETTLE_TOTAL_MS = 800;
+// Cut down from an original 800 — per feedback the whole board's fall read as
+// too slow ("tăng mạnh gravity"), and since every cascade is stretched (or
+// squeezed) to fit this one window regardless of its own step count, shrinking
+// it is the one knob that speeds up every cascade's fall at once.
+const SETTLE_TOTAL_MS = 350;
 // A cleared grain flashes solid white first, then vanishes — not a straight
 // fade from its own colour, which read as sand quietly dimming rather than
 // actually being sorted away. And it does not happen to every grain in the
@@ -863,6 +912,17 @@ export class SandCannonEngine {
    * rather than one starving the other. */
   private prismTrailAge = 0;
 
+  /** The reward chest rig, built the first time the reward screen opens and
+   * kept for the life of the engine after that — a player who opens one chest
+   * will open more, and it is a few dozen triangles. `null` until then. */
+  private chestRig: ChestRig | null = null;
+  private chestPhase: ChestPhase | null = null;
+  /** Seconds since `chestPhase` last changed — drives the spin and the lid. */
+  private chestTime = 0;
+  /** What the engine looked like before the chest took the stage, so closing
+   * it puts everything back rather than guessing at the home screen's state. */
+  private chestRestore: { frameVisible: boolean; cannonVisible: boolean } | null = null;
+
   /** The skin picker's full-screen preview — see `setShowcase`. Off for the
    * entire rest of the game's life; only the picker ever turns it on. */
   private showcase = false;
@@ -871,6 +931,13 @@ export class SandCannonEngine {
   private showcaseShots: ShowcaseShot[] = [];
   private showcaseShotGeometry: THREE.SphereGeometry | null = null;
   private showcaseMaterials: Record<CostumeFlavor, THREE.MeshBasicMaterial> | null = null;
+
+  /** "New cannon unlocked" celebration — see `playUnlockCelebration`. Built
+   * lazily on first use since most sessions never buy a skin, and torn down
+   * with everything else `track()` owns. */
+  private unlockGlowRing: THREE.Mesh | null = null;
+  private unlockGlowDisc: THREE.Mesh | null = null;
+  private unlockCelebrationStart: number | null = null;
 
   constructor(
     host: HTMLDivElement,
@@ -1558,6 +1625,11 @@ export class SandCannonEngine {
     this.recoil = 0;
     this.barrelVisual.position.z = 0;
     this.cannonRoot.rotation.y = 0;
+    // A celebration left running behind a tab switch must not resume once
+    // the picker is reopened later.
+    this.unlockCelebrationStart = null;
+    if (this.unlockGlowRing) this.unlockGlowRing.visible = false;
+    if (this.unlockGlowDisc) this.unlockGlowDisc.visible = false;
     this.cannonRoot.position.copy(CANNON_ROOT_POSITION);
     this.cannonRoot.scale.setScalar(CANNON_MODEL_SCALE);
     // The picker is only reachable from the home screen, which shows the
@@ -1567,6 +1639,94 @@ export class SandCannonEngine {
     this.camera.fov = this.camera.aspect < 0.62 ? 44 : 37;
     this.camera.updateProjectionMatrix();
     this.resetCannonDirection();
+  }
+
+  /**
+   * Puts the reward chest on stage, on the given beat of its opening, or takes
+   * it off again with `null`. Only ever called from the home screen, which is
+   * paused and idle — the same footing the skin picker's `setShowcase` works
+   * from, so `step()` never runs underneath it and `animate()` drives the
+   * chest's own timers directly off real elapsed time.
+   *
+   * Re-entrant per phase: the reward screen calls this on every phase change
+   * and on every re-render, so a repeated call with the phase already set must
+   * not restart the animation.
+   */
+  setChestShowcase(phase: ChestPhase | null) {
+    if (this.chestPhase === phase) return;
+    const wasOff = this.chestPhase === null;
+    this.chestPhase = phase;
+    this.chestTime = 0;
+
+    if (phase === null) {
+      if (this.chestRig) this.chestRig.root.visible = false;
+      if (this.chestRestore) {
+        this.frameRoot.visible = this.chestRestore.frameVisible;
+        this.cannonRoot.visible = this.chestRestore.cannonVisible;
+        this.chestRestore = null;
+      }
+      // Back to whatever this aspect ratio's own gameplay lens is — the same
+      // two numbers `resize()` picks between.
+      this.camera.fov = this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+
+    if (!this.chestRig) {
+      this.chestRig = buildChest();
+      this.chestRig.root.position.copy(CHEST_POSITION);
+      this.scene.add(this.chestRig.root);
+    }
+    this.chestRig.root.visible = true;
+
+    if (wasOff) {
+      // The chest owns the whole stage: the level's picture behind it and the
+      // cannon (if the skin picker happened to leave it up) would both read as
+      // clutter under a full-screen reward.
+      this.chestRestore = { frameVisible: this.frameRoot.visible, cannonVisible: this.cannonRoot.visible };
+      this.frameRoot.visible = false;
+      this.cannonRoot.visible = false;
+      this.camera.fov = CHEST_FOV;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Each phase starts from the pose the one before it ended on, so a screen
+    // that opens straight into "revealed" (a re-render after the animation has
+    // already played) shows an open chest rather than replaying the spin.
+    const spun = phase === "spinning" ? 0 : Math.PI * 2 * CHEST_SPIN_TURNS;
+    this.chestRig.root.rotation.y = spun;
+    this.chestRig.root.scale.setScalar(phase === "spinning" ? 0.86 : 1);
+    this.chestRig.lid.rotation.x = phase === "revealed" ? CHEST_LID_OPEN : 0;
+    this.chestRig.glow.visible = phase !== "spinning";
+  }
+
+  /** One frame of the chest's own animation — see `setChestShowcase`. */
+  private updateChest(deltaSeconds: number) {
+    const rig = this.chestRig;
+    if (!rig || !this.chestPhase) return;
+    this.chestTime += deltaSeconds;
+
+    if (this.chestPhase === "spinning") {
+      // Eased so the turn is fast out of the gate and settles rather than
+      // stopping dead, and landing on a whole number of turns so the chest
+      // faces camera at the end with nothing left to correct.
+      const t = Math.min(1, this.chestTime / CHEST_SPIN_SECONDS);
+      const eased = 1 - Math.pow(1 - t, 3);
+      rig.root.rotation.y = eased * Math.PI * 2 * CHEST_SPIN_TURNS;
+      rig.root.scale.setScalar(0.86 + 0.14 * eased);
+      rig.root.position.y = CHEST_POSITION.y;
+      return;
+    }
+
+    // Lid: overshoots a touch on the way open, the same bounce the DOM version
+    // of this screen used, then holds.
+    const t = Math.min(1, this.chestTime / CHEST_LID_SECONDS);
+    const eased = t >= 1 ? 1 : 1 - Math.pow(1 - t, 3) * Math.cos(t * Math.PI * 0.6);
+    rig.lid.rotation.x = CHEST_LID_OPEN * Math.min(1.04, eased);
+    // A slow bob once it is open, so the screen is never a frozen frame while
+    // the player reads the number on it.
+    const bobTime = this.chestTime + (this.chestPhase === "revealed" ? CHEST_LID_SECONDS : 0);
+    rig.root.position.y = CHEST_POSITION.y + Math.sin(bobTime * Math.PI * 2 * CHEST_IDLE_BOB_SPEED) * CHEST_IDLE_BOB;
   }
 
   /** Hides every muzzle-smoke puff and sparkle shard currently in flight,
@@ -1610,7 +1770,8 @@ export class SandCannonEngine {
    * `setShowcase` for why this cannot lean on `step()`'s fixed accumulator. */
   private updateShowcase(deltaSeconds: number) {
     this.showcaseTime += deltaSeconds;
-    this.cannonRoot.rotation.y = SHOWCASE_YAW + Math.sin(this.showcaseTime * SHOWCASE_SWAY_SPEED) * SHOWCASE_SWAY;
+    if (this.unlockCelebrationStart !== null) this.updateUnlockCelebration();
+    else this.cannonRoot.rotation.y = SHOWCASE_YAW + Math.sin(this.showcaseTime * SHOWCASE_SWAY_SPEED) * SHOWCASE_SWAY;
     this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
 
@@ -1642,6 +1803,100 @@ export class SandCannonEngine {
       this.scene.remove(shot.mesh);
     }
     this.showcaseShots = survivors;
+  }
+
+  /** Builds the celebration's glow meshes on first use — a soft additive disc
+   * under the rig plus a brighter ring floating just above it, both parented
+   * to `cannonRoot` so they spin along with it rather than tracking it from
+   * outside. Left invisible until `playUnlockCelebration` turns them on. */
+  private ensureUnlockGlow() {
+    if (this.unlockGlowRing) return;
+    const discGeometry = this.track(new THREE.CircleGeometry(1.7, 48));
+    const discMaterial = this.track(
+      new THREE.MeshBasicMaterial({
+        color: UNLOCK_GLOW_COLOR,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    this.unlockGlowDisc = new THREE.Mesh(discGeometry, discMaterial);
+    this.unlockGlowDisc.rotation.x = -Math.PI / 2;
+    this.unlockGlowDisc.position.y = -0.22;
+    this.unlockGlowDisc.visible = false;
+    this.unlockGlowDisc.renderOrder = 5;
+    this.cannonRoot.add(this.unlockGlowDisc);
+
+    const ringGeometry = this.track(new THREE.RingGeometry(1.15, 1.34, 48));
+    const ringMaterial = this.track(
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    this.unlockGlowRing = new THREE.Mesh(ringGeometry, ringMaterial);
+    this.unlockGlowRing.rotation.x = -Math.PI / 2;
+    this.unlockGlowRing.position.y = -0.2;
+    this.unlockGlowRing.visible = false;
+    this.unlockGlowRing.renderOrder = 6;
+    this.cannonRoot.add(this.unlockGlowRing);
+  }
+
+  /**
+   * Plays the "new cannon unlocked" reveal: the showcase rig spins in place
+   * while a golden ring blooms and pulses around its base, in place of the
+   * showcase's own gentle sway. Runs indefinitely — there is no timer, only
+   * `stopUnlockCelebration()` ends it — because the reveal is meant to hold
+   * until the player actually taps past it, not disappear out from under
+   * them. Only meaningful while `setShowcase(true)` is up — the caller
+   * (`buySkin` in SandGame.tsx) pairs this with hiding the rest of the skin
+   * screen's own chrome so the rig and the glow are the only things on
+   * screen.
+   */
+  playUnlockCelebration() {
+    this.ensureUnlockGlow();
+    this.unlockCelebrationStart = performance.now();
+    if (this.unlockGlowDisc) this.unlockGlowDisc.visible = true;
+    if (this.unlockGlowRing) this.unlockGlowRing.visible = true;
+  }
+
+  /** Ends a celebration `playUnlockCelebration` started — the player tapped
+   * past it. A no-op if none is running (e.g. it was already cleared by
+   * `setShowcase(false)`). */
+  stopUnlockCelebration() {
+    if (this.unlockCelebrationStart === null) return;
+    this.unlockCelebrationStart = null;
+    if (this.unlockGlowRing) this.unlockGlowRing.visible = false;
+    if (this.unlockGlowDisc) this.unlockGlowDisc.visible = false;
+    // Resets the sway's own clock so it picks back up from its resting phase
+    // instead of wherever `showcaseTime` happened to drift to during the spin.
+    this.showcaseTime = 0;
+  }
+
+  private updateUnlockCelebration() {
+    if (this.unlockCelebrationStart === null) return;
+    const elapsed = (performance.now() - this.unlockCelebrationStart) / 1000;
+    this.cannonRoot.rotation.y = SHOWCASE_YAW + elapsed * Math.PI * 2 * UNLOCK_SPIN_TURNS_PER_SECOND;
+
+    // Fades in over the first third-of-a-second rather than snapping on, then
+    // breathes for as long as the reveal stays up — a glow that just
+    // appeared mid-spin reads as a pop-in glitch, not a bloom.
+    const fadeIn = Math.min(1, elapsed / 0.3);
+    const pulse = 1 + Math.sin(elapsed * 6.4) * 0.14;
+    if (this.unlockGlowRing) {
+      this.unlockGlowRing.scale.setScalar(pulse);
+      (this.unlockGlowRing.material as THREE.MeshBasicMaterial).opacity = 0.75 * fadeIn;
+    }
+    if (this.unlockGlowDisc) {
+      this.unlockGlowDisc.scale.setScalar(pulse * 1.08);
+      (this.unlockGlowDisc.material as THREE.MeshBasicMaterial).opacity = 0.4 * fadeIn;
+    }
   }
 
   /**
@@ -3226,6 +3481,10 @@ export class SandCannonEngine {
       this.updateMuzzleSmoke(deltaSeconds);
       this.updateSparkles(deltaSeconds);
     }
+    // Same footing as the showcase above: the reward screen only opens from the
+    // paused home screen, so the chest runs on real elapsed time rather than
+    // the fixed-step accumulator that is not ticking underneath it.
+    if (this.chestPhase) this.updateChest(delta / 1000);
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;
@@ -3253,7 +3512,7 @@ export class SandCannonEngine {
     const height = Math.max(this.host.clientHeight, 1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    this.camera.fov = this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
+    this.camera.fov = this.chestPhase ? CHEST_FOV : this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
     this.camera.updateProjectionMatrix();
     if (this.aimPointer !== null) this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     else this.showIdleCrosshair();

@@ -18,6 +18,7 @@ import type { BoosterType } from "./sand-types.ts";
 const WALLET_KEY = "sand-cannon:v1:wallet";
 const CLEARED_KEY = "sand-cannon:v1:cleared-levels";
 const DAILY_KEY = "sand-cannon:v1:daily-login";
+const PROGRESS_KEY = "sand-cannon:v1:reward-track";
 
 // ---- balancing constants ---------------------------------------------------
 // See CHANGELOG-prototype.md for the full reasoning behind every number here.
@@ -34,7 +35,7 @@ const DAILY_KEY = "sand-cannon:v1:daily-login";
 // all, and `sand-economy.test.ts` asserts against them directly.
 
 /** CSV keys `economy.csv` uses — one place to change if the sheet's column
- * naming ever needs to move, rather than four string literals scattered
+ * naming ever needs to move, rather than a string literal scattered
  * through the functions below. */
 const CONFIG_KEY = {
   starterGold: "starterGold",
@@ -43,6 +44,7 @@ const CONFIG_KEY = {
   boosterPrice: (type: BoosterType) =>
     type === "radiusOvercharge" ? "boosterPriceRadiusOvercharge" : "boosterPricePrismShot",
   dailyLoginDay: (dayIndex: number) => `dailyLoginDay${dayIndex + 1}`,
+  cycleEmeralds: (cycleIndex: number) => `rewardTrackCycle${cycleIndex + 1}`,
 } as const;
 
 /**
@@ -69,6 +71,19 @@ function starterGold(): number {
  * spendable.
  */
 export const STARTER_GEMS = 240;
+
+/**
+ * Blue Emerald — the skin currency. Earned ONLY from the home screen's reward
+ * track (the progression section at the bottom of this file), never from
+ * clearing a level directly and never sold for real money, so the one thing
+ * it buys (a locked cannon skin — `costumePrice` in `costumes.ts`) is gated
+ * on actually playing rather than on either currency that already exists.
+ *
+ * Starts at 0, unlike gold and gems: the whole point of the track is that the
+ * first 500 arrives as a reward the player watched themselves fill, so a
+ * fresh install must not already be holding enough to skip it.
+ */
+export const STARTER_EMERALDS = 0;
 
 export const STARTER_BOOSTER_CHARGES: Record<BoosterType, number> = {
   radiusOvercharge: 1,
@@ -148,6 +163,8 @@ export function dailyLoginReward(dayIndex: number): number {
 export type Wallet = {
   gold: number;
   gems: number;
+  /** Blue Emerald — see `STARTER_EMERALDS`. Skins only. */
+  emeralds: number;
   boosters: Record<BoosterType, number>;
 };
 
@@ -155,6 +172,7 @@ function defaultWallet(): Wallet {
   return {
     gold: starterGold(),
     gems: STARTER_GEMS,
+    emeralds: STARTER_EMERALDS,
     boosters: {
       radiusOvercharge: starterBoosterCharges("radiusOvercharge"),
       prismShot: starterBoosterCharges("prismShot"),
@@ -204,6 +222,7 @@ function readWallet(): Wallet {
     cachedWallet = {
       gold: sanitiseCount(parsed?.gold, starterGold()),
       gems: sanitiseCount(parsed?.gems, STARTER_GEMS),
+      emeralds: sanitiseCount(parsed?.emeralds, STARTER_EMERALDS),
       boosters: {
         radiusOvercharge: sanitiseCount(boosters.radiusOvercharge, starterBoosterCharges("radiusOvercharge")),
         prismShot: sanitiseCount(boosters.prismShot, starterBoosterCharges("prismShot")),
@@ -268,6 +287,10 @@ export function getGems(): number {
   return readWallet().gems;
 }
 
+export function getEmeralds(): number {
+  return readWallet().emeralds;
+}
+
 export function getBoosterCount(type: BoosterType): number {
   return readWallet().boosters[type];
 }
@@ -277,6 +300,23 @@ export function addGold(amount: number) {
   const wallet = readWallet();
   walletIsFreshDefault = false;
   writeWallet({ ...wallet, gold: wallet.gold + Math.round(amount) });
+}
+
+export function addEmeralds(amount: number) {
+  if (amount <= 0) return;
+  const wallet = readWallet();
+  walletIsFreshDefault = false;
+  writeWallet({ ...wallet, emeralds: wallet.emeralds + Math.round(amount) });
+}
+
+/** Same contract as `spendGold`: atomic, and false (with nothing deducted)
+ * when the wallet cannot cover `amount`. The skin shop's only spend. */
+export function spendEmeralds(amount: number): boolean {
+  const wallet = readWallet();
+  if (wallet.emeralds < amount) return false;
+  walletIsFreshDefault = false;
+  writeWallet({ ...wallet, emeralds: wallet.emeralds - amount });
+  return true;
 }
 
 /** Returns whether the spend went through — false, and nothing changes, if the wallet is short. */
@@ -347,6 +387,7 @@ export function __resetWalletForTests(overrides?: Partial<Wallet>) {
   cachedWallet = {
     gold: overrides?.gold ?? base.gold,
     gems: overrides?.gems ?? base.gems,
+    emeralds: overrides?.emeralds ?? base.emeralds,
     boosters: { ...base.boosters, ...(overrides?.boosters ?? {}) },
   };
   // A test's own known-state wallet, not "nothing was here yet" — must never
@@ -524,6 +565,277 @@ export function __resetDailyLoginForTests() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(DAILY_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
+// ---- reward track (home screen progression bar) -----------------------------
+// The home screen's Play button used to sit next to a dead "Modes" chip. That
+// chip is now the reward track: a five-node bar that fills as levels are
+// played and pays out Blue Emerald — the only source of the currency the
+// locked cannon skin costs (`costumePrice` in `costumes.ts`).
+//
+// One level won fills one node, and the chest opens on the fifth — a five-level
+// cycle, not a long haul. The reward belongs to the CYCLE rather than to the
+// individual nodes: a node is a step on the way, the chest is the payout, and
+// `CYCLE_EMERALDS` says what each successive chest is worth. Nothing here
+// resets or loops back to the start: cycle 2 pays more than cycle 1, cycle 6
+// more than cycle 5, for as long as the player keeps playing.
+//
+// "Played" means WON — `recordLevelPlayed` is called from the same WIN
+// transition `markLevelCleared` is, but unlike gold it counts REPLAYS too:
+// the ask was "cứ hoàn thành 1 level là 1 mốc", and a bar that stalls the
+// moment a player runs out of unseen levels would stop being a progression
+// bar. Emerald only buys skins, so a replayed level topping up the track
+// cannot feed back into gold, boosters, or anything that affects play.
+
+/** Levels won per node of the bar. */
+export const LEVELS_PER_NODE = 1;
+/** Nodes on the bar — the chest opens when this many are filled. */
+export const NODES_PER_CHEST = 5;
+/** Levels won per full cycle, i.e. per chest. */
+export const LEVELS_PER_CYCLE = LEVELS_PER_NODE * NODES_PER_CHEST;
+
+/**
+ * Blue Emerald paid by each successive chest, by its 0-based cycle index. The
+ * first five are hand-picked; past that the ramp continues on the formula
+ * below — a track with no loop, per the design: cycle 6 is worth more than
+ * cycle 5, always.
+ *
+ * 500 for the first cycle is the anchor the rest is tuned around: it is
+ * exactly the Rune Cannon's price (`costumes.ts`), so five levels is what the
+ * skin costs and the currency reads as "one cycle" rather than as a number a
+ * player has to do arithmetic about.
+ */
+export const CYCLE_EMERALDS: readonly number[] = [500, 600, 750, 900, 1250];
+/** How much each cycle past the hand-picked five grows over the one before it. */
+const CYCLE_GROWTH = 1.25;
+
+/**
+ * Cycle `index`'s reward. Inside the first five a designer can override any of
+ * them from `economy.csv` (`rewardTrackCycle1`..`rewardTrackCycle5`); past that
+ * the ramp compounds off the last hand-picked value, rounded to 50 so the
+ * chest never shows an arbitrary-looking number like 1953.
+ */
+export function cycleReward(index: number): number {
+  if (index < CYCLE_EMERALDS.length) {
+    return getEconomyConfigOverride(CONFIG_KEY.cycleEmeralds(index)) ?? CYCLE_EMERALDS[index];
+  }
+  const last = CYCLE_EMERALDS[CYCLE_EMERALDS.length - 1];
+  const grown = last * Math.pow(CYCLE_GROWTH, index - (CYCLE_EMERALDS.length - 1));
+  return Math.round(grown / 50) * 50;
+}
+
+export type RewardTrackRecord = {
+  /** Levels won on this browser, ever — replays included. */
+  levelsPlayed: number;
+  /** How many chests have already been opened. Also the index of the cycle
+   * currently on the bar, which is what `cycleReward` is keyed on. */
+  claimedCycles: number;
+};
+
+export type RewardTrackNode = {
+  /** Position on the bar, 0-based. */
+  slot: number;
+  filled: boolean;
+};
+
+export type RewardTrackState = {
+  levelsPlayed: number;
+  /** Which cycle is on the bar right now, 0-based. */
+  cycle: number;
+  /** The nodes of the bar, in order. */
+  nodes: RewardTrackNode[];
+  /** How many of them are filled, 0..`NODES_PER_CHEST`. */
+  filled: number;
+  /** 0..1 across the whole bar, for the fill width. */
+  progress: number;
+  /** Every node filled — the chest is openable. */
+  canClaim: boolean;
+  /** What opening this chest pays. */
+  chestReward: number;
+};
+
+function readRewardTrack(): RewardTrackRecord {
+  if (typeof window === "undefined") return { levelsPlayed: 0, claimedCycles: 0 };
+  try {
+    const raw = window.localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return { levelsPlayed: 0, claimedCycles: 0 };
+    const parsed = JSON.parse(raw) as Partial<RewardTrackRecord> | null;
+    return {
+      levelsPlayed: sanitiseCount(parsed?.levelsPlayed, 0),
+      claimedCycles: sanitiseCount(parsed?.claimedCycles, 0),
+    };
+  } catch {
+    return { levelsPlayed: 0, claimedCycles: 0 };
+  }
+}
+
+function writeRewardTrack(next: RewardTrackRecord) {
+  // Persist BEFORE invalidating and notifying, not after: the snapshot below
+  // is rebuilt by re-reading storage, so a listener woken first would read the
+  // record this call is in the middle of replacing and cache the old bar
+  // (a claimed chest's pips staying lit until the next reload).
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(PROGRESS_KEY, JSON.stringify(next));
+    } catch {
+      // Private mode / quota: the bar just will not survive a reload — the
+      // same trade-off every other persisted thing in this file makes.
+    }
+  }
+  cachedTrackState = null;
+  rewardTrackVersion += 1;
+  for (const listener of rewardTrackListeners) listener();
+  // The bar sits next to the gold badge and re-renders off the same
+  // subscription, so a track change has to wake the listeners a wallet change
+  // does — there is no second store for the HUD to subscribe to.
+  notifyWallet();
+}
+
+/**
+ * The bar's whole state as a pure function of the stored record — split out
+ * the same way `computeDailyLoginState` is, so `sand-economy.test.ts` can
+ * drive it with fabricated records instead of a `window.localStorage`.
+ *
+ * `filled` is clamped at `NODES_PER_CHEST` rather than rolling over into the
+ * next cycle on its own: a completed bar sits there waiting to be claimed, and
+ * levels won while it waits are not lost (they are all in `levelsPlayed`) —
+ * they just land on the NEXT cycle once this chest is opened.
+ */
+export function computeRewardTrackState(record: RewardTrackRecord): RewardTrackState {
+  const earnedNodes = Math.floor(record.levelsPlayed / LEVELS_PER_NODE);
+  const filled = Math.max(0, Math.min(NODES_PER_CHEST, earnedNodes - record.claimedCycles * NODES_PER_CHEST));
+  const nodes: RewardTrackNode[] = [];
+  for (let slot = 0; slot < NODES_PER_CHEST; slot += 1) {
+    nodes.push({ slot, filled: slot < filled });
+  }
+  return {
+    levelsPlayed: record.levelsPlayed,
+    cycle: record.claimedCycles,
+    nodes,
+    filled,
+    progress: filled / NODES_PER_CHEST,
+    canClaim: filled >= NODES_PER_CHEST,
+    chestReward: cycleReward(record.claimedCycles),
+  };
+}
+
+/** What the home screen's bar should show, without claiming anything. Builds
+ * a fresh object every call — for a React snapshot use `getRewardTrackSnapshot`
+ * below instead, which is the same value held stable between changes. */
+export function getRewardTrackState(): RewardTrackState {
+  return computeRewardTrackState(readRewardTrack());
+}
+
+/**
+ * `useSyncExternalStore`'s snapshot for the bar: the same object back on every
+ * call until something actually moves the track, so React can compare it by
+ * identity. `getRewardTrackState` cannot be used directly for this — a new
+ * object every render is a new value every render, which React reads as an
+ * endless stream of changes.
+ *
+ * This is also what keeps the bar out of the hydration mismatch a plain
+ * localStorage read during render would cause: paired with `SERVER_REWARD_TRACK`
+ * below, the client's hydrating render uses the same empty track the server
+ * rendered and only picks up the real one afterwards — the same shape
+ * `SERVER_WALLET` already has.
+ */
+let cachedTrackState: RewardTrackState | null = null;
+
+export function getRewardTrackSnapshot(): RewardTrackState {
+  if (!cachedTrackState) cachedTrackState = computeRewardTrackState(readRewardTrack());
+  return cachedTrackState;
+}
+
+/** A stable reference for the server snapshot — an empty track, never mutated. */
+export const SERVER_REWARD_TRACK: RewardTrackState = computeRewardTrackState({
+  levelsPlayed: 0,
+  claimedCycles: 0,
+});
+
+// The track is its own store rather than riding on `subscribeWallet`:
+// `getRewardTrackState()` builds a fresh object every call, so it can never be
+// a `useSyncExternalStore` snapshot directly. A version counter can, and it is
+// the only thing the HUD actually needs to know changed. Claiming ALSO moves
+// the wallet, which notifies its own listeners separately — the two stores
+// stay independent on purpose, since `recordLevelPlayed` moves the bar without
+// touching a coin.
+let rewardTrackVersion = 0;
+const rewardTrackListeners = new Set<() => void>();
+
+/** `useSyncExternalStore`'s subscribe function for the home screen's bar. */
+export function subscribeRewardTrack(listener: () => void) {
+  rewardTrackListeners.add(listener);
+  return () => rewardTrackListeners.delete(listener);
+}
+
+/** A number that changes exactly when the track does — the snapshot to pair
+ * with `subscribeRewardTrack`. `0` is a stable server snapshot. */
+export function getRewardTrackVersion(): number {
+  return rewardTrackVersion;
+}
+
+// A cycle amount edited in `economy.csv` changes what the chest on the bar is
+// worth without any level being played, so the cached snapshot has to go with
+// it — otherwise the label would sit on the old number until the next win.
+// Subscribed unconditionally, same as `applyStarterOverrideIfFresh`: on a
+// server nothing ever notifies it.
+subscribeEconomyConfig(() => {
+  cachedTrackState = null;
+  rewardTrackVersion += 1;
+  for (const listener of rewardTrackListeners) listener();
+});
+
+/** Counts one won level toward the bar. Called from the same WIN transition
+ * that pays the level's gold — see this section's header for why replays
+ * count here but not there. */
+export function recordLevelPlayed() {
+  const record = readRewardTrack();
+  writeRewardTrack({ ...record, levelsPlayed: record.levelsPlayed + 1 });
+}
+
+/**
+ * Opens the chest: pays this cycle's emerald into the wallet and advances the
+ * track to the next cycle. Returns the emerald paid, or `null` when the bar is
+ * not actually complete — the caller's button should not have been live in
+ * that state, but this is the guard that makes it true.
+ */
+export function claimRewardTrack(): number | null {
+  const record = readRewardTrack();
+  const state = computeRewardTrackState(record);
+  if (!state.canClaim) return null;
+  writeRewardTrack({ ...record, claimedCycles: record.claimedCycles + 1 });
+  addEmeralds(state.chestReward);
+  return state.chestReward;
+}
+
+/**
+ * Dev-only: tops the bar up to a full, claimable chest without winning the
+ * five levels it would normally take. Rounds `levelsPlayed` UP to the end of
+ * the current cycle rather than setting it outright, so the track stays
+ * consistent with itself — the next chest after this one still costs a real
+ * five levels, and a bar part way along is completed rather than reset.
+ */
+export function fillRewardTrack() {
+  const record = readRewardTrack();
+  // `max` so a bar that is already full — with extra levels banked toward the
+  // NEXT cycle — is left alone rather than having those levels taken back.
+  const full = (record.claimedCycles + 1) * LEVELS_PER_CYCLE;
+  writeRewardTrack({ ...record, levelsPlayed: Math.max(record.levelsPlayed, full) });
+}
+
+/** Dev-only, alongside the Settings screen's other economy resets — puts the
+ * bar back to empty so the chest flow can be tested more than once. */
+export function resetRewardTrack() {
+  writeRewardTrack({ levelsPlayed: 0, claimedCycles: 0 });
+}
+
+export function __resetRewardTrackForTests() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(PROGRESS_KEY);
   } catch {
     // Nothing to clean up if storage is unavailable.
   }

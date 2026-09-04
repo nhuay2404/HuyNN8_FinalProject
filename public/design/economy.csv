@@ -10,6 +10,10 @@
 # boosterPriceRadiusOvercharge     | gia 1 vien Radius Overcharge o Shop
 # boosterPricePrismShot            | gia 1 vien Prism Shot o Shop
 # dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo ngay trong chu ky 7 ngay
+# rewardTrackCycle1..5             | Blue Emerald cua tung ruong tren thanh Reward Track o man Home
+#                                  | (moi 1 level thang = day 1 moc; day du 5 moc = 5 level thi mo duoc
+#                                  |  ruong). Ruong tu chu ky 6 tro di tu dong tang 25%/chu ky.
+# costumePrice_rune-cannon         | gia skin Rune Cannon, tinh bang Blue Emerald
 key,value
 starterGold,100
 starterBoosterRadiusOvercharge,1
@@ -23,3 +27,9 @@ dailyLoginDay4,25
 dailyLoginDay5,30
 dailyLoginDay6,40
 dailyLoginDay7,80
+rewardTrackCycle1,500
+rewardTrackCycle2,600
+rewardTrackCycle3,750
+rewardTrackCycle4,900
+rewardTrackCycle5,1250
+costumePrice_rune-cannon,500

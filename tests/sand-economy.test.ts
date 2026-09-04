@@ -16,6 +16,13 @@ import {
   boosterPrice,
   buyBoosterCharge,
   computeDailyLoginState,
+  computeRewardTrackState,
+  getEmeralds,
+  LEVELS_PER_NODE,
+  CYCLE_EMERALDS,
+  cycleReward,
+  NODES_PER_CHEST,
+  spendEmeralds,
   dailyLoginReward,
   DAILY_LOGIN_REWARDS,
   getBoosterCount,
@@ -198,4 +205,81 @@ test("a sheet override for starterGold/starterBoosterCharges reaches a brand new
   assert.equal(getBoosterCount("radiusOvercharge"), 3);
   assert.equal(getBoosterCount("prismShot"), STARTER_BOOSTER_CHARGES.prismShot, "the unlisted booster keeps its hardcoded starter count");
   seedEconomyConfig([]);
+});
+
+// ---- reward track ----------------------------------------------------------
+// Same split as the daily-login block above: the stored record is a browser
+// concern this runner has no `window` for, so what gets proven here is the
+// pure decision function (`computeRewardTrackState`) plus the reward ramp and
+// the emerald spend, which are all real logic rather than storage.
+
+test("a fresh track shows an empty bar of five nodes, worth the first cycle", () => {
+  const state = computeRewardTrackState({ levelsPlayed: 0, claimedCycles: 0 });
+  assert.equal(state.nodes.length, NODES_PER_CHEST);
+  assert.equal(state.filled, 0);
+  assert.equal(state.progress, 0);
+  assert.equal(state.canClaim, false);
+  assert.equal(state.cycle, 0);
+  assert.equal(state.chestReward, CYCLE_EMERALDS[0]);
+});
+
+test("one level won fills exactly one node", () => {
+  for (let won = 0; won <= NODES_PER_CHEST; won += 1) {
+    const state = computeRewardTrackState({ levelsPlayed: won, claimedCycles: 0 });
+    assert.equal(state.filled, won, `${won} levels should fill ${won} nodes`);
+    assert.equal(state.nodes.filter((node) => node.filled).length, won);
+    assert.equal(state.progress, won / NODES_PER_CHEST);
+  }
+});
+
+test("the chest opens on the fifth level, not before", () => {
+  assert.equal(computeRewardTrackState({ levelsPlayed: 4, claimedCycles: 0 }).canClaim, false);
+  const full = computeRewardTrackState({ levelsPlayed: 5, claimedCycles: 0 });
+  assert.equal(full.canClaim, true);
+  assert.equal(full.progress, 1);
+});
+
+test("levels won while a full chest waits to be opened are held, not lost", () => {
+  // Two levels past a complete bar: the bar itself cannot show more than five
+  // nodes, but nothing is thrown away — those two land on the next cycle the
+  // moment this chest is opened.
+  const waiting = computeRewardTrackState({ levelsPlayed: 7, claimedCycles: 0 });
+  assert.equal(waiting.filled, NODES_PER_CHEST, "the bar is capped at a full chest");
+  assert.equal(waiting.canClaim, true);
+  const afterClaim = computeRewardTrackState({ levelsPlayed: 7, claimedCycles: 1 });
+  assert.equal(afterClaim.filled, 2, "the two carried over start the next cycle");
+  assert.equal(afterClaim.canClaim, false);
+});
+
+test("the next chest is worth more than the one before it — the track never loops", () => {
+  const first = computeRewardTrackState({ levelsPlayed: 5, claimedCycles: 0 });
+  assert.equal(first.chestReward, 500, "the first cycle is the Rune Cannon's price");
+  let previous = first.chestReward;
+  for (let cycle = 1; cycle < 12; cycle += 1) {
+    const reward = computeRewardTrackState({ levelsPlayed: (cycle + 1) * 5, claimedCycles: cycle }).chestReward;
+    assert.ok(reward > previous, `cycle ${cycle + 1} (${reward}) should pay more than ${previous}`);
+    previous = reward;
+  }
+});
+
+test("a sheet edit moves a cycle's reward", () => {
+  seedEconomyConfig([{ key: "rewardTrackCycle1", value: 900 }]);
+  assert.equal(cycleReward(0), 900);
+  assert.equal(cycleReward(1), CYCLE_EMERALDS[1], "an unlisted cycle keeps its hardcoded value");
+  seedEconomyConfig([]);
+});
+
+test("a fresh wallet holds no emerald, and cannot buy a skin it has not earned", () => {
+  __resetWalletForTests();
+  assert.equal(getEmeralds(), 0);
+  assert.equal(spendEmeralds(500), false, "a short wallet refuses the spend");
+  assert.equal(getEmeralds(), 0, "and loses nothing trying");
+});
+
+test("emerald spends atomically, like gold", () => {
+  __resetWalletForTests({ emeralds: 500 });
+  assert.equal(spendEmeralds(500), true);
+  assert.equal(getEmeralds(), 0);
+  assert.equal(spendEmeralds(1), false);
+  assert.equal(getEmeralds(), 0);
 });

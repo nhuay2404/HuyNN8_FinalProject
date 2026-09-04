@@ -170,11 +170,25 @@ body {
 /* The display face, by role rather than by element: headings, every control
    label, and every number that changes. Anything that is prose or a micro
    label stays on the body face. */
-h1, h2, h3, button, strong, b, .hub-play-btn, .settings-row-label, .settings-select,
+h1, h2, h3, strong, b, .settings-row-label, .settings-select,
 .daily-login-label, .shop-card-owned, .hub-gallery-milestone, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
   font-family: var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
 }
-button { font: inherit; -webkit-tap-highlight-color: transparent; }
+/* Self-hosted locally (not through vinext's Google-fonts pipeline, since it
+   isn't a Google font) — the .otf sits in public/fonts and is only ever used
+   on buttons, so it's declared right next to the rule that uses it. */
+@font-face {
+  font-family: "Boring Time";
+  src: url("/fonts/Boring%20Time.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+button {
+  font: inherit;
+  font-family: "Boring Time", var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
 
 /* ---- Loading screen --------------------------------------------------- */
 /* Painted from markup before the bundle runs, so every rule here has to stand
@@ -432,10 +446,11 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
    the shared `top` inset both corners use is what actually keeps this row-
    aligned with `.settings-wrap` opposite it: same start, same end, same
    row, not just an eyeballed match. */
+/* An ordinary flex item now, not its own absolutely-placed corner: gold and
+   emerald share one row (.hub-currency-row, further down this file), which is
+   what carries the placement for both. */
 .hub-gold-wrap {
-  position: absolute; z-index: 31; height: 44px;
-  top: max(var(--hud-inset), env(safe-area-inset-top));
-  left: max(14px, env(safe-area-inset-left));
+  height: 44px; flex: none;
   display: flex; align-items: center;
   border: 0; background: none; padding: 0; margin: 0; cursor: pointer;
   font: inherit; transition: transform .16s;
@@ -930,10 +945,12 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .settle-badge {
   /* Tracks the frame's own move up (FRAME_CENTER_Y in SandCannonEngine.ts) so
      the two shift together instead of the dots staying pinned to the old
-     gap — see the reserved band note on .scene-wrap above. Sits low in that
-     gap now, just above the frame's own top edge, instead of up by the HUD —
-     closer to the picture the settling is actually happening in. */
-  position: absolute; z-index: 7; top: 118px; left: 50%; transform: translateX(-50%);
+     gap — see the reserved band note on .scene-wrap above. Sat right at the
+     frame's own top edge at 118px; per feedback that read as sitting on top
+     of the picture rather than above it, pulled back up into the open sky
+     band (closer to `.sand-toast`'s 46px, still a clear gap below it so the
+     two never collide if both show at once). */
+  position: absolute; z-index: 7; top: 70px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px; pointer-events: none;
 }
 .settle-badge i {
@@ -1207,6 +1224,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 18px; font-variant-numeric: tabular-nums; color: var(--ink);
 }
 .confirm-info-row .coin-icon { width: 17px; height: 17px; color: var(--gold-line); }
+.confirm-info-row .emerald-icon { width: 17px; height: 17px; }
 /* The quantity stepper on the "Buying" row: a triangle on each side of the
    number (0-99, further capped by whatever the wallet can afford — see the
    `disabled` props and the hold-to-repeat handlers in SandGame.tsx), not a
@@ -1346,35 +1364,34 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 }
 /* Bottom-anchored row holding the two hub pills — itself not a button (the
    old full-bleed `.hub-tap` "tap anywhere to play" is gone now that there
-   are two distinct actions side by side), so it stays click-through and only
-   the pills inside re-enable pointer events. */
+   are two distinct actions stacked here), so it stays click-through and only
+   the controls inside re-enable pointer events. */
 .hub-actions {
   position: absolute; inset: 0; width: 100%; pointer-events: none;
   display: flex; align-items: flex-end; justify-content: center; gap: 14px;
   padding: 0 24px calc(var(--hub-nav-height) + 28px);
 }
-.hub-actions > * { pointer-events: auto; flex: 0 0 auto; white-space: nowrap; }
-/* Sized back up and pushed shoulder-to-shoulder with the Modes pill (`gap:
-   4px` above) rather than spread to the two edges — no border, gradient or
-   shadow, same as every other button in this pass, and no more breathing
-   pulse: the pair reads as one wide two-toned control, not two separate
-   things competing for a tap. */
+/* Play and the reward track are one matched pair, not a button and a widget
+   next to it: a shared flex basis splits the row evenly between them and the shared
+   height makes both the same box, whatever each one puts inside it. Capped
+   so the pair stays a pair of buttons on a wide frame rather than stretching
+   to the full width of it. */
+.hub-actions > * {
+  pointer-events: auto; white-space: nowrap;
+  flex: 1 1 0; min-width: 0; max-width: 190px; height: 72px;
+}
+/* No border, gradient or shadow, same as every other button in this pass,
+   and no breathing pulse of its own — the reward track stacked above it
+   (`.hub-track-btn`) is the thing that pulses when it wants attention, and two
+   controls pulsing at once would just compete. */
 .hub-play-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 22px 46px; border-radius: var(--r-chrome);
+  padding: 0 16px; border-radius: var(--r-chrome);
   background: #5c9f5c; border: 0;
   color: #fcf9e8; font-size: 20px; font-weight: 800; letter-spacing: .03em;
 }
-/* Same size as `.hub-play-btn` so the pair sits flush — its own dark/gold
-   pairing is what still keeps the two halves tellable apart. */
-.hub-modes-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 22px 46px; border-radius: var(--r-chrome);
-  background: #4d3c35; border: 0;
-  color: #e6b638; font-size: 20px; font-weight: 800; letter-spacing: .03em;
-}
-.hub-play-btn:active, .hub-modes-btn:active { transform: translateY(3px); }
-.hub-play-btn:focus-visible, .hub-modes-btn:focus-visible {
+.hub-play-btn:active { transform: translateY(3px); }
+.hub-play-btn:focus-visible {
   outline: 2px solid var(--panel); outline-offset: -4px;
 }
 /* A small flat chip rather than a lifted headline — it needs to read over
@@ -1398,7 +1415,7 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
 .hub-screen.is-leaving { pointer-events: none; }
 .hub-screen.is-leaving .hub-actions { animation: hub-tap-exit .46s ease-in forwards; }
 .hub-screen.is-leaving .hub-play-btn,
-.hub-screen.is-leaving .hub-modes-btn { animation: hub-play-btn-exit .4s cubic-bezier(.5,0,1,1) forwards; }
+.hub-screen.is-leaving .hub-track-btn { animation: hub-play-btn-exit .4s cubic-bezier(.5,0,1,1) forwards; }
 .hub-nav.is-leaving { animation: hub-nav-exit .44s cubic-bezier(.4,0,1,.7) forwards; }
 
 /* A section's contents sit above the bar that opened them, never behind it. */
@@ -1785,6 +1802,68 @@ button { font: inherit; -webkit-tap-highlight-color: transparent; }
   font-size: 20px; font-weight: 800; color: var(--ink);
 }
 .skin-tagline { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--ink); }
+
+/* The unlock reveal's banner — replaces `.skin-heading` and every button/tray
+   on the skin screen for as long as `playUnlockCelebration` runs, so the
+   spinning, glowing rig and this banner are the only things left on screen.
+   A full-bleed, otherwise-invisible tap surface, same treatment as the hub's
+   own `.hub-tap`: a plain div rather than a real button, since the tap that
+   dismisses the reveal has to land reliably anywhere on screen and a
+   disabled-then-enabled native button has been unreliable about that in the
+   game's WebView. The `cannonUnlockTapReady` guard that keeps an early tap
+   from skipping past the name lives in the click handler instead (see
+   SandGame.tsx), not in `disabled` here. */
+.cannon-unlock-banner {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 0; margin: 0; border: none; background: transparent;
+  cursor: pointer;
+  /* `.skin-screen` itself is `pointer-events: none` — every real control on
+     it (`.skin-equip`, `.skin-card`, ...) opts back in the same way, and this
+     is the reveal's one control, so it has to as well. Without this, no tap
+     anywhere on it ever reached React at all; it fell straight through to
+     `.aim-zone` underneath regardless of the z-index gap between them. */
+  pointer-events: auto;
+  animation: cannon-unlock-in .32s cubic-bezier(.2,.9,.24,1) both;
+}
+/* Sits above the rig (`.skin-heading`'s own top inset) rather than over it —
+   a caption on the cannon, not a curtain over it. White on black, per the
+   ask, via a real (thin — a heavy stroke was clogging the font's own strokes)
+   `-webkit-text-stroke` with a matching text-shadow fallback for the one
+   engine that ignores it. Boring Time, the same display face every button in
+   the game already uses (see the `button` rule up top) — set explicitly
+   since this text is not inside a `<button>` any more. */
+.cannon-unlock-text {
+  margin: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 0 0;
+  padding: 0 28px; text-align: center; text-transform: uppercase;
+  font-family: "Boring Time", var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
+  font-size: 24px; font-weight: 400; letter-spacing: .02em;
+  color: #ffffff;
+  -webkit-text-stroke: 1px #1c1c1c;
+  text-shadow: 0 1px 0 #1c1c1c, 0 -1px 0 #1c1c1c, 1px 0 0 #1c1c1c, -1px 0 0 #1c1c1c;
+}
+/* Appears ~2s in (see `cannonUnlockTapReady`) at the foot of the screen,
+   breathing so it reads as "waiting on you" rather than static chrome. Same
+   face and thin white-on-black stroke as the headline above, and — per the
+   ask — no pill or fill behind it, just the lettering itself floating over
+   the rig. */
+.cannon-unlock-tap {
+  margin: auto 0 max(28px, env(safe-area-inset-bottom));
+  color: #ffffff;
+  font-family: "Boring Time", var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
+  -webkit-text-stroke: .8px #1c1c1c;
+  text-shadow: 0 1px 0 #1c1c1c, 0 -1px 0 #1c1c1c, 1px 0 0 #1c1c1c, -1px 0 0 #1c1c1c;
+  font-size: 15px; font-weight: 400; letter-spacing: .04em; text-transform: uppercase;
+  animation: cannon-unlock-breathe 1.3s ease-in-out infinite;
+}
+@keyframes cannon-unlock-in {
+  from { opacity: 0; transform: scale(.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes cannon-unlock-breathe {
+  0%, 100% { opacity: .55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.07); }
+}
 
 /* Deliberately empty: the rig in the middle is drawn by the engine behind
    this screen, not by anything in here — this is just the flex space that
@@ -2311,3 +2390,212 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   background: rgba(10,6,20,.6); color: #d8ccf5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5;
 }
+
+/* ---- Blue Emerald ------------------------------------------------------- */
+/* The reward track's currency — real artwork (`BlueEmeraldIcon.png`), sized by
+   class rather than by element the same way `.coin-icon` is, so the one
+   component can sit in the HUD, on a price pill, inside a button label and
+   mid-flight out of the chest without four variants of itself. */
+.emerald-icon { width: 22px; height: 22px; object-fit: contain; display: block; flex: none; }
+/* The reward chest's flat icon (`ChestIcon.png`) — the home screen's track
+   button, and the dev Settings row that fills that track. The chest that OPENS
+   is the 3D rig instead (`chest-model.ts`). Defaults to a glyph-sized square
+   like every other icon in a row of text; the track button overrides it to
+   fill its own slot below. */
+.chest-icon { width: 22px; height: 22px; object-fit: contain; display: block; flex: none; }
+
+/* Gold and emerald share one row in the top-left corner, so the emerald chip
+   sits flush against a gold pill whose width changes with its digit count
+   rather than at a fixed inset that would drift into or away from it. The row
+   is what carries the absolute placement now; the two chips inside it are
+   ordinary flex items. `height` is the settings gear's own (`.icon-button`),
+   which with the shared `top` inset is what keeps this row-aligned with
+   `.settings-wrap` opposite it. */
+.hub-currency-row {
+  position: absolute; z-index: 31; height: 44px;
+  top: max(var(--hud-inset), env(safe-area-inset-top));
+  left: max(14px, env(safe-area-inset-left));
+  right: 66px;
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: none;
+}
+.hub-currency-row > * { pointer-events: auto; }
+
+/* The emerald chip: deliberately the same silhouette as `.hub-gold-wrap` — a
+   big stone overlapping a stadium pill — so the two read as one family of
+   currency, with two differences carrying the whole distinction. A pale blue
+   pill instead of gold's pale yellow, and no plus mark, because emerald has
+   exactly one source (the reward track) and nothing to sell. Not a button
+   either, for the same reason. */
+.hub-emerald-wrap {
+  height: 44px; display: flex; align-items: center;
+  min-width: 0;
+}
+/* Same overlap trick `.hub-gold-wrap .coin-icon` uses: the stone's own circle
+   covers the pill's rounded end-cap rather than sitting inside it. */
+.hub-emerald-wrap .emerald-icon {
+  width: 44px; height: 44px; z-index: 1; margin-right: -36px;
+}
+.hub-emerald-badge {
+  display: flex; align-items: center; height: 44px;
+  padding: 0 16px 0 42px; border-radius: var(--r-pill);
+  /* Pale blue — emerald's own currency colour, held to the same "cozy paper"
+     lightness `.hub-gold-badge`'s yellow sits at. */
+  background: #cfe8ff;
+}
+.hub-emerald-badge strong {
+  font-size: 16px; font-weight: 800; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+
+/* ---- Home screen: the reward track -------------------------------------- */
+/* Sits beside Play in the same row, at the same size — `.hub-actions` gives
+   both children an equal share of one fixed-height row, so the two read as a
+   matched pair rather than a button and a widget. Same dark-brown chrome the
+   dead "Modes" chip had, which is what still tells the two halves apart. */
+.hub-track-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 16px; border-radius: var(--r-chrome);
+  background: #4d3c35; border: 0; cursor: default;
+  color: #e6b638; font: inherit;
+  transition: transform .16s, background .2s;
+}
+/* Only a full bar is actually tappable (`disabled` in SandGame.tsx) — an
+   incomplete one is a readout. The ready state says so loudly: a brighter
+   shell and a slow pulse, so a player coming back to the hub sees it without
+   having to read the pips. */
+.hub-track-btn.is-ready {
+  cursor: pointer; background: #6a4f36;
+  animation: hub-track-ready 1.6s ease-in-out infinite;
+}
+.hub-track-btn.is-ready:active { transform: translateY(3px); }
+.hub-track-btn:focus-visible { outline: 2px solid var(--panel); outline-offset: -4px; }
+@keyframes hub-track-ready {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(230, 182, 56, 0); }
+  50% { box-shadow: 0 0 0 6px rgba(230, 182, 56, .22); }
+}
+/* The chest takes whatever height is left once the pip row and the padding
+   have had theirs, so the button matches Play's box at any font size rather
+   than being sized to a number picked here. */
+.hub-track-chest { flex: 1 1 auto; min-height: 0; width: 100%; display: block; }
+.hub-track-chest .chest-icon { width: 100%; height: 100%; }
+/* The chest on the ready state gets the little shake a mobile game gives a
+   claimable reward — it stays SHUT here on purpose: opening is the reward
+   screen's job, and doing it in miniature on the hub would spoil it. */
+.hub-track-btn.is-ready .hub-track-chest { animation: hub-track-shake 1.6s ease-in-out infinite; }
+@keyframes hub-track-shake {
+  0%, 62%, 100% { transform: rotate(0deg); }
+  68% { transform: rotate(-7deg); }
+  74% { transform: rotate(6deg); }
+  80% { transform: rotate(-4deg); }
+  86% { transform: rotate(2deg); }
+}
+/* One continuous bar across the button, a fifth of it per level won — not a
+   row of markers: the bar has to read as "how far along" at a glance from the
+   home screen, and a single filled length does that at this size where five
+   separate dots ask to be counted. */
+.hub-track-bar {
+  display: block; flex: none; position: relative; overflow: hidden;
+  width: 100%; height: 12px; border-radius: var(--r-pill);
+  background: #2f241f;
+  box-shadow: inset 0 0 0 2px #6b564a;
+}
+.hub-track-fill {
+  display: block; height: 100%; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, #2b7fd4, #8fd2ff);
+  transition: width .45s cubic-bezier(.2,.8,.2,1);
+}
+
+/* ---- The reward chest screen -------------------------------------------- */
+/* Transparent, not a wash of its own — exactly the reasoning `.skin-screen`
+   spells out: the chest is drawn by the canvas UNDERNEATH this screen
+   (`setChestShowcase` in SandCannonEngine.ts), so a background here would
+   paint over it. The dark wash lives on `.game-frame.is-chest` instead, below
+   the canvas. */
+.reward-screen {
+  position: absolute; z-index: 60; inset: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 24px; background: transparent;
+  animation: hub-panel-in .24s cubic-bezier(.2,.9,.24,1) both;
+}
+/* Everything in here is inert except the Collect button, which turns its own
+   pointer events back on — a stray tap anywhere else must not close a screen
+   mid-animation. */
+.reward-screen > * { pointer-events: none; }
+/* Deliberately empty: the chest filling it is the 3D rig behind this screen.
+   This is only the flex space that keeps the caption and the button below it
+   rather than on top of it. */
+.reward-stage { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; }
+/* The wash the chest is seen against — on the frame itself, under the canvas,
+   the same trick `.game-frame.is-skin-*` uses for the skin showroom. */
+.game-frame.is-chest { background-color: #16213a; }
+
+/* The emeralds thrown out of the open lid. The container is a zero-size point
+   at the chest's mouth line; each piece animates out to its own `--bx`/`--by`
+   offset (inline, from `REWARD_BURST`) and settles there rather than falling
+   back — the reward should still be readable while the Collect button is up,
+   not a burst that has already vanished by the time it appears. */
+.reward-burst {
+  position: absolute; left: 50%; top: 52%; width: 0; height: 0;
+  pointer-events: none;
+}
+.reward-burst-piece {
+  position: absolute; left: 0; top: 0; opacity: 0;
+  display: block; width: 38px; height: 38px; margin: -19px 0 0 -19px;
+}
+.reward-burst-piece .emerald-icon { width: 100%; height: 100%; }
+.reward-burst.is-opening .reward-burst-piece,
+.reward-burst.is-revealed .reward-burst-piece {
+  animation: reward-burst-out .62s cubic-bezier(.15,.85,.3,1) both;
+}
+@keyframes reward-burst-out {
+  0% { opacity: 0; transform: translate(0, 0) scale(.2) rotate(0deg); }
+  25% { opacity: 1; }
+  100% { opacity: 1; transform: translate(var(--bx), var(--by)) scale(var(--bs)) rotate(24deg); }
+}
+.reward-caption {
+  margin: 0 0 0; font-size: 14px; font-weight: 800;
+  letter-spacing: .12em; text-transform: uppercase; color: #cfe8ff;
+}
+.reward-amount {
+  display: flex; align-items: center; gap: 10px; margin: 10px 0 0;
+  font-size: 36px; font-weight: 800; color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  animation: reward-amount-pop .4s cubic-bezier(.34,1.56,.64,1) both;
+}
+.reward-amount .emerald-icon { width: 38px; height: 38px; }
+@keyframes reward-amount-pop {
+  from { opacity: 0; transform: scale(.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+.reward-collect {
+  pointer-events: auto;
+  margin: 22px 0 calc(env(safe-area-inset-bottom) + 24px);
+  padding: 14px 52px; border: 0; border-radius: var(--r-pill);
+  background: #3aa0f5; color: #ffffff; cursor: pointer;
+  font: inherit; font-size: 16px; font-weight: 800; letter-spacing: .03em;
+  animation: hub-panel-in .3s cubic-bezier(.2,.9,.24,1) .1s both;
+}
+.reward-collect:active { transform: translateY(3px); }
+
+/* ---- Skin screen: locked skins ------------------------------------------ */
+/* Buy takes the emerald's blue rather than `.skin-equip`'s pink, so the one
+   button that spends currency never looks like the one that just equips. */
+.skin-equip.is-buy { background: #2b7fd4; border-color: #2b7fd4; }
+.skin-equip.is-buy .skin-equip-label {
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.skin-equip.is-buy .emerald-icon { width: 19px; height: 19px; }
+/* A locked tray card is still fully previewable — it just reads as locked: the
+   rig behind the price is dimmed and desaturated so the price pill on top of
+   it stays legible over any thumbnail. */
+.skin-card.is-locked img,
+.skin-card.is-locked .skin-card-icon { opacity: .45; filter: grayscale(.55); }
+.skin-card-price {
+  position: absolute; left: 4px; right: 4px; bottom: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  padding: 2px 0; border-radius: var(--r-pill);
+  background: #cfe8ff; color: var(--ink);
+  font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.skin-card-price .emerald-icon { width: 11px; height: 11px; }

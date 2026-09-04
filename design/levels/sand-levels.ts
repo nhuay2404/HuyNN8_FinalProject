@@ -56,59 +56,65 @@ export const defaultLevel: SandLevelConfig = {
 
   ammoQueue: ["blue"],
 
+  // No queue preview and no shot budget: the one lesson here is aim-and-fire,
+  // so nothing else about ammo should be visible or able to fail the player.
+  // `nextPreviewCount: 0` overrides RADIUS_GAMEPLAY's default just for this
+  // level — the HUD's upcoming-shots strip only renders when it has entries
+  // (see `.shots-upcoming` in SandGame.tsx), so 0 hides it outright rather
+  // than showing a row of repeated blue dots that would just be a queue
+  // widget teaching nothing (the whole wheel is one colour anyway).
+  nextPreviewCount: 0,
+
   sortRadius: 2,
-  shotLimit: 12,
+  // Infinity is the sanctioned "no limit" value — see its doc comment on
+  // `SandLevelConfig.shotLimit` in sand-types.ts.
+  shotLimit: Infinity,
   pixelScale: 5,
 
   ftueGesture: true,
 
   notes: "The default level: this build's FTUE. One colour only, on purpose — "
-    + "see ftueGesture. A board that is almost impossible to fail.",
+    + "see ftueGesture. No ammo queue shown and no shot budget: the only "
+    + "thing this level teaches is aim-and-fire, so nothing else about ammo "
+    + "should be visible or able to fail the player.",
 };
 
 /**
- * Level 2 — the second consequence: sand does not just vanish where you hit
- * it, whatever was resting on top of it falls to fill the gap. Level 1 only
- * ever taught "shoot to clear"; every shot there ate into a solid, single-
- * colour pile, so a grain quietly dropping one row into the dent it just made
- * never reads as a separate event. This level exists to make that same
- * physics — always on, never a special case — visible as its own thing, once.
+ * Level 2 — introduces the ammo queue: a five-point star, in three colours,
+ * so the upcoming-shots strip (`.shots-upcoming` in SandGame.tsx, hidden on
+ * Level 1 via `nextPreviewCount: 0`) has something worth previewing for the
+ * first time. No shot budget yet — `shotLimit: Infinity` — because the point
+ * here is reading the queue and planning around it, not surviving it; a
+ * budget would teach two lessons in one level.
  *
- * The picture, bottom to top: three rows of green floor, two rows of yellow
- * sitting directly on it (the plug), then a blue mound sitting directly on
- * the yellow, tapering up the same one-column-per-side way `DEFAULT_LEVEL_PICTURE`
- * does. `ammoQueue`'s first colour is yellow, so the very first shot — aimed
- * anywhere near the middle of that wide, hard-to-miss yellow band — punches a
- * hole straight through the plug, and the blue sitting on the breached
- * section has nothing left under it but the gap. It drops into the yellow's
- * old place on camera, on the very first shot: the board visibly reshapes
- * itself, cause (the shot) and effect (the drop) in the same spot, no caption
- * required.
- *
- * Taper-stability note, worth keeping next to the picture it explains: under
- * `GRAIN_FALL_TEMP` a grain rolls diagonally off an edge whenever the
- * diagonal-down cell is empty, not only when the cell directly below it is —
- * a resting block behaves like real loose sand, not a rigid brick, so a
- * vertical wall face erodes into a slope. That means two consecutive rows can
- * never share a width narrower than the full frame: row(y-1) has to extend at
- * least one column further out than row(y) on *each* side, or that row's own
- * edge column finds its diagonal-down neighbour sitting in empty space and
- * slides into it before the player ever sees the picture as drawn. Only rows
- * that already run edge-to-edge can repeat a width, because there is no
- * further-out column inside the frame left for them to erode into. Verified
- * with `runGrainSettle` directly (zero `GRAIN_PASS` steps) rather than by eye.
+ * Drawn solid rather than as a star-shaped silhouette on purpose: the star
+ * only exists as a colour pattern (yellow) against a sky-and-ground
+ * background (blue/green), the same trick `sandBloom`'s flower uses
+ * (tests/level-fixtures.ts) — every one of the 17x16 cells is filled, so
+ * there is no overhang for `GRAIN_FALL_TEMP` to erode and nothing to verify
+ * with `runGrainSettle` beyond the zero `GRAIN_PASS` a fully solid rectangle
+ * already guarantees. A real star *silhouette* (empty background around a
+ * five-point outline) cannot stand on its own under grain-fall physics — the
+ * notches between its points are unsupported overhangs — so the shape lives
+ * in colour, not in the outline of what is filled.
  */
-const SECOND_LEVEL_PICTURE = [
-  "..........",
-  "...BBBB...",
-  "..BBBBBB..",
-  ".BBBBBBBB.",
-  "BBBBBBBBBB",
-  "YYYYYYYYYY",
-  "YYYYYYYYYY",
-  "GGGGGGGGGG",
-  "GGGGGGGGGG",
-  "GGGGGGGGGG",
+const STAR_LEVEL_PICTURE = [
+  "BBBBBBBBBBBBBBBBB",
+  "BBBBBBBBYBBBBBBBB",
+  "BBBBBBBYYYBBBBBBB",
+  "BBBBBBBYYYBBBBBBB",
+  "BBBBBBYYYYYBBBBBB",
+  "BBYYYYYYYYYYYYYBB",
+  "BBYYYYYYYYYYYYYBB",
+  "BBBYYYYYYYYYYYBBB",
+  "BBBBYYYYYYYYYBBBB",
+  "BBBBBYYYYYYYBBBBB",
+  "BBBBBYYYYYYYBBBBB",
+  "BBBBYYYYYYYYYBBBB",
+  "GGGGYYYGGGYYYGGGG",
+  "GGGGYGGGGGGGYGGGG",
+  "GGGGGGGGGGGGGGGGG",
+  "GGGGGGGGGGGGGGGGG",
 ];
 
 export const secondConsequence: SandLevelConfig = {
@@ -117,24 +123,74 @@ export const secondConsequence: SandLevelConfig = {
   id: 2,
   name: "Level 2",
 
-  frame: { width: 10, height: 10 },
-  rows: SECOND_LEVEL_PICTURE,
+  frame: { width: 17, height: 16 },
+  rows: STAR_LEVEL_PICTURE,
 
-  // Yellow first and only yellow lives in the plug, so the opening bullet is
-  // guaranteed to be the one that triggers the collapse.
+  // The wheel of colours, not a fixed opening order — see `ammoQueue`'s own
+  // comment in sand-types.ts. Star first: it is the shape the level is named
+  // for and the smallest region, so it clears early.
   ammoQueue: ["yellow", "blue", "green"],
 
-  sortRadius: 2.5,
-  // Measured with analyseLevel: strong play clears in 9, careless play (a
-  // random cell of the colour in hand) wins 7 of 8 sampled runs at this
-  // budget — five shots of slack for a strong line, same "good" verdict the
-  // difficulty measurer itself would report.
-  shotLimit: 14,
+  sortRadius: 3,
+  // No budget: see this level's own doc comment above.
+  shotLimit: Infinity,
   pixelScale: 5,
 
-  notes: "Teaches that sand above a cleared plug falls to fill the gap — the "
-    + "yellow band is deliberately wide and loaded first so the first shot "
-    + "demonstrates it.",
+  notes: "Introduces the ammo queue preview (three colours, star/sky/ground) "
+    + "with no shot budget yet — one new lesson at a time.",
+};
+
+/**
+ * Level 3 — introduces the shot budget. Level 1 taught aim-and-fire with no
+ * queue and no budget; Level 2 added the queue preview with still no budget;
+ * this is the first level that can actually be lost to running out of shots.
+ *
+ * A house — roof, walls, sky — in the same solid-rectangle-of-colour style as
+ * `STAR_LEVEL_PICTURE` above, for the same reason: every one of the 15x14
+ * cells is filled, so the silhouette is trivially at rest under
+ * `GRAIN_FALL_TEMP` and the house shape lives entirely in colour (orange
+ * roof, yellow walls, blue sky) rather than in an outline with empty space
+ * around it.
+ */
+const THIRD_LEVEL_PICTURE = [
+  "BBBBBBBOBBBBBBB",
+  "BBBBBBOOOBBBBBB",
+  "BBBBBOOOOOBBBBB",
+  "BBBBOOOOOOOBBBB",
+  "BBBOOOOOOOOOBBB",
+  "BBOOOOOOOOOOOBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+  "BBBYYYYYYYYYBBB",
+];
+
+export const thirdLevel: SandLevelConfig = {
+  ...RADIUS_GAMEPLAY,
+
+  id: 3,
+  name: "Level 3",
+
+  frame: { width: 15, height: 14 },
+  rows: THIRD_LEVEL_PICTURE,
+
+  ammoQueue: ["orange", "yellow", "blue"],
+
+  sortRadius: 2.5,
+  // Measured with analyseLevel (app/game/level-analysis.ts): strong play
+  // clears in 20, careless play (a random cell of the colour in hand) wins 6
+  // of 8 sampled runs at this budget — six shots of slack for a strong line,
+  // the "good" verdict the difficulty measurer itself reports.
+  shotLimit: 26,
+  pixelScale: 5,
+
+  notes: "Introduces the shot budget — the first level that can actually be "
+    + "lost to running out of shots, now that Level 1/2 have taught "
+    + "aim-and-fire and the ammo queue separately.",
 };
 
 // ==== Editor-shipped levels ====
@@ -154,4 +210,4 @@ export const EDITOR_LEVELS: SandLevelConfig[] = [];
  * full. Every level meant for a player to actually reach belongs in this
  * array.
  */
-export const BUILT_IN_LEVELS: SandLevelConfig[] = [defaultLevel, secondConsequence, ...EDITOR_LEVELS];
+export const BUILT_IN_LEVELS: SandLevelConfig[] = [defaultLevel, secondConsequence, thirdLevel, ...EDITOR_LEVELS];

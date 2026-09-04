@@ -1,11 +1,16 @@
 import * as THREE from "three";
 import { MUZZLE_Z } from "./SandCannonEngine";
+import { getEconomyConfigOverride } from "./economy-config.ts";
 
 // Which skin the player has equipped for the cannon. Stored the same way the
 // sound preference is: a file:// page or a privacy mode can refuse storage
 // outright, and the game still has to start, so every read and write is
 // guarded and falls back to the default rather than throwing.
 const STORAGE_KEY = "cannon-sort:v1:costume";
+// Which skins have been bought. Same guarded-storage contract as the equipped
+// skin above — a browser that refuses storage just means the player owns the
+// free skins and nothing else, which is the safe direction to fail in.
+const OWNED_KEY = "cannon-sort:v1:owned-costumes";
 
 export type CostumeId = "classic-cannon" | "rune-cannon";
 
@@ -31,6 +36,13 @@ export type CostumeDef = {
   name: string;
   tagline: string;
   flavor: CostumeFlavor;
+  /** Blue Emerald to unlock, or 0 for a skin every player already owns.
+   * Priced here rather than in `economy.ts` because the price belongs to the
+   * skin the same way its name and tagline do — and `economy.ts` importing
+   * this file back for it would be a cycle. The CSV override still goes
+   * through `costumePrice` below, so a designer tunes it in the same sheet
+   * as every other number. */
+  price: number;
   // Returns the objects it added, so swapping a costume can take exactly
   // those back out again — see `disposeCostumeParts`.
   build: (groups: CostumeRigGroups) => THREE.Object3D[];
@@ -193,6 +205,7 @@ export const COSTUMES: Record<CostumeId, CostumeDef> = {
     name: "Field Cannon",
     tagline: "Load. Aim. Boom.",
     flavor: "classic",
+    price: 0,
     build: buildClassicCannon,
   },
   "rune-cannon": {
@@ -200,6 +213,10 @@ export const COSTUMES: Record<CostumeId, CostumeDef> = {
     name: "Rune Cannon",
     tagline: "Charge. Sparkle. Repeat.",
     flavor: "magic",
+    // The reward track's very first node pays exactly this (`MILESTONE_EMERALDS[0]`
+    // in `economy.ts`) — the skin is meant to read as "the thing the track is
+    // for", not as a number a player has to do arithmetic about.
+    price: 500,
     build: buildRuneCannon,
   },
 };
@@ -215,11 +232,74 @@ function isCostumeId(value: string | null): value is CostumeId {
   return value !== null && value in COSTUMES;
 }
 
+/** `id`'s actual Blue Emerald price — the def's own `price` unless
+ * `public/design/economy.csv` overrides it, the same shape `boosterPrice` uses
+ * for the Shop. Read this rather than `COSTUMES[id].price` anywhere a number
+ * is shown or charged, so a sheet edit moves the label and the spend
+ * together. */
+export function costumePrice(id: CostumeId): number {
+  return getEconomyConfigOverride(`costumePrice_${id}`) ?? getCostume(id).price;
+}
+
+/** A free skin is owned by everyone from the first launch — only a priced one
+ * has to be bought. Keeps `OWNED_KEY` holding just the purchases, so a skin
+ * whose price is later dropped to 0 becomes free for existing players too
+ * rather than staying locked behind a stored list they are not on. */
+export function isCostumeOwned(id: CostumeId): boolean {
+  if (costumePrice(id) <= 0) return true;
+  return readOwnedCostumes().has(id);
+}
+
+function readOwnedCostumes(): Set<CostumeId> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(OWNED_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is CostumeId => isCostumeId(id as string)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Marks `id` bought. Deliberately does NOT touch the wallet: the caller
+ * (`buySkin` in `SandGame.tsx`) spends the emerald first and only unlocks on
+ * a spend that actually went through, so this file never has to know what a
+ * skin is paid for with.
+ */
+export function unlockCostume(id: CostumeId) {
+  const owned = readOwnedCostumes();
+  if (owned.has(id)) return;
+  owned.add(id);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(OWNED_KEY, JSON.stringify([...owned]));
+  } catch {
+    // The purchase holds for this session but not across a reload. Nothing
+    // better is available on storage that refuses writes, and the alternative
+    // (refusing the sale) would take the emerald and give nothing back.
+  }
+}
+
+/** Dev-only, alongside the Settings screen's other economy resets: puts every
+ * priced skin back behind its price so the buy flow can be tested again. */
+export function resetOwnedCostumes() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(OWNED_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
 export function getSelectedCostume(): CostumeId {
   if (typeof window === "undefined") return DEFAULT_COSTUME;
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return isCostumeId(stored) ? stored : DEFAULT_COSTUME;
+    // Never hands back a skin the player does not own — the dev Settings
+    // screen can wipe the owned list out from under an equipped purchase,
+    // and the free default is the only safe thing to fall back to.
+    return isCostumeId(stored) && isCostumeOwned(stored) ? stored : DEFAULT_COSTUME;
   } catch {
     return DEFAULT_COSTUME;
   }

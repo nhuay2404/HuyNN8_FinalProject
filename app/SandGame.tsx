@@ -6,10 +6,28 @@ import {
   SAND_COLOR_HEX,
   type SandEngineEvent,
 } from "./game/SandCannonEngine";
-import { COSTUMES, COSTUME_ORDER, getSelectedCostume, setSelectedCostume, type CostumeId } from "./game/costumes";
+import {
+  COSTUMES,
+  COSTUME_ORDER,
+  costumePrice,
+  getSelectedCostume,
+  isCostumeOwned,
+  resetOwnedCostumes,
+  setSelectedCostume,
+  unlockCostume,
+  type CostumeId,
+} from "./game/costumes";
 import {
   addGold,
   boosterPrice,
+  claimRewardTrack,
+  getRewardTrackSnapshot,
+  NODES_PER_CHEST,
+  recordLevelPlayed,
+  fillRewardTrack,
+  resetRewardTrack,
+  spendEmeralds,
+  subscribeRewardTrack,
   buyBoosterCharges,
   claimDailyLogin,
   dailyLoginReward,
@@ -20,8 +38,10 @@ import {
   levelGoldReward,
   markLevelCleared,
   resetGold,
+  SERVER_REWARD_TRACK,
   SERVER_WALLET,
   subscribeWallet,
+  type RewardTrackState,
   type DailyLoginState,
 } from "./game/economy";
 import { ensureEconomyConfigLoading, getEconomyConfigVersion, subscribeEconomyConfig } from "./game/economy-config";
@@ -418,6 +438,24 @@ function PlusIcon() {
   return <img className="hub-gold-plus-icon" src="/icons/PlusIcon.png" alt="" aria-hidden="true" />;
 }
 
+/** Blue Emerald — the reward track's currency, and the only thing a locked
+ * skin can be bought with. Real artwork (`/public/icons/BlueEmeraldIcon.png`),
+ * the same `<img>` treatment `CoinIcon` gets, with every size rule in
+ * globals.css keyed to the class rather than the element so one component
+ * covers the HUD chip, a price pill, a button label and the chest's burst. */
+function EmeraldIcon() {
+  return <img className="emerald-icon" src="/icons/BlueEmeraldIcon.png" alt="" aria-hidden="true" />;
+}
+
+/** The reward chest on the home screen's own track button — the flat icon
+ * (`/public/icons/ChestIcon.png`). The chest that actually OPENS is not this:
+ * it is a 3D rig the engine draws (`chest-model.ts`, built to match this same
+ * artwork), so the button and the reward screen show one object in two
+ * places rather than two different chests. */
+function ChestIcon() {
+  return <img className="chest-icon" src="/icons/ChestIcon.png" alt="" aria-hidden="true" />;
+}
+
 /** The Shop's hard-currency glyph — a faceted gem, drawn the same way
  * `CoinIcon` is (a flat `currentColor` fill plus a darker line for the
  * facets) so the two currencies read as one family at a glance despite the
@@ -631,6 +669,29 @@ function markFtueGestureShown(id: number) {
 
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
+
+/**
+ * The emeralds thrown out of the reward chest when its lid opens. Still DOM,
+ * not part of the 3D rig: they are the currency's own artwork
+ * (`BlueEmeraldIcon.png`) and have to read as that exact icon, which a flat
+ * quad turning in the scene would not.
+ *
+ * Hand-placed rather than randomised per open: the burst has to clear the lid
+ * on every arc and read as a fan rather than a scatter, which is easier to get
+ * right by picking eight endpoints once than by tuning a random range.
+ * Coordinates are the offset each piece travels to, in pixels from the chest's
+ * mouth; `y` is negative for "up and out".
+ */
+const REWARD_BURST = [
+  { x: -104, y: -118, scale: 0.7, delay: 0 },
+  { x: -62, y: -160, scale: 1, delay: 0.04 },
+  { x: -22, y: -186, scale: 0.85, delay: 0.02 },
+  { x: 22, y: -190, scale: 1.15, delay: 0.06 },
+  { x: 64, y: -158, scale: 0.8, delay: 0.03 },
+  { x: 106, y: -112, scale: 1, delay: 0.07 },
+  { x: -136, y: -58, scale: 0.6, delay: 0.09 },
+  { x: 138, y: -54, scale: 0.65, delay: 0.05 },
+] as const;
 
 /** Falling paper pieces covering the whole WIN screen (`.win-confetti` in
  * globals.css) — a fixed hand-picked set rather than `Math.random()` so the
@@ -1074,6 +1135,131 @@ export default function SandGame() {
   // re-render happened to read it fresh.
   useSyncExternalStore(subscribeEconomyConfig, getEconomyConfigVersion, () => 0);
 
+  /**
+   * The home screen's reward track — the bar that replaced the dead "Modes"
+   * chip next to Play. `getRewardTrackState()` builds a fresh object on every
+   * call, so it cannot be a `useSyncExternalStore` snapshot itself; the
+   * version number is (`subscribeRewardTrack` in `economy.ts`, see its own
+   * comment), and the state is derived off that plus `economyConfigVersion`,
+   * so a designer's live `economy.csv` edit to a milestone amount moves the
+   * bar's labels without a reload the same way booster prices already do.
+   */
+  const track: RewardTrackState = useSyncExternalStore(
+    subscribeRewardTrack,
+    getRewardTrackSnapshot,
+    () => SERVER_REWARD_TRACK,
+  );
+  /**
+   * The chest screen, or `null` when it is closed. Its own little state
+   * machine rather than a boolean, because the ask is a sequence: the chest
+   * spins in place, stops, the lid opens, and only then does the emerald fly
+   * out. Each phase is handed to the engine, which draws and animates the
+   * chest itself (`setChestShowcase`), plus the timer below that advances to
+   * the next one.
+   *
+   * `amount` is filled in at the "opening" step — that is where
+   * `claimRewardTrack` actually runs, so the number on screen is the one that
+   * was really paid, and a screen closed early (or a reload mid-animation)
+   * has already banked it rather than losing it.
+   */
+  const [chest, setChest] = useState<{ phase: "spinning" | "opening" | "revealed"; amount: number } | null>(null);
+  useEffect(() => {
+    if (!chest || chest.phase === "revealed") return;
+    if (chest.phase === "spinning") {
+      // Matched to `CHEST_SPIN_SECONDS` in SandCannonEngine.ts — long enough
+      // to read as a real spin-and-settle rather than a flicker, short enough
+      // that a player opening their fifth chest is not waiting on it.
+      const timer = window.setTimeout(() => {
+        // Paid at the moment the lid starts to move. `claimRewardTrack` is
+        // itself the "is this bar actually complete" guard, so a second
+        // opening that somehow got through gets `null` here and shows 0
+        // rather than paying twice.
+        const paid = claimRewardTrack() ?? 0;
+        setChest({ phase: "opening", amount: paid });
+      }, 1500);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => setChest((c) => (c ? { ...c, phase: "revealed" } : c)), 620);
+    return () => window.clearTimeout(timer);
+  }, [chest]);
+  /**
+   * Hands the chest's current beat to the engine, which is what actually draws
+   * and animates it — a 3D rig on the shared canvas behind this screen, the
+   * same arrangement the skin picker's cannon uses (see `setChestShowcase`).
+   * Passing `null` on close takes it off stage and puts the level's picture
+   * back. Re-entrant on the engine's side, so a re-render with the phase
+   * unchanged does not restart the animation.
+   */
+  useEffect(() => {
+    if (!engine) return;
+    engine.setChestShowcase(chest?.phase ?? null);
+  }, [engine, chest?.phase]);
+  // Nothing to clean up on unmount beyond what the effect above already does
+  // on `chest` going null — the engine is disposed with the component anyway.
+
+  /** The reward-track button on the home screen. Only opens the chest on a
+   * complete bar — an incomplete one is a progress readout, not an action. */
+  const openChest = useCallback(() => {
+    if (!track.canClaim) return;
+    setChest({ phase: "spinning", amount: 0 });
+  }, [track.canClaim]);
+
+  // Which locked skin the skin screen is asking "buy this?" about, or null.
+  // Same reasoning as the Shop's own `buyConfirm`: spending a currency is
+  // never a single unconfirmed tap, and emerald is scarcer than gold.
+  const [skinBuyConfirm, setSkinBuyConfirm] = useState<CostumeId | null>(null);
+  // The full-screen "you unlocked it" reveal a fresh cannon purchase plays —
+  // which cannon it is celebrating, or null the rest of the time. Set by
+  // `buySkin`, cleared only by `dismissCannonUnlock` (the player's own tap) —
+  // there is no timer that closes this on its own, the reveal is meant to
+  // hold until they actually move past it.
+  const [cannonUnlock, setCannonUnlock] = useState<CostumeId | null>(null);
+  // Whether the "tap to continue" prompt has appeared yet — starts false the
+  // instant the reveal opens so the very first frame cannot be tapped past
+  // before the player has even read the name, then flips true after a fixed
+  // beat (see the effect below).
+  const [cannonUnlockTapReady, setCannonUnlockTapReady] = useState(false);
+  useEffect(() => {
+    if (!cannonUnlock) return;
+    setCannonUnlockTapReady(false);
+    const timer = window.setTimeout(() => setCannonUnlockTapReady(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, [cannonUnlock]);
+  /** The reveal's own close — only reachable once `cannonUnlockTapReady`, so
+   * a tap cannot skip past the name before the prompt inviting one exists. */
+  const dismissCannonUnlock = useCallback(() => {
+    engine?.stopUnlockCelebration();
+    setCannonUnlock(null);
+  }, [engine]);
+  // A confirm left open behind a tab switch must not resurrect itself when
+  // the player comes back to the skin screen — same guard the Shop's has.
+  useEffect(() => {
+    if (tab !== "skin") setSkinBuyConfirm(null);
+  }, [tab]);
+  /**
+   * The skin screen's Buy button. Spends first and only unlocks on a spend
+   * that actually went through (`spendEmeralds` is atomic), so a short wallet
+   * can never end up owning a skin it did not pay for. Equips it on the spot:
+   * a player who just bought a skin wants to be wearing it, not looking at a
+   * second button.
+   */
+  const buySkin = useCallback((id: CostumeId) => {
+    if (!spendEmeralds(costumePrice(id))) {
+      pushToast("Not enough Blue Emerald", "warn");
+      setSkinBuyConfirm(null);
+      return;
+    }
+    unlockCostume(id);
+    setSelectedCostume(id);
+    setCostume(id);
+    setSkinBuyConfirm(null);
+    setJustEquippedPulse(true);
+    // The reveal replaces the usual toast for this one moment — the spin,
+    // glow and "YOU UNLOCKED ..." banner are the announcement now.
+    setCannonUnlock(id);
+    engine?.playUnlockCelebration();
+  }, [pushToast, engine]);
+
   // What today looked like the FIRST time this page checked — same
   // `readBoot`/`SERVER_BOOT` shape just above (a value `useSyncExternalStore`
   // reads once through a cached snapshot, real on the client and a fixed
@@ -1319,6 +1505,10 @@ export default function SandGame() {
    */
   const [lastHandledResult, setLastHandledResult] = useState<SandGameState["result"]>(null);
   if (state.result !== lastHandledResult) {
+    // The reward track counts every win, replays included — unlike the gold
+    // above, which pays first-clears only. See the reward-track section header
+    // in `economy.ts` for why the two differ.
+    if (state.result?.kind === "WIN") recordLevelPlayed();
     if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
       const granted = getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score);
       addGold(granted);
@@ -1329,6 +1519,10 @@ export default function SandGame() {
   }
 
   const remaining = ammoRemaining(level, state);
+  // `ammoRemaining` returns `Infinity` for a `shotLimit: Infinity` level (see
+  // its own doc comment) — rendered as "∞" rather than the literal word
+  // "Infinity" a plain template string would otherwise produce.
+  const remainingLabel = Number.isFinite(remaining) ? String(remaining) : "∞";
   const busy = BUSY_PHASES.has(state.phase);
   /**
    * What the badge's dot shows — one step behind `state.queue` on purpose.
@@ -1391,6 +1585,13 @@ export default function SandGame() {
   // `buyQtyCap` is 99 unless the wallet cannot even afford that many: the
   // stepper's "+" button (see its `disabled` prop below) never lets a player
   // dial past what `wallet.gold` could actually cover.
+  // The previewed skin's own lock state, pulled out of the JSX because the
+  // heading, the main button and the confirm dialog all need the same two
+  // answers. Recomputed every render on purpose: `isCostumeOwned` is a cached
+  // localStorage read, and `buySkin` writing it has to show up immediately in
+  // all three places at once.
+  const previewOwned = isCostumeOwned(previewCostume);
+  const previewPrice = costumePrice(previewCostume);
   const buyConfirmPrice = buyConfirm ? boosterPrice(buyConfirm) : 0;
   const buyQtyCap = buyConfirmPrice > 0 ? Math.min(99, Math.floor(wallet.gold / buyConfirmPrice)) : 99;
 
@@ -1422,7 +1623,7 @@ export default function SandGame() {
           that screen; a background on the screen would paint over the rig
           instead of showing through behind it. */}
       <div
-        className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}`}
+        className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}${chest ? " is-chest" : ""}`}
         style={playing && loadedAmmo ? ({ "--ammo-bg": ammoSky(loadedAmmo) } as React.CSSProperties) : undefined}
       >
         {/* Top-left HUD stack: §22/§23: ammo, the 3D frame, then the cannon
@@ -1452,8 +1653,8 @@ export default function SandGame() {
               role="status"
               aria-label={
                 loadedAmmo
-                  ? `${remaining} ${COLOR_NAME[loadedAmmo]} shots left, next up ${upcomingAmmo.map((color) => COLOR_NAME[color]).join(", ") || "nothing"}`
-                  : `${remaining} shots left`
+                  ? `${remainingLabel} ${COLOR_NAME[loadedAmmo]} shots left, next up ${upcomingAmmo.map((color) => COLOR_NAME[color]).join(", ") || "nothing"}`
+                  : `${remainingLabel} shots left`
               }
             >
               <span
@@ -1483,7 +1684,7 @@ export default function SandGame() {
                   ))}
                 </span>
               )}
-              <strong>{remaining}</strong>
+              <strong>{remainingLabel}</strong>
             </div>
           </header>
         </div>
@@ -1497,29 +1698,35 @@ export default function SandGame() {
             Shown on every hub tab, Skin included now — none of the
             full-screen takeovers (Skin, Shop, Gallery) have a close button
             of their own, so this gear is the one settings entry point that
-            has to stay reachable no matter which one is open. */}
-        <div className="settings-wrap">
-          {playing && (level.tutorial || level.ftueGesture) && (
+            has to stay reachable no matter which one is open. The reward
+            chest is the one exception: it is a short animation that ends in a
+            Collect button, not a screen a player can get stuck on, and a gear
+            floating over it would be the only thing on that frame besides the
+            chest. */}
+        {!chest && !cannonUnlock && (
+          <div className="settings-wrap">
+            {playing && (level.tutorial || level.ftueGesture) && (
+              <button
+                type="button"
+                className="icon-button help-button"
+                onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
+                aria-label="How to play this level"
+                title="How to play"
+              >
+                <Glyph name="help" />
+              </button>
+            )}
             <button
               type="button"
-              className="icon-button help-button"
-              onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
-              aria-label="How to play this level"
-              title="How to play"
+              className="icon-button settings-button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+              title="Settings"
             >
-              <Glyph name="help" />
+              <img className="settings-button-icon" src="/icons/SettingIcon.png" alt="" aria-hidden="true" />
             </button>
-          )}
-          <button
-            type="button"
-            className="icon-button settings-button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
-            title="Settings"
-          >
-            <img className="settings-button-icon" src="/icons/SettingIcon.png" alt="" aria-hidden="true" />
-          </button>
-        </div>
+          </div>
+        )}
 
         {/* The hub's own control, on the right edge rather than the top-right
             corner `.settings-wrap` uses mid-play — the two used to share
@@ -1545,7 +1752,7 @@ export default function SandGame() {
             open (`dailyLogin` below) — a button that opens a card it is
             currently sitting behind would just be dead chrome until the
             card closes. */}
-        {!playing && tab === "home" && !dailyLogin && (
+        {!playing && !chest && !cannonUnlock && tab === "home" && !dailyLogin && (
           <div className="hub-gift-wrap">
             <button
               type="button"
@@ -1567,21 +1774,39 @@ export default function SandGame() {
             (only mounted on the Shop tab). The coin art sits half outside
             the pill on purpose — a big coin overlapping the chip's own edge,
             not a small icon tucked inside it, per the reference layout. */}
-        {!playing && (
-          <button
-            type="button"
-            className="hub-gold-wrap"
-            onClick={openCoinPacks}
-            aria-label={`${displayGold} coins — buy more`}
-          >
-            <CoinIcon />
-            <span className="hub-gold-badge" ref={goldHudRef}>
-              <strong key={goldBump}>{displayGold}</strong>
-              <span className="hub-gold-plus" aria-hidden="true">
-                <PlusIcon />
+        {!playing && !chest && !cannonUnlock && (
+          <div className="hub-currency-row">
+            <button
+              type="button"
+              className="hub-gold-wrap"
+              onClick={openCoinPacks}
+              aria-label={`${displayGold} coins — buy more`}
+            >
+              <CoinIcon />
+              <span className="hub-gold-badge" ref={goldHudRef}>
+                <strong key={goldBump}>{displayGold}</strong>
+                <span className="hub-gold-plus" aria-hidden="true">
+                  <PlusIcon />
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+
+            {/* Blue Emerald, in the same row as gold and built to the same
+                shape (a big stone overlapping a stadium pill), with the two
+                differences that carry the whole distinction: a pale blue pill
+                instead of gold's pale yellow, and no plus mark. Not a button
+                either, for the same reason there is no plus — emerald has
+                exactly one source (the reward track) and cannot be bought, so
+                there is nowhere for a tap to go. A real flex row rather than a
+                second fixed inset: gold's pill grows with its digit count, and
+                only a row keeps the two flush as it does. */}
+            <div className="hub-emerald-wrap" role="status" aria-label={`${wallet.emeralds} Blue Emerald`}>
+              <EmeraldIcon />
+              <span className="hub-emerald-badge">
+                <strong>{wallet.emeralds}</strong>
+              </span>
+            </div>
+          </div>
         )}
 
         {/* One `.coin-fly` span per airborne coin from the last daily-login
@@ -1724,10 +1949,14 @@ export default function SandGame() {
             idle in its frame, which is what the player is choosing to play.
             Stays mounted a beat past `playing` turning true so `is-leaving`
             gets to animate it off instead of the screen just cutting out.
+            Unmounted entirely while the reward chest is open, same as the nav
+            and the currency row: that screen owns the whole frame while it
+            plays, and the chest behind it is drawn on the same canvas this
+            screen frames.
             Excludes Shop too now, same reasoning as Skin below it: `.shop-screen`
             is its own full-bleed takeover (see its own comment), not another
             `.hub-panel` bottom sheet floating over the picture. */}
-        {homeVisible && tab !== "skin" && tab !== "shop" && tab !== "gallery" && (
+        {homeVisible && !chest && tab !== "skin" && tab !== "shop" && tab !== "gallery" && (
           <div
             className={`hub-screen${playing ? " is-leaving" : ""}`}
             role="group"
@@ -1745,9 +1974,37 @@ export default function SandGame() {
                 >
                   Level {level.id}
                 </button>
-                <div className="hub-modes-btn">
-                  Modes
-                </div>
+                {/* The reward track, in the slot the dead "Modes" chip used
+                    to hold and sized to match Play beside it (see
+                    `.hub-actions`, which gives both the same box). A real
+                    button only once the bar is full: an incomplete track is a
+                    progress readout with nothing to tap, and `disabled` says
+                    so to a screen reader rather than a tap that silently does
+                    nothing. The bar under the chest is one continuous track
+                    filling a fifth per level won — the count itself lives in
+                    the label above, since a bar this size has no room to print
+                    it without crowding the chest. */}
+                <button
+                  type="button"
+                  className={`hub-track-btn${track.canClaim ? " is-ready" : ""}`}
+                  onClick={openChest}
+                  disabled={!track.canClaim}
+                  aria-label={
+                    track.canClaim
+                      ? `Open reward chest — ${track.chestReward} Blue Emerald`
+                      : `Reward track — ${track.filled} of ${NODES_PER_CHEST} levels`
+                  }
+                >
+                  <span className="hub-track-chest" aria-hidden="true">
+                    <ChestIcon />
+                  </span>
+                  <span className="hub-track-bar" aria-hidden="true">
+                    <span
+                      className="hub-track-fill"
+                      style={{ width: `${Math.round(track.progress * 100)}%` }}
+                    />
+                  </span>
+                </button>
               </div>
             ) : (
               // Not a click-through backdrop: while a section is open, tapping
@@ -1793,36 +2050,97 @@ export default function SandGame() {
             className="skin-screen"
             role="dialog" aria-modal="true" aria-labelledby="skin-title"
           >
-            <div className="skin-heading">
-              <h2 id="skin-title">{COSTUMES[previewCostume].name}</h2>
-              <p className="skin-tagline">{COSTUMES[previewCostume].tagline}</p>
-            </div>
+            {!cannonUnlock && (
+              <div className="skin-heading">
+                <h2 id="skin-title">{COSTUMES[previewCostume].name}</h2>
+                <p className="skin-tagline">{COSTUMES[previewCostume].tagline}</p>
+              </div>
+            )}
 
             <div className="skin-stage" aria-hidden="true" />
 
-            <button
-              className={`skin-equip${justEquippedPulse ? " is-just-selected" : ""}`}
-              type="button"
-              onClick={selectCostume}
-              disabled={previewCostume === costume}
-              onAnimationEnd={() => setJustEquippedPulse(false)}
-            >
-              <span className="skin-equip-label">{previewCostume === costume ? "Selected" : "Select"}</span>
-            </button>
+            {/* The unlock reveal: every other control on this screen (and
+                every persistent HUD piece — see the `!cannonUnlock` guards
+                on `.settings-wrap`/`.hub-gift-wrap`/`.hub-currency-row`/
+                `.hub-nav`) is hidden while this is up, so the spinning,
+                glowing rig the engine is playing (`playUnlockCelebration`)
+                and this banner are the only things on screen. Sits above the
+                rig rather than over it (`.cannon-unlock-text`'s own top
+                margin) so the reveal reads as a caption on the cannon, not a
+                curtain over it.
+                Plain `role="button"` div rather than a real `<button
+                disabled>` — a disabled-then-enabled native button has been
+                unreliable about picking taps back up in the game's WebView,
+                where every other full-screen tap surface here (`.hub-tap`
+                etc.) is already a div for the same reason. The tap guard
+                lives in the handler itself instead: any tap anywhere on
+                screen dismisses the reveal, but only once
+                `cannonUnlockTapReady` flips true (~2s in) — before that a
+                tap is swallowed rather than skipping past the name before
+                the prompt inviting one even exists. */}
+            {cannonUnlock && (
+              <div
+                className="cannon-unlock-banner"
+                role="button"
+                tabIndex={0}
+                onClick={() => { if (cannonUnlockTapReady) dismissCannonUnlock(); }}
+                aria-label={`You unlocked ${COSTUMES[cannonUnlock].name}.${cannonUnlockTapReady ? " Tap to continue." : ""}`}
+              >
+                <p className="cannon-unlock-text" aria-hidden="true">You unlocked {COSTUMES[cannonUnlock].name}!</p>
+                {cannonUnlockTapReady && (
+                  <p className="cannon-unlock-tap" aria-hidden="true">Tap to continue</p>
+                )}
+              </div>
+            )}
 
+            {/* One button, three jobs, in the order a player meets them: Buy
+                (locked), Select (owned but not worn), Selected (worn). Buying
+                equips in the same step (`buySkin`), so the Buy state never
+                hands back to a Select the player then has to tap again. A
+                wallet that cannot afford it still gets a live button — the
+                confirm dialog is where "not enough" is said, rather than a
+                dead control with no explanation on it. */}
+            {cannonUnlock ? null : !previewOwned ? (
+              <button
+                className="skin-equip is-buy"
+                type="button"
+                onClick={() => setSkinBuyConfirm(previewCostume)}
+              >
+                <span className="skin-equip-label">
+                  Buy <EmeraldIcon /> {previewPrice}
+                </span>
+              </button>
+            ) : (
+              <button
+                className={`skin-equip${justEquippedPulse ? " is-just-selected" : ""}`}
+                type="button"
+                onClick={selectCostume}
+                disabled={previewCostume === costume}
+                onAnimationEnd={() => setJustEquippedPulse(false)}
+              >
+                <span className="skin-equip-label">{previewCostume === costume ? "Selected" : "Select"}</span>
+              </button>
+            )}
+
+            {!cannonUnlock && (
             <div className="skin-tray">
               <div className="skin-grid">
                 {COSTUME_ORDER.map((id) => {
                   const def = COSTUMES[id];
                   const thumbnail = costumeThumbnails[id];
+                  // A locked card is still fully previewable — tapping it swaps
+                  // the showroom rig the same as any other, so a player can see
+                  // what they would be buying before they buy it. Only the
+                  // main button below changes.
+                  const owned = isCostumeOwned(id);
                   return (
                     <button
                       key={id}
                       type="button"
-                      className={`skin-card${previewCostume === id ? " is-previewing" : ""}`}
+                      className={`skin-card${previewCostume === id ? " is-previewing" : ""}${owned ? "" : " is-locked"}`}
                       onClick={() => previewCostumeCard(id)}
                       aria-pressed={previewCostume === id}
-                      aria-label={`${def.name}${costume === id ? ", equipped" : ""}`}
+                      aria-label={`${def.name}${owned ? (costume === id ? ", equipped" : "") : `, locked — ${costumePrice(id)} Blue Emerald`}`}
                     >
                       {thumbnail
                         // A data URL rendered from the rig itself a moment
@@ -1831,12 +2149,19 @@ export default function SandGame() {
                         // eslint-disable-next-line @next/next/no-img-element
                         ? <img src={thumbnail} alt="" />
                         : <span className={`skin-card-icon${def.flavor === "magic" ? " is-magic" : ""}`}><CostumeIcon id={id} /></span>}
-                      {costume === id && <span className="skin-card-tick" aria-hidden="true">✓</span>}
+                      {owned
+                        ? costume === id && <span className="skin-card-tick" aria-hidden="true">✓</span>
+                        : (
+                          <span className="skin-card-price" aria-hidden="true">
+                            <EmeraldIcon /> {costumePrice(id)}
+                          </span>
+                        )}
                     </button>
                   );
                 })}
               </div>
             </div>
+            )}
           </div>
         )}
 
@@ -2211,6 +2536,92 @@ export default function SandGame() {
           </div>
         )}
 
+        {/* Buying a skin gets the same confirm the Shop's boosters get — a
+            single unconfirmed tap should never spend a currency, and emerald
+            is scarcer than gold. Gated on `tab === "skin"` as well as on the
+            state itself, same as the Shop's dialog: a confirm left open
+            behind a tab switch must not reappear on the way back. */}
+        {tab === "skin" && skinBuyConfirm && (
+          <div className="result-screen" role="dialog" aria-modal="true" aria-label={`Buy ${COSTUMES[skinBuyConfirm].name}`}>
+            <div className="result-card confirm-card">
+              <h2>Buy {COSTUMES[skinBuyConfirm].name}?</h2>
+              <div className="confirm-info">
+                <div className="confirm-info-row">
+                  <span>Price</span>
+                  <strong><EmeraldIcon /> {costumePrice(skinBuyConfirm)}</strong>
+                </div>
+                <div className="confirm-info-row">
+                  <span>You have</span>
+                  <strong><EmeraldIcon /> {wallet.emeralds}</strong>
+                </div>
+              </div>
+              <div className="result-actions is-row">
+                <button
+                  type="button"
+                  disabled={wallet.emeralds < costumePrice(skinBuyConfirm)}
+                  onClick={() => buySkin(skinBuyConfirm)}
+                >
+                  Yes, buy
+                </button>
+                <button type="button" className="is-quiet" onClick={() => setSkinBuyConfirm(null)}>
+                  No
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The reward chest: its own full-screen takeover over everything else,
+            playing the sequence `chest`'s state machine drives — the closed
+            chest spins on the spot, settles, the lid hinges back, and the
+            emerald bursts out of it. The amount and the Collect button only
+            appear at the "revealed" phase, so nothing spoils the opening. */}
+        {chest && (
+          <div className="reward-screen" role="dialog" aria-modal="true" aria-label="Reward chest">
+            {/* Deliberately empty, the same way `.skin-stage` is: the chest
+                filling this space is the 3D rig the engine draws on the canvas
+                BEHIND this screen (`setChestShowcase`), not anything in here.
+                All this does is claim the rig a spot in the layout so the
+                caption and the button below never ride up over it. */}
+            <div className="reward-stage" aria-hidden="true">
+              {/* Eight emeralds thrown out of the open lid on slightly
+                  different arcs — the per-piece endpoint is an inline custom
+                  property, the timing curve is one shared keyframe. Anchored
+                  to the stage's own mouth line rather than to the chest,
+                  which is not in the DOM to anchor to. */}
+              <div className={`reward-burst is-${chest.phase}`}>
+                {REWARD_BURST.map((piece, i) => (
+                  <span
+                    key={i}
+                    className="reward-burst-piece"
+                    style={{
+                      "--bx": `${piece.x}px`,
+                      "--by": `${piece.y}px`,
+                      "--bs": piece.scale,
+                      animationDelay: `${piece.delay}s`,
+                    } as React.CSSProperties}
+                  >
+                    <EmeraldIcon />
+                  </span>
+                ))}
+              </div>
+            </div>
+            <p className="reward-caption">
+              {chest.phase === "revealed" ? "Reward unlocked" : "Opening…"}
+            </p>
+            {chest.phase === "revealed" && (
+              <>
+                <p className="reward-amount">
+                  <EmeraldIcon /> {chest.amount}
+                </p>
+                <button type="button" className="reward-collect" onClick={() => setChest(null)}>
+                  Collect
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* The bottom bar itself, pulled out of `.hub-screen` so it stays
             mounted over the skin picker too (that screen used to unmount it
             along with the rest of `.hub-screen` — the one thing every hub
@@ -2218,7 +2629,7 @@ export default function SandGame() {
             on `homeVisible` alone, same as `.hub-screen`/`.skin-screen`
             themselves, so it fades out with them rather than outliving the
             screen it belongs to. */}
-        {homeVisible && (
+        {homeVisible && !chest && !cannonUnlock && (
           <nav className={`hub-nav${playing ? " is-leaving" : ""}`} aria-label="Sections">
             {HUB_TABS.map((entry) => (
               <button
@@ -2356,6 +2767,29 @@ export default function SandGame() {
                 </button>
                 <button type="button" className="settings-devlink" onClick={() => resetGold()}>
                   <CoinIcon /> Reset gold
+                </button>
+                {/* Fills the bar to a claimable chest in one tap, without
+                    having to win five levels first — the only way to reach the
+                    reward screen (and the emerald behind it) while testing. */}
+                <button type="button" className="settings-devlink" onClick={() => fillRewardTrack()}>
+                  <ChestIcon /> Full reward track
+                </button>
+                <button type="button" className="settings-devlink" onClick={() => resetRewardTrack()}>
+                  <EmeraldIcon /> Reset reward track
+                </button>
+                {/* Puts every priced skin back behind its price. Does not
+                    refund anything — it exists to get back to the locked
+                    state the buy flow starts from, not to undo a purchase. */}
+                <button
+                  type="button"
+                  className="settings-devlink"
+                  onClick={() => {
+                    resetOwnedCostumes();
+                    setSelectedCostume(getSelectedCostume());
+                    setCostume(getSelectedCostume());
+                  }}
+                >
+                  <EmeraldIcon /> Relock skins
                 </button>
               </div>
             </div>

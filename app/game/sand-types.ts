@@ -176,7 +176,16 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
   ammoQueue: SandColor[];
   /** Radius of the sorting disc, in blueprint cells. Scaled with the board. */
   sortRadius: number;
-  /** Total shots allowed. This is where the difficulty of a level lives. */
+  /**
+   * Total shots allowed. This is where the difficulty of a level lives.
+   *
+   * `Infinity` is the sanctioned way to author "no limit" — every runtime
+   * check (`withResult`'s fail condition, `ammoRemaining`'s countdown) is
+   * ordinary arithmetic against this field, and a real number can never
+   * reach or exceed `Infinity`, so the fail branch simply never fires. The
+   * HUD (`SandGame.tsx`) renders that case as "∞" rather than the literal
+   * word "Infinity".
+   */
   shotLimit: number;
   /**
    * How many simulation pixels one authored blueprint cell expands into, in
