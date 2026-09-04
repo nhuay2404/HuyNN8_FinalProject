@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { buildChest, type ChestRig } from "./chest-model.ts";
+import { ChestStage, type ChestPhase } from "./chest-model.ts";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   disposeCostumeParts,
@@ -195,33 +195,21 @@ export const MUZZLE_Z = -2.18;
 const CANNON_MODEL_SCALE = 0.8;
 
 // ---- reward chest showcase -----------------------------------------------
-// The reward screen's chest is a real 3D rig (`chest-model.ts`), shown the same
-// way the skin picker's cannon is: drawn by this engine's own renderer behind a
-// transparent DOM screen, because the page keeps exactly one WebGL context and
-// a second canvas for one overlay would eventually cost the game its own.
+// The reward screen's chest is a real 3D stage (`chest-model.ts` — the chest,
+// the shaft of light out of its mouth, and the emeralds it throws), shown the
+// same way the skin picker's cannon is: drawn by this engine's own renderer
+// behind a transparent DOM screen, because the page keeps exactly one WebGL
+// context and a second canvas for one overlay would eventually cost the game
+// its own.
 //
-// Held far enough back, and high enough, to leave the lower half of the frame
-// to the screen's own caption, amount and Collect button.
-const CHEST_POSITION = new THREE.Vector3(0, 1.35, 5.05);
+// Everything about how the chest BEHAVES lives in `ChestStage`; this file only
+// decides where it stands, how it is framed, and when it gets a tick. The
+// ground plane is the stage's own y=0, set low enough in frame that the patch
+// of floor the stones land on is actually visible under it.
+const CHEST_POSITION = new THREE.Vector3(0, 1.05, 5);
 const CHEST_FOV = 43;
-/** Full turns the chest makes before it settles, and how long that takes. Ends
- * on a whole number of turns, so the settle lands square to camera with no
- * separate snap. */
-const CHEST_SPIN_TURNS = 3;
-const CHEST_SPIN_SECONDS = 1.5;
-/** How far the lid swings, and how long it takes. Just past a right angle:
- * far enough to read as thrown open, not so far that it folds back down over
- * the front of the chest and hides what is coming out of it. */
-const CHEST_LID_OPEN = -1.72;
-const CHEST_LID_SECONDS = 0.55;
-/** The gentle bob the open chest settles into, so the reward screen is never
- * a still image while the player reads the number. */
-const CHEST_IDLE_BOB = 0.045;
-const CHEST_IDLE_BOB_SPEED = 0.55;
 
-/** Which beat of the opening the chest is on, or `null` for "not on screen".
- * Mirrors the reward screen's own state machine in SandGame.tsx. */
-export type ChestPhase = "spinning" | "opening" | "revealed";
+export type { ChestPhase } from "./chest-model.ts";
 
 // ---- showcase (skin picker) ----------------------------------------------
 // The picker's full-screen preview: the rig moves out to where the camera can
@@ -912,13 +900,11 @@ export class SandCannonEngine {
    * rather than one starving the other. */
   private prismTrailAge = 0;
 
-  /** The reward chest rig, built the first time the reward screen opens and
-   * kept for the life of the engine after that — a player who opens one chest
-   * will open more, and it is a few dozen triangles. `null` until then. */
-  private chestRig: ChestRig | null = null;
+  /** The reward stage, built the first time the reward screen opens and kept
+   * for the life of the engine after that — a player who opens one chest will
+   * open more, and it is a few hundred triangles. `null` until then. */
+  private chestStage: ChestStage | null = null;
   private chestPhase: ChestPhase | null = null;
-  /** Seconds since `chestPhase` last changed — drives the spin and the lid. */
-  private chestTime = 0;
   /** What the engine looked like before the chest took the stage, so closing
    * it puts everything back rather than guessing at the home screen's state. */
   private chestRestore: { frameVisible: boolean; cannonVisible: boolean } | null = null;
@@ -1656,10 +1642,9 @@ export class SandCannonEngine {
     if (this.chestPhase === phase) return;
     const wasOff = this.chestPhase === null;
     this.chestPhase = phase;
-    this.chestTime = 0;
 
     if (phase === null) {
-      if (this.chestRig) this.chestRig.root.visible = false;
+      this.chestStage?.setPhase(null);
       if (this.chestRestore) {
         this.frameRoot.visible = this.chestRestore.frameVisible;
         this.cannonRoot.visible = this.chestRestore.cannonVisible;
@@ -1672,12 +1657,11 @@ export class SandCannonEngine {
       return;
     }
 
-    if (!this.chestRig) {
-      this.chestRig = buildChest();
-      this.chestRig.root.position.copy(CHEST_POSITION);
-      this.scene.add(this.chestRig.root);
+    if (!this.chestStage) {
+      this.chestStage = new ChestStage();
+      this.chestStage.root.position.copy(CHEST_POSITION);
+      this.scene.add(this.chestStage.root);
     }
-    this.chestRig.root.visible = true;
 
     if (wasOff) {
       // The chest owns the whole stage: the level's picture behind it and the
@@ -1690,43 +1674,7 @@ export class SandCannonEngine {
       this.camera.updateProjectionMatrix();
     }
 
-    // Each phase starts from the pose the one before it ended on, so a screen
-    // that opens straight into "revealed" (a re-render after the animation has
-    // already played) shows an open chest rather than replaying the spin.
-    const spun = phase === "spinning" ? 0 : Math.PI * 2 * CHEST_SPIN_TURNS;
-    this.chestRig.root.rotation.y = spun;
-    this.chestRig.root.scale.setScalar(phase === "spinning" ? 0.86 : 1);
-    this.chestRig.lid.rotation.x = phase === "revealed" ? CHEST_LID_OPEN : 0;
-    this.chestRig.glow.visible = phase !== "spinning";
-  }
-
-  /** One frame of the chest's own animation — see `setChestShowcase`. */
-  private updateChest(deltaSeconds: number) {
-    const rig = this.chestRig;
-    if (!rig || !this.chestPhase) return;
-    this.chestTime += deltaSeconds;
-
-    if (this.chestPhase === "spinning") {
-      // Eased so the turn is fast out of the gate and settles rather than
-      // stopping dead, and landing on a whole number of turns so the chest
-      // faces camera at the end with nothing left to correct.
-      const t = Math.min(1, this.chestTime / CHEST_SPIN_SECONDS);
-      const eased = 1 - Math.pow(1 - t, 3);
-      rig.root.rotation.y = eased * Math.PI * 2 * CHEST_SPIN_TURNS;
-      rig.root.scale.setScalar(0.86 + 0.14 * eased);
-      rig.root.position.y = CHEST_POSITION.y;
-      return;
-    }
-
-    // Lid: overshoots a touch on the way open, the same bounce the DOM version
-    // of this screen used, then holds.
-    const t = Math.min(1, this.chestTime / CHEST_LID_SECONDS);
-    const eased = t >= 1 ? 1 : 1 - Math.pow(1 - t, 3) * Math.cos(t * Math.PI * 0.6);
-    rig.lid.rotation.x = CHEST_LID_OPEN * Math.min(1.04, eased);
-    // A slow bob once it is open, so the screen is never a frozen frame while
-    // the player reads the number on it.
-    const bobTime = this.chestTime + (this.chestPhase === "revealed" ? CHEST_LID_SECONDS : 0);
-    rig.root.position.y = CHEST_POSITION.y + Math.sin(bobTime * Math.PI * 2 * CHEST_IDLE_BOB_SPEED) * CHEST_IDLE_BOB;
+    this.chestStage.setPhase(phase);
   }
 
   /** Hides every muzzle-smoke puff and sparkle shard currently in flight,
@@ -3484,7 +3432,7 @@ export class SandCannonEngine {
     // Same footing as the showcase above: the reward screen only opens from the
     // paused home screen, so the chest runs on real elapsed time rather than
     // the fixed-step accumulator that is not ticking underneath it.
-    if (this.chestPhase) this.updateChest(delta / 1000);
+    if (this.chestPhase) this.chestStage?.update(delta / 1000);
     if (!this.paused) {
       this.accumulator += delta;
       let steps = 0;

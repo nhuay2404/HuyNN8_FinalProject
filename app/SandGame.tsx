@@ -670,29 +670,6 @@ function markFtueGestureShown(id: number) {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
-/**
- * The emeralds thrown out of the reward chest when its lid opens. Still DOM,
- * not part of the 3D rig: they are the currency's own artwork
- * (`BlueEmeraldIcon.png`) and have to read as that exact icon, which a flat
- * quad turning in the scene would not.
- *
- * Hand-placed rather than randomised per open: the burst has to clear the lid
- * on every arc and read as a fan rather than a scatter, which is easier to get
- * right by picking eight endpoints once than by tuning a random range.
- * Coordinates are the offset each piece travels to, in pixels from the chest's
- * mouth; `y` is negative for "up and out".
- */
-const REWARD_BURST = [
-  { x: -104, y: -118, scale: 0.7, delay: 0 },
-  { x: -62, y: -160, scale: 1, delay: 0.04 },
-  { x: -22, y: -186, scale: 0.85, delay: 0.02 },
-  { x: 22, y: -190, scale: 1.15, delay: 0.06 },
-  { x: 64, y: -158, scale: 0.8, delay: 0.03 },
-  { x: 106, y: -112, scale: 1, delay: 0.07 },
-  { x: -136, y: -58, scale: 0.6, delay: 0.09 },
-  { x: 138, y: -54, scale: 0.65, delay: 0.05 },
-] as const;
-
 /** Falling paper pieces covering the whole WIN screen (`.win-confetti` in
  * globals.css) — a fixed hand-picked set rather than `Math.random()` so the
  * layout doesn't reshuffle every re-render while the result screen is up.
@@ -2578,34 +2555,14 @@ export default function SandGame() {
             appear at the "revealed" phase, so nothing spoils the opening. */}
         {chest && (
           <div className="reward-screen" role="dialog" aria-modal="true" aria-label="Reward chest">
-            {/* Deliberately empty, the same way `.skin-stage` is: the chest
-                filling this space is the 3D rig the engine draws on the canvas
-                BEHIND this screen (`setChestShowcase`), not anything in here.
-                All this does is claim the rig a spot in the layout so the
-                caption and the button below never ride up over it. */}
-            <div className="reward-stage" aria-hidden="true">
-              {/* Eight emeralds thrown out of the open lid on slightly
-                  different arcs — the per-piece endpoint is an inline custom
-                  property, the timing curve is one shared keyframe. Anchored
-                  to the stage's own mouth line rather than to the chest,
-                  which is not in the DOM to anchor to. */}
-              <div className={`reward-burst is-${chest.phase}`}>
-                {REWARD_BURST.map((piece, i) => (
-                  <span
-                    key={i}
-                    className="reward-burst-piece"
-                    style={{
-                      "--bx": `${piece.x}px`,
-                      "--by": `${piece.y}px`,
-                      "--bs": piece.scale,
-                      animationDelay: `${piece.delay}s`,
-                    } as React.CSSProperties}
-                  >
-                    <EmeraldIcon />
-                  </span>
-                ))}
-              </div>
-            </div>
+            {/* Deliberately empty, the same way `.skin-stage` is: everything
+                that happens in this space — the chest, the light out of its
+                mouth, the emeralds it throws and where they land — is the 3D
+                stage the engine draws on the canvas BEHIND this screen
+                (`setChestShowcase` / `ChestStage`). All this does is claim that
+                stage a spot in the layout so the caption and the button below
+                never ride up over it. */}
+            <div className="reward-stage" aria-hidden="true" />
             <p className="reward-caption">
               {chest.phase === "revealed" ? "Reward unlocked" : "Opening…"}
             </p>
@@ -2938,7 +2895,7 @@ export default function SandGame() {
             card's own X, so a player who does not want to claim today just
             closes the card instead of choosing between two ways to say the
             same thing. */}
-        {!playing && dailyLogin && (
+        {!playing && !chest && dailyLogin && (
           <div
             className="result-screen"
             role="dialog"

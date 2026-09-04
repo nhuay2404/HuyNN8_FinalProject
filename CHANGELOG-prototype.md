@@ -6110,3 +6110,227 @@ lúc.
 
 **Test:** `tsc --noEmit` sạch. Xác nhận qua computed stylesheet + `getBoundingClientRect()` lúc bắn thử: rule
 `top: 70px` áp dụng đúng, badge hiện cao hơn hẳn vị trí cũ.
+
+---
+
+## 151. Blue Emerald: currency thứ ba, chỉ mua skin, chỉ đến từ Reward Track (04/09)
+
+Ví trước đó có `gold` (kiếm bằng chơi level, tiêu ở Shop) và `gems` (hard currency của Shop, chưa nối
+payment). Thêm **Blue Emerald** làm currency thứ ba, tách hẳn khỏi cả hai: nguồn duy nhất là rương thưởng ở
+Home (§152), và thứ duy nhất nó mua được là skin bị khoá (§153). Không bán bằng tiền thật, không đổi qua
+gold — nên món nó gate được đặt sau *việc chơi*, không sau ví.
+
+**`economy.ts`:**
+- `Wallet` thêm field `emeralds`; `STARTER_EMERALDS = 0` (khác `STARTER_GOLD`/`STARTER_GEMS` vốn > 0). Cố ý
+  bằng 0: cả điểm của reward track là 500 đầu tiên phải đến như một phần thưởng người chơi tự thấy mình lấp
+  đầy, nên máy mới cài không được sẵn có đủ để bỏ qua nó.
+- `getEmeralds` / `addEmeralds` / `spendEmeralds` — `spendEmeralds` cùng hợp đồng với `spendGold`: atomic,
+  ví thiếu thì trả `false` và không trừ gì.
+- `readWallet` sanitise `emeralds` như mọi field khác nên ví đã lưu từ trước (chưa có field này) đọc lên
+  thành 0 chứ không `NaN`.
+
+**Test:** `sand-economy.test.ts` thêm case ví mới không có emerald + không mua nổi skin, và case spend
+atomic. `tsc --noEmit` sạch, 131/131 test pass.
+
+---
+
+## 152. Reward Track: thay nút "Modes" chết bằng thanh tiến độ + rương thưởng (04/09)
+
+Nút "Modes" cạnh nút Play là một `<div>` không làm gì từ đầu. Thay bằng reward track: mỗi level **thắng**
+lấp 1 mốc, đủ 5 mốc (= 5 level) thì mở được rương lấy Blue Emerald.
+
+Bản đầu làm theo chu kỳ 25 level (5 mốc × 5 level/mốc) rồi rút lại còn **chu kỳ 5** theo yêu cầu, nên
+`LEVELS_PER_NODE = 1`, `NODES_PER_CHEST = 5`. Cũng vì thế thưởng thuộc về **chu kỳ**, không thuộc từng mốc:
+mốc chỉ là một bước, rương mới là payout.
+
+**`economy.ts`, block reward track:**
+- Record lưu ở `sand-cannon:v1:reward-track` = `{ levelsPlayed, claimedCycles }`.
+- `CYCLE_EMERALDS = [500, 600, 750, 900, 1250]` cho 5 chu kỳ đầu; từ chu kỳ 6 `cycleReward` tự nhân
+  `CYCLE_GROWTH = 1.25` rồi làm tròn 50. **Không có vòng lặp về đầu** — chu kỳ 6 luôn hơn chu kỳ 5. Chu kỳ
+  đầu = 500 đúng bằng giá Rune Cannon (§153), nên "5 level = 1 skin" đọc ra được mà không cần tính toán.
+- `computeRewardTrackState` là hàm thuần (test drive được không cần `window`), kẹp `filled` ở
+  `NODES_PER_CHEST`: rương đầy đứng chờ claim, level thắng trong lúc chờ **không mất** (vẫn nằm trong
+  `levelsPlayed`) mà dồn sang chu kỳ sau khi mở rương.
+- `recordLevelPlayed` gọi từ đúng transition WIN mà `markLevelCleared` đang dùng, nhưng **đếm cả replay** —
+  khác gold (chỉ trả lần clear đầu). Lý do: yêu cầu là "cứ hoàn thành 1 level là 1 mốc", và một thanh dừng
+  hẳn khi người chơi hết level mới thì không còn là thanh tiến độ. An toàn vì emerald chỉ mua skin, không
+  vòng lại thành gold/booster hay bất cứ thứ ảnh hưởng gameplay.
+- Track có store riêng (`subscribeRewardTrack` + version counter) chứ không ké `subscribeWallet`:
+  `recordLevelPlayed` làm thanh chạy mà không chạm đồng nào. `getRewardTrackSnapshot` cache object để dùng
+  làm snapshot của `useSyncExternalStore` — `getRewardTrackState()` tạo object mới mỗi lần gọi nên React đọc
+  thành "đổi liên tục". Cặp với `SERVER_REWARD_TRACK` để render hydrate khớp server (đọc localStorage thẳng
+  trong render là **hydration mismatch**, đã gặp thật khi làm).
+- **Bug đã sửa:** `writeRewardTrack` ban đầu notify listener **trước** khi ghi localStorage. Snapshot dựng
+  lại bằng cách đọc lại storage, nên listener bị gọi trước sẽ đọc record cũ và cache lại thanh cũ — claim
+  rương xong các mốc vẫn sáng tới lần reload sau. Giờ ghi trước, invalidate + notify sau.
+
+**`SandGame.tsx`:**
+- `.hub-track-btn` thay chỗ `.hub-modes-btn`: icon `ChestIcon.png` + một **thanh dài liền** lấp 1/5 mỗi
+  level. (Bản đầu là 5 chấm tròn, đổi theo yêu cầu — một chiều dài lấp đầy đọc được "tới đâu rồi" trong một
+  cái nhìn, còn 5 chấm rời thì bắt đếm.) Chỉ là `<button>` thật khi thanh đầy; thanh chưa đầy là readout nên
+  `disabled` — nói đúng điều đó với screen reader thay vì một cú tap im lặng không làm gì.
+- `.hub-actions` quay lại hàng ngang, hai nút chia đều một hàng cao 72px (`flex: 1 1 0` + `height` chung) nên
+  reward track bằng đúng size nút Play và nằm cạnh nó.
+- HUD emerald: cùng silhouette với coin (viên đá tròn đè lên pill), nền `#cfe8ff`, **không có nút cộng** và
+  không phải `<button>` — emerald chỉ có một nguồn và không mua được nên không có chỗ nào cho một cú tap.
+  Gold + emerald nằm chung `.hub-currency-row` (flex row thật, không phải hai inset tuyệt đối): pill vàng nở
+  theo số chữ số nên chỉ có row mới giữ hai chip sát nhau.
+- GameDevOption thêm **Full reward track** (`fillRewardTrack`, làm tròn `levelsPlayed` *lên* hết chu kỳ hiện
+  tại + `Math.max` nên không nuốt level đã bank cho chu kỳ sau), **Reset reward track**, **Relock skins**.
+
+**`public/design/economy.csv`:** thêm `rewardTrackCycle1..5` và `costumePrice_rune-cannon` — tune được như
+mọi số khác, không cần build lại.
+
+**Test:** 8 case mới trong `sand-economy.test.ts` (thanh rỗng, 1 level = 1 mốc, rương chỉ mở ở level thứ 5,
+level thắng lúc chờ không mất, chu kỳ sau luôn hơn chu kỳ trước qua 12 chu kỳ, sheet override). `tsc` sạch,
+131/131 pass. Verify trên preview: chơi hết luồng 5 level → mở rương → 500 emerald, thanh reset về 0%.
+
+---
+
+## 153. Rune Cannon: khoá lại, thành mục mua 500 Blue Emerald (04/09)
+
+**`costumes.ts`:**
+- `CostumeDef` thêm `price`; Field Cannon 0, Rune Cannon 500. Giá đặt ở đây chứ không ở `economy.ts` vì nó
+  thuộc về skin y như tên và tagline — và `economy.ts` import lại file này để lấy giá thì thành vòng.
+  `costumePrice(id)` đọc override từ `economy.csv` trước (đúng shape `boosterPrice` của Shop đang dùng).
+- Danh sách đã mua ở `cannon-sort:v1:owned-costumes`. `isCostumeOwned` trả `true` ngay cho skin giá 0, nên
+  `OWNED_KEY` chỉ chứa các lần mua thật: skin nào sau này hạ giá về 0 thì free luôn cho người chơi cũ chứ
+  không bị khoá sau một danh sách họ không có tên.
+- `unlockCostume` **không** chạm ví: caller trừ emerald trước, chỉ unlock khi spend thật đi qua — nên file
+  này không cần biết skin trả bằng gì.
+- `getSelectedCostume` không bao giờ trả skin chưa mua (dev reset có thể xoá danh sách dưới chân một skin
+  đang mặc).
+
+**`SandGame.tsx`:** nút chính ở màn Skin có 3 việc theo đúng thứ tự người chơi gặp: **Buy** (khoá) → Select
+(có nhưng chưa mặc) → Selected (đang mặc). Buy màu xanh emerald, khác nút Select hồng, và có confirm dialog
+như Shop — tiêu currency không bao giờ là một cú tap không xác nhận, mà emerald khan hơn gold. Mua xong equip
+luôn nên không phải tap tiếp một nút Select nữa. Card trong tray vẫn preview được (mờ + pill giá), chỉ nút
+chính đổi. Ví thiếu vẫn được nút sống — "không đủ" nói trong dialog, không phải một control chết không giải
+thích gì.
+
+Bản đầu có thêm pill giá dưới dòng tagline, đã bỏ theo yêu cầu; giá giờ chỉ ở nút Buy và card trong tray.
+
+**Test:** `tsc` sạch. Verify trên preview: 500 emerald → Buy → confirm → ví về 0, owned ghi đúng, skin tự
+equip, nút thành Selected.
+
+---
+
+## 154. Màn mở rương: sân khấu 3D dựng theo blueprint (04/09)
+
+Màn reward là DOM trong suốt, còn rương/ánh sáng/emerald là rig 3D do **engine sẵn có** vẽ
+(`setChestShowcase` → `ChestStage`) — không mở WebGL context thứ hai, đúng lý do `getCostumeThumbnails` đã
+ghi: page giữ đúng một context, cái thứ hai rồi sẽ lấy mất canvas của game. Nền tối đặt trên
+`.game-frame.is-chest` *dưới* canvas, cùng thủ thuật `.game-frame.is-skin-*` của skin showroom.
+
+Toàn bộ *hành vi* nằm trong `ChestStage` (file mới `app/game/chest-model.ts`); engine chỉ quyết định chỗ
+đứng (`CHEST_POSITION`), khung hình (`CHEST_FOV = 43`) và cấp tick. `root` cắm **trên mặt sàn**: y=0 là mặt
+đá rơi xuống, còn rương là con của nó — nên rương có nhún cũng không kéo sàn ra khỏi chân viên đá đang nằm.
+
+**Rương** — dựng theo `ChestIcon.png` + bản blueprint 3 hình chiếu, số đo lấy từ pixel thật (front 587×495,
+khe ở y=520/295..790; right view scale 0.6 → depth 410 front-px) → `2.10 × 1.47 × 0.97`, nắp cao `0.80`,
+band vàng `0.16`.
+
+Điểm quyết định: **Right view có vòm cung, không phải hình chữ nhật** — nên nắp không thể là nửa hình trụ
+(nhìn ngang nửa trụ ra hình chữ nhật). Nó là rounded box: mặt cắt superellipse (`LID_SQUARE = 0.55` cho vai
+bè + đỉnh phẳng như front view) trượt full-size qua giữa rồi **inset theo pháp tuyến** ở `LID_EDGE = 0.34`
+cuối mỗi nửa độ sâu. `domeGeometry` tham số hoá theo "vị trí trên cung" nên đai vàng và đường ván cắt ra từ
+chính mặt đó, ôm theo cong thay vì nổi lên trên.
+
+3 lỗi hình học đã sửa trong lúc dựng:
+1. Ban đầu **scale** mặt cắt về gốc thay vì inset → nắp thành hình lều, và mọi dải vẽ trên nó tụ thành ngôi
+   sao ở giữa.
+2. Mặt trượt là vỏ hở hai đầu → nhìn chính diện thấy xuyên qua vòm ra nền tối. Thêm `domeCapGeometry` bịt
+   hai đầu, và `buildLidCapDetail` kẻ lại đai/đường ván trên mặt bịt đó (mặt bịt phẳng, `domeGeometry` không
+   với tới).
+3. Vị trí 2 đai trong: `u` **không** linear theo x (superellipse dồn range vào vai), nên phải giải ngược từ
+   vị trí blueprint (±0.41 nửa chiều rộng = spacing 30%/70% mà cả front và top view đều cho thấy) chứ không
+   đoán trên tham số.
+
+Vàng đặt đúng nơi 3 view đồng thuận: 2 đai biên + 2 đai trong trên nắp, band dày ở khe nắp/thân, band đáy,
+cột 4 góc dọc kèm đinh cầu, khiên khoá xanh (`ExtrudeGeometry` từ outline hình khiên — không tổ hợp box nào
+ra đúng) + lỗ khoá, chỉ ở mặt trước. Thêm mặt dưới nắp: vừa là thứ camera nhìn vào khi nắp mở, vừa che
+không cho hiệu ứng sáng lọt qua kẽ giữa vành và nắp.
+
+**Emerald** — dựng theo blueprint riêng của viên đá. 3 view của nó mô tả khối **không phải** gem-cut hình
+nón: front là bát giác có bát giác table bên trong, side và top đều là phiến dẹt hai đầu vát. Khối duy nhất
+thoả cả ba: girdle bát giác ở chỗ rộng nhất + hai mặt bát giác nhỏ hơn lùi vào + vành facet vát nối chúng
+→ `0.30 × 0.36 × 0.15`, cắt góc `0.063`, lùi mặt `0.046`.
+
+Dựng bằng một BufferGeometry non-indexed với **vertex colors**, không dùng `ExtrudeGeometry`: extrude+bevel
+chỉ cho 2 material group nên mọi facet vát cùng một màu, mất hẳn cái faceted. Thay vào đó mỗi tam giác shade
+bằng pháp tuyến của chính nó dot với một hướng sáng bake sẵn (trên–trái–trước, đúng chỗ icon đặt highlight),
+ramp **hai chặng** qua màu mid — ramp một chặng làm facet sáng bạc ra trắng và dìm hết phần còn lại thành một
+khối navy phẳng. Thêm viền `Line` xanh đậm quanh girdle: cho cạnh gọn như icon, và ở kích thước này nó giữ
+hai viên nằm chồng nhau không dính thành một khối xanh.
+
+**Vật lý & pose** — `GEM_COUNT = 8`, bắn ra từ miệng rương theo quạt **chỉ nửa trước** (heading `sin > 0`,
+viên nào bắn ra sau thì thân rương che mất), `GRAVITY = -9.4`, nảy `GEM_BOUNCE = 0.36`, settle khi tốc độ
+tụt dưới ngưỡng. Lộn nhào bằng quaternion (`premultiply` delta quanh trục vận tốc góc) chứ không cộng dồn 3
+góc Euler riêng lẻ — cách cũ gimbal-lock thành lắc lư thay vì lộn.
+
+Đá **nằm lênh láng** khi đáp: pose lúc nghỉ (`restPose`, quaternion) bốc sẵn lúc phóng — úp một trong hai
+mặt xuống sàn (random), yaw tự do cả `2π`, nghiêng thêm 1–2° quanh một trục ngang bất kỳ (cái nghiêng đó là
+thứ giữ 8 viên không trông như decal dán đều xuống đất). Phải là quaternion vì "úp mặt xuống **và** quay
+trong mặt phẳng sàn" là hai phép quay quanh hai trục khác nhau, Euler chỉ ghép đúng theo một thứ tự cụ thể
+mà vòng lộn nhào chạy trước cũng phải đồng thuận thứ tự ấy. Hai độ cao khác nhau: `GEM_LAND_Y = 0.38·W` để
+nảy (giữa lúc lộn nhào viên đá chống trên một góc), `GEM_REST_Y = D/2 + 0.012` để nằm (nửa **độ dày**, phần
+lẻ hấp thụ độ nghiêng cho góc đá không lún dưới sàn). Lúc settle thì slerp về `restPose` + ease `y` xuống →
+đọc ra "đáp xuống rồi đổ phẳng ra".
+
+**Test:** `tsc` sạch, lint 0 trên cả 2 file 3D. Verify trên preview qua nhiều vòng chỉnh khung hình/màu: đá
+nằm rải phẳng quanh rương, đủ 8 viên, không viên nào nằm sau thân rương.
+
+---
+
+## 155. Hiệu ứng sáng của rương: chốt thành hình nón tĩnh, trước nắp nhưng sau vách trước (04/09)
+
+Hiệu ứng đi qua 3 vòng theo phản hồi, và mỗi vòng vướng đúng một chuyện đáng ghi lại.
+
+**Vòng 1 — sunburst.** Fan 22 tia xen kẽ sáng/mờ, gradient kem → hổ phách → tắt, blend additive (đen =
+trong suốt nên vành ngoài chính là fade-out). Vấn đề: đặt fan **trước** nắp thì mặt phẳng additive cộng
+thẳng lên gỗ và biến nắp thành kính mờ — depth test không cứu được, mặt phẳng thật sự gần camera hơn. Nên
+lúc đó phải tách: tia ra **sau** rương, quầng core nhỏ ra **trước** miệng.
+
+**Vòng 2 — kéo ra trước.** Yêu cầu là ánh sáng phải ở trước nắp (đặt sau thì nắp cắt mất nửa trên của fan).
+Kéo ra trước được, nhưng phải tune 3 thứ cùng lúc thay vì chỉ đổi vị trí: opacity `0.55 → 0.25`, stop hổ
+phách tối hẳn, vành trong siết `0.2 → 0.13` — một điểm nóng nhỏ ở miệng rồi tắt nhanh mới đọc ra "ánh sáng
+đi ngang trước một vật thể đặc", còn vành sáng rộng thì thành filter kẻ sọc phủ lên rương.
+
+**Vòng 3 — chốt: hình nón tĩnh.** Bỏ hẳn fan, thay bằng `buildLightCone`.
+- **Phẳng, không phải khối nón 3D.** Khối nón rộng cỡ này trải hơn 1 đơn vị theo Z nên nửa gần của nó chọc
+  ra trước vách trước của rương — mà chính cái vách đó là thứ phải cắt đáy nón. Billboard phẳng ở một Z cố
+  định đặt được chính xác giữa nắp và vách; một khối thì không.
+- `CONE_Z = 0.42`: trước nắp (nắp ngả về Z âm) nên nón vắt qua nắp; sau vách trước ở `BODY_D/2 = 0.735` nên
+  vách cắt đáy nón. Đỉnh nón đặt **dưới** đường miệng để chính cái đỉnh cũng bị vách che — ánh sáng có điểm
+  khởi đầu nhìn thấy thì đọc ra thành decal.
+- Gradient dồn về đầu (`0 / 0.22 / 0.55 / 1`, kem → hổ phách → tắt): ramp chia đều để lại một nêm nâu rộng
+  treo trên đầu khung, đọc ra thành hình vẽ chứ không phải ánh sáng tắt dần. Ngang thân nón chỉ giảm xuống
+  `CONE_EDGE = 0.5`, **không về 0** — nón mà mờ hết hai bên thì mất silhouette, mà silhouette chính là cái
+  shape được yêu cầu.
+- **Tĩnh:** bỏ `rotation.z +=` và cả hai hàm `Math.sin` breathing. Anim duy nhất còn lại là fade + scale lên
+  theo nắp rồi clamp ở 1; sau đó không gì di chuyển. Cũng bỏ nhịp nhún của rương sau khi mở (`chest.position.y`
+  giờ chỉ được set 0 trong `setPhase`) và cái oval nền — oval đọc ra thành bệ kê chứ không phải mặt đất, sàn
+  giờ chỉ hàm ý qua bóng đổ và qua chỗ mọi thứ nằm xuống.
+
+**Bug đã sửa (1) — nêm đen phủ nền.** `THREE.AdditiveBlending` cộng cả **alpha**, mà canvas trong suốt ở chỗ
+không vẽ gì: đầu nón đã fade về đen nên không góp màu nào nhưng vẫn góp trọn `opacity` vào alpha, biến canvas
+thành **đen đặc** ở đó — đúng cái việc additive lẽ ra không thể làm được. Sửa bằng `CustomBlending`:
+`blendSrc: SrcAlpha / blendDst: One` cho màu, `blendSrcAlpha: Zero / blendDstAlpha: One` để giữ nguyên
+`dstAlpha`. Canvas premultiplied khi đó composite thành `màu cộng thêm + nền`, tức additive như ý định.
+
+**Bug đã sửa (2) — anim lặp.** `setPhase` reset `this.time = 0` ở **mọi** lần đổi phase, còn
+`updateLid`/`updateBurst` lấy góc nắp và ramp sáng từ `time`. `opening` và `revealed` là hai nhãn của **cùng
+một beat**, nên khi React chuyển sang `revealed` (620ms sau) đồng hồ về 0 → nắp sập lại rồi mở lần hai, ánh
+sáng tối đi rồi sáng lại. Giờ chỉ reset khi vào một beat *thực sự mới* (từ off-screen hoặc từ pha xoay);
+`opening → revealed` return sớm, giữ nguyên đồng hồ. Trường hợp vào thẳng `revealed` (re-render sau khi anim
+đã chạy xong) thì set đồng hồ **vượt** `LID_SECONDS` để rương chỉ đơn giản là đang mở, không mở lại cho
+không ai xem.
+
+**Anim rương chốt lại:** xoay `SPIN_TURNS = 3` vòng ease-out `1.5s` (dừng đúng số vòng nguyên nên chính diện
+camera, không cần snap) → nắp bật quanh bản lề `LID_OPEN = -1.02` rad trong `0.55s`. Góc mở dừng ở khoảng
+2/3 vuông góc: quá vuông góc thì cả mặt `2.1 × 1.47` của nắp quay về camera và đọc ra thành một tấm panel
+sau rương thay vì một cái nắp mở.
+
+**Test:** `tsc --noEmit` sạch, 131/131 test pass, lint 0 trên `chest-model.ts`. Verify trên tab sạch: console
+không lỗi trước **và** sau cả luồng (xoay → mở → nhận 500 → Collect → về hub), nón đứng yên, đáy nón bị vách
+rương cắt, không còn nêm đen trên nền.

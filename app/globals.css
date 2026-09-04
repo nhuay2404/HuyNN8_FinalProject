@@ -2530,29 +2530,6 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    the same trick `.game-frame.is-skin-*` uses for the skin showroom. */
 .game-frame.is-chest { background-color: #16213a; }
 
-/* The emeralds thrown out of the open lid. The container is a zero-size point
-   at the chest's mouth line; each piece animates out to its own `--bx`/`--by`
-   offset (inline, from `REWARD_BURST`) and settles there rather than falling
-   back — the reward should still be readable while the Collect button is up,
-   not a burst that has already vanished by the time it appears. */
-.reward-burst {
-  position: absolute; left: 50%; top: 52%; width: 0; height: 0;
-  pointer-events: none;
-}
-.reward-burst-piece {
-  position: absolute; left: 0; top: 0; opacity: 0;
-  display: block; width: 38px; height: 38px; margin: -19px 0 0 -19px;
-}
-.reward-burst-piece .emerald-icon { width: 100%; height: 100%; }
-.reward-burst.is-opening .reward-burst-piece,
-.reward-burst.is-revealed .reward-burst-piece {
-  animation: reward-burst-out .62s cubic-bezier(.15,.85,.3,1) both;
-}
-@keyframes reward-burst-out {
-  0% { opacity: 0; transform: translate(0, 0) scale(.2) rotate(0deg); }
-  25% { opacity: 1; }
-  100% { opacity: 1; transform: translate(var(--bx), var(--by)) scale(var(--bs)) rotate(24deg); }
-}
 .reward-caption {
   margin: 0 0 0; font-size: 14px; font-weight: 800;
   letter-spacing: .12em; text-transform: uppercase; color: #cfe8ff;
