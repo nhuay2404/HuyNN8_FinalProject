@@ -511,17 +511,31 @@ button {
    where in the tree it renders, and `--dx`/`--dy` (also inline, per coin)
    carry it the rest of the way to the gold badge. */
 .coin-fly {
-  position: fixed; z-index: 60; width: 18px; height: 18px;
-  margin: -9px 0 0 -9px; pointer-events: none;
-  animation: coin-fly-move .65s cubic-bezier(.22,.61,.36,1) both;
+  position: fixed; z-index: 60; width: 24px; height: 24px;
+  margin: -12px 0 0 -12px; pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(255, 214, 110, .85));
+  animation: coin-fly-move .7s cubic-bezier(.22,.61,.36,1) both;
 }
 .coin-fly .coin-icon {
   width: 100%; height: 100%; color: var(--gold-line);
 }
 @keyframes coin-fly-move {
   0% { transform: translate(0, 0) scale(1); opacity: 1; }
-  35% { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .5 - 26px)) scale(1.1); opacity: 1; }
+  35% { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .5 - 26px)) scale(1.35); opacity: 1; }
   100% { transform: translate(var(--dx), var(--dy)) scale(.35); opacity: 0; }
+}
+/* The HUD itself pops and wobbles the instant a claim's coins arrive — the
+   badge remounts (its `key` bumps in SandGame.tsx alongside the count-up),
+   which replays this from scratch, so it reads as the HUD reacting to the
+   coins landing rather than just the number silently ticking up. */
+.hub-gold-wrap { animation: hub-gold-wrap-shake .4s ease; }
+@keyframes hub-gold-wrap-shake {
+  0% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-3px) rotate(-4deg); }
+  40% { transform: translateX(3px) rotate(4deg); }
+  60% { transform: translateX(-2px) rotate(-3deg); }
+  80% { transform: translateX(2px) rotate(2deg); }
+  100% { transform: translateX(0) rotate(0); }
 }
 /* ---- Unified Settings card ---------------------------------------------- */
 /* One Settings screen instead of two: the hub's own gear and the in-play
@@ -1306,29 +1320,10 @@ button {
 /* Also `.result-screen`/`.result-card` underneath, same reasoning as the
    tutorial overlay above — a seven-chip strip standing in for the numbered
    steps. Dressed as a hanging banner now — a mint header naming the card, a
-   red ribbon edge under it, two dark pegs pinning it to the hub behind it —
-   same two-tone-card-plus-decor language as the WIN card's `.win-frame`. */
+   red ribbon edge under it — same two-tone-card-plus-decor language as the
+   WIN card's `.win-frame`. The two dark pegs this card once had pinning it
+   to the hub behind it are gone; they read as clutter rather than decor. */
 .daily-login-frame { position: relative; width: 100%; max-width: 324px; }
-/* One short peg, not a thumbtack: a dark pill with a cream ring around it,
-   sitting low in the mint header so its bottom tip just crosses the red
-   strip and stops — the reference layout. Nothing pokes above the card any
-   more (the earlier mint head + long pin version overshot the header in
-   both directions, which read as two black bars laid over the card rather
-   than two pegs set into it). Ringed rather than bare so the dark pill
-   stays legible against both the mint header and the red strip it ends on.
-   Still z-index above the card (unlike a silhouette peeking out from behind
-   it) since the peg has to draw over the header and the strip. */
-.daily-login-tab {
-  position: absolute; z-index: 2; top: 44px;
-  width: 14px; height: 30px; border-radius: 999px;
-  background: #2e2a26; box-shadow: 0 0 0 2px #fffdf5;
-}
-/* Threaded between the centred title and the corner close button — this is
-   the one horizontal band where the peg clears both: any further out
-   towards the corner and it runs into the close button's box, any further
-   in towards the middle and it runs into the title. */
-.daily-login-tab.is-left { left: 17%; }
-.daily-login-tab.is-right { right: 17%; }
 .daily-login-card { position: relative; z-index: 1; max-width: 324px; padding: 0; overflow: hidden; }
 .daily-login-header {
   position: relative; padding: 16px 44px 14px; text-align: center;
@@ -1406,8 +1401,18 @@ button {
 .hub-play-btn {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 16px; border-radius: var(--r-chrome);
-  background: #5c9f5c; border: 0;
+  background-color: #5c9f5c; border: 0;
   color: #fcf9e8; font-size: 20px; font-weight: 800; letter-spacing: .03em;
+  position: relative; overflow: hidden; isolation: isolate;
+}
+/* Chấm bi lặp nền, xanh lá nhạt hơn nút để nổi trên nền xanh đậm hơn của
+   button, kích thước to và trôi chậm theo đường chéo cho cảm giác "loop". */
+.hub-play-btn::before {
+  content: ""; position: absolute; inset: -40px; z-index: -1;
+  background-image: radial-gradient(circle, #6eb16e 34%, transparent 36%);
+  background-size: 46px 46px;
+  animation: hub-play-dots 5s linear infinite;
+  pointer-events: none;
 }
 .hub-play-btn:active { transform: translateY(3px); }
 .hub-play-btn:focus-visible {
@@ -1491,8 +1496,7 @@ button {
 .hub-gallery-lock {
   position: absolute; inset: 0; z-index: 1;
   display: grid; place-items: center;
-  font-size: 22px; font-weight: 800; color: var(--panel);
-  text-shadow: 0 1px 3px rgba(0,0,0,.45);
+  font-size: 22px; font-weight: 800; color: var(--muted);
 }
 /* The milestone reward pill — every 10th level by id (see the JSX comment at
    the call site) gets one, shown even locked as a teaser of what is waiting
@@ -2172,6 +2176,7 @@ button {
 @keyframes hub-enter { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
 @keyframes hub-tap-exit { to { opacity: 0; } }
 @keyframes hub-play-btn-exit { to { transform: scale(.15); opacity: 0; } }
+@keyframes hub-play-dots { from { transform: translate(0, 0); } to { transform: translate(-46px, -46px); } }
 @keyframes hub-nav-exit { to { transform: translateY(130%); opacity: 0; } }
 @keyframes hub-panel-in { from { opacity: 0; transform: translateY(16px); } }
 /* `.shop-screen`'s own entrance — same slide-up as `hub-panel-in`, minus the
@@ -2631,11 +2636,27 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    it stays legible over any thumbnail. */
 .skin-card.is-locked img,
 .skin-card.is-locked .skin-card-icon { opacity: .45; filter: grayscale(.55); }
+/* A full-width strip across the card's own bottom edge rather than a pill
+   floating above it — `.skin-card`'s own `overflow: hidden` clips this
+   flush into its rounded corners, so no radius is needed here. */
 .skin-card-price {
-  position: absolute; left: 4px; right: 4px; bottom: 4px;
+  position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; justify-content: center; gap: 3px;
-  padding: 2px 0; border-radius: var(--r-pill);
-  background: #cfe8ff; color: var(--ink);
+  padding: 4px 0;
+  /* Translucent, not solid — the sand pile behind it should still read
+     through the strip. Only the fill carries the alpha: the emerald icon
+     and price text below both paint at full opacity regardless. A border
+     paints over a box's own background by definition, so the dividing line
+     against the thumbnail above always shows even though the fill under it
+     doesn't. */
+  background: rgba(207, 232, 255, .6); color: var(--ink);
+  border-top: 1.5px solid #8fb8e6;
   font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+  transition: background-color .12s;
 }
 .skin-card-price .emerald-icon { width: 11px; height: 11px; }
+/* Selected = the strip reads at full strength, not just a tint — solid the
+   whole time this card is the one being previewed (`.is-previewing`, tapped
+   into that state and staying there until another card is tapped), back to
+   translucent the instant some other card takes over the selection. */
+.skin-card.is-previewing .skin-card-price { background-color: #cfe8ff; }

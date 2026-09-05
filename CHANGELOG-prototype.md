@@ -6334,3 +6334,45 @@ sau rương thay vì một cái nắp mở.
 **Test:** `tsc --noEmit` sạch, 131/131 test pass, lint 0 trên `chest-model.ts`. Verify trên tab sạch: console
 không lỗi trước **và** sau cả luồng (xoay → mở → nhận 500 → Collect → về hub), nón đứng yên, đáy nón bị vách
 rương cắt, không còn nêm đen trên nền.
+
+## 156. Nút Play: nền chấm bi loop; Daily Login: bỏ 2 chốt đen, HUD lắc khi claim; Skin tray: dải giá emerald che hết đáy thumbnail (05/09)
+
+**Nút Play (Home hub).** Nền `.hub-play-btn` giờ có pattern chấm bi lặp (`radial-gradient` + `background-size`
++ `animation` dịch chuyển chéo liên tục), không phải màu phẳng nữa. Bi dùng xanh lá nhạt hơn nền nút để nổi
+lên nhưng không chói mắt. Vòng đầu chọn màu quá nhạt (`#a7e0a4`) theo phản hồi ban đầu; chỉnh lại còn `#6eb16e`
+— chỉ khác nền gốc `#5c9f5c` một chút, đủ đọc ra pattern mà không phân tán khỏi chữ "Level N". Pattern vẽ bằng
+pseudo-element `::before` đặt `z-index: -1` cộng `isolation: isolate` trên nút — thiếu `isolation` thì pattern
+bị vẽ lấn lên trên chữ (âm z-index không neo vào đúng stacking context của nút mà trôi lên context cha), nên
+`isolation: isolate` bắt buộc phải có để chữ luôn nổi trên pattern.
+
+**Daily Login card.** Bỏ hẳn 2 "chốt đen" hình oval (`.daily-login-tab`, decor thuần tuý) từng ghim ở đầu card
+— đọc ra thành 2 thanh đen chắn ngang chữ hơn là chốt trang trí, nên xoá cả JSX (2 `<span>` trong
+`SandGame.tsx`) lẫn CSS liên quan. Khi bấm Claim: HUD tiền (`.hub-gold-wrap`) giờ lắc nhẹ (`hub-gold-wrap-shake`
+— translateX + rotate xen kẽ 5 bước) đúng lúc dòng coin bay tới, thay vì chỉ số nhảy lặng lẽ. Cách trigger:
+gắn `key={goldBump}` lên chính `<button className="hub-gold-wrap">` (goldBump vốn chỉ remount `<strong>` con để
+bump số) để cả nút remount và animation replay từ đầu mỗi lần có tiền bay vào — không riêng daily-login, bất
+kỳ lần `tweenGoldTo` nào (kể cả thưởng thắng màn) cũng lắc theo, nhất quán hơn là chỉ xử lý một nguồn. Đồng
+thời phóng to đồng xu bay (`.coin-fly` 18px → 24px) và thêm `drop-shadow` vàng ấm cho rõ đường bay hơn.
+
+**Skin tray — dải giá Blue Emerald.** `.skin-card-price` (dải hiện giá + icon emerald trên thumbnail khoá)
+từng là pill nổi có margin quanh, giờ kéo full-width/full-bottom (`left/right/bottom: 0`, bỏ `border-radius`,
+để `.skin-card` tự cắt theo góc bo của nó qua `overflow: hidden`) — che nguyên phần đáy thumbnail như yêu cầu,
+icon + số giá vẫn giữ nguyên vị trí giữa dải. Qua 2 vòng chỉnh theo phản hồi tiếp theo:
+- Nền dải đổi từ `#cfe8ff` đặc sang `rgba(207, 232, 255, .6)` — để hình nền (đống cát) mờ xuyên qua được,
+  trong khi icon/số giá không đụng tới opacity nên vẫn 100% rõ.
+- Thêm `border-top: 1.5px solid #8fb8e6` — border luôn vẽ đè lên trên nền của chính box nó thuộc về, nên
+  đường viền này đọc rõ ngay cả khi nền dưới là màu trong suốt.
+- Dải trở lại nền đặc 100% (`background-color: #cfe8ff`) khi thumbnail đó **đang được chọn** (`.is-previewing`)
+  — thử `:active` (nhấn giữ) trước nhưng phản hồi chỉnh lại: phải là trạng thái chọn/preview, không phải chỉ
+  lúc ngón tay còn đè xuống, nên đổi selector từ `.skin-card:active` sang `.skin-card.is-previewing`.
+
+**Gallery hub — số thứ tự màn khoá.** `.hub-gallery-lock` (số lớn phủ lên thumbnail màn chưa mở khoá) từng
+màu kem (`var(--panel)`) kèm `text-shadow` để đọc được trên ảnh nền bất kỳ; đổi sang `color: var(--muted)` —
+đúng màu nâu `.hub-gallery button.is-locked b` (chữ "Locked") đang dùng — và bỏ hẳn `text-shadow`, theo đúng
+yêu cầu "không shadow hay stroke".
+
+**Test:** `tsc --noEmit` sạch (2 lỗi còn lại trong `db/index.ts`/`worker/index.ts` là thiếu type Cloudflare
+Workers, có từ trước, không liên quan tới đợt sửa này), 131/131 test pass. Verify trực tiếp trên browser
+preview: chấm bi Play hiện đúng màu, 2 chốt đen daily-login đã biến mất, claim daily-login lên tiền + HUD lắc
+đúng lúc, dải giá emerald full-width/translucent/border/opaque-khi-chọn đều đúng thứ tự các vòng chỉnh, số
+khoá Gallery đổi màu nâu không còn shadow.

@@ -1785,6 +1785,7 @@ export default function SandGame() {
           <div className="hub-currency-row">
             <button
               type="button"
+              key={goldBump}
               className="hub-gold-wrap"
               onClick={openCoinPacks}
               aria-label={`${displayGold} coins — buy more`}
@@ -2972,12 +2973,6 @@ export default function SandGame() {
             }}
           >
             <div className="daily-login-frame">
-              {/* Two dark pegs pinning the card to the hub behind it, poking
-                  above the header — purely decorative, so they sit outside
-                  the card's own `overflow: hidden` in this sibling wrapper
-                  rather than inside it. */}
-              <span className="daily-login-tab is-left" aria-hidden="true" />
-              <span className="daily-login-tab is-right" aria-hidden="true" />
               <div className="result-card daily-login-card">
                 <div className="daily-login-header">
                   <h2>Daily Login</h2>
