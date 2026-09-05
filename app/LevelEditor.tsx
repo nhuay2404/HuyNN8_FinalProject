@@ -23,6 +23,7 @@ import {
   draftToTypeScript,
   effectivePixelScale,
   fixtureCounts,
+  levelToDraft,
   loadDrafts,
   lockedLetter,
   readCell,
@@ -33,6 +34,7 @@ import {
   validateDraft,
   type LevelDraft,
 } from "./game/level-drafts";
+import { BUILT_IN_LEVELS } from "../design/levels/sand-levels";
 import { groupCells } from "./game/sand-rules";
 import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./game/sand-sprites";
 import { SAND_COLORS, type SandColor } from "./game/sand-types";
@@ -399,6 +401,8 @@ export default function LevelEditor() {
   const [importing, setImporting] = useState(false);
   /** Whether a near-white pixel imports as empty rather than as sand. */
   const [trimWhite, setTrimWhite] = useState(true);
+  /** Which built-in level the "Import built-in" row would bring in next. */
+  const [importLevelId, setImportLevelId] = useState<number | null>(BUILT_IN_LEVELS[3]?.id ?? null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -817,6 +821,41 @@ export default function LevelEditor() {
               }}
             >
               Delete
+            </button>
+          </div>
+
+          {/* Pulls one of the hand-authored built-in levels in as a fresh,
+              editable draft (via `levelToDraft`) — a copy, not a live link:
+              shipping it writes a new level, it does not overwrite the
+              original `fourthLevel`..`tenthLevel` const in sand-levels.ts.
+              Reconciling the two (deleting the old hand-authored entry,
+              renumbering the shipped one back to the same id) is a manual
+              follow-up in that file, the same as any other hand-edit there. */}
+          <div className="editor-row">
+            <select
+              className="editor-import-select"
+              aria-label="Built-in level to import"
+              value={importLevelId ?? ""}
+              onChange={(event) => setImportLevelId(Number(event.target.value))}
+            >
+              {BUILT_IN_LEVELS.filter((level) => level.id >= 4 && level.id <= 10).map((level) => (
+                <option key={level.id} value={level.id}>{level.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="editor-button"
+              disabled={importLevelId === null}
+              onClick={() => {
+                const source = BUILT_IN_LEVELS.find((level) => level.id === importLevelId);
+                if (!source) return;
+                const imported = levelToDraft(source);
+                persist([...drafts, imported]);
+                setPickedId(imported.id);
+                history.current = { past: [], future: [] };
+              }}
+            >
+              Import built-in
             </button>
           </div>
 

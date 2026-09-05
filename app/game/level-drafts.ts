@@ -216,6 +216,38 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
   };
 }
 
+/**
+ * The reverse of `draftToLevel` — turns a hand-authored (or previously
+ * shipped) `SandLevelConfig` into a fresh, editable draft.
+ *
+ * Only the fields a draft actually has room for come along: `tutorial`,
+ * `ftueGesture`, `requiresBooster` and `notes` have no equivalent slot on
+ * `LevelDraft` and are dropped, same as `draftToLevel` re-spreads
+ * `RADIUS_GAMEPLAY` fresh rather than keeping a level's own policy fields.
+ * Expanded to true pixel resolution via `expandDraftToPixels` immediately,
+ * the same translation a blueprint-era draft gets on load — a hand-authored
+ * level's `rows` is still a small blueprint scaled by `pixelScale`, but "what
+ * the editor holds IS the board the game runs" (see `createDraft`'s own
+ * comment), so nothing outside this function ever sees the blueprint size.
+ */
+export function levelToDraft(level: SandLevelConfig): LevelDraft {
+  draftCounter += 1;
+  const draft: LevelDraft = {
+    id: `draft-${Date.now().toString(36)}-${draftCounter.toString(36)}`,
+    name: level.name,
+    width: level.frame.width,
+    height: level.frame.height,
+    rows: [...level.rows],
+    ammoQueue: [...level.ammoQueue],
+    sortRadius: level.sortRadius,
+    shotLimit: level.shotLimit,
+    pixelScale: level.pixelScale,
+    keyFriction: level.keyFriction,
+    updatedAt: Date.now(),
+  };
+  return expandDraftToPixels(draft);
+}
+
 export type DraftIssue = {
   severity: "error" | "warning";
   message: string;

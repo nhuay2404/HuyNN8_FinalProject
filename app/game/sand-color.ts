@@ -109,3 +109,26 @@ export function jitterColorHex(hex: number, seed: number, saturationRange: numbe
   const [r, g, b] = jitterColor(hex, seed, saturationRange, lightnessRange);
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
+
+/**
+ * Darkens a colour toward black while also boosting its saturation, hue
+ * untouched — used by the sort-radius lift highlight (`SandCannonEngine`) so
+ * a grain the aim radius currently reaches reads as a richer, more vivid
+ * shade of its own colour rather than just a flat tint toward black (which
+ * washes the hue out instead of intensifying it).
+ *
+ * `r`/`g`/`b` are 0-255 bytes in, 0-255 bytes out. `darken` and
+ * `saturationBoost` are both 0-1 fractions of the way to "fully darkened" /
+ * "fully saturated".
+ */
+export function darkenAndSaturate(r: number, g: number, b: number, darken: number, saturationBoost: number) {
+  const hsl = rgbToHsl(r / 255, g / 255, b / 255);
+  const s = clamp01(hsl.s + (1 - hsl.s) * saturationBoost);
+  const l = clamp01(hsl.l * (1 - darken));
+  const result = hslToRgb(hsl.h, s, l);
+  return [
+    Math.round(result.r * 255),
+    Math.round(result.g * 255),
+    Math.round(result.b * 255),
+  ] as const;
+}

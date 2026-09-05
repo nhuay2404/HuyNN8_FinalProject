@@ -648,6 +648,25 @@ button {
 .settings-devlink:hover { background: #e5d6bd; }
 .settings-devlink:active { transform: translateY(2px); }
 .settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
+/* The one dev row that takes a typed value instead of a single tap — a plain
+   div styled to match `.settings-devlink` (not a button/anchor itself, since
+   it holds its own interactive input and "Go" button, and nesting a control
+   inside a button/anchor is invalid). */
+.settings-devlink-goto { cursor: default; }
+.settings-devlink-input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 8px 10px; border-radius: var(--r-sm); border: 0;
+  background: var(--panel); color: var(--ink);
+  font-size: 14px; font-weight: 700;
+}
+.settings-devlink-input::placeholder { color: var(--muted); font-weight: 600; }
+.settings-devlink-go {
+  flex: none; padding: 8px 16px; border-radius: var(--r-sm); border: 0;
+  background: var(--accent); color: var(--panel);
+  font-size: 13px; font-weight: 800; letter-spacing: .02em;
+  cursor: pointer; transition: transform .16s;
+}
+.settings-devlink-go:active { transform: translateY(2px); }
 
 /* ---- Top-left HUD stack ------------------------------------------------ */
 /* Just the ammo row now — the coin balance that used to sit above it (and
@@ -1466,11 +1485,15 @@ button {
 .hub-gallery button.is-locked .pixel-thumb { opacity: .35; filter: grayscale(1); }
 .hub-gallery button.is-locked b { color: var(--muted); }
 .hub-gallery-thumb { position: relative; width: 100%; }
+/* The locked-state badge — the level's own order number (`index + 1` at the
+   call site) rather than a padlock glyph, so a glance at a locked tile still
+   answers "which one is this" instead of just "not open yet". */
 .hub-gallery-lock {
   position: absolute; inset: 0; z-index: 1;
   display: grid; place-items: center;
+  font-size: 22px; font-weight: 800; color: var(--panel);
+  text-shadow: 0 1px 3px rgba(0,0,0,.45);
 }
-.lock-icon { width: 22px; height: 22px; fill: currentColor; color: var(--muted); }
 /* The milestone reward pill — every 10th level by id (see the JSX comment at
    the call site) gets one, shown even locked as a teaser of what is waiting
    a few clears from now. Sits on the thumbnail's own top-right corner, same
@@ -2259,6 +2282,11 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 .editor-mini:disabled { opacity: .35; pointer-events: none; }
 .editor-mini.is-danger:hover { background: rgba(255,80,110,.25); }
 
+.editor-import-select {
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(10,6,20,.5); color: var(--ink); font-size: 12px; font-weight: 700;
+}
+
 /* ---- level list ---- */
 .editor-level-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .editor-level-list button {
@@ -2454,18 +2482,18 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    matched pair rather than a button and a widget. Same dark-brown chrome the
    dead "Modes" chip had, which is what still tells the two halves apart. */
 .hub-track-btn {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  padding: 10px 16px; border-radius: var(--r-chrome);
-  background: #4d3c35; border: 0; cursor: default;
+  display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px;
+  padding: 8px 14px; border-radius: var(--r-chrome);
+  background: #4d3c35; border: 0; cursor: pointer;
   color: #e6b638; font: inherit;
   transition: transform .16s, background .2s;
 }
-/* Only a full bar is actually tappable (`disabled` in SandGame.tsx) — an
-   incomplete one is a readout. The ready state says so loudly: a brighter
-   shell and a slow pulse, so a player coming back to the hub sees it without
-   having to read the pips. */
+/* Only a full bar actually opens the chest (`handleTrackTap` in SandGame.tsx)
+   — an incomplete one just shakes (`.is-denied` below). The ready state says
+   so loudly on its own: a brighter shell and a slow pulse, so a player coming
+   back to the hub sees it without having to read the pips. */
 .hub-track-btn.is-ready {
-  cursor: pointer; background: #6a4f36;
+  background: #6a4f36;
   animation: hub-track-ready 1.6s ease-in-out infinite;
 }
 .hub-track-btn.is-ready:active { transform: translateY(3px); }
@@ -2474,10 +2502,30 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   0%, 100% { box-shadow: 0 0 0 0 rgba(230, 182, 56, 0); }
   50% { box-shadow: 0 0 0 6px rgba(230, 182, 56, .22); }
 }
-/* The chest takes whatever height is left once the pip row and the padding
-   have had theirs, so the button matches Play's box at any font size rather
-   than being sized to a number picked here. */
-.hub-track-chest { flex: 1 1 auto; min-height: 0; width: 100%; display: block; }
+/* Tapping an incomplete track: a sharp, one-shot jolt rather than the ready
+   state's idle wiggle — it needs to read as "not yet" on the SAME tap that
+   triggered it, not as a background ambience. */
+.hub-track-btn.is-denied { animation: hub-track-denied .4s ease-in-out; }
+@keyframes hub-track-denied {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+/* The heading above the bar — sits above everything else in the button so the
+   chest's new spot beside the bar reads as "the reward this bar earns", not
+   as an unrelated icon floating in the corner. */
+.hub-track-label {
+  display: block; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px; font-weight: 800; letter-spacing: .01em; line-height: 1;
+  color: #f3d896;
+}
+/* The bar and the chest side by side — the chest moved out of its own stacked
+   row and onto the bar's end, so the reward that's being filled toward sits
+   right where the fill is heading. */
+.hub-track-row { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.hub-track-chest { flex: none; width: 32px; height: 32px; display: block; }
 .hub-track-chest .chest-icon { width: 100%; height: 100%; }
 /* The chest on the ready state gets the little shake a mobile game gives a
    claimable reward — it stays SHUT here on purpose: opening is the reward
@@ -2490,21 +2538,36 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   80% { transform: rotate(-4deg); }
   86% { transform: rotate(2deg); }
 }
-/* One continuous bar across the button, a fifth of it per level won — not a
-   row of markers: the bar has to read as "how far along" at a glance from the
-   home screen, and a single filled length does that at this size where five
-   separate dots ask to be counted. */
+/* One continuous bar across the button, a fifth of it per level won. Ticked
+   into five even segments (`.hub-track-ticks`) so that count still reads at a
+   glance even though the fill itself is one continuous stripe rather than five
+   separate pips. */
 .hub-track-bar {
-  display: block; flex: none; position: relative; overflow: hidden;
-  width: 100%; height: 12px; border-radius: var(--r-pill);
+  display: block; flex: 1 1 auto; position: relative; overflow: hidden;
+  height: 14px; border-radius: var(--r-pill);
   background: #2f241f;
   box-shadow: inset 0 0 0 2px #6b564a;
 }
+/* Looping diagonal stripe in emerald's two blues, rather than a static
+   gradient — a bar that visibly moves reads as "actively filling" instead of
+   a flat swatch of colour. */
 .hub-track-fill {
   display: block; height: 100%; border-radius: var(--r-pill);
-  background: linear-gradient(90deg, #2b7fd4, #8fd2ff);
+  background-image: repeating-linear-gradient(45deg, #1f6fc9 0 9px, #7ecbff 9px 18px);
+  background-size: 26px 26px;
   transition: width .45s cubic-bezier(.2,.8,.2,1);
+  animation: hub-track-stripes 1s linear infinite;
 }
+@keyframes hub-track-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 26px 0; }
+}
+/* Five equal flex cells with a divider between each pair — four dividers,
+   splitting the bar into five, drawn over the fill rather than baked into it
+   so they stay put while the fill's own stripes scroll underneath. */
+.hub-track-ticks { position: absolute; inset: 0; display: flex; }
+.hub-track-ticks span { flex: 1 1 0; border-right: 2px solid rgba(0, 0, 0, .28); }
+.hub-track-ticks span:last-child { border-right: none; }
 
 /* ---- The reward chest screen -------------------------------------------- */
 /* Transparent, not a wash of its own — exactly the reasoning `.skin-screen`

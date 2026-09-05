@@ -312,18 +312,6 @@ function CancelIcon() {
   return <img className="close-icon" src="/icons/CancelIcon.png" alt="" aria-hidden="true" />;
 }
 
-/** A plain padlock, drawn in currentColor like the other line-art icons here
- * — the Gallery's own "not unlocked yet" badge, sat over a level thumbnail
- * that has not been played to (see `hasClearedLevel` at the call site). */
-function LockIcon() {
-  return (
-    <svg className="lock-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="5" y="11" width="14" height="10" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" />
-    </svg>
-  );
-}
-
 /**
  * The chrome glyphs.
  *
@@ -339,7 +327,7 @@ function LockIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "menu" | "help" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil";
+type ChromeGlyph = "menu" | "help" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
@@ -390,6 +378,13 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
         <>
           <path d="M15.6 4.6 19.4 8.4 8.8 19H5v-3.8z" />
           <path d="M13.4 6.8l3.8 3.8" />
+        </>
+      )}
+      {name === "target" && (
+        <>
+          <circle cx="12" cy="12" r="8.2" />
+          <circle cx="12" cy="12" r="3.6" />
+          <path d="M12 3.8v2.6M12 17.6v2.6M20.2 12h-2.6M6.4 12H3.8" />
         </>
       )}
     </svg>
@@ -1050,6 +1045,9 @@ export default function SandGame() {
   // `!playing` (the hub) or mid-play (`.settings-wrap`'s in-play button),
   // so there is exactly one place Sound/Vibration/the level editor live.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The GameDevOption "jump to level" field's raw text, kept separate from
+  // `chosenIndex` so a half-typed number never triggers a jump.
+  const [devLevelInput, setDevLevelInput] = useState("");
   // Lags `playing` on the way in: the home screen stays mounted for one more
   // beat after Play is tapped so its CSS exit animation (Play button
   // shrinking, the bottom bar sliding off) actually gets to play instead of
@@ -1180,6 +1178,18 @@ export default function SandGame() {
     if (!track.canClaim) return;
     setChest({ phase: "spinning", amount: 0 });
   }, [track.canClaim]);
+
+  /** Tapping the track while it is still filling does nothing but shake —
+   * a "not yet" jolt distinct from the ready state's own idle wiggle, reset
+   * once its animation finishes so the same tap can retrigger it. */
+  const [trackDenied, setTrackDenied] = useState(false);
+  const handleTrackTap = useCallback(() => {
+    if (track.canClaim) {
+      openChest();
+      return;
+    }
+    setTrackDenied(true);
+  }, [track.canClaim, openChest]);
 
   // Which locked skin the skin screen is asking "buy this?" about, or null.
   // Same reasoning as the Shop's own `buyConfirm`: spending a currency is
@@ -1379,6 +1389,26 @@ export default function SandGame() {
     setPlaying(false);
     setTab("home");
   }, [openLevel]);
+
+  /**
+   * GameDevOption's "jump to level" field — matched against each playable's
+   * `level.id` (what the HUD and level name already show), not its array
+   * index, since editor-shipped levels number from `BUILT_IN_LEVELS.length + 1`
+   * (see `collectPlayables`) rather than from a plain position in the list.
+   * Deliberately skips the unlock/progression check `pickFromGallery`'s own
+   * gallery grid enforces (`hasClearedLevel`) — same "bypass, don't earn it"
+   * spirit as every other row in GameDevOption.
+   */
+  const jumpToLevel = useCallback(() => {
+    const wanted = Number(devLevelInput);
+    if (!Number.isFinite(wanted)) return;
+    const index = playables.findIndex((entry) => entry.level.id === wanted);
+    if (index < 0) return;
+    openLevel(index);
+    setPlaying(true);
+    setSettingsOpen(false);
+    setDevLevelInput("");
+  }, [devLevelInput, playables, openLevel]);
 
   /**
    * The skin screen's whole life: entered the moment `tab` becomes "skin",
@@ -1963,23 +1993,31 @@ export default function SandGame() {
                     it without crowding the chest. */}
                 <button
                   type="button"
-                  className={`hub-track-btn${track.canClaim ? " is-ready" : ""}`}
-                  onClick={openChest}
-                  disabled={!track.canClaim}
+                  className={`hub-track-btn${track.canClaim ? " is-ready" : ""}${trackDenied ? " is-denied" : ""}`}
+                  onClick={handleTrackTap}
+                  onAnimationEnd={(e) => {
+                    if (e.animationName === "hub-track-denied") setTrackDenied(false);
+                  }}
                   aria-label={
                     track.canClaim
                       ? `Open reward chest — ${track.chestReward} Blue Emerald`
                       : `Reward track — ${track.filled} of ${NODES_PER_CHEST} levels`
                   }
                 >
-                  <span className="hub-track-chest" aria-hidden="true">
-                    <ChestIcon />
-                  </span>
-                  <span className="hub-track-bar" aria-hidden="true">
-                    <span
-                      className="hub-track-fill"
-                      style={{ width: `${Math.round(track.progress * 100)}%` }}
-                    />
+                  <span className="hub-track-label" aria-hidden="true">Progression Chest</span>
+                  <span className="hub-track-row">
+                    <span className="hub-track-bar" aria-hidden="true">
+                      <span
+                        className="hub-track-fill"
+                        style={{ width: `${Math.round(track.progress * 100)}%` }}
+                      />
+                      <span className="hub-track-ticks" aria-hidden="true">
+                        <span /><span /><span /><span /><span />
+                      </span>
+                    </span>
+                    <span className="hub-track-chest" aria-hidden="true">
+                      <ChestIcon />
+                    </span>
                   </span>
                 </button>
               </div>
@@ -2195,7 +2233,7 @@ export default function SandGame() {
                       <PixelThumb level={entry.level} />
                       {!unlocked && (
                         <span className="hub-gallery-lock" aria-hidden="true">
-                          <LockIcon />
+                          {index + 1}
                         </span>
                       )}
                       {isMilestone && (
@@ -2748,6 +2786,30 @@ export default function SandGame() {
                 >
                   <EmeraldIcon /> Relock skins
                 </button>
+                {/* Jumps straight into any level by its id (the number the
+                    HUD and level name already show), skipping the gallery's
+                    own unlock/progression check — the one place in this
+                    section that needs a value typed in rather than a single
+                    tap, so it is a row of its own instead of a plain
+                    `.settings-devlink` button. */}
+                <div className="settings-devlink settings-devlink-goto">
+                  <Glyph name="target" className="icon-glyph" />
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={playables.length}
+                    placeholder={`Level (1-${playables.length})`}
+                    aria-label="Jump to level number"
+                    value={devLevelInput}
+                    onChange={(event) => setDevLevelInput(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") jumpToLevel(); }}
+                    className="settings-devlink-input"
+                  />
+                  <button type="button" className="settings-devlink-go" onClick={jumpToLevel}>
+                    Go
+                  </button>
+                </div>
               </div>
             </div>
           </div>

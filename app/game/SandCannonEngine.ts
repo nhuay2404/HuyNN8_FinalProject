@@ -13,7 +13,7 @@ import {
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
 import { sound, soundSandLanded, startAmbience, stopAmbience } from "./sound";
-import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColor } from "./sand-color";
+import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, darkenAndSaturate, jitterColor } from "./sand-color";
 // Only the padlock: the key's shape is whatever cells the level authored, and
 // this file draws them rather than deciding them.
 import { PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./sand-sprites";
@@ -416,6 +416,45 @@ const PROJECTILE_OUTLINE_SCALE = 1.22;
 /** The painting is fitted into this opening whatever the authored grid is. */
 const FIT_WIDTH = 5.4;
 const FIT_HEIGHT = 6.15;
+/**
+ * How much of the viewport the picture is meant to fill — across, then down.
+ *
+ * These replace what used to be two hardcoded vertical FOVs picked off one
+ * aspect threshold (44 below 0.62, 37 above). One FOV cannot serve two
+ * aspects: at the narrowest one the picture nearly touched the sides, and on a
+ * shorter, relatively wider window the SAME angle left it filling barely four
+ * fifths of the width with a band of dead sky down both edges. `fitFov` below
+ * solves for the angle instead, so the picture sits the same distance off the
+ * edge whatever shape the window is.
+ *
+ * Under 1 on purpose: the picture is meant to come close to the edge, not to
+ * run off it. The vertical figure is the tighter of the two because the frame
+ * hangs well above the camera's own sightline (`FRAME_CENTER_Y`), so its top
+ * edge is the thing that runs out of room first on a tall board.
+ */
+const FRAME_FILL_X = 0.9;
+const FRAME_FILL_Y = 0.94;
+/** How far the frame's own rails stand outside the picture opening, in cells.
+ * Named because three places need the same number: the rails are built to it,
+ * hit-testing allows for it, and the fit has to frame the OUTER edge — fitting
+ * the picture alone puts the rails past where the fill was aimed. */
+const FRAME_BORDER_CELLS = 0.62;
+/** Bounds on what `fitFov` may return, so a freak window size cannot hand the
+ * camera a degenerate lens. */
+const FIT_FOV_MIN = 24;
+const FIT_FOV_MAX = 52;
+
+/**
+ * Where the camera stands and what it looks at. Constants now rather than two
+ * bare position/lookAt calls, because the fit below has to do geometry against
+ * them — how far the picture plane is along the sightline, and where that line
+ * has got to vertically by the time it reaches it — and neither answer may
+ * drift from where the camera actually is.
+ */
+const CAMERA_POSITION = new THREE.Vector3(0, 3.3, 13.6);
+const CAMERA_LOOK_AT = new THREE.Vector3(0, 1, -0.5);
+/** Scratch for the fit, which runs on every resize. */
+const FIT_FOV_SIGHT = new THREE.Vector3();
 /** Raised from the pivot's original 1.95: leaves a band of open sky between
  * the frame's bottom edge and the cannon (CANNON_ROOT_POSITION, unmoved) for
  * `.booster-hud` to sit in. Pushed as high as it safely goes — past ~2.6 the
@@ -540,7 +579,12 @@ const LIFT_SHADOW_DARKEN = 0.55;
  * the grain's colour, not a lighter/washed-out one. Much lighter than
  * `LIFT_SHADOW_DARKEN` so the face still reads as clearly closer to the
  * grain's own colour than the shadow rimming it. */
-const LIFT_FACE_DARKEN = 0.18;
+const LIFT_FACE_DARKEN = 0.35;
+/** How far the raised face's saturation is pushed toward fully saturated, on
+ * top of `LIFT_FACE_DARKEN` — darkening alone flattens a colour's hue, so
+ * this keeps the lifted grain reading as a richer, more vivid version of
+ * itself instead of just a dimmer one. See `darkenAndSaturate`. */
+const LIFT_FACE_SATURATE = 0.3;
 /** Never rotated — every lift-block instance faces the same way the flat
  * sand plane already does, so composing its matrix each frame only ever
  * needs a fresh position and scale. Shared rather than a `new THREE.Quaternion()`
@@ -975,8 +1019,8 @@ export class SandCannonEngine {
     // to blend seamlessly into one continuous "wall" the picture and the
     // cannon stand out against.
     this.scene.fog = new THREE.FogExp2(0xaedee4, 0.02);
-    this.camera.position.set(0, 3.3, 13.6);
-    this.camera.lookAt(0, 1, -0.5);
+    this.camera.position.copy(CAMERA_POSITION);
+    this.camera.lookAt(CAMERA_LOOK_AT);
     this.renderer = acquireRenderer(this, this.host);
 
     this.buildLighting();
@@ -1056,7 +1100,7 @@ export class SandCannonEngine {
   private buildFrame() {
     const openWidth = this.level.frame.width * this.cell;
     const openHeight = this.level.frame.height * this.cell;
-    const border = this.cell * 0.62;
+    const border = this.cell * FRAME_BORDER_CELLS;
     const depth = this.cell * 1.75;
 
     this.frameRoot.position.set(0, FRAME_CENTER_Y, SAND_PLANE_Z);
@@ -1234,15 +1278,18 @@ export class SandCannonEngine {
       // to treating its input as already-linear, which reads these bytes too
       // bright/washed out. Naming the colour space here is what keeps a
       // lifted grain matching the shade of the flat sand right next to it,
-      // before `LIFT_FACE_DARKEN` deepens it a step further on purpose.
+      // before `LIFT_FACE_DARKEN`/`LIFT_FACE_SATURATE` push it a step further
+      // on purpose.
+      const [faceR, faceG, faceB] = darkenAndSaturate(
+        cell.rgb[0],
+        cell.rgb[1],
+        cell.rgb[2],
+        LIFT_FACE_DARKEN,
+        LIFT_FACE_SATURATE,
+      );
       faceMesh.setColorAt(
         index,
-        this.liftColor.setRGB(
-          (cell.rgb[0] * (1 - LIFT_FACE_DARKEN)) / 255,
-          (cell.rgb[1] * (1 - LIFT_FACE_DARKEN)) / 255,
-          (cell.rgb[2] * (1 - LIFT_FACE_DARKEN)) / 255,
-          THREE.SRGBColorSpace,
-        ),
+        this.liftColor.setRGB(faceR / 255, faceG / 255, faceB / 255, THREE.SRGBColorSpace),
       );
 
       const shadowSize = this.cell * LIFT_SHADOW_SCALE * cell.lift;
@@ -1622,7 +1669,7 @@ export class SandCannonEngine {
     // cannon nowhere at all.
     this.cannonRoot.visible = false;
     this.frameRoot.visible = true;
-    this.camera.fov = this.camera.aspect < 0.62 ? 44 : 37;
+    this.camera.fov = this.fitFov(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     this.resetCannonDirection();
   }
@@ -1652,7 +1699,7 @@ export class SandCannonEngine {
       }
       // Back to whatever this aspect ratio's own gameplay lens is — the same
       // two numbers `resize()` picks between.
-      this.camera.fov = this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
+      this.camera.fov = this.showcase ? SHOWCASE_FOV : this.fitFov(this.camera.aspect);
       this.camera.updateProjectionMatrix();
       return;
     }
@@ -2978,8 +3025,8 @@ export class SandCannonEngine {
 
   /** Did the shot land on the frame itself rather than sail past the whole thing? */
   private hitFrameStructure(point: THREE.Vector3) {
-    const halfWidth = (this.level.frame.width * this.cell) / 2 + this.cell * 0.62;
-    const halfHeight = (this.level.frame.height * this.cell) / 2 + this.cell * 0.62;
+    const halfWidth = (this.level.frame.width * this.cell) / 2 + this.cell * FRAME_BORDER_CELLS;
+    const halfHeight = (this.level.frame.height * this.cell) / 2 + this.cell * FRAME_BORDER_CELLS;
     const dx = Math.abs(point.x - this.frameRoot.position.x);
     const dy = Math.abs(point.y - this.frameRoot.position.y);
     return dx <= halfWidth && dy <= halfHeight;
@@ -3455,12 +3502,54 @@ export class SandCannonEngine {
     }
   };
 
+  /**
+   * The vertical FOV that frames THIS level's picture at `FRAME_FILL_X` /
+   * `FRAME_FILL_Y` on the current aspect.
+   *
+   * Two constraints, and the answer is whichever is the wider angle, since
+   * both have to hold:
+   *  - across: the picture's own width has to fit inside `FRAME_FILL_X` of the
+   *    visible width at the picture's distance;
+   *  - down: its top and bottom edges have to fit inside `FRAME_FILL_Y` of the
+   *    visible height, measured from the camera's sightline rather than from
+   *    the picture's middle — the two are not the same point, the frame hangs
+   *    ~1.9 above the sightline at that distance.
+   *
+   * Everything is derived from the camera and the level rather than assumed,
+   * so this stays correct if the camera moves or a level's board is a
+   * different shape (`this.cell` is fitted per level — a square board's frame
+   * is nowhere near `FIT_HEIGHT` tall).
+   */
+  private fitFov(aspect: number): number {
+    const half = FIT_FOV_SIGHT.copy(CAMERA_LOOK_AT).sub(CAMERA_POSITION).normalize();
+    // How far along the sightline the picture plane is, and where that line has
+    // got to vertically by then.
+    const distance = (SAND_PLANE_Z - CAMERA_POSITION.z) / half.z;
+    const sightY = CAMERA_POSITION.y + half.y * distance;
+
+    // The frame's OUTER edge, rails included — that is the edge a player sees
+    // approach the side of the screen.
+    const border = this.cell * FRAME_BORDER_CELLS;
+    const halfWidth = (this.level.frame.width * this.cell) / 2 + border;
+    const halfHeight = (this.level.frame.height * this.cell) / 2 + border;
+    const fromWidth = halfWidth / FRAME_FILL_X / aspect;
+    const fromHeight =
+      Math.max(FRAME_CENTER_Y + halfHeight - sightY, sightY - (FRAME_CENTER_Y - halfHeight)) / FRAME_FILL_Y;
+
+    const fov = 2 * THREE.MathUtils.radToDeg(Math.atan(Math.max(fromWidth, fromHeight) / distance));
+    return THREE.MathUtils.clamp(fov, FIT_FOV_MIN, FIT_FOV_MAX);
+  }
+
   private resize() {
     const width = Math.max(this.host.clientWidth, 1);
     const height = Math.max(this.host.clientHeight, 1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    this.camera.fov = this.chestPhase ? CHEST_FOV : this.showcase ? SHOWCASE_FOV : (this.camera.aspect < 0.62 ? 44 : 37);
+    this.camera.fov = this.chestPhase
+      ? CHEST_FOV
+      : this.showcase
+        ? SHOWCASE_FOV
+        : this.fitFov(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     if (this.aimPointer !== null) this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     else this.showIdleCrosshair();
