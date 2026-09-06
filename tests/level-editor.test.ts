@@ -11,6 +11,26 @@ import {
   eighthLevel,
   ninthLevel,
   tenthLevel,
+  eleventhLevel,
+  twelfthLevel,
+  thirteenthLevel,
+  fourteenthLevel,
+  fifteenthLevel,
+  sixteenthLevel,
+  seventeenthLevel,
+  eighteenthLevel,
+  nineteenthLevel,
+  twentiethLevel,
+  twentyFirstLevel,
+  twentySecondLevel,
+  twentyThirdLevel,
+  twentyFourthLevel,
+  twentyFifthLevel,
+  twentySixthLevel,
+  twentySeventhLevel,
+  twentyEighthLevel,
+  twentyNinthLevel,
+  thirtiethLevel,
   BUILT_IN_LEVELS,
 } from "../design/levels/sand-levels.ts";
 import { sandBloom } from "./level-fixtures.ts";
@@ -387,23 +407,22 @@ test("a name with a quote cannot break out of the generated string", () => {
 // ---- the shipped level stays a valid draft target -------------------------
 
 test("the built-in level list is what the game and editor both start from", () => {
-  // Ten hand-authored levels (1-3: the tutorial arc; 4-10: the beatchart's
-  // first ten rows) — everything past that is authored and shipped from the
-  // editor now.
-  assert.ok(BUILT_IN_LEVELS.includes(defaultLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(secondConsequence));
-  assert.ok(BUILT_IN_LEVELS.includes(thirdLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(fourthLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(fifthLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(sixthLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(seventhLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(eighthLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(ninthLevel));
-  assert.ok(BUILT_IN_LEVELS.includes(tenthLevel));
-  assert.equal(BUILT_IN_LEVELS.length, 10);
+  // Thirty hand-authored levels (1-3: the tutorial arc; 4-10: beatchart arc
+  // 1; 11-20: arc 2, Wall Obstacle; 21-30: arc 3, Lock & Key) — everything
+  // past that is authored and shipped from the editor now.
+  const handAuthored = [
+    defaultLevel, secondConsequence, thirdLevel,
+    fourthLevel, fifthLevel, sixthLevel, seventhLevel, eighthLevel, ninthLevel, tenthLevel,
+    eleventhLevel, twelfthLevel, thirteenthLevel, fourteenthLevel, fifteenthLevel,
+    sixteenthLevel, seventeenthLevel, eighteenthLevel, nineteenthLevel, twentiethLevel,
+    twentyFirstLevel, twentySecondLevel, twentyThirdLevel, twentyFourthLevel, twentyFifthLevel,
+    twentySixthLevel, twentySeventhLevel, twentyEighthLevel, twentyNinthLevel, thirtiethLevel,
+  ];
+  for (const level of handAuthored) assert.ok(BUILT_IN_LEVELS.includes(level));
+  assert.equal(BUILT_IN_LEVELS.length, 30);
   assert.deepEqual(
     BUILT_IN_LEVELS.map((level) => level.id),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    Array.from({ length: 30 }, (_, index) => index + 1),
     "ids are what the HUD shows",
   );
 });

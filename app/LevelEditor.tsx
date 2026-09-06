@@ -15,6 +15,7 @@ import {
   MAX_WIDTH,
   MIN_DIMENSION,
   MIN_KEY_FRICTION,
+  WALL_LETTER,
   blankRows,
   coloursUsed,
   countPaintedCells,
@@ -81,6 +82,8 @@ const DIFFICULTY_HEX: Record<DifficultyResult["label"], SandColor> = {
 
 /** The key's gold, matching what the engine paints on the board. */
 const KEY_HEX = "#ffd654";
+/** Wall Obstacle's stone grey, matching what the engine paints on the board. */
+const WALL_HEX = "#6b7280";
 /**
  * Key size, as an integer multiple of `KEY_SPRITE`'s own pixels.
  *
@@ -388,6 +391,11 @@ export default function LevelEditor() {
   const [tool, setTool] = useState<Tool>("brush");
   /** Whether the brush lays sand down frozen. A modifier, not a tool. */
   const [locking, setLocking] = useState(false);
+  /** Whether the brush lays down Wall Obstacle instead of sand — a colourless
+   * material, not a colour, so this is a modifier alongside `locking` rather
+   * than a fifth `Tool`. Mutually exclusive with it: a cell cannot be both a
+   * wall and locked sand. */
+  const [wallMode, setWallMode] = useState(false);
   /** The key tool's radius, in board pixels. */
   const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
   /** Width of the square brush nib, in board pixels. */
@@ -540,6 +548,7 @@ export default function LevelEditor() {
 
     const letter = tool === "eraser"
       ? EMPTY_CELL
+      : wallMode ? WALL_LETTER
       : locking ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
     update((current) => {
       if (tool === "bucket") {
@@ -552,7 +561,7 @@ export default function LevelEditor() {
         .reduce((acc, cell) => withCell(acc, cell.x, cell.y, current.height, letter), current.rows);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, locking, keyScale, brushSize, update]);
+  }, [tool, color, locking, wallMode, keyScale, brushSize, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
@@ -605,6 +614,12 @@ export default function LevelEditor() {
 
         if (cell.kind === "key") {
           context.fillStyle = KEY_HEX;
+          context.fillRect(left, top, cellPx, cellPx);
+          continue;
+        }
+
+        if (cell.kind === "wall") {
+          context.fillStyle = WALL_HEX;
           context.fillRect(left, top, cellPx, cellPx);
           continue;
         }
@@ -911,10 +926,11 @@ export default function LevelEditor() {
                 <button
                   key={entry}
                   type="button"
-                  className={`editor-swatch${entry === color && tool !== "eraser" ? " is-active" : ""}`}
+                  className={`editor-swatch${entry === color && tool !== "eraser" && !wallMode ? " is-active" : ""}`}
                   style={{ "--swatch": hex(entry) } as React.CSSProperties}
                   onClick={() => {
                     setColor(entry);
+                    setWallMode(false);
                     if (tool === "eraser") setTool("brush");
                   }}
                   aria-label={COLOR_NAME[entry]}
@@ -941,11 +957,28 @@ export default function LevelEditor() {
                 className={`editor-button${locking ? " is-active" : ""}`}
                 onClick={() => {
                   setLocking((value) => !value);
+                  setWallMode(false);
                   if (tool === "eraser" || tool === "key") setTool("brush");
                 }}
                 title="Paint this colour frozen: it hangs in the frame and cannot be shot until a key reaches it"
               >
                 🔒 Locked
+              </button>
+              {/* Also a modifier, not a tool: Wall Obstacle is a material, not
+                  a colour, so it slots in beside "Locked" rather than beside
+                  Brush/Fill/Eraser — mutually exclusive with locking a colour
+                  down, since a cell cannot be both. */}
+              <button
+                type="button"
+                className={`editor-button${wallMode ? " is-active" : ""}`}
+                onClick={() => {
+                  setWallMode((value) => !value);
+                  setLocking(false);
+                  if (tool === "eraser" || tool === "key") setTool("brush");
+                }}
+                title="Paint a Wall Obstacle: a permanent, colourless cell no shot can ever reach or remove"
+              >
+                🧱 Wall
               </button>
               {/* Each tool's size dial, shown only while that tool is up — a
                   dial for a tool nobody is holding is a control with nothing

@@ -200,7 +200,7 @@ export interface Strings {
   // ---- Result screens --------------------------------------------------------------
   frameCleared: string;
   backToHome: string;
-  everyGrainGone: (shotsToSpare: number) => string;
+  goldEarned: (amount: number) => string;
   continueLabel: string;
   outOfShots: string;
   clearedPercent: (pct: number, remainingGrains: number) => string;
@@ -354,7 +354,7 @@ const EN: Strings = {
 
   frameCleared: "FRAME CLEARED!",
   backToHome: "Back to home",
-  everyGrainGone: (shotsToSpare) => `Every grain gone with ${shotsToSpare} shot${shotsToSpare === 1 ? "" : "s"} to spare.`,
+  goldEarned: (amount) => `+${amount} gold earned`,
   continueLabel: "Continue",
   outOfShots: "OUT OF SHOTS",
   clearedPercent: (pct, remainingGrains) => `${pct}% cleared — ${remainingGrains} grains still in the frame.`,
@@ -489,7 +489,7 @@ const VI: Strings = {
 
   frameCleared: "ĐÃ DỌN SẠCH KHUNG!",
   backToHome: "Về trang chủ",
-  everyGrainGone: (shotsToSpare) => `Đã dọn sạch mọi hạt cát, còn dư ${shotsToSpare} phát.`,
+  goldEarned: (amount) => `+${amount} vàng`,
   continueLabel: "Tiếp tục",
   outOfShots: "HẾT ĐẠN",
   clearedPercent: (pct, remainingGrains) => `Đã dọn ${pct}% — còn ${remainingGrains} hạt cát trong khung.`,

@@ -45,6 +45,17 @@ export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
  */
 export const KEY_LETTER = "K";
 
+/**
+ * Wall Obstacle's letter. `W` was free for the same reason `K` was.
+ *
+ * Not a colour and not sand at all — unlike locked sand (a colour, just
+ * frozen and eventually freeable), a wall cell has no colour, is never
+ * handed to the ammo wheel, is never freed by anything, and never moves.
+ * It is simply a permanent hole in the board that sand rests against the
+ * way it rests against the floor.
+ */
+export const WALL_LETTER = "W";
+
 /** Locked sand is the colour's letter in lower case — `y` is frozen yellow. */
 export function isLockedLetter(letter: string) {
   return letter !== letter.toUpperCase() && SAND_COLOR_BY_LETTER[letter.toUpperCase()] !== undefined;
@@ -126,6 +137,8 @@ export type ParsedLevel = {
   locked: CellCoord[];
   /** One key per connected group of `K` cells. */
   keys: SandKey[];
+  /** Cells the picture drew as `W` — see `WALL_LETTER`'s own comment. */
+  walls: CellCoord[];
   issues: LevelIssue[];
 };
 
@@ -176,6 +189,7 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
   const grid = new Map<string, SandColor>();
   const locked: CellCoord[] = [];
   const keyCells = new Set<string>();
+  const walls: CellCoord[] = [];
 
   if (level.rows.length !== height) {
     issues.push({ severity: "error", message: `frame height is ${height} but ${level.rows.length} rows were written` });
@@ -191,6 +205,10 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
       const inside = y >= 0 && y < height && x < width;
       if (letter === KEY_LETTER) {
         if (inside) keyCells.add(cellKey(x, y));
+        return;
+      }
+      if (letter === WALL_LETTER) {
+        if (inside) walls.push({ x, y });
         return;
       }
       const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
@@ -252,7 +270,7 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
   if (keys.length && !locked.length) {
     issues.push({ severity: "warning", message: "the picture has a key but nothing locked for it to open" });
   }
-  return { bodies, locked, keys, issues };
+  return { bodies, locked, keys, walls: sortCells(walls), issues };
 }
 
 function parseCellKey(key: string): CellCoord {
@@ -336,7 +354,7 @@ export function runGrainSettle(
 // grain, a key and a lock can never disagree about what is where.
 
 /** The parts of the board that are not plain falling sand. */
-export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: number };
+export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: number; walls?: CellCoord[] };
 
 /**
  * How many settle passes a key waits at `friction: 1` before a sideways roll
@@ -349,6 +367,9 @@ type World = {
   /** Every sand cell, frozen ones included — locked sand still fills its cell. */
   grid: Map<string, SandColor>;
   locked: Set<string>;
+  /** Wall Obstacle cells — occupied, but never in `grid`: not sand, never
+   * moves, never removed. See `WALL_LETTER`'s own comment. */
+  walls: Set<string>;
   keys: Map<string, CellCoord[]>;
   /** Reverse index of `keys`, so occupancy is one lookup rather than a scan. */
   keyAt: Map<string, string>;
@@ -379,13 +400,14 @@ function buildWorld(bodies: SandBody[], fixtures: Fixtures): World {
     keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
     for (const cell of key.cells) keyAt.set(cellKey(cell.x, cell.y), key.id);
   }
-  return { grid, locked, keys, keyAt, keyRollWait: new Map(), friction: fixtures.friction ?? 0 };
+  const walls = new Set((fixtures.walls ?? []).map((cell) => cellKey(cell.x, cell.y)));
+  return { grid, locked, walls, keys, keyAt, keyRollWait: new Map(), friction: fixtures.friction ?? 0 };
 }
 
 function occupied(world: World, frame: SandFrame, x: number, y: number) {
   if (x < 0 || x >= frame.width || y < 0 || y >= frame.height) return true;
   const key = cellKey(x, y);
-  return world.grid.has(key) || world.keyAt.has(key);
+  return world.grid.has(key) || world.keyAt.has(key) || world.walls.has(key);
 }
 
 /** Where the grain at (x, y) would fall this pass, or null if nothing gives. */
@@ -708,6 +730,7 @@ function finishWorld(world: World, frame: SandFrame, steps: SettleStep[]): Settl
     steps,
     locked: sortCells([...world.locked].map(parseCellKey)),
     keys: [...world.keys].map(([id, cells]) => ({ id, cells: sortCells(cells) })),
+    walls: sortCells([...world.walls].map(parseCellKey)),
   };
 }
 
@@ -793,7 +816,7 @@ export function spendBoosterCharge(type: BoosterType): void {
 // ---- Game state ---------------------------------------------------------
 
 export function createSandGameState(level: SandLevelConfig): SandGameState {
-  const { bodies, locked, keys } = parseSandLevel(level);
+  const { bodies, locked, keys, walls } = parseSandLevel(level);
   const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
   // A colour that starts entirely locked is authored into the wheel — it has to
   // be, or it could never be shot once freed — but it must not be *handed out*
@@ -811,13 +834,14 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
     remainingCells: countCells(bodies),
     locked,
     keys,
+    walls,
     result: null,
   };
 }
 
 /** The board's non-sand furniture, in the shape the solver wants it. */
 export function fixturesOf(level: SandLevelConfig, state: SandGameState): Fixtures {
-  return { locked: state.locked, keys: state.keys, friction: level.keyFriction ?? 0 };
+  return { locked: state.locked, keys: state.keys, walls: state.walls, friction: level.keyFriction ?? 0 };
 }
 
 /** Cell keys of everything frozen, for the lookups a shot and a redraw need. */
@@ -1132,6 +1156,7 @@ export function resolveShot(
     remainingCells: countCells(settle.bodies),
     locked: settle.locked,
     keys: settle.keys,
+    walls: settle.walls,
   };
   return { state: withResult(level, sorted), outcome: "SORTED", hitBody, removed, settle, steps };
 }

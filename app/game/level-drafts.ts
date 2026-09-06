@@ -7,7 +7,7 @@
 // single place the two are joined, so a level tested in the editor and a level
 // pasted into `sand-levels.ts` cannot drift apart.
 
-import { KEY_LETTER, expandLevelForPixelBoard, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
+import { KEY_LETTER, WALL_LETTER, expandLevelForPixelBoard, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
 import {
   RADIUS_GAMEPLAY,
   SAND_COLORS,
@@ -61,17 +61,18 @@ export const LETTER_BY_SAND_COLOR: Record<SandColor, string> = {
 
 export const EMPTY_CELL = ".";
 /** The key's letter, re-exported so the editor never has to spell it itself. */
-export { KEY_LETTER };
+export { KEY_LETTER, WALL_LETTER };
 
 /** The same colour, frozen. Lower case is the whole representation of a lock. */
 export function lockedLetter(color: SandColor) {
   return LETTER_BY_SAND_COLOR[color].toLowerCase();
 }
 
-/** What a cell holds, for an editor that has to draw three different things. */
-export function readCell(letter: string): { kind: "empty" } | { kind: "key" }
+/** What a cell holds, for an editor that has to draw four different things. */
+export function readCell(letter: string): { kind: "empty" } | { kind: "key" } | { kind: "wall" }
   | { kind: "sand"; color: SandColor; locked: boolean } {
   if (letter === KEY_LETTER) return { kind: "key" };
+  if (letter === WALL_LETTER) return { kind: "wall" };
   const color = SAND_COLORS.find((entry) => LETTER_BY_SAND_COLOR[entry] === letter.toUpperCase());
   if (!color) return { kind: "empty" };
   return { kind: "sand", color, locked: letter === letter.toLowerCase() };
@@ -311,8 +312,8 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
   // the solver here for the same reason the game hands them over: a slab that
   // is only still because it is frozen must not be reported as slumping.
   const level = draftToLevel(draft, 0);
-  const { bodies, locked, keys } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame, { locked, keys });
+  const { bodies, locked, keys, walls } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls });
   if (settled.steps.some((step) => step.kind !== "REINDEX")) {
     issues.push({
       severity: "warning",
@@ -359,8 +360,8 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
  */
 export function settleDraft(draft: LevelDraft): LevelDraft {
   const level = draftToLevel(draft, 0);
-  const { bodies, locked, keys } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame, { locked, keys });
+  const { bodies, locked, keys, walls } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls });
 
   const grid = new Map<string, SandColor>();
   for (const body of settled.bodies) {
@@ -368,6 +369,7 @@ export function settleDraft(draft: LevelDraft): LevelDraft {
   }
   const frozen = new Set(settled.locked.map((cell) => `${cell.x},${cell.y}`));
   const keyCells = new Set(settled.keys.flatMap((key) => key.cells.map((cell) => `${cell.x},${cell.y}`)));
+  const wallCells = new Set(settled.walls.map((cell) => `${cell.x},${cell.y}`));
 
   const rows = Array.from({ length: draft.height }, (_, row) => {
     const y = draft.height - 1 - row;
@@ -376,6 +378,10 @@ export function settleDraft(draft: LevelDraft): LevelDraft {
       const at = `${x},${y}`;
       if (keyCells.has(at)) {
         line += KEY_LETTER;
+        continue;
+      }
+      if (wallCells.has(at)) {
+        line += WALL_LETTER;
         continue;
       }
       const color = grid.get(at);

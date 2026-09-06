@@ -317,6 +317,15 @@ export type SandGameState = {
   locked: CellCoord[];
   /** The keys still in the frame. Each opens the first lock it touches. */
   keys: SandKey[];
+  /**
+   * Wall Obstacle cells — never sand, never counted toward the win, never
+   * freed by anything. A permanent hole in the board: sand rests against one
+   * the way it rests against the floor, a shot's radius disc never reaches
+   * one (it is not in `bodies` for `cellsInRadius` to find), and it never
+   * moves, so unlike `locked`/`keys` this list is fixed for the level's whole
+   * life — set once in `createSandGameState` and never touched again.
+   */
+  walls: CellCoord[];
   result: SandResult;
 };
 
@@ -366,4 +375,7 @@ export type SettleOutcome = {
   locked: CellCoord[];
   /** The keys that have not been spent. */
   keys: SandKey[];
+  /** Wall Obstacle cells, unchanged — carried through rather than recomputed,
+   * since nothing a settle does can ever move or remove one. */
+  walls: CellCoord[];
 };

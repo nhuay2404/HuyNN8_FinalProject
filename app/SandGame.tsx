@@ -59,6 +59,7 @@ import {
   KEY_LETTER,
   nextAmmo,
   SAND_COLOR_BY_LETTER,
+  WALL_LETTER,
 } from "./game/sand-rules";
 import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
@@ -1435,6 +1436,11 @@ export default function SandGame() {
    * whether that is right after this level or several Continues later.
    */
   const [lastHandledResult, setLastHandledResult] = useState<SandGameState["result"]>(null);
+  // The gold amount the WIN card's own body shows — the actual amount just
+  // credited to the wallet by the block below, not the level's payout in the
+  // abstract, so a replay (no new gold, `markLevelCleared` already false)
+  // correctly shows 0 rather than re-claiming the same number.
+  const [wonGold, setWonGold] = useState(0);
   if (state.result !== lastHandledResult) {
     // The reward track counts every win, replays included — unlike the gold
     // above, which pays first-clears only. See the reward-track section header
@@ -1445,6 +1451,9 @@ export default function SandGame() {
       addGold(granted);
       suppressGoldSyncRef.current = true;
       setPendingHomeReward((sum) => sum + granted);
+      setWonGold(granted);
+    } else if (state.result?.kind === "WIN") {
+      setWonGold(0);
     }
     setLastHandledResult(state.result);
   }
@@ -1499,9 +1508,11 @@ export default function SandGame() {
   // need not — would otherwise open at "69% cleared" before a shot was fired.
   // The key is not sand — it is never cleared and never counted, so counting it
   // here would open every lock level at "4% cleared" before a shot was fired.
+  // A Wall Obstacle cell is the same story: never sand, never cleared, so a
+  // walled level would open already "cleared" by however much wall it drew.
   const startingCells = useMemo(
     () => level.rows.reduce(
-      (total, row) => total + [...row].filter((letter) => letter !== "." && letter !== KEY_LETTER).length,
+      (total, row) => total + [...row].filter((letter) => letter !== "." && letter !== KEY_LETTER && letter !== WALL_LETTER).length,
       0,
     ),
     [level],
@@ -1781,22 +1792,26 @@ export default function SandGame() {
               the touch it is demonstrating: the very drag it is showing
               reaches `.aim-zone` underneath untouched, fires `AIM_TOUCHED`,
               and that is what actually closes this — not a button here.
-              No enclosing card: two dashed "tap here" rings (the same dashed
-              marker language `.aim-joystick::after` already draws on the real
-              pad, borrowed rather than invented) with the real reference
-              tapping-hand artwork (`/public/icons/FTUEicon.png`, an SVG
-              `<image>` rather than a hand-drawn shape now) gliding between
-              them: press at the first ring, drag to the second, release. The
-              image sits inside the same `<g>` `ftue-gesture-drag` (in
-              globals.css) already animates, offset so the fingertip in the
-              artwork — not the image's own top-left corner — lands on that
-              `<g>`'s local origin, the same "fingertip at (0,0)" contract
-              the old hand-drawn shapes used. */}
+              No enclosing card: a dashed circular track (`.ftue-gesture-path`,
+              the same dashed marker language `.aim-joystick::after` already
+              draws on the real pad, borrowed rather than invented) with the
+              real reference tapping-hand artwork
+              (`/public/icons/FTUEicon.png`, an SVG `<image>`) swinging all the
+              way around it — press at the first ring, arc around the track,
+              release at the second. A curved sweep reads unambiguously as
+              "drag any direction from here", where the old straight
+              corner-to-corner glide could be misread as "this exact diagonal
+              is the one that works". The image sits inside the same `<g>`
+              `ftue-gesture-drag` (in globals.css) already animates, offset so
+              the fingertip in the artwork — not the image's own top-left
+              corner — lands on that `<g>`'s local origin, the same
+              "fingertip at (0,0)" contract the old hand-drawn shapes used. */}
           {playing && ftueGestureOpen && level.ftueGesture && (
             <div className="ftue-gesture" role="status" aria-label={s.dragToAim}>
               <svg className="ftue-gesture-glyph" viewBox="0 0 220 190" aria-hidden="true">
-                <circle className="ftue-gesture-ring ftue-gesture-ring-a" cx="90" cy="135" r="17" />
-                <circle className="ftue-gesture-ring ftue-gesture-ring-b" cx="140" cy="100" r="17" />
+                <circle className="ftue-gesture-path" cx="115" cy="120" r="42" />
+                <circle className="ftue-gesture-ring ftue-gesture-ring-a" cx="157" cy="120" r="17" />
+                <circle className="ftue-gesture-ring ftue-gesture-ring-b" cx="136" cy="84" r="17" />
                 <g className="ftue-gesture-hand">
                   <image href="/icons/FTUEicon.png" x={-33} y={-69} width={72} height={83} />
                 </g>
@@ -2843,7 +2858,9 @@ export default function SandGame() {
                   </button>
                 </div>
                 <div className="result-card-body">
-                  <p>{s.everyGrainGone(remaining)}</p>
+                  <p className="result-gold-earned">
+                    <CoinIcon /> {s.goldEarned(wonGold)}
+                  </p>
                   {hasNextLevel && (
                     <div className="result-actions">
                       <button type="button" onClick={() => openLevel(levelIndex + 1)}>

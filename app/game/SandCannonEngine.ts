@@ -547,6 +547,12 @@ const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
  * track otherwise. No drop shadow (see `redrawSand`). */
 const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
 const KEY_GLINT_RGB: readonly [number, number, number] = [255, 250, 214];
+/** Wall Obstacle's stone grey — flat and colourless on purpose, so it never
+ * reads as a sand colour the wheel might hand out (`LevelEditor.tsx` paints
+ * the same hex for its own preview canvas). Per-cell jittered the same way
+ * sand is (`jitterColor`), so a wall reads as a textured surface rather than
+ * a single dead-flat rectangle. */
+const WALL_HEX = 0x6b7280;
 const THAW_SECONDS = 0.5;
 /** How quickly a grain eases up to full lift once the aim radius reaches it —
  * brisk, so the highlight reads as tracking the crosshair rather than lagging
@@ -822,6 +828,9 @@ export class SandCannonEngine {
    * same way sand is, not stood in for by a separate object.
    */
   private keys = new Map<string, CellCoord[]>();
+  /** Wall Obstacle cells, fixed for the level's whole life — set once in
+   * `buildSand` and never touched again, unlike `keys`/lock state above. */
+  private walls: CellCoord[] = [];
   /**
    * How far each key has rolled, in radians, accumulated as it moves.
    *
@@ -1164,8 +1173,9 @@ export class SandCannonEngine {
    * it IS, not something recomputed frame to frame.
    */
   private buildSand() {
-    const { bodies, locked, keys } = parseSandLevel(this.level);
+    const { bodies, locked, keys, walls } = parseSandLevel(this.level);
     const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
+    this.walls = walls;
 
     for (const body of bodies) {
       for (const cell of body.cells) {
@@ -1358,6 +1368,15 @@ export class SandCannonEngine {
       }
       return false;
     };
+
+    // Walls first, as a base layer: fixed for the level's whole life, never
+    // shared a cell with sand, a key or a lock, so draw order against those
+    // never matters — this only has to run before nothing else overwrites it.
+    for (const cell of this.walls) {
+      const seed = cell.x * 733 + cell.y * 197;
+      const [r, g, b] = jitterColor(WALL_HEX, seed, SAND_SATURATION_JITTER, SAND_LIGHTNESS_JITTER);
+      writePixel(cell.x, height - 1 - cell.y, r, g, b, 255);
+    }
 
     for (const cell of this.cells.values()) {
       let [r, g, b] = cell.rgb;

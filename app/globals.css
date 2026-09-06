@@ -628,7 +628,7 @@ button {
   transition: background .2s;
 }
 .settings-toggle::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px;
+  content: ""; position: absolute; top: 4px; left: 4px; width: 24px; height: 24px;
   border-radius: 50%; background: var(--panel);
   transition: transform .2s cubic-bezier(.4,1.4,.6,1);
 }
@@ -855,9 +855,10 @@ button {
    glued to it. `pointer-events: none` end to end — the whole point is that the
    drag it is teaching lands on `.aim-zone` underneath, not on this.
    Deliberately no backing card or panel behind the glyph (an earlier pass had
-   one and it read as a blob sitting on top of the picture) — the hand and the
-   two rings carry their own solid ink outline, the same contrast every other
-   flat icon in this file uses, so they read fine against the scene alone. */
+   one and it read as a blob sitting on top of the picture) — the hand, the
+   track and the two rings carry their own solid ink outline, the same
+   contrast every other flat icon in this file uses, so they read fine
+   against the scene alone. */
 .ftue-gesture {
   position: absolute; z-index: 6; left: 50%; top: 56%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -866,12 +867,22 @@ button {
 .ftue-gesture-glyph {
   width: 176px; height: 152px;
 }
-/* The two stops of the drag, drawn with the same dashed-ring language
-   `.aim-joystick::after` already uses for the real pad's own centre marker —
-   borrowed on purpose, so the glyph reads as pointing at the actual control
-   rather than inventing a second visual vocabulary next to it. Each ring
-   flashes once, timed to `.ftue-gesture-hand`'s own two keyframes below, so
-   the "press here" beat lands on the ring the hand is actually touching. */
+/* The circular track the hand below sweeps around — drawn once, statically,
+   so the shape of the drag reads even on the first animation frame rather
+   than only after watching the hand move. Fainter than the two rings (which
+   still get their own flash) since this is the whole path, not a beat to
+   notice. */
+.ftue-gesture-path {
+  fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round;
+  stroke-dasharray: 1 9; opacity: .22;
+}
+/* The two stops of the drag — press here, release there — drawn with the
+   same dashed-ring language `.aim-joystick::after` already uses for the real
+   pad's own centre marker, borrowed on purpose so the glyph reads as
+   pointing at the actual control rather than inventing a second visual
+   vocabulary next to it. Each ring flashes once, timed to
+   `.ftue-gesture-hand`'s own keyframes below, so the "press here"/"release
+   here" beats land on the ring the hand is actually touching. */
 .ftue-gesture-ring {
   fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round;
   stroke-dasharray: 1 8; opacity: .3;
@@ -897,24 +908,40 @@ button {
   20%, 100% { opacity: .3; }
 }
 @keyframes ftue-gesture-ring-b {
-  0%, 52% { opacity: .3; }
-  58% { opacity: .95; }
-  70%, 100% { opacity: .3; }
+  0%, 74% { opacity: .3; }
+  80% { opacity: .95; }
+  92%, 100% { opacity: .3; }
 }
-/* Fade in descending onto ring A, press (squash), release, hold, glide to
-   ring B, press, release, hold, lift and fade, reset invisibly. The hand's
-   own shapes are drawn with their fingertip at local (0,0), so each
-   `translate` below is simply that ring's centre — see the JSX. */
+/* Press at ring A, then arc all the way around `.ftue-gesture-path` — a
+   circular sweep, not a straight glide — to ring B, release. Unlike a
+   two-point glide (a straight `translate` interpolates in a straight line no
+   matter how many keyframes sit between two of them), a curved path needs
+   its own waypoints sampled along the circle (`cx 115, cy 120, r 42`, same
+   as `.ftue-gesture-path`), so every stop below but the press/release beats
+   is one such sample, evenly spaced by angle rather than hand-picked. The
+   hand's own shapes are drawn with their fingertip at local (0,0), so each
+   `translate` is simply that point on the ring/track — see the JSX. */
 @keyframes ftue-gesture-drag {
-  0% { transform: translate(90px, 145px) scale(1); opacity: 0; }
-  6% { transform: translate(90px, 135px) scale(1); opacity: 1; }
-  11% { transform: translate(90px, 137px) scale(1.05, .92); }
-  17% { transform: translate(90px, 135px) scale(1); }
-  55% { transform: translate(140px, 100px) scale(1); opacity: 1; }
-  60% { transform: translate(140px, 102px) scale(1.05, .92); }
-  66% { transform: translate(140px, 100px) scale(1); opacity: 1; }
-  84% { transform: translate(140px, 90px) scale(1); opacity: 0; }
-  100% { transform: translate(90px, 145px) scale(1); opacity: 0; }
+  0% { transform: translate(157px, 132px) scale(1); opacity: 0; }
+  6% { transform: translate(157px, 120px) scale(1); opacity: 1; }
+  11% { transform: translate(157px, 122px) scale(1.05, .92); }
+  17% { transform: translate(157px, 120px) scale(1); opacity: 1; }
+  23% { transform: translate(153px, 138px) scale(1); }
+  28% { transform: translate(142px, 152px) scale(1); }
+  33% { transform: translate(126px, 161px) scale(1); }
+  38% { transform: translate(108px, 161px) scale(1); }
+  43% { transform: translate(91px, 154px) scale(1); }
+  48% { transform: translate(79px, 141px) scale(1); }
+  53% { transform: translate(73px, 124px) scale(1); }
+  58% { transform: translate(76px, 106px) scale(1); }
+  63% { transform: translate(85px, 90px) scale(1); }
+  68% { transform: translate(101px, 81px) scale(1); }
+  73% { transform: translate(119px, 78px) scale(1); }
+  78% { transform: translate(136px, 84px) scale(1); opacity: 1; }
+  82% { transform: translate(136px, 84px) scale(1.05, .92); }
+  88% { transform: translate(136px, 84px) scale(1); opacity: 1; }
+  94% { transform: translate(136px, 74px) scale(1); opacity: 0; }
+  100% { transform: translate(157px, 132px) scale(1); opacity: 0; }
 }
 
 /* ---- Booster HUD --------------------------------------------------------- */
@@ -1114,11 +1141,27 @@ button {
 .win-decor-horn.is-right { right: calc(-1 * var(--horn-out)); transform: translateY(42%) rotate(6deg); }
 .win-decor-horn.is-right img { animation-delay: .95s; }
 /* `-88%` of its own height, so ~12% of the cannon (its base) stays tucked
-   behind the card — see `.win-decor`'s note on the two layers. */
+   behind the card — see `.win-decor`'s note on the two layers.
+   The badge art is the same cool blue as the real cannon rig still sitting
+   in the scene behind it, so on its own it reads as a continuation of that
+   rig rather than a distinct badge — easy to lose entirely against a sky or
+   sand tone in the same family. `::before` gives it a plate to sit on (the
+   same cream as the card, `--panel`) so it pops regardless of what happens
+   to be behind it, the way the two horns already do by virtue of being warm
+   gold against a cool scene. */
 .win-decor-cannon {
   position: absolute; top: 0; left: 50%;
   display: block; width: 40%; transform: translate(-50%, -88%);
   animation: win-decor-pop-center .5s cubic-bezier(.34,1.56,.64,1) .1s both;
+}
+.win-decor-cannon::before {
+  content: "";
+  position: absolute; z-index: -1;
+  left: 50%; top: 8%; width: 88%; aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 4px 10px rgba(0,0,0,.25);
 }
 .win-decor-cannon img {
   display: block; width: 100%; height: auto;
