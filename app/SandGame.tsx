@@ -12,9 +12,11 @@ import {
   costumePrice,
   getSelectedCostume,
   isCostumeOwned,
+  markSkinBadgeSeen,
   resetOwnedCostumes,
   setSelectedCostume,
   unlockCostume,
+  unseenAffordableSkins,
   type CostumeId,
 } from "./game/costumes";
 import {
@@ -62,19 +64,7 @@ import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSo
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
 import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
-
-const COLOR_NAME: Record<SandColor, string> = {
-  red: "RED",
-  green: "GREEN",
-  yellow: "YELLOW",
-  blue: "BLUE",
-  purple: "PURPLE",
-  orange: "ORANGE",
-  cyan: "CYAN",
-  pink: "PINK",
-  lime: "LIME",
-  brown: "BROWN",
-};
+import { getLanguage, LANGUAGES, LANGUAGE_NAME, setLanguage, subscribeLanguage, t, type Strings } from "./i18n";
 
 function hex(color: SandColor) {
   return numHex(SAND_COLOR_HEX[color]);
@@ -101,20 +91,10 @@ function numHex(value: number) {
   return `#${value.toString(16).padStart(6, "0")}`;
 }
 
-/** Toast copy for booster-radius-prism-spec.md §7.1: a booster is spent the
- * instant a shot leaves the barrel, so "armed" is the only state worth
- * announcing — there is no separate "used" moment for the player to miss. */
-const BOOSTER_NAME: Record<BoosterType, string> = {
-  radiusOvercharge: "Radius Overcharge",
-  prismShot: "Prism Shot",
-};
-
-/** The Shop's one-line pitch for each booster — what a player who has never
- * armed one is actually buying. */
-const BOOSTER_DESC: Record<BoosterType, string> = {
-  radiusOvercharge: "Doubles the sorting disc for one shot.",
-  prismShot: "One shot takes every colour in reach, not just the one loaded.",
-};
+// Booster name/description copy (booster-radius-prism-spec.md §7.1's toast
+// language, and the Shop's one-line pitch) now lives in i18n.ts as
+// `s.boosterName`/`s.boosterDesc` — see `Strings` there — so both follow
+// whichever language is current instead of being fixed English records.
 
 /**
  * The Shop's Gems tab — real-money offers, none of it wired to an actual
@@ -176,25 +156,17 @@ const HOME_EXIT_MS = 480;
 const HUB_TABS = ["shop", "skin", "home", "gallery", "customize"] as const;
 type HubTab = (typeof HUB_TABS)[number];
 
-const HUB_TAB_NAME: Record<HubTab, string> = {
-  shop: "Shop",
-  skin: "Skin",
-  home: "Home",
-  gallery: "Gallery",
-  customize: "Customize",
-};
-
-/** What each still-unbuilt section is for, so its placeholder is not just an
- * apology. `shop` and `skin` have no entry read at runtime any more (they
- * have real panels now) but keep one so this stays a total
- * `Record<HubTab, string>`. */
-const HUB_TAB_BLURB: Record<HubTab, string> = {
-  shop: "",
-  skin: "",
-  home: "",
-  gallery: "",
-  customize: "Where the frame, the sand texture and the board's colours would be set.",
-};
+/** `HUB_TAB_NAME`/`HUB_TAB_BLURB`'s replacement, built inside the component
+ * from `s` (see `i18n.ts`) rather than kept as module-level constants — the
+ * name and blurb have to follow whichever language is current. `shop` and
+ * `skin` have no blurb read at runtime any more (they have real panels now)
+ * but keep an entry so this stays a total `Record<HubTab, string>`. */
+function hubTabNames(s: Strings): Record<HubTab, string> {
+  return { shop: s.tabShop, skin: s.tabSkin, home: s.tabHome, gallery: s.tabGallery, customize: s.tabCustomize };
+}
+function hubTabBlurbs(s: Strings): Record<HubTab, string> {
+  return { shop: "", skin: "", home: "", gallery: "", customize: s.customizeBlurb };
+}
 
 /** One small shape set per tab (Gallery and Customize — the other three now
  * use a real photographic asset instead, see `TAB_PHOTO_ICON` below), line
@@ -327,7 +299,7 @@ function CancelIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "menu" | "help" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target";
+type ChromeGlyph = "menu" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
@@ -341,12 +313,6 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
               shows (a gear button opening a menu with a gear item inside
               read as the settings button nested in itself). */}
           <path d="M4.6 7.2h14.8M4.6 12h14.8M4.6 16.8h14.8" />
-        </>
-      )}
-      {name === "help" && (
-        <>
-          <path d="M9.3 9.1a2.8 2.8 0 0 1 5.4.9c0 1.9-2.7 2.2-2.7 4" />
-          <path d="M12 17.4v.1" strokeWidth="2.6" />
         </>
       )}
       {name === "sound-on" && (
@@ -594,74 +560,6 @@ function markTutorialSeen(id: number) {
   }
 }
 
-/**
- * Unlike `tutorial`, `ftueGesture` is not a "shown once, ever" overlay — a
- * teaching aid that costs zero clicks to dismiss (it clears itself on the
- * player's own first touch) is cheap enough to bring back on its own once the
- * lesson has plausibly gone stale, rather than trusting a player to remember
- * a control from a single showing weeks ago. Two independent triggers decide
- * that, either is enough:
- *
- *  - the app was killed and relaunched since the glyph last showed —
- *    `sessionStorage`, not `localStorage`, records "shown this run", so a
- *    fresh process (a fresh `sessionStorage`) always earns a replay;
- *  - enough real time has passed since it last showed that it is worth
- *    repeating even inside the one still-running session
- *    (`FTUE_GESTURE_REPLAY_AFTER_MS`) — the "quay lại sau một thời gian"
- *    case, for an app instance that goes a long while without ever actually
- *    being killed (backgrounded, not terminated).
- *
- * `lastShown` lives in `localStorage`, keyed by level id, because it has to
- * survive the very kill/relaunch the first trigger is built to detect.
- */
-const FTUE_GESTURE_LAST_SHOWN_KEY = "sand-cannon:v1:ftue-gesture-last-shown";
-const FTUE_GESTURE_SESSION_KEY_PREFIX = "sand-cannon:v1:ftue-gesture-session-shown:";
-/** Six hours reads as "a different sitting", not a momentary alt-tab. */
-const FTUE_GESTURE_REPLAY_AFTER_MS = 6 * 60 * 60 * 1000;
-
-function loadFtueGestureLastShown(): Record<number, number> {
-  try {
-    const raw = window.localStorage.getItem(FTUE_GESTURE_LAST_SHOWN_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : {};
-    if (!parsed || typeof parsed !== "object") return {};
-    const result: Record<number, number> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const id = Number(key);
-      if (Number.isFinite(id) && typeof value === "number") result[id] = value;
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function shouldShowFtueGesture(id: number): boolean {
-  try {
-    if (!window.sessionStorage.getItem(`${FTUE_GESTURE_SESSION_KEY_PREFIX}${id}`)) return true;
-  } catch {
-    // Private browsing can refuse sessionStorage outright — showing the
-    // glyph is the safe direction to fail in for a teaching aid.
-    return true;
-  }
-  const lastShown = loadFtueGestureLastShown()[id];
-  return lastShown === undefined || Date.now() - lastShown >= FTUE_GESTURE_REPLAY_AFTER_MS;
-}
-
-function markFtueGestureShown(id: number) {
-  try {
-    const next = loadFtueGestureLastShown();
-    next[id] = Date.now();
-    window.localStorage.setItem(FTUE_GESTURE_LAST_SHOWN_KEY, JSON.stringify(next));
-  } catch {
-    // Falls back to showing again next time — see loadFtueGestureLastShown.
-  }
-  try {
-    window.sessionStorage.setItem(`${FTUE_GESTURE_SESSION_KEY_PREFIX}${id}`, "1");
-  } catch {
-    // Same fallback.
-  }
-}
-
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
@@ -713,13 +611,13 @@ export default function SandGame() {
   const levelIndex = chosenIndex ?? boot.initialIndex;
   const [runId, setRunId] = useState(0);
   // Whether the tutorial overlay is open. Opened by `startPlaying` the first
-  // time a level with unread `tutorial` content starts play, and reopenable
-  // any time from the HUD's help button.
+  // time a level with unread `tutorial` content starts play.
   const [tutorialOpen, setTutorialOpen] = useState(false);
   // Same shape as `tutorialOpen`, for `ftueGesture` levels' hand/drag glyph —
-  // opened by `startPlaying`, but also closed early by the engine's own
-  // `AIM_TOUCHED` event (see the effect below): the glyph's job is done the
-  // instant the player makes their own first touch on the real joystick.
+  // opened by `startPlaying` every time such a level starts play, and closed
+  // early by the engine's own `AIM_TOUCHED` event (see the effect below): the
+  // glyph's job is done the instant the player makes their own first touch on
+  // the real joystick.
   const [ftueGestureOpen, setFtueGestureOpen] = useState(false);
 
   // The engine simulates and reports state at pixel resolution — every number
@@ -1040,6 +938,19 @@ export default function SandGame() {
   // Same one-place-writes-it reasoning as `soundOn` above, for the haptics
   // module's own stored preference.
   const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
+  // Unlike `soundOn`/`vibrationOn` above, this can't be a plain `useState(()
+  // => getLanguage())`: that reads real client storage on the very first
+  // client render, while the server pass (which never sees localStorage)
+  // rendered "en" — a text mismatch `useSyncExternalStore` exists to
+  // reconcile safely (`() => "en"` is what the server, and the first client
+  // pass during hydration, render; `getLanguage`/`subscribeLanguage` are what
+  // every render after that reads and reacts to). `s` is every piece of copy
+  // this render needs, in whichever language is current; every JSX string
+  // below reads through it rather than branching on `language` itself.
+  const language = useSyncExternalStore(subscribeLanguage, getLanguage, () => "en" as const);
+  const s = t(language);
+  const HUB_TAB_NAME = hubTabNames(s);
+  const HUB_TAB_BLURB = hubTabBlurbs(s);
   // The one unified Settings card (see globals.css's own comment on
   // `.settings-screen`) — opened from the same gear button either way,
   // `!playing` (the hub) or mid-play (`.settings-wrap`'s in-play button),
@@ -1232,7 +1143,11 @@ export default function SandGame() {
    */
   const buySkin = useCallback((id: CostumeId) => {
     if (!spendEmeralds(costumePrice(id))) {
-      pushToast("Not enough Blue Emerald", "warn");
+      // Reads the language fresh rather than through the outer `s`: this
+      // callback is memoised once per `[pushToast, engine]`, not per render,
+      // so a stale closure would keep announcing in whatever language was
+      // active when it was created instead of whichever is active now.
+      pushToast(t(getLanguage()).toastNotEnoughEmerald, "warn");
       setSkinBuyConfirm(null);
       return;
     }
@@ -1267,6 +1182,12 @@ export default function SandGame() {
     if (!host || !aimZone || !crosshair) return;
 
     const onEvent = (event: SandEngineEvent) => {
+      // Read fresh, not through the outer `s`: this handler is captured once
+      // per `[level, runId, pushToast]` by the effect below, not per render,
+      // so a stale closure would keep announcing in whatever language was
+      // active when the engine was (re)built instead of whichever is active
+      // by the time a shot actually lands.
+      const s = t(getLanguage());
       switch (event.type) {
         case "AIM_TOUCHED":
           // The gesture glyph's whole job is to get out of the way the moment
@@ -1278,21 +1199,21 @@ export default function SandGame() {
           // A shot can land on sand and still take nothing — the disc simply
           // found none of its colour in reach. That looks like a bug unless it
           // is said out loud.
-          pushToast(`No ${COLOR_NAME[event.ammo]} in range — shot spent`, "warn");
+          pushToast(s.toastNoColorInRange(s.colorName(event.ammo)), "warn");
           break;
         case "MISS":
           // A shot that never reached sand costs nothing (MISS_IS_FREE_TEMP),
           // and the player has to be told, or a missing shot is the only clue.
-          pushToast(event.hitFrame ? "Hit the frame — no shot spent" : "Missed the frame — no shot spent", "warn");
+          pushToast(event.hitFrame ? s.toastHitFrame : s.toastMissedFrame, "warn");
           break;
         case "UNLOCKED":
-          pushToast("Lock opened — the sand is free", "good");
+          pushToast(s.toastLockOpened, "good");
           break;
         case "BOOSTER_ARMED":
-          pushToast(`${BOOSTER_NAME[event.booster]} armed — next shot`, "good");
+          pushToast(s.toastBoosterArmed(s.boosterName(event.booster)), "good");
           break;
         case "BOOSTER_DISARMED":
-          pushToast(`${BOOSTER_NAME[event.booster]} cancelled`, "warn");
+          pushToast(s.toastBoosterCancelled(s.boosterName(event.booster)), "warn");
           break;
         default:
           break;
@@ -1437,10 +1358,14 @@ export default function SandGame() {
   }, [tab, engine]);
 
   /** A thumbnail tap: swaps the live rig so the showroom shows that skin, but
-   * does not save anything — only the Select button does that. */
+   * does not save anything — only the Select button does that. Also dismisses
+   * that card's afford-notification dot, if it is wearing one — a look is
+   * enough to acknowledge it, buying is not required (see
+   * `unseenAffordableSkins`'s own comment on what that dot means). */
   const previewCostumeCard = useCallback((id: CostumeId) => {
     setPreviewCostume(id);
     engine?.setCostume(id);
+    markSkinBadgeSeen(id);
   }, [engine]);
 
   /** The Select button: saves whatever the showroom is currently previewing. */
@@ -1470,9 +1395,8 @@ export default function SandGame() {
       setTutorialOpen(true);
       markTutorialSeen(level.id);
     }
-    if (level.ftueGesture && shouldShowFtueGesture(level.id)) {
+    if (level.ftueGesture) {
       setFtueGestureOpen(true);
-      markFtueGestureShown(level.id);
     }
   }, [level]);
 
@@ -1599,6 +1523,13 @@ export default function SandGame() {
   // all three places at once.
   const previewOwned = isCostumeOwned(previewCostume);
   const previewPrice = costumePrice(previewCostume);
+  // Every skin the wallet's current Blue Emerald covers, is not yet owned,
+  // and has not already had its dot dismissed (`markSkinBadgeSeen`) — drives
+  // both the Skin tab's own dot (non-empty) and which card(s) in the picker
+  // wear one. Recomputed every render for the same reason `previewOwned`
+  // above is: a purchase or a dismiss has to show up immediately, not on the
+  // next unrelated re-render.
+  const unseenSkins = unseenAffordableSkins(wallet.emeralds);
   const buyConfirmPrice = buyConfirm ? boosterPrice(buyConfirm) : 0;
   const buyQtyCap = buyConfirmPrice > 0 ? Math.min(99, Math.floor(wallet.gold / buyConfirmPrice)) : 99;
 
@@ -1660,8 +1591,12 @@ export default function SandGame() {
               role="status"
               aria-label={
                 loadedAmmo
-                  ? `${remainingLabel} ${COLOR_NAME[loadedAmmo]} shots left, next up ${upcomingAmmo.map((color) => COLOR_NAME[color]).join(", ") || "nothing"}`
-                  : `${remainingLabel} shots left`
+                  ? s.shotsLeftWithNext(
+                      remainingLabel,
+                      s.colorName(loadedAmmo),
+                      upcomingAmmo.map((color) => s.colorName(color)).join(", ") || s.nothing,
+                    )
+                  : s.shotsLeftOnly(remainingLabel)
               }
             >
               <span
@@ -1696,39 +1631,27 @@ export default function SandGame() {
           </header>
         </div>
 
-        {/* Same top-right corner and the same gear either way now — mid-play
-            just adds the help button beside it. The old mid-play menu (level
-            grid, Home/Restart/Settings rows behind a hamburger) is gone: the
-            gear now opens the one unified Settings card directly, same as
-            the hub, and `.settings-round-actions` inside that card is what
-            covers Home/Restart while a level is open (see its own comment).
-            Shown on every hub tab, Skin included now — none of the
-            full-screen takeovers (Skin, Shop, Gallery) have a close button
-            of their own, so this gear is the one settings entry point that
-            has to stay reachable no matter which one is open. The reward
-            chest is the one exception: it is a short animation that ends in a
-            Collect button, not a screen a player can get stuck on, and a gear
-            floating over it would be the only thing on that frame besides the
-            chest. */}
+        {/* Same top-right corner and the same gear either way now. The old
+            mid-play menu (level grid, Home/Restart/Settings rows behind a
+            hamburger) is gone: the gear now opens the one unified Settings
+            card directly, same as the hub, and `.settings-round-actions`
+            inside that card is what covers Home/Restart while a level is
+            open (see its own comment). Shown on every hub tab, Skin included
+            now — none of the full-screen takeovers (Skin, Shop, Gallery)
+            have a close button of their own, so this gear is the one
+            settings entry point that has to stay reachable no matter which
+            one is open. The reward chest is the one exception: it is a short
+            animation that ends in a Collect button, not a screen a player
+            can get stuck on, and a gear floating over it would be the only
+            thing on that frame besides the chest. */}
         {!chest && !cannonUnlock && (
           <div className="settings-wrap">
-            {playing && (level.tutorial || level.ftueGesture) && (
-              <button
-                type="button"
-                className="icon-button help-button"
-                onClick={() => (level.tutorial ? setTutorialOpen(true) : setFtueGestureOpen(true))}
-                aria-label="How to play this level"
-                title="How to play"
-              >
-                <Glyph name="help" />
-              </button>
-            )}
             <button
               type="button"
               className="icon-button settings-button"
               onClick={() => setSettingsOpen(true)}
-              aria-label="Settings"
-              title="Settings"
+              aria-label={s.settingsTitle}
+              title={s.settingsTitle}
             >
               <img className="settings-button-icon" src="/icons/SettingIcon.png" alt="" aria-hidden="true" />
             </button>
@@ -1765,8 +1688,8 @@ export default function SandGame() {
               type="button"
               className="icon-button gift-button"
               onClick={() => setDailyLoginOverride(getDailyLoginState())}
-              aria-label="Daily login reward"
-              title="Daily login reward"
+              aria-label={s.dailyLoginAria}
+              title={s.dailyLoginAria}
             >
               <img className="gift-button-icon" src="/icons/LoginIcon.png" alt="" aria-hidden="true" />
             </button>
@@ -1788,7 +1711,7 @@ export default function SandGame() {
               key={goldBump}
               className="hub-gold-wrap"
               onClick={openCoinPacks}
-              aria-label={`${displayGold} coins — buy more`}
+              aria-label={s.coinsAria(displayGold)}
             >
               <CoinIcon />
               <span className="hub-gold-badge" ref={goldHudRef}>
@@ -1808,7 +1731,7 @@ export default function SandGame() {
                 there is nowhere for a tap to go. A real flex row rather than a
                 second fixed inset: gold's pill grows with its digit count, and
                 only a row keeps the two flush as it does. */}
-            <div className="hub-emerald-wrap" role="status" aria-label={`${wallet.emeralds} Blue Emerald`}>
+            <div className="hub-emerald-wrap" role="status" aria-label={s.emeraldAria(wallet.emeralds)}>
               <EmeraldIcon />
               <span className="hub-emerald-badge">
                 <strong>{wallet.emeralds}</strong>
@@ -1870,7 +1793,7 @@ export default function SandGame() {
               `<g>`'s local origin, the same "fingertip at (0,0)" contract
               the old hand-drawn shapes used. */}
           {playing && ftueGestureOpen && level.ftueGesture && (
-            <div className="ftue-gesture" role="status" aria-label="Drag to aim, release to fire">
+            <div className="ftue-gesture" role="status" aria-label={s.dragToAim}>
               <svg className="ftue-gesture-glyph" viewBox="0 0 220 190" aria-hidden="true">
                 <circle className="ftue-gesture-ring ftue-gesture-ring-a" cx="90" cy="135" r="17" />
                 <circle className="ftue-gesture-ring ftue-gesture-ring-b" cx="140" cy="100" r="17" />
@@ -1878,7 +1801,7 @@ export default function SandGame() {
                   <image href="/icons/FTUEicon.png" x={-33} y={-69} width={72} height={83} />
                 </g>
               </svg>
-              <span className="ftue-gesture-caption">Drag to aim · release to fire</span>
+              <span className="ftue-gesture-caption">{s.dragToAimCaption}</span>
             </div>
           )}
 
@@ -1917,9 +1840,9 @@ export default function SandGame() {
                     className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
                     onClick={() => engine?.armBooster(type)}
                     disabled={busy || charges <= 0 || (armedBooster !== null && armedBooster !== type)}
-                    aria-label={`${BOOSTER_NAME[type]} — ${charges} left`}
+                    aria-label={s.boosterAria(s.boosterName(type), charges)}
                     aria-pressed={armedBooster === type}
-                    title={`${BOOSTER_NAME[type]} — ${charges} left`}
+                    title={s.boosterAria(s.boosterName(type), charges)}
                   >
                     <BoosterIcon type={type} />
                     {/* Spec §4's reserved charge-count badge, now shown for real
@@ -1937,7 +1860,7 @@ export default function SandGame() {
             <div
               className="settle-badge"
               role="status"
-              aria-label={state.phase === "PROJECTILE_FLYING" ? "Shot in flight" : "Sand settling"}
+              aria-label={state.phase === "PROJECTILE_FLYING" ? s.shotInFlight : s.sandSettling}
             >
               <i />
               <i />
@@ -1968,7 +1891,7 @@ export default function SandGame() {
           <div
             className={`hub-screen${playing ? " is-leaving" : ""}`}
             role="group"
-            aria-label="Home screen"
+            aria-label={s.homeScreenAria}
             aria-hidden={playing || undefined}
           >
 
@@ -1978,9 +1901,9 @@ export default function SandGame() {
                   type="button"
                   className="hub-play-btn"
                   onClick={startPlaying}
-                  aria-label={`Play ${level.name}`}
+                  aria-label={s.playLevelAria(s.levelName(level.name))}
                 >
-                  Level {level.id}
+                  {s.levelButtonLabel(level.id)}
                 </button>
                 {/* The reward track, in the slot the dead "Modes" chip used
                     to hold and sized to match Play beside it (see
@@ -2001,11 +1924,11 @@ export default function SandGame() {
                   }}
                   aria-label={
                     track.canClaim
-                      ? `Open reward chest — ${track.chestReward} Blue Emerald`
-                      : `Reward track — ${track.filled} of ${NODES_PER_CHEST} levels`
+                      ? s.openRewardChestAria(track.chestReward)
+                      : s.rewardTrackAria(track.filled, NODES_PER_CHEST)
                   }
                 >
-                  <span className="hub-track-label" aria-hidden="true">Progression Chest</span>
+                  <span className="hub-track-label" aria-hidden="true">{s.progressionChest}</span>
                   <span className="hub-track-row">
                     <span className="hub-track-bar" aria-hidden="true">
                       <span
@@ -2030,20 +1953,20 @@ export default function SandGame() {
                 className="hub-scrim"
                 type="button"
                 onClick={() => setTab("home")}
-                aria-label={`Close ${HUB_TAB_NAME[tab]}`}
+                aria-label={s.closeTab(HUB_TAB_NAME[tab])}
               />
             )}
 
             {/* Kept off the home tab itself — the cannon and the level name
                 would otherwise sit on top of the picture the moment it starts
                 turning, which is the one thing this screen is meant to show off. */}
-            {tab !== "home" && <h2 className="hub-level-name">{level.name}</h2>}
+            {tab !== "home" && <h2 className="hub-level-name">{s.levelName(level.name)}</h2>}
 
             {tab !== "home" && (
               <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
                 <h3>{HUB_TAB_NAME[tab]}</h3>
                 <p>{HUB_TAB_BLURB[tab]}</p>
-                <p className="hub-panel-note">Not built yet.</p>
+                <p className="hub-panel-note">{s.notBuiltYet}</p>
               </div>
             )}
           </div>
@@ -2068,8 +1991,8 @@ export default function SandGame() {
           >
             {!cannonUnlock && (
               <div className="skin-heading">
-                <h2 id="skin-title">{COSTUMES[previewCostume].name}</h2>
-                <p className="skin-tagline">{COSTUMES[previewCostume].tagline}</p>
+                <h2 id="skin-title">{s.costumeName(previewCostume)}</h2>
+                <p className="skin-tagline">{s.costumeTagline(previewCostume)}</p>
               </div>
             )}
 
@@ -2100,11 +2023,11 @@ export default function SandGame() {
                 role="button"
                 tabIndex={0}
                 onClick={() => { if (cannonUnlockTapReady) dismissCannonUnlock(); }}
-                aria-label={`You unlocked ${COSTUMES[cannonUnlock].name}.${cannonUnlockTapReady ? " Tap to continue." : ""}`}
+                aria-label={`${s.youUnlocked(s.costumeName(cannonUnlock))}${cannonUnlockTapReady ? ` ${s.tapToContinue}.` : ""}`}
               >
-                <p className="cannon-unlock-text" aria-hidden="true">You unlocked {COSTUMES[cannonUnlock].name}!</p>
+                <p className="cannon-unlock-text" aria-hidden="true">{s.youUnlocked(s.costumeName(cannonUnlock))}</p>
                 {cannonUnlockTapReady && (
-                  <p className="cannon-unlock-tap" aria-hidden="true">Tap to continue</p>
+                  <p className="cannon-unlock-tap" aria-hidden="true">{s.tapToContinue}</p>
                 )}
               </div>
             )}
@@ -2123,7 +2046,7 @@ export default function SandGame() {
                 onClick={() => setSkinBuyConfirm(previewCostume)}
               >
                 <span className="skin-equip-label">
-                  Buy <EmeraldIcon /> {previewPrice}
+                  {s.buyLabel} <EmeraldIcon /> {previewPrice}
                 </span>
               </button>
             ) : (
@@ -2134,7 +2057,7 @@ export default function SandGame() {
                 disabled={previewCostume === costume}
                 onAnimationEnd={() => setJustEquippedPulse(false)}
               >
-                <span className="skin-equip-label">{previewCostume === costume ? "Selected" : "Select"}</span>
+                <span className="skin-equip-label">{previewCostume === costume ? s.selectedLabel : s.selectLabel}</span>
               </button>
             )}
 
@@ -2156,8 +2079,15 @@ export default function SandGame() {
                       className={`skin-card${previewCostume === id ? " is-previewing" : ""}${owned ? "" : " is-locked"}`}
                       onClick={() => previewCostumeCard(id)}
                       aria-pressed={previewCostume === id}
-                      aria-label={`${def.name}${owned ? (costume === id ? ", equipped" : "") : `, locked — ${costumePrice(id)} Blue Emerald`}`}
+                      aria-label={`${s.costumeName(id)}${owned ? (costume === id ? s.equippedSuffix : "") : s.lockedSuffix(costumePrice(id))}${unseenSkins.includes(id) ? s.affordableSuffix : ""}`}
                     >
+                      {/* The card-level twin of `.hub-nav-dot`: this specific
+                          skin, not just "the Skin tab", is one the wallet can
+                          afford and the player has not dismissed yet. A tap
+                          anywhere on this card (`previewCostumeCard`) clears
+                          it via `markSkinBadgeSeen`, whether or not the player
+                          goes on to buy. */}
+                      {unseenSkins.includes(id) && <span className="skin-card-dot" aria-hidden="true" />}
                       {thumbnail
                         // A data URL rendered from the rig itself a moment
                         // ago: there is no file for an image loader to
@@ -2192,9 +2122,9 @@ export default function SandGame() {
             reasoning as the skin picker and Shop: `.hub-nav` stays mounted
             over this screen too, so tapping any other tab is how you leave. */}
         {tab === "gallery" && (
-          <div className="gallery-screen" role="dialog" aria-label="Gallery">
+          <div className="gallery-screen" role="dialog" aria-label={s.galleryTitle}>
             <div className="gallery-heading">
-              <h2>Gallery</h2>
+              <h2>{s.galleryTitle}</h2>
             </div>
             <div className="hub-gallery">
               {playables.map((entry, index) => {
@@ -2226,8 +2156,8 @@ export default function SandGame() {
                     aria-current={index === levelIndex ? "true" : undefined}
                     title={
                       unlocked
-                        ? entry.fromEditor ? `${entry.level.name} (from the editor)` : entry.level.name
-                        : "Clear the level before this one to unlock"
+                        ? `${s.levelName(entry.level.name)}${entry.fromEditor ? s.fromEditorSuffix : ""}`
+                        : s.lockedCardTitle
                     }
                   >
                     <span className="hub-gallery-thumb">
@@ -2243,7 +2173,7 @@ export default function SandGame() {
                         </span>
                       )}
                     </span>
-                    <b>{unlocked ? entry.level.name : "Locked"}</b>
+                    <b>{unlocked ? s.levelName(entry.level.name) : s.lockedLabel}</b>
                   </button>
                 );
               })}
@@ -2264,23 +2194,23 @@ export default function SandGame() {
             as the skin picker: `.hub-nav` stays mounted over this screen
             too, so tapping any other tab is how you leave. */}
         {tab === "shop" && (
-          <div className="shop-screen" role="dialog" aria-label="Shop">
+          <div className="shop-screen" role="dialog" aria-label={s.shopTitle}>
             <div className="shop-heading">
-              <h2>Shop</h2>
+              <h2>{s.shopTitle}</h2>
               {/* Only shown on the Gems tab — gems have no other readout
                   anywhere else in the game yet (unlike gold's persistent
                   `.hub-gold-badge`, top-left on every hub screen including
                   this one), so there is no "always on" corner for it to
                   live in instead. */}
               {shopTab === "gems" && (
-                <div className="shop-gem-badge" aria-label={`${wallet.gems} gems`}>
+                <div className="shop-gem-badge" aria-label={s.gemsAria(wallet.gems)}>
                   <GemIcon />
                   <strong>{wallet.gems}</strong>
                 </div>
               )}
             </div>
 
-            <div className="shop-tabs" role="tablist" aria-label="Shop currency tabs">
+            <div className="shop-tabs" role="tablist" aria-label={s.shopCurrencyTabsAria}>
               <button
                 type="button"
                 role="tab"
@@ -2288,7 +2218,7 @@ export default function SandGame() {
                 className={`shop-tab-btn is-gems${shopTab === "gems" ? " is-active" : ""}`}
                 onClick={() => setShopTab("gems")}
               >
-                Gems
+                {s.gemsTab}
               </button>
               <button
                 type="button"
@@ -2297,7 +2227,7 @@ export default function SandGame() {
                 className={`shop-tab-btn is-coins${shopTab === "coins" ? " is-active" : ""}`}
                 onClick={() => setShopTab("coins")}
               >
-                Coins
+                {s.coinsTab}
               </button>
             </div>
 
@@ -2318,8 +2248,8 @@ export default function SandGame() {
               <div className="shop-panel">
                 <div className="shop-section">
                   <div className="shop-section-head">
-                    <h3>Special Offers</h3>
-                    <p>Limited-time bundles</p>
+                    <h3>{s.specialOffers}</h3>
+                    <p>{s.limitedTimeBundles}</p>
                   </div>
                   {/* Stacked top to bottom, not a side-scrolling rail — every
                       offer is visible without a swipe, the same "no hidden
@@ -2327,8 +2257,8 @@ export default function SandGame() {
                   <div className="offer-stack">
                     {SPECIAL_OFFERS.map((offer) => (
                       <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
-                        <span className="offer-tag">{offer.tag}</span>
-                        <h4>{offer.name}</h4>
+                        <span className="offer-tag">{s.offerTag(offer.id)}</span>
+                        <h4>{s.offerName(offer.id)}</h4>
                         <div className="offer-contents">
                           <GemIcon /> {offer.gems.toLocaleString("en-US")}
                           {offer.coins != null && (
@@ -2337,7 +2267,7 @@ export default function SandGame() {
                               <CoinIcon /> {offer.coins.toLocaleString("en-US")}
                             </>
                           )}
-                          {offer.bonus && <span className="offer-plus">{offer.bonus}</span>}
+                          {offer.bonus && <span className="offer-plus">{s.offerFlag(offer.bonus)}</span>}
                         </div>
                         <button type="button" className="buy-btn" onClick={notifyIapComingSoon}>
                           {offer.price}
@@ -2349,21 +2279,21 @@ export default function SandGame() {
 
                 <div className="shop-section">
                   <div className="shop-section-head">
-                    <h3>Bundles</h3>
-                    <p>Gems and coins together</p>
+                    <h3>{s.bundlesTitle}</h3>
+                    <p>{s.gemsAndCoinsTogether}</p>
                   </div>
                   <div className="bundle-list">
                     {BUNDLES.map((bundle) => (
                       <div key={bundle.id} className={`bundle-row${bundle.flag ? " is-best" : ""}`}>
                         <div className="bundle-icon"><GemIcon /></div>
                         <div className="bundle-mid">
-                          {bundle.flag && <div className="bundle-flag">{bundle.flag}</div>}
+                          {bundle.flag && <div className="bundle-flag">{s.offerFlag(bundle.flag)}</div>}
                           <div className="bundle-amount">
-                            {bundle.gems.toLocaleString("en-US")} Gems
+                            {bundle.gems.toLocaleString("en-US")} {s.gemsSuffix}
                             {bundle.bonus && <span className="bundle-bonus">{bundle.bonus}</span>}
                           </div>
                           <div className="bundle-sub">
-                            <CoinIcon /> {bundle.coins.toLocaleString("en-US")} Coins
+                            <CoinIcon /> {bundle.coins.toLocaleString("en-US")} {s.coinsSuffix}
                           </div>
                         </div>
                         <button type="button" className="bundle-price" onClick={notifyIapComingSoon}>
@@ -2376,12 +2306,12 @@ export default function SandGame() {
 
                 <div className="shop-section" ref={coinPackSectionRef}>
                   <div className="shop-section-head">
-                    <h3>Coins</h3>
-                    <p>Buy coins directly — no gems needed</p>
+                    <h3>{s.coinsTitle}</h3>
+                    <p>{s.buyCoinsDirectly}</p>
                   </div>
                   <div className="pack-grid">
                     {COIN_PACKS.map((pack) => (
-                      <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag}>
+                      <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
                         <CoinIcon />
                         <div className="pack-amount">
                           {pack.coins.toLocaleString("en-US")}
@@ -2408,12 +2338,12 @@ export default function SandGame() {
                     const canAfford = wallet.gold >= price;
                     return (
                       <div key={type} className="shop-card">
-                        {/* The one-line pitch (`BOOSTER_DESC`) dropped out of the
+                        {/* The one-line pitch (`s.boosterDesc`) dropped out of the
                             card itself — name only, per feedback that the card
                             should read as clean as the sketch it started from —
                             but stays reachable as a hover tooltip rather than
                             disappearing outright. */}
-                        <b className="shop-card-name" title={BOOSTER_DESC[type]}>{BOOSTER_NAME[type]}</b>
+                        <b className="shop-card-name" title={s.boosterDesc(type)}>{s.boosterName(type)}</b>
                         <div className={`shop-card-frame is-${type === "radiusOvercharge" ? "radius" : "prism"}`}>
                           <span className="shop-card-icon">
                             <BoosterIcon type={type} />
@@ -2437,7 +2367,7 @@ export default function SandGame() {
                             setBuyQty(1);
                             setBuyConfirm(type);
                           }}
-                          aria-label={`Buy ${BOOSTER_NAME[type]} for ${price} coins${owned > 0 ? `, ${owned} owned` : ""}`}
+                          aria-label={s.buyBoosterAria(s.boosterName(type), price, owned)}
                         >
                           <CoinIcon /> {price}
                         </button>
@@ -2455,7 +2385,7 @@ export default function SandGame() {
                 background), and a snackbar that scrolled away with whatever
                 panel is open would miss the tap that triggered it. */}
             {iapNotice && (
-              <div className="shop-iap-toast" role="status">Real-money purchases aren't live in this build yet.</div>
+              <div className="shop-iap-toast" role="status">{s.iapComingSoon}</div>
             )}
           </div>
         )}
@@ -2475,16 +2405,16 @@ export default function SandGame() {
             confirm from before a tab switch can never reappear over a
             different screen — see the effect that clears it on tab change. */}
         {tab === "shop" && buyConfirm && (
-          <div className="result-screen" role="dialog" aria-modal="true" aria-label={`Buy ${BOOSTER_NAME[buyConfirm]}`}>
+          <div className="result-screen" role="dialog" aria-modal="true" aria-label={s.buyBoosterQuestion(s.boosterName(buyConfirm))}>
             <div className="result-card confirm-card">
-              <h2>Buy {BOOSTER_NAME[buyConfirm]}?</h2>
+              <h2>{s.buyBoosterQuestion(s.boosterName(buyConfirm))}</h2>
               <div className="confirm-info">
                 <div className="confirm-info-row">
-                  <span>Currently own</span>
+                  <span>{s.currentlyOwn}</span>
                   <strong>{wallet.boosters[buyConfirm]}</strong>
                 </div>
                 <div className="confirm-info-row">
-                  <span>Buying</span>
+                  <span>{s.buying}</span>
                   <span className="confirm-qty-stepper">
                     <button
                       type="button"
@@ -2495,7 +2425,7 @@ export default function SandGame() {
                       onPointerLeave={stopQtyHold}
                       onPointerCancel={stopQtyHold}
                       onClick={() => stepQtyOnClick(() => setBuyQty((qty) => Math.max(0, qty - 1)))}
-                      aria-label="Decrease quantity"
+                      aria-label={s.decreaseQuantity}
                     >
                       <StepperArrow direction="prev" />
                     </button>
@@ -2509,14 +2439,14 @@ export default function SandGame() {
                       onPointerLeave={stopQtyHold}
                       onPointerCancel={stopQtyHold}
                       onClick={() => stepQtyOnClick(() => setBuyQty((qty) => Math.min(buyQtyCap, qty + 1)))}
-                      aria-label="Increase quantity"
+                      aria-label={s.increaseQuantity}
                     >
                       <StepperArrow direction="next" />
                     </button>
                   </span>
                 </div>
                 <div className="confirm-info-row">
-                  <span>Total cost</span>
+                  <span>{s.totalCost}</span>
                   <strong><CoinIcon /> {buyConfirmPrice * buyQty}</strong>
                 </div>
               </div>
@@ -2535,17 +2465,17 @@ export default function SandGame() {
                     // the click, so the message still has to add the batch
                     // itself.
                     if (buyBoosterCharges(type, qty)) {
-                      pushToast(`Bought ${BOOSTER_NAME[type]} ×${qty} — ${owned + qty} owned`, "good");
+                      pushToast(s.toastBoughtBooster(s.boosterName(type), qty, owned + qty), "good");
                     } else {
-                      pushToast("Not enough coins", "warn");
+                      pushToast(s.toastNotEnoughCoins, "warn");
                     }
                     setBuyConfirm(null);
                   }}
                 >
-                  Yes, buy
+                  {s.yesBuy}
                 </button>
                 <button type="button" className="is-quiet" onClick={() => setBuyConfirm(null)}>
-                  No
+                  {s.no}
                 </button>
               </div>
             </div>
@@ -2558,16 +2488,16 @@ export default function SandGame() {
             state itself, same as the Shop's dialog: a confirm left open
             behind a tab switch must not reappear on the way back. */}
         {tab === "skin" && skinBuyConfirm && (
-          <div className="result-screen" role="dialog" aria-modal="true" aria-label={`Buy ${COSTUMES[skinBuyConfirm].name}`}>
+          <div className="result-screen" role="dialog" aria-modal="true" aria-label={s.buySkinQuestion(s.costumeName(skinBuyConfirm))}>
             <div className="result-card confirm-card">
-              <h2>Buy {COSTUMES[skinBuyConfirm].name}?</h2>
+              <h2>{s.buySkinQuestion(s.costumeName(skinBuyConfirm))}</h2>
               <div className="confirm-info">
                 <div className="confirm-info-row">
-                  <span>Price</span>
+                  <span>{s.price}</span>
                   <strong><EmeraldIcon /> {costumePrice(skinBuyConfirm)}</strong>
                 </div>
                 <div className="confirm-info-row">
-                  <span>You have</span>
+                  <span>{s.youHave}</span>
                   <strong><EmeraldIcon /> {wallet.emeralds}</strong>
                 </div>
               </div>
@@ -2577,10 +2507,10 @@ export default function SandGame() {
                   disabled={wallet.emeralds < costumePrice(skinBuyConfirm)}
                   onClick={() => buySkin(skinBuyConfirm)}
                 >
-                  Yes, buy
+                  {s.yesBuy}
                 </button>
                 <button type="button" className="is-quiet" onClick={() => setSkinBuyConfirm(null)}>
-                  No
+                  {s.no}
                 </button>
               </div>
             </div>
@@ -2593,7 +2523,7 @@ export default function SandGame() {
             emerald bursts out of it. The amount and the Collect button only
             appear at the "revealed" phase, so nothing spoils the opening. */}
         {chest && (
-          <div className="reward-screen" role="dialog" aria-modal="true" aria-label="Reward chest">
+          <div className="reward-screen" role="dialog" aria-modal="true" aria-label={s.rewardChestAria}>
             {/* Deliberately empty, the same way `.skin-stage` is: everything
                 that happens in this space — the chest, the light out of its
                 mouth, the emeralds it throws and where they land — is the 3D
@@ -2603,7 +2533,7 @@ export default function SandGame() {
                 never ride up over it. */}
             <div className="reward-stage" aria-hidden="true" />
             <p className="reward-caption">
-              {chest.phase === "revealed" ? "Reward unlocked" : "Opening…"}
+              {chest.phase === "revealed" ? s.rewardUnlocked : s.opening}
             </p>
             {chest.phase === "revealed" && (
               <>
@@ -2611,7 +2541,7 @@ export default function SandGame() {
                   <EmeraldIcon /> {chest.amount}
                 </p>
                 <button type="button" className="reward-collect" onClick={() => setChest(null)}>
-                  Collect
+                  {s.collect}
                 </button>
               </>
             )}
@@ -2626,7 +2556,7 @@ export default function SandGame() {
             themselves, so it fades out with them rather than outliving the
             screen it belongs to. */}
         {homeVisible && !chest && !cannonUnlock && (
-          <nav className={`hub-nav${playing ? " is-leaving" : ""}`} aria-label="Sections">
+          <nav className={`hub-nav${playing ? " is-leaving" : ""}`} aria-label={s.sectionsNav}>
             {HUB_TABS.map((entry) => (
               <button
                 key={entry}
@@ -2635,11 +2565,19 @@ export default function SandGame() {
                 data-tab={entry}
                 onClick={() => setTab(entry)}
                 aria-current={entry === tab ? "page" : undefined}
-                aria-label={HUB_TAB_NAME[entry]}
+                aria-label={`${HUB_TAB_NAME[entry]}${entry === "skin" && unseenSkins.length > 0 ? s.skinTabHasOfferSuffix : ""}`}
                 title={HUB_TAB_NAME[entry]}
               >
                 <span className="hub-nav-bubble">
                   <HubIcon tab={entry} active={entry === tab} />
+                  {/* One skin the wallet can now afford and the player has
+                      not yet dismissed (`unseenAffordableSkins`) is enough to
+                      light this — it says "something changed in Skin", not
+                      "buy now", so it stays lit even mid-preview until that
+                      card is actually looked at. */}
+                  {entry === "skin" && unseenSkins.length > 0 && (
+                    <span className="hub-nav-dot" aria-hidden="true" />
+                  )}
                 </span>
               </button>
             ))}
@@ -2669,12 +2607,12 @@ export default function SandGame() {
           >
             <div className="settings-card">
               <div className="settings-card-header">
-                <h2 id="settings-title">Settings</h2>
+                <h2 id="settings-title">{s.settingsTitle}</h2>
                 <button
                   type="button"
                   className="settings-close"
                   onClick={() => setSettingsOpen(false)}
-                  aria-label="Close settings"
+                  aria-label={s.closeSettings}
                 >
                   <CancelIcon />
                 </button>
@@ -2689,8 +2627,8 @@ export default function SandGame() {
                     type="button"
                     className="settings-round-button"
                     onClick={() => { setSettingsOpen(false); goHome(); }}
-                    aria-label="Home"
-                    title="Home"
+                    aria-label={s.homeAction}
+                    title={s.homeAction}
                   >
                     <img className="settings-round-button-icon" src="/icons/ReturnMainHubIcon.png" alt="" aria-hidden="true" />
                   </button>
@@ -2698,8 +2636,8 @@ export default function SandGame() {
                     type="button"
                     className="settings-round-button"
                     onClick={() => { setSettingsOpen(false); restart(); }}
-                    aria-label="Restart"
-                    title="Restart"
+                    aria-label={s.restartAction}
+                    title={s.restartAction}
                   >
                     <img className="settings-round-button-icon" src="/icons/ReplayIcon.png" alt="" aria-hidden="true" />
                   </button>
@@ -2709,14 +2647,14 @@ export default function SandGame() {
                 {soundSupported() && (
                   <div className="settings-row">
                     <span className="settings-row-label">
-                      <Glyph name={soundOn ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> Sound
+                      <Glyph name={soundOn ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.sound}
                     </span>
                     <button
                       type="button"
                       className={`settings-toggle${soundOn ? " is-on" : ""}`}
                       role="switch"
                       aria-checked={soundOn}
-                      aria-label={`Sound ${soundOn ? "on" : "off"}`}
+                      aria-label={s.soundAria(soundOn)}
                       onClick={() => {
                         const next = !soundOn;
                         setSoundEnabled(next);
@@ -2728,14 +2666,14 @@ export default function SandGame() {
                 {hapticsSupported() && (
                   <div className="settings-row">
                     <span className="settings-row-label">
-                      <Glyph name="vibrate" className="icon-glyph settings-row-icon" /> Vibration
+                      <Glyph name="vibrate" className="icon-glyph settings-row-icon" /> {s.vibration}
                     </span>
                     <button
                       type="button"
                       className={`settings-toggle${vibrationOn ? " is-on" : ""}`}
                       role="switch"
                       aria-checked={vibrationOn}
-                      aria-label={`Vibration ${vibrationOn ? "on" : "off"}`}
+                      aria-label={s.vibrationAria(vibrationOn)}
                       onClick={() => {
                         const next = !vibrationOn;
                         setHapticsEnabled(next);
@@ -2744,14 +2682,32 @@ export default function SandGame() {
                     />
                   </div>
                 )}
-                {/* Cosmetic, matching the reference — there is no second
-                    language built into the game yet, so this shows the row
-                    without pretending a tap here would do anything. */}
+                {/* Real now, not the cosmetic "EN ▾" placeholder this used to
+                    be — a tap cycles to the next entry in `LANGUAGES` (only
+                    two today, so this is a toggle in practice, but it reads
+                    correctly however many languages that list ever grows
+                    to). Tried as a native `<select>` dropdown first; reverted
+                    on request — a plain button, and no arrow glyph on it
+                    either, just the language's own name. `setLanguage`
+                    (i18n.ts) both persists the choice and notifies
+                    `subscribeLanguage`'s listeners, which is what updates
+                    `language` above — same one-writer contract
+                    Sound/Vibration's own modules use, just reactive instead
+                    of read-once. */}
                 <div className="settings-row">
                   <span className="settings-row-label">
-                    <Glyph name="globe" className="icon-glyph settings-row-icon" /> Language
+                    <Glyph name="globe" className="icon-glyph settings-row-icon" /> {s.language}
                   </span>
-                  <span className="settings-select" aria-label="Language: English (more coming soon)">EN ▾</span>
+                  <button
+                    type="button"
+                    className="settings-select"
+                    aria-label={`${s.language}: ${LANGUAGE_NAME[language]}`}
+                    onClick={() => {
+                      setLanguage(LANGUAGES[(LANGUAGES.indexOf(language) + 1) % LANGUAGES.length]);
+                    }}
+                  >
+                    {LANGUAGE_NAME[language]}
+                  </button>
                 </div>
 
                 <h3 className="settings-section-title">GameDevOption</h3>
@@ -2881,17 +2837,17 @@ export default function SandGame() {
 
               <div className="result-card is-win">
                 <div className="result-card-header">
-                  <h2>FRAME CLEARED!</h2>
-                  <button type="button" className="result-close-btn" onClick={goHome} aria-label="Back to home">
+                  <h2>{s.frameCleared}</h2>
+                  <button type="button" className="result-close-btn" onClick={goHome} aria-label={s.backToHome}>
                     <CancelIcon />
                   </button>
                 </div>
                 <div className="result-card-body">
-                  <p>Every grain gone with {remaining} shot{remaining === 1 ? "" : "s"} to spare.</p>
+                  <p>{s.everyGrainGone(remaining)}</p>
                   {hasNextLevel && (
                     <div className="result-actions">
                       <button type="button" onClick={() => openLevel(levelIndex + 1)}>
-                        Continue
+                        {s.continueLabel}
                       </button>
                     </div>
                   )}
@@ -2904,26 +2860,25 @@ export default function SandGame() {
         {state.result?.kind === "FAIL" && (
           <div className="result-screen" role="dialog" aria-modal="true">
             <div className="result-card">
-              <h2>OUT OF SHOTS</h2>
-              <p>{cleared}% cleared — {state.remainingCells} grains still in the frame.</p>
+              <h2>{s.outOfShots}</h2>
+              <p>{s.clearedPercent(cleared, state.remainingCells)}</p>
               <div className="result-actions">
                 <button type="button" onClick={restart}>
-                  Play again
+                  {s.playAgain}
                 </button>
                 <button type="button" className="is-quiet" onClick={goHome}>
-                  Home
+                  {s.home}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* The FTUE overlay: opened once automatically, by `startPlaying`, the
-            first time a level with `tutorial` content is played on this
-            browser, and reopenable any time from the "?" button next to the
-            settings menu. Sits above everything else in `.game-frame`
-            (result screen included, though the two are never open together —
-            a fresh board has no result yet) so the very first shot is never
+        {/* The tutorial overlay: opened once automatically, by `startPlaying`,
+            the first time a level with `tutorial` content is played on this
+            browser. Sits above everything else in `.game-frame` (result
+            screen included, though the two are never open together — a
+            fresh board has no result yet) so the very first shot is never
             taken blind. */}
         {playing && tutorialOpen && level.tutorial && (
           <div className="result-screen" role="dialog" aria-modal="true" aria-label={level.tutorial.title}>
@@ -2936,7 +2891,7 @@ export default function SandGame() {
               </ol>
               <div className="result-actions">
                 <button type="button" onClick={() => setTutorialOpen(false)}>
-                  Got it
+                  {s.gotIt}
                 </button>
               </div>
             </div>
@@ -2963,7 +2918,7 @@ export default function SandGame() {
             className="result-screen"
             role="dialog"
             aria-modal="true"
-            aria-label="Daily login reward"
+            aria-label={s.dailyLoginAria}
             // A tap on the scrim itself (not one that bubbled up from the
             // card) dismisses the same way the corner X does — the standard
             // "tap outside a sheet to close it" gesture, on top of that X
@@ -2975,12 +2930,12 @@ export default function SandGame() {
             <div className="daily-login-frame">
               <div className="result-card daily-login-card">
                 <div className="daily-login-header">
-                  <h2>Daily Login</h2>
+                  <h2>{s.dailyLoginTitle}</h2>
                   <button
                     type="button"
                     className="result-close-btn"
                     onClick={() => setDailyLoginOverride(null)}
-                    aria-label="Close"
+                    aria-label={s.close}
                   >
                     <CancelIcon />
                   </button>
@@ -2996,7 +2951,7 @@ export default function SandGame() {
                           key={index}
                           className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
                         >
-                          <span className="daily-login-label">Day {index + 1}</span>
+                          <span className="daily-login-label">{s.dayLabel(index + 1)}</span>
                           <span ref={isToday ? todayCoinRef : undefined}>
                             <CoinIcon />
                           </span>
@@ -3012,7 +2967,7 @@ export default function SandGame() {
                   {!dailyLogin.claimedToday && (
                     <div className="result-actions">
                       <button type="button" onClick={claimDailyLoginWithFlight}>
-                        Claim {dailyLogin.reward} coins
+                        {s.claimCoins(dailyLogin.reward)}
                       </button>
                     </div>
                   )}

@@ -254,11 +254,11 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * state a shot changes, and hiding it would make "how many are left" a
    * mystery rather than a lesson.
    *
-   * Unlike `tutorial`, this is not "shown once, ever": it also reappears on
-   * a killed-and-relaunched app, or after several hours away in a session
-   * that was never actually killed — see `shouldShowFtueGesture` in
-   * SandGame.tsx. A dismiss that costs zero clicks can afford to repeat
-   * itself; a wall-of-text modal cannot.
+   * Unlike `tutorial`, this is not "shown once, ever": `startPlaying` in
+   * SandGame.tsx opens it every time this level starts play, with no
+   * once-per-session or once-ever bookkeeping to skip it. A dismiss that
+   * costs zero clicks can afford to repeat itself; a wall-of-text modal
+   * cannot.
    */
   ftueGesture?: boolean;
 };

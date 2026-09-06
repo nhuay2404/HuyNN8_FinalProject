@@ -232,38 +232,24 @@ export const thirdLevel: SandLevelConfig = {
  * brown the one colour worth a careful shot instead of a careless one.
  */
 const ICE_CREAM_CONE_PICTURE = [
-  ".............MY.............",
-  "............MMMY............",
-  "............MMMY............",
-  "...........MMMMYY...........",
-  "..........MMMMMYYY..........",
-  "..........MMMMMYYY..........",
-  ".........MMMMMYYNYY.........",
-  "........MMMMMYYYYYYY........",
-  "........MMNMMYYYYYYY........",
-  ".......MMMMMMYYYYYYYY.......",
-  ".......MMMMMMYYYYYYYY.......",
-  "......MMMMMMMYYYYYYYYY......",
-  ".....MMMMMMMMMYYYYYNYYY.....",
-  ".....MMMMMMMMMYYYYYYYYY.....",
-  "....MMMNMMMMMMMYYYYYYYYY....",
-  "...MMMMMMMMMMMMYYYYYYYYYY...",
-  "...MMMMMMMMMMMMYYYYYNYYYY...",
-  "..MMMMMMMMMMMMMYYYYYYYYYYY..",
-  ".MMMMMMMMMMMMMMYYYYYYYYYYYY.",
-  ".MMMMMMMMNMMMMYYYYYYYYYYYYY.",
-  "MMMMMMMMMMMMMNNYYNYYYYYYYYYY",
-  "MMMMMMMMMMMMMNNYYYYYYYYYYYYY",
-  "MMMMMMMMMMMMNNNNYYYYYYYYYYYY",
-  "MMMMMMMMMMMMNNNNYYYYYYYYYYYY",
-  "MMMMMMMMMMMNNNNNNYYYYYYYYYYY",
-  "MMMMMMMMMMMNNNNNNYYYYYYYYYYY",
-  "MMMMMMMMMMNNNNNNNNYYYYYYYYYY",
-  "MMMMMMMMMMNNNNNNNNYYYYYYYYYY",
-  "MMMMMMMMMNNNNNNNNNNYYYYYYYYY",
-  "MMMMMMMMMNNNNNNNNNNYYYYYYYYY",
-  "MMMMMMMMNNNNNNNNNNNNYYYYYYYY",
-  "MMMMMMMMNNNNNNNNNNNNYYYYYYYY",
+  ".......MY.......",
+  ".......MM.......",
+  "......MMMY......",
+  ".....MMMYNY.....",
+  ".....MMYYYY.....",
+  "....MMMYYYYY....",
+  "...MMMMYYYYYY...",
+  "...MMMMMYYYYY...",
+  "..MMMMMMMYYYYY..",
+  "..MMMMMMMYYNYY..",
+  ".MMMMMMMMYYYYYY.",
+  "MMMMMMMNNYYYYYYY",
+  "MMMMMMMNNYYYYYYY",
+  "MMMMMMNNNNYYYYYY",
+  "MMMMMMNNNNYYYYYY",
+  "MMMMMMNNNNYYYYYY",
+  "MMMMMNNNNNNYYYYY",
+  "MMMMMNNNNNNYYYYY",
 ];
 
 export const fourthLevel: SandLevelConfig = {
@@ -272,16 +258,16 @@ export const fourthLevel: SandLevelConfig = {
   id: 4,
   name: "Level 4",
 
-  frame: { width: 28, height: 32 },
+  frame: { width: 16, height: 18 },
   rows: ICE_CREAM_CONE_PICTURE,
 
   ammoQueue: ["pink", "yellow", "brown"],
 
-  sortRadius: 4.25,
-  // Measured with analyseLevel: strong play clears in 21; careless play
+  sortRadius: 2.43,
+  // Measured with analyseLevel: strong play clears in 17; careless play
   // (a random cell of the colour in hand) wins all 8 sampled runs at this
   // budget — generous on purpose, this level teaches a cost, not a fail.
-  shotLimit: 27,
+  shotLimit: 24,
   pixelScale: 5,
 
   notes: "Ice cream cone (beatchart row 4). Teaches NO_MATCH costs a shot, "
@@ -297,40 +283,24 @@ export const fourthLevel: SandLevelConfig = {
  * lesson.
  */
 const BALLOONS_PICTURE = [
-  "..............GG..............",
-  ".............RGGG.............",
-  ".............RGGG.............",
-  "............RRGGGG............",
-  "...........RRRRGGGG...........",
-  "...........RRRRGGGG...........",
-  "..........RRRRRGGGGG..........",
-  "..........RRRRRGGGGG..........",
-  ".........RRRRRRGGGGGG.........",
-  "........RRRRRRRGGGGGGG........",
-  "........RRRRRRRGGGGGGG........",
-  ".......RRRRRRRRGGGGGGGG.......",
-  "......RRRRRRRRRGGGGGGGGG......",
-  "......RRRRRRRRRGGGGGGGGG......",
-  ".....RRRRRRRRRRGGGGGGGGGG.....",
-  "....RRRRRRRRRRRGGGGGGGGGGG....",
-  "....RRRRRRRRRRRGGGGGGGGGGG....",
-  "...RRRRRRRRRRRRYYYYYYYYYYYY...",
-  "...BBBBBBBBBBBBYYYYYYYYYYYY...",
-  "..BBBBBBBBBBBBBYYYYYYYYYYYYY..",
-  ".BBBBBBBBBBBBBBYYYYYYYYYYYYYY.",
-  ".BBBBBBBBBBBBBBYYYYYYYYYYYYYY.",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBRRRYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBRRRYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBRRRYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBYYYYYYYYYYYYYYY",
+  ".......GG.......",
+  ".......GG.......",
+  "......RRGG......",
+  ".....RRRGGG.....",
+  ".....RRRGGG.....",
+  "....RRRRGGGG....",
+  "...RRRRRGGGGG...",
+  "...RRRRRGGGGG...",
+  "..RRRRRRGGGGGG..",
+  "..RRRRRRYYYYYY..",
+  ".BBBBBBBYYYYYYY.",
+  ".BBBBBBBYYYYYYY.",
+  "BBBBBBBBYYYYYYYY",
+  "BBBBBBBBYYYYYYYY",
+  "BBBBBBBBYYYYYYYY",
+  "BBBBBBBBYYYYYYYY",
+  "BBBBBBBRRYYYYYYY",
+  "BBBBBBBBYYYYYYYY",
 ];
 
 export const fifthLevel: SandLevelConfig = {
@@ -339,15 +309,15 @@ export const fifthLevel: SandLevelConfig = {
   id: 5,
   name: "Level 5",
 
-  frame: { width: 30, height: 34 },
+  frame: { width: 16, height: 18 },
   rows: BALLOONS_PICTURE,
 
   ammoQueue: ["red", "blue", "green", "yellow"],
 
-  sortRadius: 4.53,
-  // Measured with analyseLevel: strong play clears in 24; careless play wins
+  sortRadius: 2.42,
+  // Measured with analyseLevel: strong play clears in 20; careless play wins
   // 7 of 8 sampled runs at this budget.
-  shotLimit: 33,
+  shotLimit: 27,
   pixelScale: 5,
 
   notes: "Four balloons clustered together (beatchart row 5). First "
@@ -361,40 +331,24 @@ export const fifthLevel: SandLevelConfig = {
  * player who shoots low first gets every band above it sliding down for free.
  */
 const RAINBOW_PICTURE = [
-  "..............GG..............",
-  ".............GGGG.............",
-  ".............GGGG.............",
-  "............GGGGGG............",
-  "...........GGGGGGGG...........",
-  "..........GGGGGGGGGG..........",
-  "..........GGGGGGGGGG..........",
-  ".........GGGGGGGGGGGG.........",
-  "........YYYYYYYYYYYYYY........",
-  ".......YYYYYYYYYYYYYYYY.......",
-  ".......YYYYYYYYYYYYYYYY.......",
-  "......YYYYYYYYYYYYYYYYYY......",
-  ".....YYYYYYYYYYYYYYYYYYYY.....",
-  "....YYYYYYYYYYYYYYYYYYYYYY....",
-  "....YYYYYYYYYYYYYYYYYYYYYY....",
-  "...YYYYYYYYYYYYYYYYYYYYYYYY...",
-  "..OOOOOOOOOOOOOOOOOOOOOOOOOO..",
-  ".OOOOOOOOOOOOOOOOOOOOOOOOOOOO.",
-  ".OOOOOOOOOOOOOOOOOOOOOOOOOOOO.",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-  "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+  ".......GG.......",
+  ".......GG.......",
+  "......GGGG......",
+  ".....GGGGGG.....",
+  "....YYYYYYYY....",
+  "....YYYYYYYY....",
+  "...YYYYYYYYYY...",
+  "..YYYYYYYYYYYY..",
+  ".OOOOOOOOOOOOOO.",
+  ".OOOOOOOOOOOOOO.",
+  "OOOOOOOOOOOOOOOO",
+  "OOOOOOOOOOOOOOOO",
+  "OOOOOOOOOOOOOOOO",
+  "RRRRRRRRRRRRRRRR",
+  "RRRRRRRRRRRRRRRR",
+  "RRRRRRRRRRRRRRRR",
+  "RRRRRRRRRRRRRRRR",
+  "RRRRRRRRRRRRRRRR",
 ];
 
 export const sixthLevel: SandLevelConfig = {
@@ -403,16 +357,16 @@ export const sixthLevel: SandLevelConfig = {
   id: 6,
   name: "Level 6",
 
-  frame: { width: 30, height: 34 },
+  frame: { width: 16, height: 18 },
   rows: RAINBOW_PICTURE,
 
   ammoQueue: ["red", "orange", "yellow", "green"],
 
-  sortRadius: 4.53,
+  sortRadius: 2.42,
   // Measured with analyseLevel: strong play clears in 22; careless play wins
   // all 8 sampled runs at this budget — generous, matching the beatchart's
   // own "Không" (not realistically losable) call for this row.
-  shotLimit: 37,
+  shotLimit: 31,
   pixelScale: 5,
 
   notes: "Four stacked bands (beatchart row 6) — shooting the bottom band "
@@ -427,42 +381,24 @@ export const sixthLevel: SandLevelConfig = {
  * shot that could easily miss most of what it was aimed at.
  */
 const TROPHY_PICTURE = [
-  "...............YY...............",
-  "..............YYYY..............",
-  "..............YYYY..............",
-  ".............YYYYYY.............",
-  "............YYYYYYYY............",
-  "...........YYYYYYYYYY...........",
-  "...........GGGGGGGGGG...........",
-  "..........GGGGGGGGGGGG..........",
-  ".........GGGGGGGGGGGGGG.........",
-  "........YYYYYYYYYYYYYYYY........",
-  "........YYYYYYYYYYYYYYYY........",
-  ".......YYYYYYYYYYYYYYYYYY.......",
-  "......BBYYYYYYYYYYYYYYYYBB......",
-  ".....BBBYYYYYYYYYYYYYYYYBBB.....",
-  ".....BBBBYYYYYYYYYYYYYYBBBB.....",
-  "....BBBBYYYYYYYYYYYYYYYYBBBB....",
-  "...BBBBBYYYYYYYYYYYYYYYYBBBBB...",
-  "..BBBBBYYYYYYYYYYYYYYYYYYBBBBB..",
-  ".YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY.",
-  ".YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY.",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYNYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYNNNYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYNYYYYYYYYYYYYYYYY",
-  "YYYYYYYYNNNYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYNNNYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYNNNYYYYYYYYYYYNYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYNNNYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYNYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+  ".......YY.......",
+  "......YYY.......",
+  ".....YYYYY......",
+  ".....GGGGGG.....",
+  "....YYYYYYYY....",
+  "...YYYYYYYYY....",
+  "..BBYYYYYYYYB...",
+  "..BBYYYYYYYYBB..",
+  ".BBYYYYYYYYYBBB.",
+  "YYYYYYYYYYYYYYY.",
+  "YYYYYYYYYYYYYYYY",
+  "YYYYYYYYYYYYYYYY",
+  "YYYYYYYYYYYYYYYY",
+  "YYYYYYYNYYYYYYYY",
+  "YYYYNYYYYYYYYYYY",
+  "YYYYNYYYYYYYYYYY",
+  "YYYYYYYYYYYYYYYY",
+  "YYYYYYYYYYYYYYYY",
 ];
 
 export const seventhLevel: SandLevelConfig = {
@@ -471,16 +407,16 @@ export const seventhLevel: SandLevelConfig = {
   id: 7,
   name: "Level 7",
 
-  frame: { width: 32, height: 36 },
+  frame: { width: 16, height: 18 },
   rows: TROPHY_PICTURE,
 
   ammoQueue: ["yellow", "brown", "blue", "green"],
 
-  sortRadius: 4.82,
-  // Measured with analyseLevel: strong play clears in 23; careless play wins
-  // 5 of 8 sampled runs at this budget — a real chance of failure, matching
+  sortRadius: 2.41,
+  // Measured with analyseLevel: strong play clears in 19; careless play wins
+  // 4 of 8 sampled runs at this budget — a real chance of failure, matching
   // the beatchart's own "CÓ" (losable) call for this row.
-  shotLimit: 31,
+  shotLimit: 24,
   pixelScale: 5,
 
   notes: "Gold trophy (beatchart row 7) — three separate, thin flecks of "
@@ -499,42 +435,24 @@ export const seventhLevel: SandLevelConfig = {
  * above `fourthLevel`.
  */
 const MUSIC_NOTE_PICTURE = [
-  "...............BB...............",
-  "..............BBBB..............",
-  "..............BBBB..............",
-  ".............BBBBBB.............",
-  "............BBBBBBBB............",
-  "...........BBBBBBBCCC...........",
-  "...........BBBBBBBCCC...........",
-  "..........BBBBBBBBCCCB..........",
-  ".........BBBBBBBBBCCCBB.........",
-  "........BBBBBBBBBBCCCBBY........",
-  "........BBBBBBBBBBCCCBBB........",
-  ".......BBBBBBBBBBBCCCBBBB.......",
-  "......BBBBBBBBBBBBCCCBBBBB......",
-  ".....BBBBBBBBBBBBBCCCBBBBBB.....",
-  ".....BBBBBBBBBBBBBCCCBBBBBY.....",
-  "....BBBBBBBBBBBBBBCCCBBBBBBY....",
-  "...BBBBBBBBBBBBBBBCCCBBBBBBBB...",
-  "..BBBBBBBBBBBBBBBBCCCBBYBBBBBB..",
-  ".BBBBBBBBBBBBBBBBBCCCBYYYBBBBBB.",
-  ".BBBBBBBBBBBBBBBBBCCCBBYBBBBBBB.",
-  "BBBBBBBBBBBBBBBBBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBBBPPPPPBBCCCBBBBBBBBBBB",
-  "BBBBBBBBBPPPPPPPPPCCCBBBBBBBBBBB",
-  "BBBBBBBBPPPPPPPPPPPCCBBBBBBBBBBB",
-  "BBBBBBBBPPPPPPPPPPPCCBBBBBBBBBBB",
-  "BBBBBBBPPPPPPPPPPPPPCBBBBBBBBBBB",
-  "BBBBBBBBPPPPPPPPPPPBBBBBBBBBBBBB",
-  "BBBBBBBBPPPPPPPPPPPBBBBBBBBBBBBB",
-  "BBBBBBBBBPPPPPPPPPBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBPPPPPBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  ".......BB.......",
+  "......BBB.......",
+  ".....BBBBC......",
+  ".....BBBBCB.....",
+  "....BBBBBCBY....",
+  "...BBBBBBCBB....",
+  "..BBBBBBBCBBB...",
+  "..BBBBBBBCBBBY..",
+  ".BBBBBBBBCBBBBB.",
+  "BBBBBBBBBCBYBBB.",
+  "BBBBBBBBBCBBBBBB",
+  "BBBBBBBBBCBBBBBB",
+  "BBBBBPPPBCBBBBBB",
+  "BBBBPPPPPCBBBBBB",
+  "BBBPPPPPPPBBBBBB",
+  "BBBBPPPPPBBBBBBB",
+  "BBBBBPPPBBBBBBBB",
+  "BBBBBBBBBBBBBBBB",
 ];
 
 export const eighthLevel: SandLevelConfig = {
@@ -543,16 +461,16 @@ export const eighthLevel: SandLevelConfig = {
   id: 8,
   name: "Level 8",
 
-  frame: { width: 32, height: 36 },
+  frame: { width: 16, height: 18 },
   rows: MUSIC_NOTE_PICTURE,
 
   ammoQueue: ["purple", "cyan", "yellow", "blue"],
 
-  sortRadius: 4.82,
-  // Measured with analyseLevel: strong play clears in 25; careless play wins
+  sortRadius: 2.41,
+  // Measured with analyseLevel: strong play clears in 18; careless play wins
   // 5 of 8 sampled runs at this budget — a real chance of failure, matching
   // the beatchart's own "CÓ" (losable) call for this row.
-  shotLimit: 30,
+  shotLimit: 25,
   pixelScale: 5,
 
   notes: "Music note (beatchart row 8) — the first level that can actually "
@@ -571,44 +489,24 @@ export const eighthLevel: SandLevelConfig = {
  * punishment for whoever does not.
  */
 const FISH_PICTURE = [
-  "................CC................",
-  "...............CCCC...............",
-  "...............CCCC...............",
-  "..............CCCCCC..............",
-  ".............CCCCCCBB.............",
-  ".............CCCCCCBB.............",
-  "............CCCCCCCBBC............",
-  "...........CCCCCCCCCCCC...........",
-  "..........CCCCCCCCCCCCCC..........",
-  "..........CCCCCCCCCCCCCC..........",
-  ".........CCCCCCCCCCCCCCCC.........",
-  "........CCCCCCCCCCCCCCCCCC........",
-  "........GGCCYYGGCCYYGGCCYY........",
-  ".......YGGCCYYGGCCYYGGCCYYG.......",
-  "......GGCCYYGGCCYYGGCCYYGGCC......",
-  "......GGCCYYGGCCYYGGCCYYGGCC......",
-  ".....GCCYYGGCCYYGGCCYYGGCCYYG.....",
-  "....GGCCYYGGCCYYGGCCYYGGCCYYGG....",
-  "...GCCYYGGCCYYGGCCYYGGCCYYGGCCY...",
-  "...GCCYYGGCCYYGGCCYYGGCCYYGGCCY...",
-  "..CCYYGGCCYYGGCCYYGGCCYYGGCCYYGG..",
-  ".GCCYYGGCCYYGGCCYYGGCCYYGGCCYYGGC.",
-  ".CYYGGCCYYGGCCYYGGCCYYGGCCYYGGCCY.",
-  "CCYYGGCCYYGGCCYYGGCCYYGGCCYYGGCCYY",
-  "YYGGCCYYGGCCYYGGCCYYGGCCYYGGCCYYGG",
-  "YYGGCCYYGGCCYYGGCCYYGGCCYYGGCCYYGG",
-  "GGCCYYGGCCYYGGCCYYGGCCYYGGCCYYGGCC",
-  "GGCCYYGGCCYYGGCCYYGGCCYYGGCCYYGGCC",
-  "CCYYGGCCYYGGCCYYGGCCYYGGCCYYGGCCYY",
-  "CCYYGGCCYYGGCCYYGGCCYYGGCCYYGGCCYY",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
-  "OOOOOOOOOOOOOOOOBBOOOOOOOOOOOOOOOO",
+  ".......CC.......",
+  ".......CC.......",
+  "......CCCB......",
+  ".....CCCCCC.....",
+  ".....CCCCCC.....",
+  "....CCCCCCCC....",
+  "...YGCYGYGCYG...",
+  "...GCYGCGCYGC...",
+  "..GCYGCYCYGCYG..",
+  ".CYGCYGCGCYGCYG.",
+  "CYGCYGCYCYGCYGCY",
+  "YGCYGCYGYGCYGCYG",
+  "GCYGCYGCGCYGCYGC",
+  "CYGCYGCYCYGCYGCY",
+  "OOOOOOOOOOOOOOOO",
+  "OOOOOOOOOOOOOOOO",
+  "OOOOOOOOOOOOOOOO",
+  "OOOOOOOOOOOOOOOO",
 ];
 
 export const ninthLevel: SandLevelConfig = {
@@ -617,15 +515,15 @@ export const ninthLevel: SandLevelConfig = {
   id: 9,
   name: "Level 9",
 
-  frame: { width: 34, height: 38 },
+  frame: { width: 16, height: 18 },
   rows: FISH_PICTURE,
 
   ammoQueue: ["cyan", "blue", "orange", "yellow", "green"],
 
-  sortRadius: 5.1,
-  // Measured with analyseLevel: strong play clears in 34; careless play wins
-  // only 4 of 8 sampled runs at this budget — the spike closing this arc.
-  shotLimit: 43,
+  sortRadius: 2.4,
+  // Measured with analyseLevel: strong play clears in 26; careless play wins
+  // 5 of 8 sampled runs at this budget — the spike closing this arc.
+  shotLimit: 36,
   pixelScale: 5,
 
   notes: "Fish, nose up (beatchart row 9) — the spike closing this arc: five "
@@ -639,45 +537,30 @@ export const ninthLevel: SandLevelConfig = {
  * on purpose.
  */
 const SUNRISE_PICTURE = [
-  ".................OO.................",
-  "................OOOO................",
-  "...............OOOOOO...............",
-  "..............OOOOOOOO..............",
-  "..............OOOOOOOO..............",
-  ".............OOOOOOOOOO.............",
-  "............OOOOOOOOOOOO............",
-  "...........OOOOOOOOOOOOOO...........",
-  "..........OOOOOOOOOOOOOOOO..........",
-  ".........OOOOOOOOOOOOOOOOOO.........",
-  ".........OOOOOOOOOOOOOOOOOO.........",
-  "........OOOOOOOOOOOOOOOOOOOO........",
-  ".......OOOOOOOOOOOOOOOOOOOOOO.......",
-  "......YYYYYYYYYYYYYYYYYYYYYYYY......",
-  ".....YYYYYYYYYYYYYYYYYYYYYYYYYY.....",
-  "....YYYYYYYYYYYYYYYYYYYYYYYYYYYY....",
-  "...YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY...",
-  "...YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY...",
-  "..YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY..",
-  ".YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY.",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "..........OO..........",
+  ".........OOOO.........",
+  ".........OOOO.........",
+  "........OOOOOO........",
+  ".......OOOOOOOO.......",
+  "......OOOOOOOOOO......",
+  ".....OOOOOOOOOOO......",
+  ".....OOOOOOOOOOOO.....",
+  "....YYYYYYYYYYYYYY....",
+  "...YYYYYYYYYYYYYYYY...",
+  "..YYYYYYYYYYYYYYYYYY..",
+  "..YYYYYYYYYYYYYYYYYY..",
+  ".YYYYYYYYYYYYYYYYYYYY.",
+  "YYYYYYYYYYYYYYYYYYYYYY",
+  "YYYYYYYYYYYYYYYYYYYYYY",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
+  "BBBBBBBBBBBBBBBBBBBBBB",
 ];
 
 export const tenthLevel: SandLevelConfig = {
@@ -686,17 +569,17 @@ export const tenthLevel: SandLevelConfig = {
   id: 10,
   name: "Level 10",
 
-  frame: { width: 36, height: 40 },
+  frame: { width: 22, height: 24 },
   rows: SUNRISE_PICTURE,
 
   ammoQueue: ["orange", "yellow", "blue"],
 
-  sortRadius: 5.38,
-  // Measured with analyseLevel: strong play clears in 23; careless play wins
+  sortRadius: 3.29,
+  // Measured with analyseLevel: strong play clears in 22; careless play wins
   // all 8 sampled runs at this budget — the breather closing this run of
   // levels, matching the beatchart's own "Không" (not realistically losable)
   // call for this row.
-  shotLimit: 35,
+  shotLimit: 30,
   pixelScale: 5,
 
   notes: "Sunrise over the sea (beatchart row 10) — three large, single-body "

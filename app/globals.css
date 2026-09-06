@@ -202,7 +202,7 @@ button {
   transition: opacity .34s ease;
 }
 .loading-screen.is-done { opacity: 0; pointer-events: none; }
-.loading-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.loading-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .loading-panel {
   position: relative; z-index: 1;
   padding: 0 32px max(58px, env(safe-area-inset-bottom));
@@ -634,15 +634,18 @@ button {
 }
 .settings-toggle.is-on { background: var(--accent); }
 .settings-toggle.is-on::after { transform: translateX(22px); }
-/* Cosmetic only — there is no second language in the game yet, so this shows
-   the pill without pretending a switch here does anything. */
+/* A real control now (see i18n.ts) — a tap cycles `LANGUAGES` — so this is a
+   `<button>`, not the inert `<span>` it used to be. A native `<select>`
+   dropdown was tried and reverted on request; this plain pill (no arrow
+   glyph either) is what replaced it. */
 .settings-select {
-  flex: none; display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center;
   padding: 8px 15px; border-radius: var(--r-pill);
   background: var(--sky); color: var(--sky-ink);
   font-size: 13px; font-weight: 700; letter-spacing: .02em;
-  cursor: default; opacity: .85;
+  border: 0; cursor: pointer;
 }
+.settings-select:active { transform: translateY(1px); }
 .settings-section-title {
   margin: 18px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em;
   text-transform: uppercase; color: var(--muted);
@@ -2010,6 +2013,17 @@ button {
   background: #ffffff; color: #3e7871;
   display: grid; place-items: center; font-size: 11px; font-weight: 800;
 }
+/* "You can afford this one and have not looked at it yet" — see
+   `unseenAffordableSkins` in costumes.ts. Top-right, opposite corner from
+   `.skin-card-tick`/`.skin-card-price`, so it never collides with either. A
+   ring rather than a flat fill: the card underneath it is already a photo,
+   and a plain disc would read as part of that image rather than as chrome
+   sitting on top of it. */
+.skin-card-dot {
+  position: absolute; top: 6px; right: 6px; z-index: 1;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 0 2px #ffffff;
+}
 
 /* The picture itself, one grid cell per authored cell. `image-rendering` is not
    involved: these are real boxes, so they stay square at any size.
@@ -2095,6 +2109,16 @@ button {
    of its own, and inherits whichever of these two this element is currently
    set to. Scoped to this class rather than repointing `--muted` itself, which
    is shared with unrelated text elsewhere in this file. */
+/* "There is a skin you can afford and have not looked at yet" — see
+   `unseenAffordableSkins` in costumes.ts. Positioned against `.hub-nav-bubble`
+   (which fills the tab's tile at a fixed size) rather than `.hub-nav-icon`
+   (which grows when its tab is active), so the dot sits still instead of
+   hopping a few pixels the moment Skin is the open tab. */
+.hub-nav-dot {
+  position: absolute; top: 2px; right: 2px; z-index: 1;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 0 2px var(--hub-navy);
+}
 .hub-nav-icon {
   display: block; width: 30px; height: 30px;
   fill: none; stroke: var(--wood-ink); stroke-width: 1.6;

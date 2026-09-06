@@ -11,6 +11,10 @@ const STORAGE_KEY = "cannon-sort:v1:costume";
 // skin above — a browser that refuses storage just means the player owns the
 // free skins and nothing else, which is the safe direction to fail in.
 const OWNED_KEY = "cannon-sort:v1:owned-costumes";
+// Which skins' "you can afford this" dot the player has already dismissed —
+// see `unseenAffordableSkins`'s own comment for what dismissing one means.
+// Same guarded-storage contract as the two keys above.
+const BADGE_SEEN_KEY = "cannon-sort:v1:skin-badge-seen";
 
 export type CostumeId = "classic-cannon" | "rune-cannon";
 
@@ -70,6 +74,25 @@ function collector() {
 // here has to sit clear of it rather than on top of it.
 const AMMO_RING_RADIUS = 0.86;
 
+// A soft 4-band ramp so the cannon's shell — unlike the flat, unlit picture,
+// frame, and sand around it — actually catches the scene's lights: a gentle
+// stepped falloff from shadow to highlight, styled after Animal Crossing/A
+// Short Hike's soft toon shading rather than a hard graphic-novel cel edge.
+// One texture shared by every `MeshToonMaterial` the cannon uses (both
+// costumes and the engine's own trim), lazily built once like the thumbnail
+// cache below.
+let toonRamp: THREE.DataTexture | null = null;
+export function getCannonToonRamp(): THREE.DataTexture {
+  if (toonRamp) return toonRamp;
+  const bands = new Uint8Array([96, 150, 200, 255]);
+  const texture = new THREE.DataTexture(bands, bands.length, 1, THREE.RedFormat);
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  toonRamp = texture;
+  return texture;
+}
+
 /**
  * Today's cannon shell, unchanged: a candy-blue barrel on a dark cradle and
  * pedestal, gold muzzle ring. Extracted from `buildCannon()` verbatim so the
@@ -78,13 +101,15 @@ const AMMO_RING_RADIUS = 0.86;
  */
 function buildClassicCannon(groups: CostumeRigGroups) {
   const { added, attach } = collector();
-  // Unlit flat colour — no light-driven shading gradient across the
-  // cannon's surfaces, just the smooth, evenly-lit look the game wants.
-  const body = new THREE.MeshBasicMaterial({ color: 0x66a9eb });
-  const dark = new THREE.MeshBasicMaterial({ color: 0x4a5c8d });
+  // Toon-shaded, not flat — the shell now catches the scene's lights in a
+  // soft, stepped falloff (see `getCannonToonRamp`) instead of reading as one
+  // even colour regardless of angle.
+  const ramp = getCannonToonRamp();
+  const body = new THREE.MeshToonMaterial({ color: 0x66a9eb, gradientMap: ramp });
+  const dark = new THREE.MeshToonMaterial({ color: 0x4a5c8d, gradientMap: ramp });
   // Dark gunmetal trim — was gold (0xffb70e); the shell now stays in cool
   // dark tones (near-black, slate, navy) instead of mixing in yellow.
-  const accent = new THREE.MeshBasicMaterial({ color: 0x2b3140 });
+  const accent = new THREE.MeshToonMaterial({ color: 0x2b3140, gradientMap: ramp });
 
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40), dark);
   attach(groups.cannonRoot, base);
@@ -116,11 +141,14 @@ function buildClassicCannon(groups: CostumeRigGroups) {
  */
 function buildRuneCannon(groups: CostumeRigGroups) {
   const { added, attach } = collector();
-  // Same reasoning as the classic rig: flat, unlit colour so the stone and
-  // wood read as smooth surfaces rather than lit/shaded ones.
-  const stone = new THREE.MeshBasicMaterial({ color: 0x27214e });
-  const wood = new THREE.MeshBasicMaterial({ color: 0x4b386b });
-  // Unlit, so these read as light sources rather than as painted plastic.
+  // Same reasoning as the classic rig: toon-shaded stone and wood so they
+  // read as lit, faceted surfaces rather than flat paint.
+  const ramp = getCannonToonRamp();
+  const stone = new THREE.MeshToonMaterial({ color: 0x27214e, gradientMap: ramp });
+  const wood = new THREE.MeshToonMaterial({ color: 0x4b386b, gradientMap: ramp });
+  // Still unlit, unlike the stone and wood above: these read as light
+  // sources rather than as painted plastic, and a light source shaded by the
+  // scene's own lights would stop reading as one.
   const glow = new THREE.MeshBasicMaterial({ color: 0xac71ff });
   const spark = new THREE.MeshBasicMaterial({ color: 0xffdc75 });
   const ember = new THREE.MeshBasicMaterial({ color: 0xff5bc8 });
@@ -287,9 +315,60 @@ export function resetOwnedCostumes() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(OWNED_KEY);
+    // A relocked skin should be able to earn its dot back too, not stay
+    // silently dismissed from a run before the reset.
+    window.localStorage.removeItem(BADGE_SEEN_KEY);
   } catch {
     // Nothing to clean up if storage is unavailable.
   }
+}
+
+function readSeenBadges(): Set<CostumeId> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(BADGE_SEEN_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is CostumeId => isCostumeId(id as string)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Marks `id`'s afford-notification dot dismissed — call the moment the
+ * player taps that skin's card in the picker, whether or not they go on to
+ * buy it. Buying makes the dot moot on its own (`isCostumeOwned` excludes it
+ * from `unseenAffordableSkins` from then on); this is what stops it coming
+ * back on its own for a skin the player looked at and chose not to buy yet.
+ */
+export function markSkinBadgeSeen(id: CostumeId) {
+  const seen = readSeenBadges();
+  if (seen.has(id)) return;
+  seen.add(id);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(BADGE_SEEN_KEY, JSON.stringify([...seen]));
+  } catch {
+    // The dot just reappears next time — nothing worse than showing it twice.
+  }
+}
+
+/**
+ * Every skin the player can afford right now, does not already own, and has
+ * not already dismissed the dot for (`markSkinBadgeSeen`). Drives both the
+ * Skin tab's own red dot (non-empty) and which card(s) in the picker wear
+ * one — the tab's dot is "there is at least one of these", a card's is "this
+ * is one of them".
+ *
+ * A skin dropped from this list by `markSkinBadgeSeen` stays dropped even if
+ * the balance never changes — the notification means "you can afford *a*
+ * skin you have not seen", not "you can afford this particular one", so it
+ * only comes back once saving up further makes a *different*, still-unseen
+ * skin affordable too.
+ */
+export function unseenAffordableSkins(emeralds: number): CostumeId[] {
+  const seen = readSeenBadges();
+  return COSTUME_ORDER.filter((id) => !isCostumeOwned(id) && emeralds >= costumePrice(id) && !seen.has(id));
 }
 
 export function getSelectedCostume(): CostumeId {

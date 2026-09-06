@@ -3,6 +3,7 @@ import { ChestStage, type ChestPhase } from "./chest-model.ts";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   disposeCostumeParts,
+  getCannonToonRamp,
   getCostume,
   getCostumeThumbnails,
   getSelectedCostume,
@@ -91,7 +92,6 @@ const FIXED_STEP = 1 / 60;
 const FIXED_LAUNCH_SPEED = 19;
 const SHOT_COOLDOWN_MS = 400;
 const JOYSTICK_RADIUS = 64;
-const JOYSTICK_RESPONSE_DEAD_ZONE = 14;
 const JOYSTICK_ARM_RADIUS = 18;
 /**
  * Grace period for a drag that has wandered outside `host` (the rendered
@@ -1047,8 +1047,11 @@ export class SandCannonEngine {
 
   /** Neutral on purpose: a warm key or a blue rim would tint every lit
    * material toward that hue, and the whole point of this pass is that
-   * nothing lit — the frame, the cannon's own grey and gold — carries a cast
-   * that competes with the sand picture's actual colours. */
+   * nothing lit carries a cast that competes with the sand picture's own
+   * colours. The frame and sand stay unlit (`MeshBasicMaterial`) and so are
+   * unaffected; the cannon's toon-shaded shell (`MeshToonMaterial`, see
+   * `costumes.ts`) is what these lights actually shape — the key gives it a
+   * lit face and the rim keeps its shadow side from going flat black. */
   private buildLighting() {
     this.scene.add(new THREE.HemisphereLight(0xf2f2f2, 0x8fa8ab, 1.3));
     const key = new THREE.DirectionalLight(0xffffff, 1.85);
@@ -1532,11 +1535,11 @@ export class SandCannonEngine {
     // both the costume's shell and the muzzle band.
     this.baseRing = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(0.86, 0.11, 14, 40)),
-      // Unlit flat slate, matching the costume shell's own materials — no
-      // light-driven shading gradient on the cannon's fixed trim either.
+      // Toon-shaded slate, matching the costume shell's own materials — same
+      // stepped light falloff on the cannon's fixed trim as on the shell.
       // Was gold (0xffc233); moved to a cool dark tone so the shell has no
       // yellow left in it.
-      this.track(new THREE.MeshBasicMaterial({ color: 0x333c50 })),
+      this.track(new THREE.MeshToonMaterial({ color: 0x333c50, gradientMap: getCannonToonRamp() })),
     );
     this.baseRing.rotation.x = Math.PI / 2;
     this.baseRing.position.y = 0.27;
@@ -1547,7 +1550,7 @@ export class SandCannonEngine {
     // `syncAmmoModel`'s comment: that signal moved to the background).
     this.muzzleBand = new THREE.Mesh(
       this.track(new THREE.TorusGeometry(MUZZLE_BAND_RADIUS, 0.045, 10, 32)),
-      this.track(new THREE.MeshBasicMaterial({ color: 0x333c50 })),
+      this.track(new THREE.MeshToonMaterial({ color: 0x333c50, gradientMap: getCannonToonRamp() })),
     );
     this.muzzleBand.position.z = MUZZLE_Z + 0.2;
     this.barrelVisual.add(this.muzzleBand);
@@ -2537,12 +2540,12 @@ export class SandCannonEngine {
     this.aimZone.style.setProperty("--joystick-dy", `${dy * clampedScale}px`);
     this.aimZone.classList.toggle("is-cancelled", !this.aimArmed);
 
-    const baseResponse = THREE.MathUtils.clamp(
-      (Math.min(this.aimDistance, JOYSTICK_RADIUS) - JOYSTICK_RESPONSE_DEAD_ZONE)
-        / (JOYSTICK_RADIUS - JOYSTICK_RESPONSE_DEAD_ZONE),
-      0,
-      1,
-    );
+    // No dead zone here on purpose: a flat "response pinned to exactly zero"
+    // band near the centre reads, to a thumb easing back in, as the aim
+    // snapping to dead-centre the moment it crosses into that band — rather
+    // than the crosshair just running out of room to move. Scaling from raw
+    // distance keeps the response continuous all the way to the centre.
+    const baseResponse = THREE.MathUtils.clamp(this.aimDistance / JOYSTICK_RADIUS, 0, 1);
     const response = (baseResponse * this.aimDragSensitivity)
       / (1 + (this.aimDragSensitivity - 1) * baseResponse);
     if (this.aimDistance > 1e-5 && response > 0) {
