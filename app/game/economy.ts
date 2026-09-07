@@ -337,6 +337,16 @@ export function resetGold() {
   writeWallet({ ...wallet, gold: 0 });
 }
 
+/** Dev-only: puts the WHOLE wallet — gold, gems, emeralds, every booster
+ * charge — back to its starter defaults, not just gold. Broader than
+ * `resetGold` above (which only zeroes gold for testing the Shop on its
+ * own); this is the "reset entire game" button's own piece of a full
+ * factory reset. */
+export function resetWallet() {
+  walletIsFreshDefault = false;
+  writeWallet(defaultWallet());
+}
+
 export function addBoosterCharges(type: BoosterType, amount: number) {
   if (amount <= 0) return;
   const wallet = readWallet();
@@ -444,6 +454,20 @@ export function markLevelCleared(id: number): boolean {
 }
 
 export function __resetClearedLevelsForTests() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(CLEARED_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
+/** Dev-only: forgets every level's first-clear, so the gold-payout flow can
+ * be replayed from scratch — the "reset entire game" button's own piece of a
+ * full factory reset. Same effect as `__resetClearedLevelsForTests` above,
+ * kept as a separate, non-test-prefixed entry point since that one is a test
+ * seam ("never called from game code") and this one is meant to be. */
+export function resetClearedLevels() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(CLEARED_KEY);
@@ -568,6 +592,72 @@ export function __resetDailyLoginForTests() {
   } catch {
     // Nothing to clean up if storage is unavailable.
   }
+}
+
+/** Dev-only: forgets the daily-login streak entirely — the "reset entire
+ * game" button's own piece of a full factory reset. Same effect as
+ * `__resetDailyLoginForTests` above, kept separate since that one is a test
+ * seam and this one is meant to be reachable from the Settings screen. */
+export function resetDailyLogin() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DAILY_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
+// ---- dev date override (testing daily login) -------------------------------
+// The daily-login streak is entirely a function of what day `claimDailyLogin`/
+// `getDailyLoginState` are told "today" is — real code always leaves that at
+// its default (`new Date()`), but testing a multi-day streak (or the exact
+// midnight boundary where a streak breaks) by actually waiting real days is
+// not practical. `devNow()` is the one knob for that: a whole-day offset,
+// persisted so it survives the reload the Settings screen's date tool
+// triggers after changing it (both `getDailyLoginState`'s result and
+// `SandGame.tsx`'s own once-per-load `cachedInitialDailyLogin` are read at
+// module-load time, so the offset has to already be in storage before that
+// read happens, not just in a React state update).
+const DEV_DATE_OFFSET_KEY = "sand-cannon:v1:dev-date-offset-days";
+
+/** Whole days the dev date tool has nudged "today" by, positive or negative.
+ * `0` (the default a real player's browser always stays at) means no
+ * override — `devNow()` is then just `new Date()`. */
+export function getDevDateOffsetDays(): number {
+  if (typeof window === "undefined") return 0;
+  try {
+    const raw = window.localStorage.getItem(DEV_DATE_OFFSET_KEY);
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Dev-only: sets the offset `devNow()` applies. The Settings screen reloads
+ * the page right after calling this — see this section's own header for why
+ * a React re-render alone would not be enough. */
+export function setDevDateOffsetDays(days: number) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DEV_DATE_OFFSET_KEY, String(Math.trunc(days)));
+  } catch {
+    // The offset just will not survive a reload.
+  }
+}
+
+/**
+ * "Today", nudged by the dev date tool above. The one thing `SandGame.tsx`
+ * passes to `getDailyLoginState`/`claimDailyLogin` instead of letting them
+ * default to `new Date()` — so a real player (offset always 0) sees exactly
+ * the same behaviour either way, and only a tester who has actually opened
+ * the date tool ever gets a nudged "today".
+ */
+export function devNow(): Date {
+  const offsetDays = getDevDateOffsetDays();
+  if (!offsetDays) return new Date();
+  return new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
 }
 
 // ---- reward track (home screen progression bar) -----------------------------

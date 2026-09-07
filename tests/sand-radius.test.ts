@@ -13,6 +13,7 @@ import {
   parseSandLevel,
   resolveShot,
   runGrainSettle,
+  SORT_RADIUS_FORGIVENESS,
 } from "../app/game/sand-rules.ts";
 import type { SandBody, SandColor, SandGameState } from "../app/game/sand-types.ts";
 
@@ -183,11 +184,14 @@ test("a shot into empty air inside the frame still sorts what the disc reaches",
   }
   assert.ok(air, "no empty square has the colour in hand in reach");
 
-  const expected = cellsInRadius(state.bodies, air, RADIUS, ammo);
+  // `resolveShot` itself sweeps a little past `RADIUS` — see
+  // `SORT_RADIUS_FORGIVENESS`'s own comment — so the oracle needs the same
+  // margin, not just the number the ring is drawn from.
+  const expected = cellsInRadius(state.bodies, air, RADIUS + SORT_RADIUS_FORGIVENESS, ammo);
   const resolution = resolveShot(LEVEL, state, { bodyId: null, x: air.x, y: air.y });
   assert.equal(resolution.outcome, "SORTED");
   assert.equal(resolution.hitBody, null, "there was no body under the impact, and the result says so");
-  assert.deepEqual(resolution.removed, expected, "the disc takes exactly what it reaches from that place");
+  assert.deepEqual(resolution.removed, expected, "the disc takes exactly what it reaches from that place, forgiveness margin included");
   assert.equal(resolution.state.shotsUsed, state.shotsUsed + 1);
 });
 

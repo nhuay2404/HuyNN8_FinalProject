@@ -57,6 +57,8 @@ export const LETTER_BY_SAND_COLOR: Record<SandColor, string> = {
   pink: "M",
   lime: "L",
   brown: "N",
+  white: "S",
+  black: "D",
 };
 
 export const EMPTY_CELL = ".";
@@ -92,6 +94,16 @@ export type LevelDraft = {
   pixelScale: number | null;
   /** 0–1, how strongly a key resists rolling sideways. Absent is the same as 0. */
   keyFriction?: number;
+  /**
+   * Set by `levelToDraft` when this draft came from "Import built-in" — the
+   * numeric id of the `SandLevelConfig` it was copied from. What lets the
+   * editor's "Update built-in level" button (see LevelEditor.tsx) write back
+   * to that same hand-authored const in sand-levels.ts instead of shipping
+   * as a brand new level the way an ordinary draft does. Absent for every
+   * other draft (a fresh "+ New", an image import, a duplicate of one of
+   * those) — those have no built-in level to write back to.
+   */
+  importedFromId?: number;
   updatedAt: number;
 };
 
@@ -244,6 +256,7 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     shotLimit: level.shotLimit,
     pixelScale: level.pixelScale,
     keyFriction: level.keyFriction,
+    importedFromId: level.id,
     updatedAt: Date.now(),
   };
   return expandDraftToPixels(draft);

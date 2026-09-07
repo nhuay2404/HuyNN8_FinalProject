@@ -1,7 +1,20 @@
-// A small standalone Node server that writes every level in the editor's
-// level list straight into design/levels/sand-levels.ts, replacing whatever
-// was there before — so shipping never piles up stale entries from levels the
-// editor no longer has.
+// A small standalone Node server that writes level drafts straight into
+// design/levels/sand-levels.ts. Two routes, both enforcing the same rule —
+// every level has exactly one id, and a draft naming an id already in the
+// file updates that level rather than minting a duplicate — at two different
+// scales:
+//
+// - POST /update-level writes ONE draft back to the specific `export const`
+//   it was imported from (matched by id, wherever it sits in the file) —
+//   what "Import built-in" + "Update built-in level" in the editor use to
+//   actually revise a hand-authored level in place, instead of shipping the
+//   edit as an unrelated new one.
+// - POST /ship-levels does the same per-draft id check across the editor's
+//   whole level list at once: a draft that names an existing id updates that
+//   level in place (see `shipLevels`'s own comment for exactly where);
+//   everything left over — genuinely new levels only — replaces the
+//   EDITOR_LEVELS block wholesale, so that block never piles up stale
+//   entries from levels the editor no longer has.
 //
 // It cannot live inside the app itself: this project's dev/build target is
 // Cloudflare Workers (see worker/index.ts, wrangler.toml), and the Workers
@@ -22,6 +35,101 @@ const SAND_LEVELS_PATH = path.join(process.cwd(), "design", "levels", "sand-leve
 
 const BEGIN_MARKER = "// ==== Editor-shipped levels ====";
 const END_MARKER = "// ==== End editor-shipped levels ====";
+
+/**
+ * Scan `source` from `openIndex` (the position of an opening bracket) for the
+ * bracket that closes it, skipping over comments and string/template
+ * literals so a stray `{`/`}`/`[`/`]` inside a doc comment or a quoted string
+ * (both common in this codebase's prose-heavy comments) never miscounts.
+ * Returns the closing bracket's index, or -1 if the source ends unclosed.
+ */
+function findMatchingBracket(source, openIndex, openChar, closeChar) {
+  let depth = 0;
+  for (let i = openIndex; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "/" && next === "/") {
+      const eol = source.indexOf("\n", i);
+      if (eol === -1) return -1;
+      i = eol;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      const close = source.indexOf("*/", i + 2);
+      if (close === -1) return -1;
+      i = close + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i += 1;
+      while (i < source.length && source[i] !== quote) {
+        if (source[i] === "\\") i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === openChar) depth += 1;
+    else if (ch === closeChar) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Finds the one `export const NAME: SandLevelConfig = { ... };` block whose
+ * body contains `id: <id>` — hand-authored or previously shipped, wherever it
+ * sits in the file. Used by `/update-level` to write back to the *same*
+ * const a draft was imported from, rather than shipping it as a new level.
+ */
+function findLevelBlockById(source, id) {
+  const headerRe = /export const (\w+): SandLevelConfig = \{/g;
+  let match;
+  while ((match = headerRe.exec(source))) {
+    const openBrace = match.index + match[0].length - 1;
+    const closeBrace = findMatchingBracket(source, openBrace, "{", "}");
+    if (closeBrace === -1) break;
+    let end = closeBrace + 1;
+    while (end < source.length && /\s/.test(source[end])) end += 1;
+    if (source[end] === ";") end += 1;
+    headerRe.lastIndex = end;
+
+    const blockText = source.slice(match.index, end);
+    const idMatch = blockText.match(/\bid:\s*(\d+)\b/);
+    if (idMatch && Number(idMatch[1]) === id) {
+      const rowsMatch = blockText.match(/\brows:\s*(\w+)\s*,/);
+      return { start: match.index, end, constName: match[1], pictureConstName: rowsMatch?.[1] ?? null };
+    }
+  }
+  return null;
+}
+
+/**
+ * If the block being replaced pointed at a separate `const PICTURE = [...]`
+ * (the style every hand-authored level in sand-levels.ts uses — see that
+ * file's own levels), that picture becomes dead code the instant the level
+ * block is replaced with a self-contained one (the shipped format always
+ * inlines `rows` directly). Removed here so updating a built-in level does
+ * not leave an unused const behind for every level it touches.
+ */
+function removeOrphanedPictureConst(source, pictureConstName) {
+  const headerRe = new RegExp(`const ${pictureConstName} = \\[`, "g");
+  const match = headerRe.exec(source);
+  if (!match) return source;
+  const openBracket = match.index + match[0].length - 1;
+  const closeBracket = findMatchingBracket(source, openBracket, "[", "]");
+  if (closeBracket === -1) return source;
+  let end = closeBracket + 1;
+  while (end < source.length && /\s/.test(source[end]) && source[end] !== "\n") end += 1;
+  if (source[end] === ";") end += 1;
+  // Eat one trailing blank line so removing the const does not leave a gap
+  // of two blank lines where there used to be one.
+  let start = match.index;
+  while (end < source.length && (source[end] === "\n" || source[end] === "\r")) end += 1;
+  return source.slice(0, start) + source.slice(end);
+}
 
 function quoted(value) {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -89,27 +197,76 @@ function isDraft(value) {
     && typeof value.shotLimit === "number";
 }
 
+/**
+ * Every level gets exactly one id, and shipping a draft whose `importedFromId`
+ * names an id already in the file updates that same level rather than
+ * minting a duplicate — the one rule this function exists to enforce,
+ * regardless of where that id's own `export const` happens to live:
+ *
+ * - Outside the editor-shipped block (a hand-authored level, or one shipped
+ *   on an earlier run and later re-imported for more editing): updated in
+ *   place, independently of anything below, the same way `/update-level`
+ *   does it — because the wholesale regeneration below would otherwise wipe
+ *   out that update the instant it replaces the whole block.
+ * - Inside the editor-shipped block: left for that regeneration to handle,
+ *   just kept at its own id instead of being handed a fresh one.
+ *
+ * Only a draft with no `importedFromId` at all — one that has never named an
+ * existing level — actually counts as new and gets a fresh id.
+ */
 async function shipLevels(drafts) {
-  const source = await readFile(SAND_LEVELS_PATH, "utf8");
+  let source = await readFile(SAND_LEVELS_PATH, "utf8");
   // Match the file's own line endings — this checkout keeps sand-levels.ts as
   // CRLF, and a block hard-coded to \n would leave the file with mixed
   // endings even though it still parses.
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
 
-  const beginIdx = source.indexOf(BEGIN_MARKER);
-  const endIdx = source.indexOf(END_MARKER);
+  let beginIdx = source.indexOf(BEGIN_MARKER);
+  let endIdx = source.indexOf(END_MARKER);
   if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
     throw new Error("Could not find the editor-shipped levels markers in design/levels/sand-levels.ts.");
   }
 
-  // IDs starting right after every hand-authored level already in the file,
-  // so a shipped level never collides with one written by hand.
-  const outsideBlock = source.slice(0, beginIdx) + source.slice(endIdx + END_MARKER.length);
-  const handAuthoredIds = [...outsideBlock.matchAll(/\bid:\s*(\d+)/g)].map((match) => Number(match[1]));
-  const firstId = handAuthoredIds.length ? Math.max(...handAuthoredIds) + 1 : 1;
+  const regenerate = [];
+  let updatedInPlace = 0;
+  for (const draft of drafts) {
+    const targetId = Number.isInteger(draft.importedFromId) ? draft.importedFromId : null;
+    if (targetId === null) {
+      regenerate.push({ draft, id: null });
+      continue;
+    }
+    const found = findLevelBlockById(source, targetId);
+    const insideShippedBlock = found && found.start >= beginIdx && found.start < endIdx;
+    if (found && !insideShippedBlock) {
+      const newBlock = draftToTypeScript(draft, targetId, found.constName).replace(/\n/g, eol);
+      source = source.slice(0, found.start) + newBlock + source.slice(found.end);
+      if (found.pictureConstName) source = removeOrphanedPictureConst(source, found.pictureConstName);
+      // The upsert above can shift both markers (a removed picture const, a
+      // block that changed size) — re-find them before the next draft trusts
+      // either index.
+      beginIdx = source.indexOf(BEGIN_MARKER);
+      endIdx = source.indexOf(END_MARKER);
+      updatedInPlace += 1;
+      continue;
+    }
+    // Either its own const sits inside the block the loop below regenerates
+    // wholesale (so updating it here would just be overwritten a moment
+    // later), or `targetId` no longer exists (its level was deleted by
+    // hand) — either way its edit belongs in that regeneration, kept at its
+    // own id rather than treated as a fresh level.
+    regenerate.push({ draft, id: targetId });
+  }
 
-  const names = uniqueExportNames(drafts);
-  const blocks = drafts.map((draft, index) => draftToTypeScript(draft, firstId + index, names[index]));
+  // Fresh ids start right after every id living outside the block about to be
+  // regenerated, so a genuinely new level never collides with one written by
+  // hand — or with one of the re-ided drafts above, now sitting outside it.
+  const outsideBlock = source.slice(0, beginIdx) + source.slice(endIdx + END_MARKER.length);
+  const existingIds = [...outsideBlock.matchAll(/\bid:\s*(\d+)/g)].map((match) => Number(match[1]));
+  let nextFreshId = existingIds.length ? Math.max(...existingIds) + 1 : 1;
+
+  const names = uniqueExportNames(regenerate.map((entry) => entry.draft));
+  const blocks = regenerate.map((entry, index) =>
+    draftToTypeScript(entry.draft, entry.id ?? nextFreshId++, names[index]));
 
   // Built with plain "\n" throughout, then converted to the file's own line
   // ending in one pass at the end — converting twice (once per fragment) would
@@ -119,6 +276,9 @@ async function shipLevels(drafts) {
     "// \"Ship to sand-levels.ts\" button, via `npm run level-writer`) — this array",
     "// always mirrors the editor's current level list exactly, so a level deleted",
     "// in the editor disappears from here on the next ship rather than lingering.",
+    "// A draft imported from a level living outside this block updates that",
+    "// level's own const instead of appearing here at all — see this file's",
+    "// header comment.",
     "// Hand edits inside this block are overwritten on the next ship; edit the",
     "// level in the editor instead.",
     ...(blocks.length ? [blocks.join("\n\n"), ""] : []),
@@ -130,7 +290,45 @@ async function shipLevels(drafts) {
     + source.slice(endIdx);
 
   await writeFile(SAND_LEVELS_PATH, next, "utf8");
-  return { count: drafts.length, names };
+  const created = regenerate.filter((entry) => entry.id === null).length;
+  return { count: drafts.length, created, updatedInPlace: updatedInPlace + (regenerate.length - created), names };
+}
+
+/**
+ * Writes one draft back to the *same* `export const` it was imported from
+ * (matched by `id`, wherever that const sits in the file — hand-authored or
+ * previously shipped), rather than appending it as a new level the way
+ * `shipLevels` always does. This is what the editor's "Update built-in
+ * level" button calls.
+ *
+ * The replacement is always in the self-contained, inlined-`rows` shape
+ * `draftToTypeScript` produces — the same shape `shipLevels` writes. A
+ * hand-authored level that split its picture into its own named const (every
+ * level in sand-levels.ts written before this feature existed does) loses
+ * that split: the const becomes unreferenced the instant this runs, so it is
+ * deleted here too rather than left as dead code.
+ */
+async function updateLevel(id, draft) {
+  const source = await readFile(SAND_LEVELS_PATH, "utf8");
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+
+  const found = findLevelBlockById(source, id);
+  if (!found) {
+    throw new Error(`Could not find a level with id ${id} in design/levels/sand-levels.ts.`);
+  }
+
+  const newBlock = draftToTypeScript(draft, id, found.constName).replace(/\n/g, eol);
+  let next = source.slice(0, found.start) + newBlock + source.slice(found.end);
+
+  let orphanRemoved = false;
+  if (found.pictureConstName) {
+    const before = next;
+    next = removeOrphanedPictureConst(next, found.pictureConstName);
+    orphanRemoved = next !== before;
+  }
+
+  await writeFile(SAND_LEVELS_PATH, next, "utf8");
+  return { constName: found.constName, pictureConstName: found.pictureConstName, orphanRemoved };
 }
 
 const server = createServer((req, res) => {
@@ -142,7 +340,7 @@ const server = createServer((req, res) => {
     res.writeHead(204).end();
     return;
   }
-  if (req.method !== "POST" || req.url !== "/ship-levels") {
+  if (req.method !== "POST" || (req.url !== "/ship-levels" && req.url !== "/update-level")) {
     res.writeHead(404).end();
     return;
   }
@@ -151,6 +349,17 @@ const server = createServer((req, res) => {
   req.on("data", (chunk) => { body += chunk; });
   req.on("end", async () => {
     try {
+      if (req.url === "/update-level") {
+        const { id, draft } = JSON.parse(body);
+        if (!Number.isInteger(id) || id < 1 || !isDraft(draft)) {
+          res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "That doesn't look like a level id and a draft." }));
+          return;
+        }
+        const result = await updateLevel(id, draft);
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, ...result }));
+        return;
+      }
+
       const { drafts } = JSON.parse(body);
       if (!Array.isArray(drafts) || !drafts.every(isDraft)) {
         res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "That doesn't look like a list of level drafts." }));

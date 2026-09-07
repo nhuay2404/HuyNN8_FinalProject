@@ -35,6 +35,11 @@ export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
   M: "pink",
   L: "lime",
   N: "brown",
+  // `S`/`D` rather than the conventional `W`/`K` for white/black — both of
+  // those letters were already spoken for (`WALL_LETTER`, `KEY_LETTER`)
+  // before white and black joined the palette.
+  S: "white",
+  D: "black",
 };
 
 /**
@@ -410,14 +415,59 @@ function occupied(world: World, frame: SandFrame, x: number, y: number) {
   return world.grid.has(key) || world.keyAt.has(key) || world.walls.has(key);
 }
 
-/** Where the grain at (x, y) would fall this pass, or null if nothing gives. */
+/** The 8 neighbours of a cell — used only by `grainTarget`'s own cohesion
+ * tie-break below, nowhere solvability-sensitive depends on this order. */
+const EIGHT_NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+];
+
+/** How much of `color` already surrounds (x, y) — `grainTarget`'s cohesion
+ * tie-break reads this off each candidate landing spot before choosing one. */
+function sameColorNeighbourCount(world: World, x: number, y: number, color: SandColor): number {
+  let count = 0;
+  for (const [dx, dy] of EIGHT_NEIGHBOURS) {
+    if (world.grid.get(cellKey(x + dx, y + dy)) === color) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Where the grain at (x, y) would fall this pass, or null if nothing gives.
+ *
+ * Straight down still wins outright whenever it is open — this only ever
+ * chooses between the two diagonals, and only when *both* are open at once.
+ * That case is exactly a freshly-opened gap wide enough for a grain to go
+ * either way, which is also the one place today's flat LEFT_FIRST_TEMP rule
+ * (SLIDE_ORDER, Open Decisions 4 and 5) used to scatter colours evenly
+ * across a gap regardless of which side already held more of this grain's
+ * own colour — the "sand doesn't stick to itself" look a wide shot's
+ * collapse used to produce. Preferring whichever side already touches more
+ * of the same colour keeps a clump reading as a clump through that collapse
+ * without touching the single-candidate case SLIDE_ORDER's own solvability
+ * argument is about: with only one side open, this still returns exactly
+ * what it always did. Ties (including every single-colour board, where both
+ * sides always score 0) keep the old left-first order, so nothing here
+ * changes unless the two sides genuinely disagree on colour.
+ */
 function grainTarget(world: World, frame: SandFrame, x: number, y: number): CellCoord | null {
   if (!occupied(world, frame, x, y - 1)) return { x, y: y - 1 };
+  const open: Array<-1 | 1> = [];
   for (const dx of SLIDE_ORDER) {
     if (occupied(world, frame, x + dx, y) || occupied(world, frame, x + dx, y - 1)) continue;
-    return { x: x + dx, y: y - 1 };
+    open.push(dx);
   }
-  return null;
+  if (open.length === 0) return null;
+  if (open.length === 1) return { x: x + open[0], y: y - 1 };
+  const color = world.grid.get(cellKey(x, y));
+  if (color !== undefined) {
+    const [left, right] = open;
+    const leftScore = sameColorNeighbourCount(world, x + left, y - 1, color);
+    const rightScore = sameColorNeighbourCount(world, x + right, y - 1, color);
+    if (rightScore > leftScore) return { x: x + right, y: y - 1 };
+  }
+  return { x: x + open[0], y: y - 1 };
 }
 
 /** One pass of falling sand. Returns whether anything moved. */
@@ -787,6 +837,22 @@ export function effectiveSortRadius(level: SandLevelConfig, booster?: BoosterTyp
 }
 
 /**
+ * A little slack past `effectiveSortRadius`, added only where a shot
+ * actually resolves (`resolveShot`) and never to the number the ring/lift
+ * preview are drawn from — on request, the disc a shot sweeps should reach
+ * a bit past what the ring promises, not exactly match it, so a grain
+ * sitting just outside the drawn edge still gets swept up instead of the
+ * ring reading as a stricter boundary than it looks. A flat cell fraction
+ * rather than a multiplier, so it stays a small, constant margin rather than
+ * ballooning at Radius Overcharge's already-doubled reach — kept small
+ * enough that a level's shot budget still means something (see
+ * sand-radius.test.ts's own "careless play loses" difficulty check).
+ * Exported only so tests can build the same oracle `resolveShot` actually
+ * resolves against; the renderer never touches it.
+ */
+export const SORT_RADIUS_FORGIVENESS = 0.15;
+
+/**
  * How many charges of `type` are left — spec §4.
  *
  * Used to be a flat `Infinity` for both boosters, with a comment noting that
@@ -1040,6 +1106,21 @@ function shootableColors(bodies: SandBody[], frozen: ReadonlySet<string>): SandC
 }
 
 /**
+ * A landed shot that leaves this little (or less) of the level's own starting
+ * sand behind is close enough to call finished. Per feedback: 1-2% of a
+ * picture left over reads as a rounding error the player did nothing wrong
+ * to avoid, not a real miss — see `resolveShot`'s own use of this, which is
+ * what actually sweeps the leftover away rather than just excusing it.
+ */
+const WIN_LENIENCY_FRACTION = 0.02;
+
+function isForgivableLeftover(level: SandLevelConfig, remainingCells: number): boolean {
+  if (remainingCells <= 0) return false;
+  const startingCells = countCells(parseSandLevel(level).bodies);
+  return remainingCells <= Math.max(1, Math.round(startingCells * WIN_LENIENCY_FRACTION));
+}
+
+/**
  * Win first, then fail.
  *
  * §12 checks the empty board after the settle, and §13 only asks about the
@@ -1135,7 +1216,12 @@ export function resolveShot(
   // and only the part of each that falls inside it. The place may be empty air
   // — the disc still reaches down from it. A shot that finds none of its colour
   // in reach is not a special case; NO_MATCH covers it.
-  const radius = effectiveSortRadius(level, booster);
+  //
+  // The disc itself reaches a little past `effectiveSortRadius` — see
+  // `SORT_RADIUS_FORGIVENESS`'s own comment — while the ring drawn for this
+  // same shot (the renderer's own call to `effectiveSortRadius`) stays
+  // exactly what it always was, so only what a shot actually sweeps grew.
+  const radius = effectiveSortRadius(level, booster) + SORT_RADIUS_FORGIVENESS;
   const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozen, {
     matchColor: booster !== "prismShot",
   });
@@ -1149,7 +1235,7 @@ export function resolveShot(
     .filter((body) => body.cells.length);
   const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(level, state), removed);
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
-  const sorted: SandGameState = {
+  let sorted: SandGameState = {
     ...state,
     bodies: settle.bodies,
     ...spend(settle.bodies, stillFrozen),
@@ -1158,5 +1244,21 @@ export function resolveShot(
     keys: settle.keys,
     walls: settle.walls,
   };
-  return { state: withResult(level, sorted), outcome: "SORTED", hitBody, removed, settle, steps };
+
+  // A landed shot that spends the last bullet is allowed to sweep away a tiny
+  // (`WIN_LENIENCY_FRACTION`) leftover along with whatever it actually hit,
+  // rather than losing to it. Folded into `removed` below rather than just
+  // deleted from the data: that is what puts these grains through the same
+  // clear-flash-and-spray the shot's own hit gets, instead of having them
+  // blink out of existence with nothing on screen to explain where they went.
+  // Scoped to a shot that hit something on purpose — a `NO_MATCH` miss stays
+  // a miss, since the engine's own miss animation has no clear beat to fold
+  // this into.
+  let forgiven: CellCoord[] = [];
+  if (sorted.shotsUsed >= level.shotLimit && isForgivableLeftover(level, sorted.remainingCells)) {
+    forgiven = sorted.bodies.flatMap((body) => body.cells);
+    sorted = { ...sorted, bodies: [], locked: [], remainingCells: 0 };
+  }
+
+  return { state: withResult(level, sorted), outcome: "SORTED", hitBody, removed: [...removed, ...forgiven], settle, steps };
 }

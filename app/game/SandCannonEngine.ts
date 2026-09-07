@@ -75,6 +75,14 @@ export const SAND_COLOR_HEX: Record<SandColor, number> = {
   pink: 0xff97b2,
   lime: 0xc1ec35,
   brown: 0x998757,
+  // Not from the designer's reference board above (it never had a white or a
+  // black) — picked to match its register instead: a warm off-white rather
+  // than flat #fff (which would read as a blown-out highlight, not sand),
+  // a dark graphite rather than flat #000 (which would read as a hole/shadow
+  // in the frame, and would sit too close to this file's own `WALL_HEX`
+  // (`#6b7280`, Wall Obstacle's grey) if it were any lighter).
+  white: 0xede7d9,
+  black: 0x2e2b31,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -91,7 +99,21 @@ const FIXED_STEP = 1 / 60;
  * crosshair is over, just with less hang time getting there. */
 const FIXED_LAUNCH_SPEED = 19;
 const SHOT_COOLDOWN_MS = 400;
+/** How far the *visible knob* is allowed to travel from centre before it pins
+ * to the edge of the pad. Purely cosmetic — keep `.aim-joystick`'s width/height
+ * in `globals.css` at exactly double this, since that ring is the drawn size
+ * of the same travel this clamps the knob to. The aim response itself does
+ * not saturate here; see `JOYSTICK_RESPONSE_RADIUS`. */
 const JOYSTICK_RADIUS = 64;
+/** How far a drag actually has to travel before the aim response reaches full
+ * strength. Deliberately bigger than `JOYSTICK_RADIUS`: a small pad stays easy
+ * to glance at and fits in a thumb's natural range, but a small pad's worth of
+ * pixels maps too few of them to a comfortable full sweep of aim power — every
+ * physical millimetre of drag would swing the aim by too much. Spreading that
+ * same 0-to-full response over a longer drag distance is what fixes it; the
+ * knob itself just pins at the pad's edge (`JOYSTICK_RADIUS`) well before the
+ * player has to stop pulling for the response to keep climbing. */
+const JOYSTICK_RESPONSE_RADIUS = 256;
 const JOYSTICK_ARM_RADIUS = 18;
 /**
  * Grace period for a drag that has wandered outside `host` (the rendered
@@ -107,8 +129,11 @@ const JOYSTICK_ARM_RADIUS = 18;
  * nothing.
  */
 const AIM_OUTSIDE_ZONE_CANCEL_MS = 1700;
-const MIN_CONTROL_SENSITIVITY = 0.5;
-const MAX_CONTROL_SENSITIVITY = 2;
+// Exported so the Settings HUD's own sensitivity slider clamps and scales
+// against exactly the same range `setControlSensitivity` enforces, rather
+// than a second copy of these numbers drifting out of sync with it.
+export const MIN_CONTROL_SENSITIVITY = 0.5;
+export const MAX_CONTROL_SENSITIVITY = 2;
 const CANNON_NEUTRAL_YAW = 0;
 const CANNON_NEUTRAL_ELEVATION = 0.24;
 const CANNON_MAX_YAW = 0.54;
@@ -116,9 +141,22 @@ const CANNON_MIN_ELEVATION = -0.08;
 const CANNON_MAX_ELEVATION = 1.08;
 const GRAVITY = new THREE.Vector3(0, -9.5, 0);
 const AIM_PREDICTION_DURATION = 2.2;
-const AIM_CURSOR_EDGE_MARGIN = 22;
-const AIM_CURSOR_HORIZONTAL_RATIO = 0.39;
-const AIM_CURSOR_UP_RATIO = 0.4;
+/** Half of `.aim-crosshair`'s own footprint at its biggest (26px base ×
+ * `is-target-valid`'s 1.08 scale ≈ 28px) — the crosshair is centred on its
+ * screen position, so clamping that position to this margin from the edge is
+ * what makes the icon's own outer edge exactly the limit: full aim reaches
+ * until the icon touches the screen, never past it and never stopping short. */
+const AIM_CURSOR_EDGE_MARGIN = 14;
+/** At 0.5, `cursorForCurrentStick`'s own `Math.min(ratio * dimension, centre -
+ * AIM_CURSOR_EDGE_MARGIN)` always resolves to the margin term (half the
+ * dimension is always a hair more than half the dimension minus the margin) —
+ * so full aim reaches to within `AIM_CURSOR_EDGE_MARGIN` of the screen's own
+ * edge, the most it could ever sensibly reach, rather than stopping short of
+ * it. Raised from 0.39 — full drag was landing well inside the frame instead
+ * of near its edge. */
+const AIM_CURSOR_HORIZONTAL_RATIO = 0.5;
+/** Same reasoning as `AIM_CURSOR_HORIZONTAL_RATIO`, raised from 0.4. */
+const AIM_CURSOR_UP_RATIO = 0.5;
 const AIM_CURSOR_DOWN_RATIO = 0.15;
 const RECOIL_TRAVEL = 0.23;
 /**
@@ -483,6 +521,34 @@ const SPIN_RETURN_SECONDS = 1;
  * over the same `SPIN_RETURN_SECONDS` stretch the picture's rotation already
  * eases back over once Play is tapped — see `updateFrameSpin`. */
 const HUB_FRAME_SCALE = 0.74;
+
+// ---- win reveal ------------------------------------------------------------
+// The moment a level clears, before the "Frame cleared" card interrupts: a
+// beat of stillness on the finished picture, then it takes a bow — one full
+// turn (the same double-sided `frameRoot`/`sandMeshBack` pair the hub idle
+// spin already turns, so the back reads correctly mid-turn too) — and holds
+// at rest again so the player actually gets to look at what they just
+// finished before the card covers it.
+/** How long the picture sits still after the last shot before it starts
+ * turning — the settle/clear beats (`CLEAR_DURATION_MS` etc.) are still
+ * playing out under this, and a turn starting the instant WIN fires would
+ * step on that rather than wait for it to read as finished. */
+const WIN_REVEAL_DELAY_SECONDS = 0.5;
+/** How long the picture's own turn takes — eased in and out
+ * (`updateWinReveal`), so this is the turn's total duration, not a constant
+ * speed. */
+const WIN_REVEAL_SPIN_SECONDS = 1.1;
+/** How long the finished picture holds at rest, turn already done, before
+ * `SandGame.tsx` lets the "Frame cleared" card appear. */
+const WIN_REVEAL_POST_HOLD_SECONDS = 0.6;
+/**
+ * Total time `SandGame.tsx` keeps the HUD hidden and the WIN result card off
+ * screen once a level clears — the still beat, the turn, and the hold after
+ * it, back to back. Lives here, next to the animation it is timing, rather
+ * than as a guessed number duplicated in SandGame.tsx.
+ */
+export const WIN_REVEAL_HOLD_MS =
+  (WIN_REVEAL_DELAY_SECONDS + WIN_REVEAL_SPIN_SECONDS + WIN_REVEAL_POST_HOLD_SECONDS) * 1000;
 
 // SAND_SATURATION_JITTER / SAND_LIGHTNESS_JITTER live in ./sand-color, shared
 // with the editor's preview so a level textures the same in both places.
@@ -977,6 +1043,9 @@ export class SandCannonEngine {
   private unlockGlowRing: THREE.Mesh | null = null;
   private unlockGlowDisc: THREE.Mesh | null = null;
   private unlockCelebrationStart: number | null = null;
+
+  /** Level-clear reveal — see `playWinReveal`/`updateWinReveal`. */
+  private winRevealStart: number | null = null;
 
   constructor(
     host: HTMLDivElement,
@@ -1917,6 +1986,42 @@ export class SandCannonEngine {
   }
 
   /**
+   * Starts the level-clear reveal: after `WIN_REVEAL_DELAY_SECONDS` of
+   * sitting still (letting the settle/clear beats actually finish), the
+   * finished picture takes one full turn (`frameRoot.rotation.y` 0 → 2π, so
+   * it ends facing front again — see `sandMeshBack` for why the back reads
+   * correctly mid-turn) and holds there. `updateWinReveal` stops touching
+   * rotation once the turn completes, so a fresh engine (a new instance per
+   * restart/level, see `runId` in SandGame.tsx) is the only thing that ever
+   * resets it.
+   *
+   * `SandGame.tsx` calls this the instant a WIN result comes back, and
+   * separately holds its own HUD/result-card off screen for
+   * `WIN_REVEAL_HOLD_MS` so the player actually sees this play out.
+   */
+  playWinReveal() {
+    this.winRevealStart = performance.now();
+  }
+
+  private updateWinReveal() {
+    if (this.winRevealStart === null) return;
+    const elapsed = (performance.now() - this.winRevealStart) / 1000 - WIN_REVEAL_DELAY_SECONDS;
+    if (elapsed < 0) return;
+
+    const spinT = Math.min(1, elapsed / WIN_REVEAL_SPIN_SECONDS);
+    const spinEased = 1 - (1 - spinT) ** 3;
+    this.frameRoot.rotation.y = spinEased * Math.PI * 2;
+
+    if (spinT >= 1) {
+      // Exactly 0, not `% twoPi` of whatever float `spinEased * 2π` landed
+      // on — the turn is meant to end precisely back at the authored
+      // orientation, not a hair off it.
+      this.frameRoot.rotation.y = 0;
+      this.winRevealStart = null;
+    }
+  }
+
+  /**
    * A ring built from `PRISM_SPECTRUM_HEX.length` flat-coloured wedges rather
    * than one mesh, so it needs no shader to show several colours at once —
    * every other coloured surface on this cannon is a single flat
@@ -2564,7 +2669,7 @@ export class SandCannonEngine {
     // snapping to dead-centre the moment it crosses into that band — rather
     // than the crosshair just running out of room to move. Scaling from raw
     // distance keeps the response continuous all the way to the centre.
-    const baseResponse = THREE.MathUtils.clamp(this.aimDistance / JOYSTICK_RADIUS, 0, 1);
+    const baseResponse = THREE.MathUtils.clamp(this.aimDistance / JOYSTICK_RESPONSE_RADIUS, 0, 1);
     const response = (baseResponse * this.aimDragSensitivity)
       / (1 + (this.aimDragSensitivity - 1) * baseResponse);
     if (this.aimDistance > 1e-5 && response > 0) {
@@ -3196,7 +3301,7 @@ export class SandCannonEngine {
     // `.settle-badge`) show until `advanceBeats` clears the queue below.
     this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
     this.callbacks.onState(this.cloneState());
-    if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); }
+    if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
     if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
     if (!resolution.state.result) this.showIdleCrosshair();
   }
@@ -3486,6 +3591,7 @@ export class SandCannonEngine {
     const delta = Math.min(now - this.lastFrame, 120);
     this.lastFrame = now;
     this.updateFrameSpin(delta);
+    this.updateWinReveal();
     this.updateCannonEntrance();
     // Runs through the same pause the picker opens on top of, the same way
     // `updateFrameSpin`/`updateCannonEntrance` already do — `step()` below

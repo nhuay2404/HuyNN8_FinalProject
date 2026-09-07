@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   SandCannonEngine,
   SAND_COLOR_HEX,
+  WIN_REVEAL_HOLD_MS,
+  MAX_CONTROL_SENSITIVITY,
+  MIN_CONTROL_SENSITIVITY,
   type SandEngineEvent,
 } from "./game/SandCannonEngine";
 import {
@@ -34,12 +37,18 @@ import {
   claimDailyLogin,
   dailyLoginReward,
   DAILY_LOGIN_REWARDS,
+  devNow,
   getDailyLoginState,
+  getDevDateOffsetDays,
   getWallet,
   hasClearedLevel,
   levelGoldReward,
   markLevelCleared,
+  resetClearedLevels,
+  resetDailyLogin,
   resetGold,
+  resetWallet,
+  setDevDateOffsetDays,
   SERVER_REWARD_TRACK,
   SERVER_WALLET,
   subscribeWallet,
@@ -63,6 +72,7 @@ import {
 } from "./game/sand-rules";
 import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
+import { getAimSensitivity, setAimSensitivity } from "./game/aim-sensitivity";
 import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 import { getLanguage, LANGUAGES, LANGUAGE_NAME, setLanguage, subscribeLanguage, t, type Strings } from "./i18n";
@@ -300,7 +310,7 @@ function CancelIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "menu" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target";
+type ChromeGlyph = "menu" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target" | "trash" | "calendar";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
@@ -352,6 +362,21 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
           <circle cx="12" cy="12" r="8.2" />
           <circle cx="12" cy="12" r="3.6" />
           <path d="M12 3.8v2.6M12 17.6v2.6M20.2 12h-2.6M6.4 12H3.8" />
+        </>
+      )}
+      {name === "trash" && (
+        <>
+          <path d="M4.6 7.2h14.8" />
+          <path d="M9 7.2V5a1.4 1.4 0 0 1 1.4-1.4h3.2A1.4 1.4 0 0 1 15 5v2.2" />
+          <path d="M6.6 7.2 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-11.8" />
+          <path d="M10.2 10.6v6.4M13.8 10.6v6.4" />
+        </>
+      )}
+      {name === "calendar" && (
+        <>
+          <rect x="3.8" y="5.4" width="16.4" height="15" rx="2" />
+          <path d="M3.8 9.8h16.4" />
+          <path d="M8 3.4v3.6M16 3.4v3.6" />
         </>
       )}
     </svg>
@@ -474,12 +499,20 @@ type Playable = { level: SandLevelConfig; fromEditor: boolean };
  * it in the switcher would just be a trap. The editor is where those are fixed
  * and is the only place that explains them.
  *
+ * A draft with `importedFromId` set is a working copy of a level already in
+ * `builtIn` — "Import built-in" brought it in to edit, not to add a second,
+ * unrelated entry alongside the original. Without this exclusion, editing a
+ * built-in level in the editor and never shipping it makes it show up twice
+ * in this browser's own Gallery: once as the real level, once more as a
+ * stray "new" one tacked on the end under a fresh id.
+ *
  * Read once per mount rather than watched — the editor lives on its own page, so
  * anything it saves arrives with the next load of this one.
  */
 function collectPlayables(): Playable[] {
   const builtIn: Playable[] = BUILT_IN_LEVELS.map((level) => ({ level, fromEditor: false }));
   const drafts = loadDrafts()
+    .filter((draft) => draft.importedFromId === undefined)
     .filter((draft) => !validateDraft(draft).some((issue) => issue.severity === "error"))
     .map((draft, index) => ({
       level: draftToLevel(draft, BUILT_IN_LEVELS.length + index + 1),
@@ -530,7 +563,7 @@ const SERVER_DAILY_LOGIN: DailyLoginState = { day: 0, reward: DAILY_LOGIN_REWARD
 let cachedInitialDailyLogin: DailyLoginState | null = null;
 
 function readInitialDailyLogin(): DailyLoginState {
-  if (!cachedInitialDailyLogin) cachedInitialDailyLogin = getDailyLoginState();
+  if (!cachedInitialDailyLogin) cachedInitialDailyLogin = getDailyLoginState(devNow());
   return cachedInitialDailyLogin;
 }
 
@@ -800,7 +833,7 @@ export default function SandGame() {
    * opinion on, since `economy.ts` only deals in numbers. */
   const claimDailyLoginWithFlight = useCallback(() => {
     const goldBefore = wallet.gold;
-    const claimed = claimDailyLogin();
+    const claimed = claimDailyLogin(devNow());
     if (!claimed) return;
     setDailyLoginOverride(claimed);
     const fromEl = todayCoinRef.current;
@@ -939,6 +972,11 @@ export default function SandGame() {
   // Same one-place-writes-it reasoning as `soundOn` above, for the haptics
   // module's own stored preference.
   const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
+  // Same one-place-writes-it reasoning again, for the aim-sensitivity module.
+  // Applying it to the engine is a separate effect below — `aim-sensitivity.ts`
+  // only owns storing the number, `SandCannonEngine.setControlSensitivity` is
+  // what actually changes how the joystick responds.
+  const [aimSensitivity, setAimSensitivityState] = useState(() => getAimSensitivity());
   // Unlike `soundOn`/`vibrationOn` above, this can't be a plain `useState(()
   // => getLanguage())`: that reads real client storage on the very first
   // client render, while the server pass (which never sees localStorage)
@@ -960,6 +998,16 @@ export default function SandGame() {
   // The GameDevOption "jump to level" field's raw text, kept separate from
   // `chosenIndex` so a half-typed number never triggers a jump.
   const [devLevelInput, setDevLevelInput] = useState("");
+  // The GameDevOption date-offset field — mirrors `devLevelInput`'s own
+  // "raw text, not the applied value" shape. Seeded from whatever offset is
+  // already persisted (`getDevDateOffsetDays`), not `0`, so reopening
+  // Settings after a previous nudge shows the offset actually in effect
+  // rather than looking like it reset itself. Server-safe default (`"0"`)
+  // since `getDevDateOffsetDays` reads `window.localStorage` — this is a
+  // dev-only field nobody sees before hydration anyway.
+  const [devDateOffsetInput, setDevDateOffsetInput] = useState(() =>
+    typeof window === "undefined" ? "0" : String(getDevDateOffsetDays()),
+  );
   // Lags `playing` on the way in: the home screen stays mounted for one more
   // beat after Play is tapped so its CSS exit animation (Play button
   // shrinking, the bottom bar sliding off) actually gets to play instead of
@@ -1244,6 +1292,14 @@ export default function SandGame() {
     engine?.setIdle(!playing);
   }, [engine, playing]);
 
+  // Every level start/restart builds a fresh engine (`aimDragSensitivity`
+  // resets to its own default of 1 in the constructor — see the effect that
+  // builds `built` above), so the stored preference has to be re-applied on
+  // every new one, not just once when the slider itself moves.
+  useEffect(() => {
+    engine?.setControlSensitivity({ aim: aimSensitivity });
+  }, [engine, aimSensitivity]);
+
   useEffect(() => {
     const onVisibility = () => {
       // A background tab must not keep ambience playing (or drifting out of
@@ -1331,6 +1387,47 @@ export default function SandGame() {
     setSettingsOpen(false);
     setDevLevelInput("");
   }, [devLevelInput, playables, openLevel]);
+
+  /**
+   * GameDevOption's "reset entire game" button — every piece of persisted
+   * player progress (wallet, first-clears, the daily-login streak, the
+   * reward track, owned/equipped skins) back to a brand-new install, plus
+   * the dev date-offset tool below so a full reset does not leave "today"
+   * quietly nudged. Reloads immediately after rather than trying to patch
+   * every already-rendered piece of state by hand — several of these
+   * (`cachedInitialDailyLogin`, the reward track's cached snapshot, the
+   * wallet cache) are only ever read fresh once per page load, the same
+   * reasoning `applyDevDateOffset` below relies on.
+   */
+  const resetEntireGame = useCallback(() => {
+    resetWallet();
+    resetClearedLevels();
+    resetDailyLogin();
+    resetRewardTrack();
+    resetOwnedCostumes();
+    setDevDateOffsetDays(0);
+    try {
+      window.localStorage.removeItem(TUTORIALS_SEEN_KEY);
+    } catch {
+      // Nothing to clean up if storage is unavailable.
+    }
+    window.location.reload();
+  }, []);
+
+  /**
+   * GameDevOption's date tool — persists the typed day offset
+   * (`setDevDateOffsetDays`) and reloads, so `devNow()` picks it up
+   * everywhere it is read from a fresh module load (`cachedInitialDailyLogin`
+   * included) rather than just in whatever React state happens to be open
+   * right now. Testing a streak is then: nudge +1, reload, claim, repeat —
+   * or jump straight past several days to check the streak actually breaks.
+   */
+  const applyDevDateOffset = useCallback(() => {
+    const days = Number(devDateOffsetInput);
+    if (!Number.isFinite(days)) return;
+    setDevDateOffsetDays(Math.trunc(days));
+    window.location.reload();
+  }, [devDateOffsetInput]);
 
   /**
    * The skin screen's whole life: entered the moment `tab` becomes "skin",
@@ -1457,6 +1554,29 @@ export default function SandGame() {
     }
     setLastHandledResult(state.result);
   }
+
+  /**
+   * Holds the "Frame cleared" card (and the rest of the in-play HUD) off
+   * screen for `WIN_REVEAL_HOLD_MS` after a WIN, so the engine's own
+   * `playWinReveal` — the picture's full turn plus the moderate saturation
+   * boost, both started the instant the engine itself detects WIN, well
+   * before this effect even runs — has room to play out and the finished
+   * picture gets a beat to sit before the card interrupts it. Keyed on
+   * `state.result` itself (a fresh object per win, see `lastHandledResult`'s
+   * own comment) rather than `lastHandledResult`, so this effect's cleanup
+   * — clearing a still-pending timer — runs on every result change, not just
+   * the ones this component happened to still be mounted to finish.
+   */
+  const [winReveal, setWinReveal] = useState(false);
+  useEffect(() => {
+    if (state.result?.kind !== "WIN") {
+      setWinReveal(false);
+      return;
+    }
+    setWinReveal(true);
+    const timer = window.setTimeout(() => setWinReveal(false), WIN_REVEAL_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [state.result]);
 
   const remaining = ammoRemaining(level, state);
   // `ammoRemaining` returns `Infinity` for a `shotLimit: Infinity` level (see
@@ -1586,7 +1706,7 @@ export default function SandGame() {
             above this row — see `wallet.gold` for where it is still tracked —
             but this corner is ammo-only now. */}
         <div className="hud-top-left">
-          <header className="hud-top" hidden={!playing}>
+          <header className="hud-top" hidden={!playing || winReveal}>
             {/* The dot is the bullet in the chamber, not a generic "ammo" icon —
                 it takes the loaded colour so the badge answers "what am I about
                 to fire" at a glance, the same colour the crosshair already
@@ -1655,7 +1775,7 @@ export default function SandGame() {
             animation that ends in a Collect button, not a screen a player
             can get stuck on, and a gear floating over it would be the only
             thing on that frame besides the chest. */}
-        {!chest && !cannonUnlock && (
+        {!chest && !cannonUnlock && !winReveal && (
           <div className="settings-wrap">
             <button
               type="button"
@@ -1698,7 +1818,7 @@ export default function SandGame() {
             <button
               type="button"
               className="icon-button gift-button"
-              onClick={() => setDailyLoginOverride(getDailyLoginState())}
+              onClick={() => setDailyLoginOverride(getDailyLoginState(devNow()))}
               aria-label={s.dailyLoginAria}
               title={s.dailyLoginAria}
             >
@@ -1844,7 +1964,7 @@ export default function SandGame() {
               Also gated on `!level.ftueGesture`: a level whose one lesson is
               "aim and shoot" should not show a second control nobody has
               explained yet — see `ftueGesture`'s doc comment. */}
-          {playing && !level.ftueGesture && (
+          {playing && !level.ftueGesture && !winReveal && (
             <div className="booster-hud">
               {(["radiusOvercharge", "prismShot"] as const).map((type) => {
                 const charges = wallet.boosters[type];
@@ -1871,7 +1991,7 @@ export default function SandGame() {
             </div>
           )}
 
-          {busy && (
+          {busy && !winReveal && (
             <div
               className="settle-badge"
               role="status"
@@ -1883,7 +2003,7 @@ export default function SandGame() {
             </div>
           )}
 
-          {toast && (
+          {toast && !winReveal && (
             <div key={toast.id} className={`sand-toast is-${toast.tone}`} role="status">
               {toast.text}
             </div>
@@ -2176,7 +2296,7 @@ export default function SandGame() {
                     }
                   >
                     <span className="hub-gallery-thumb">
-                      <PixelThumb level={entry.level} />
+                      {unlocked && <PixelThumb level={entry.level} />}
                       {!unlocked && (
                         <span className="hub-gallery-lock" aria-hidden="true">
                           {index + 1}
@@ -2725,6 +2845,34 @@ export default function SandGame() {
                   </button>
                 </div>
 
+                {/* A continuous value, not a toggle, so this is the one row
+                    that wraps to a second line for a full-width slider rather
+                    than fitting a control beside the label. Persisted through
+                    aim-sensitivity.ts the same way Sound/Vibration persist
+                    through their own modules; applied to the live engine by
+                    the effect next to `setIdle` above, since a fresh engine
+                    (every level start/restart) forgets it otherwise. */}
+                <div className="settings-row settings-row--slider">
+                  <span className="settings-row-label">
+                    <Glyph name="target" className="icon-glyph settings-row-icon" /> {s.aimSensitivity}
+                    <span className="settings-row-value">{aimSensitivity.toFixed(1)}x</span>
+                  </span>
+                  <input
+                    type="range"
+                    className="settings-slider"
+                    min={MIN_CONTROL_SENSITIVITY}
+                    max={MAX_CONTROL_SENSITIVITY}
+                    step={0.1}
+                    value={aimSensitivity}
+                    aria-label={s.aimSensitivity}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setAimSensitivity(next);
+                      setAimSensitivityState(next);
+                    }}
+                  />
+                </div>
+
                 <h3 className="settings-section-title">GameDevOption</h3>
                 <a href="/editor" className="settings-devlink">
                   <Glyph name="pencil" /> Level editor
@@ -2782,6 +2930,41 @@ export default function SandGame() {
                     Go
                   </button>
                 </div>
+                {/* A day offset, not a real calendar picker — the only thing
+                    daily-login logic (`getDailyLoginState`/`claimDailyLogin`
+                    in economy.ts, via `devNow()`) actually needs to be
+                    exercised is "today plus/minus N days", so that is the one
+                    value this row takes. Reloads immediately on Apply — see
+                    `applyDevDateOffset`'s own comment for why a React state
+                    update alone would not actually move "today" everywhere
+                    that reads it. */}
+                <div className="settings-devlink settings-devlink-goto">
+                  <Glyph name="calendar" className="icon-glyph" />
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="Day offset (e.g. 1, -1)"
+                    aria-label="Daily-login test date offset, in days"
+                    value={devDateOffsetInput}
+                    onChange={(event) => setDevDateOffsetInput(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") applyDevDateOffset(); }}
+                    className="settings-devlink-input"
+                  />
+                  <button type="button" className="settings-devlink-go" onClick={applyDevDateOffset}>
+                    Apply
+                  </button>
+                </div>
+                {/* The whole-game factory reset — every persisted piece of
+                    progress this section's other buttons reset one at a
+                    time, in one tap, plus the date tool above (see
+                    `resetEntireGame`'s own comment for the full list).
+                    Last in the list and its own colour (`.is-danger` below)
+                    so it does not read as just another "reset gold"/"relock
+                    skins" row a tester might tap without thinking — this one
+                    actually starts the browser over as a brand-new install. */}
+                <button type="button" className="settings-devlink is-danger" onClick={resetEntireGame}>
+                  <Glyph name="trash" className="icon-glyph" /> Reset entire game
+                </button>
               </div>
             </div>
           </div>
@@ -2794,7 +2977,7 @@ export default function SandGame() {
             it always was (Play again / Home). Reward money and its fly-to-
             badge animation never appear here either way — see
             `pendingHomeReward`'s own comment for why that waits for Home. */}
-        {state.result?.kind === "WIN" && (
+        {state.result?.kind === "WIN" && !winReveal && (
           <div className="result-screen is-win" role="dialog" aria-modal="true">
             {/* Purely ambient — behind the card (`.result-card.is-win` keeps
                 its own `z-index: 1`), so it never competes with the card for

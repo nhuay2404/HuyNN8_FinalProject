@@ -7,12 +7,12 @@
 // perspective only — never as a second layer of puzzle.
 
 /**
- * Palette letters used by the authored picture: R G Y B P O C M L N.
+ * Palette letters used by the authored picture: R G Y B P O C M L N S D.
  *
- * The same letter in lower case is that colour LOCKED, and `K` is a key cell —
- * see `SAND_COLOR_BY_LETTER` and `KEY_LETTER`. Both survive
- * `expandLevelForPixelBoard` untouched, because expansion only ever repeats
- * letters.
+ * The same letter in lower case is that colour LOCKED, and `K` is a key cell,
+ * `W` is a Wall Obstacle cell — see `SAND_COLOR_BY_LETTER`, `KEY_LETTER` and
+ * `WALL_LETTER`. All survive `expandLevelForPixelBoard` untouched, because
+ * expansion only ever repeats letters.
  */
 export type SandColor =
   | "red"
@@ -24,7 +24,9 @@ export type SandColor =
   | "cyan"
   | "pink"
   | "lime"
-  | "brown";
+  | "brown"
+  | "white"
+  | "black";
 
 export const SAND_COLORS: readonly SandColor[] = [
   "red",
@@ -37,6 +39,8 @@ export const SAND_COLORS: readonly SandColor[] = [
   "pink",
   "lime",
   "brown",
+  "white",
+  "black",
 ];
 
 export type CellCoord = { x: number; y: number };

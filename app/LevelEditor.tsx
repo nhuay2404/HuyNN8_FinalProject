@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
 import { computeDifficulty, type DifficultyResult } from "./game/level-difficulty";
+import { adviseLevel, type Suggestion } from "./game/level-advisor";
 import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColorHex } from "./game/sand-color";
 import {
   EMPTY_CELL,
@@ -41,7 +42,7 @@ import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } fr
 import { SAND_COLORS, type SandColor } from "./game/sand-types";
 import { finishLoading } from "./loading-screen";
 
-type Tool = "brush" | "eraser" | "bucket" | "key";
+type Tool = "brush" | "bucket" | "key";
 
 const COLOR_NAME: Record<SandColor, string> = {
   red: "Red",
@@ -54,6 +55,8 @@ const COLOR_NAME: Record<SandColor, string> = {
   pink: "Pink",
   lime: "Lime",
   brown: "Brown",
+  white: "White",
+  black: "Black",
 };
 
 function hex(color: SandColor) {
@@ -79,6 +82,11 @@ const DIFFICULTY_HEX: Record<DifficultyResult["label"], SandColor> = {
   hard: "orange",
   "very-hard": "red",
 };
+
+/** SVG viewBox for the difficulty-progression chart, in its own local units. */
+const CHART_WIDTH = 280;
+const CHART_HEIGHT = 64;
+const CHART_PAD = 6;
 
 /** The key's gold, matching what the engine paints on the board. */
 const KEY_HEX = "#ffd654";
@@ -257,11 +265,11 @@ function withCell(rows: string[], x: number, y: number, height: number, letter: 
   return next;
 }
 
-/** The palette colour whose RGB is closest to a pixel, by plain squared distance. */
-function nearestSandColor(r: number, g: number, b: number): SandColor {
-  let best: SandColor = SAND_COLORS[0];
+/** Whichever of `candidates` is closest to an RGB triple, by plain squared distance. */
+function nearestColorAmong(r: number, g: number, b: number, candidates: readonly SandColor[]): SandColor {
+  let best: SandColor = candidates[0];
   let bestDistance = Infinity;
-  for (const candidate of SAND_COLORS) {
+  for (const candidate of candidates) {
     const rgb = SAND_COLOR_HEX[candidate];
     const cr = (rgb >> 16) & 0xff;
     const cg = (rgb >> 8) & 0xff;
@@ -275,6 +283,11 @@ function nearestSandColor(r: number, g: number, b: number): SandColor {
   return best;
 }
 
+/** The full-palette colour whose RGB is closest to a pixel. */
+function nearestSandColor(r: number, g: number, b: number): SandColor {
+  return nearestColorAmong(r, g, b, SAND_COLORS);
+}
+
 /**
  * Rasterise a bitmap onto the board, one board pixel at a time.
  *
@@ -282,37 +295,84 @@ function nearestSandColor(r: number, g: number, b: number): SandColor {
  * whatever spills past the shorter axis — the same as CSS `background-size:
  * cover`. Fitting it inside the frame instead would leave empty bars an
  * author has to notice and paint over by hand, and covering never does.
+ * Smoothing is off for that scale: a browser's default bilinear resize blends
+ * neighbouring pixels together at every edge, which is exactly backwards for
+ * pixel art — it manufactures in-between colours the source image never had,
+ * right where a clean block boundary should be. Nearest-neighbour sampling
+ * keeps every output pixel a real colour that was actually in the source.
  *
- * Every opaque pixel is matched to the nearest palette colour by RGB
+ * Every opaque pixel is then matched to the nearest palette colour by RGB
  * distance — the same "which colour is this closest to" a human eye does,
- * just run once per pixel instead of by hand. A pixel counts as background,
- * and is left empty, when it is transparent or (with `trimWhite`) nearly
- * white — an imported picture almost always has one of those two, and either
- * one filled in solid would bury the picture under a slab of one colour.
+ * just run once per pixel instead of by hand — with no distance cutoff: a
+ * pixel that came from the source image is real information about it, not
+ * noise to be filtered out, so it always becomes the sand colour closest to
+ * it rather than being discarded. A pixel counts as background, and is left
+ * empty, only when it is transparent or (with `trimWhite`) nearly white —
+ * an imported picture almost always has one of those two, and either one
+ * filled in solid would bury the picture under a slab of one colour.
+ *
+ * `maxColors` caps how many distinct colours the result uses. The first pass
+ * always matches against the full palette and counts how often each colour
+ * actually gets used; only if that count exceeds the cap does a second pass
+ * keep the most-used colours and reassign every pixel that lost its colour to
+ * whichever survivor is closest to it — never to empty, since a cut colour
+ * means "call it something else", not "erase it".
  */
-function imageToRows(img: HTMLImageElement, width: number, height: number, trimWhite: boolean): string[] {
+function imageToRows(
+  img: HTMLImageElement,
+  width: number,
+  height: number,
+  trimWhite: boolean,
+  maxColors: number,
+): string[] {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return blankRows(width, height);
+  context.imageSmoothingEnabled = false;
   const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
   const drawWidth = img.naturalWidth * scale;
   const drawHeight = img.naturalHeight * scale;
   context.drawImage(img, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
 
   const { data } = context.getImageData(0, 0, width, height);
+  const colors: (SandColor | null)[] = new Array(width * height);
+  for (let i = 0; i < width * height; i += 1) {
+    const at = i * 4;
+    const r = data[at];
+    const g = data[at + 1];
+    const b = data[at + 2];
+    const a = data[at + 3];
+    const isBackground = a < 24 || (trimWhite && r > 240 && g > 240 && b > 240);
+    colors[i] = isBackground ? null : nearestSandColor(r, g, b);
+  }
+
+  const counts = new Map<SandColor, number>();
+  for (const color of colors) {
+    if (color !== null) counts.set(color, (counts.get(color) ?? 0) + 1);
+  }
+
+  const remap = new Map<SandColor, SandColor>();
+  if (counts.size > maxColors) {
+    const kept = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Math.max(1, maxColors))
+      .map(([color]) => color);
+    const keptSet = new Set(kept);
+    for (const color of counts.keys()) {
+      if (keptSet.has(color)) continue;
+      const rgb = SAND_COLOR_HEX[color];
+      remap.set(color, nearestColorAmong((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, kept));
+    }
+  }
+
   const rows: string[] = [];
   for (let row = 0; row < height; row += 1) {
     let line = "";
     for (let x = 0; x < width; x += 1) {
-      const at = (row * width + x) * 4;
-      const r = data[at];
-      const g = data[at + 1];
-      const b = data[at + 2];
-      const a = data[at + 3];
-      const isBackground = a < 24 || (trimWhite && r > 240 && g > 240 && b > 240);
-      line += isBackground ? EMPTY_CELL : LETTER_BY_SAND_COLOR[nearestSandColor(r, g, b)];
+      const color = colors[row * width + x];
+      line += color === null ? EMPTY_CELL : LETTER_BY_SAND_COLOR[remap.get(color) ?? color];
     }
     rows.push(line);
   }
@@ -396,6 +456,12 @@ export default function LevelEditor() {
    * than a fifth `Tool`. Mutually exclusive with it: a cell cannot be both a
    * wall and locked sand. */
   const [wallMode, setWallMode] = useState(false);
+  /** Whether Brush/Fill clears cells instead of painting them — a modifier
+   * rather than its own tool so it composes with Fill: Erase alone rubs out
+   * a brush-sized patch, Erase+Fill clears a whole connected region in one
+   * click. Mutually exclusive with `locking`/`wallMode`, since a cell cannot
+   * be erased and also painted down as something. */
+  const [erasing, setErasing] = useState(false);
   /** The key tool's radius, in board pixels. */
   const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
   /** Width of the square brush nib, in board pixels. */
@@ -406,9 +472,18 @@ export default function LevelEditor() {
   const [exported, setExported] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [shipping, setShipping] = useState(false);
+  /** In-flight state for "Update built-in level" — separate from `shipping`
+   * since the two hit different endpoints and can't run at the same time
+   * anyway (both write the same file), but sharing one flag would disable
+   * the wrong button's label while the other request is in flight. */
+  const [updatingBuiltIn, setUpdatingBuiltIn] = useState(false);
   const [importing, setImporting] = useState(false);
   /** Whether a near-white pixel imports as empty rather than as sand. */
   const [trimWhite, setTrimWhite] = useState(true);
+  /** How many distinct colours "Import image" is allowed to use — the full
+   * palette by default, so this only ever narrows the result until an author
+   * turns it down. */
+  const [importMaxColors, setImportMaxColors] = useState(SAND_COLORS.length);
   /** Which built-in level the "Import built-in" row would bring in next. */
   const [importLevelId, setImportLevelId] = useState<number | null>(BUILT_IN_LEVELS[3]?.id ?? null);
 
@@ -429,6 +504,21 @@ export default function LevelEditor() {
   );
 
   /**
+   * `drafts` itself stays undeferred — the canvas, the form fields, undo/redo
+   * all read it directly and have to track every keystroke and every sampled
+   * point of a stroke with zero lag. The difficulty bar doesn't need that:
+   * `computeDifficulty` walks the whole picture (`parseSandLevel`'s 4-connected
+   * body split), tens of milliseconds on an 80x90 board — cheap once, but a
+   * fast drag fires dozens of pointermove events a second, and paying that
+   * cost synchronously on every single one is what would make the *painting*
+   * itself start dropping frames, not just the bar lag behind it. Deferring
+   * this one read is what keeps the bar auto-updating (React catches it up
+   * the moment the main thread has spare cycles, no click required) without
+   * ever competing with the stroke that is still actually in progress.
+   */
+  const deferredDrafts = useDeferredValue(drafts);
+
+  /**
    * The whole roster's difficulty, for the overview chart in the Levels
    * panel — cached per draft *object* in `DIFFICULTY_CACHE` (module scope,
    * same pattern as `cachedDrafts` above), not just recomputed whenever the
@@ -440,9 +530,26 @@ export default function LevelEditor() {
    * with nothing here having to notice and evict it.
    */
   const difficultyById = useMemo(
-    () => new Map(drafts.map((entry) => [entry.id, difficultyFor(entry)] as const)),
-    [drafts],
+    () => new Map(deferredDrafts.map((entry) => [entry.id, difficultyFor(entry)] as const)),
+    [deferredDrafts],
   );
+
+  /**
+   * Plot points for the difficulty-progression chart: one per level, in the
+   * same list order the roster and the bar-list below both use, so a point
+   * on the chart and a row in the list always mean the same level.
+   */
+  const difficultyChartPoints = useMemo(() => {
+    const width = CHART_WIDTH - CHART_PAD * 2;
+    const height = CHART_HEIGHT - CHART_PAD * 2;
+    return drafts.map((entry, index) => {
+      const result = difficultyById.get(entry.id);
+      const score = result?.score ?? 0;
+      const x = drafts.length <= 1 ? CHART_WIDTH / 2 : CHART_PAD + (index / (drafts.length - 1)) * width;
+      const y = CHART_PAD + (1 - score / 100) * height;
+      return { id: entry.id, name: entry.name || "Untitled", score, label: result?.label ?? "easy", x, y };
+    });
+  }, [drafts, difficultyById]);
 
   const persist = useCallback((next: LevelDraft[]) => {
     setEdited(next);
@@ -546,7 +653,7 @@ export default function LevelEditor() {
       return;
     }
 
-    const letter = tool === "eraser"
+    const letter = erasing
       ? EMPTY_CELL
       : wallMode ? WALL_LETTER
       : locking ? lockedLetter(color) : LETTER_BY_SAND_COLOR[color];
@@ -561,7 +668,7 @@ export default function LevelEditor() {
         .reduce((acc, cell) => withCell(acc, cell.x, cell.y, current.height, letter), current.rows);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, locking, wallMode, keyScale, brushSize, update]);
+  }, [tool, color, locking, wallMode, erasing, keyScale, brushSize, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
@@ -699,6 +806,20 @@ export default function LevelEditor() {
   const scale = draft ? effectivePixelScale(draft) : 1;
   const pixels = draft ? draft.width * draft.height * scale * scale : 0;
 
+  /**
+   * Edit suggestions for the selected level — the heuristic and progression
+   * checks run every render (cheap, no solver involved), the solver-backed
+   * one only once `analysis` exists (i.e. "Measure difficulty" was clicked).
+   */
+  const suggestions = useMemo<Suggestion[]>(() => {
+    if (!draft) return [];
+    const result = difficultyById.get(draft.id);
+    if (!result) return [];
+    const index = drafts.findIndex((entry) => entry.id === draft.id);
+    const prevScore = index > 0 ? difficultyById.get(drafts[index - 1].id)?.score ?? null : null;
+    return adviseLevel({ result, analysis, prevScore });
+  }, [draft, drafts, difficultyById, analysis]);
+
   const flash = (message: string) => {
     setStatus(message);
     window.setTimeout(() => setStatus(null), 4000);
@@ -737,7 +858,7 @@ export default function LevelEditor() {
     };
     img.onload = () => {
       update((current) => {
-        const rows = imageToRows(img, current.width, current.height, trimWhite);
+        const rows = imageToRows(img, current.width, current.height, trimWhite, importMaxColors);
         return syncQueueToPicture({ ...current, rows });
       }, true);
       flash(`Imported ${file.name} as the picture`);
@@ -842,10 +963,16 @@ export default function LevelEditor() {
           {/* Pulls one of the hand-authored built-in levels in as a fresh,
               editable draft (via `levelToDraft`) — a copy, not a live link:
               shipping it writes a new level, it does not overwrite the
-              original `fourthLevel`..`tenthLevel` const in sand-levels.ts.
-              Reconciling the two (deleting the old hand-authored entry,
-              renumbering the shipped one back to the same id) is a manual
-              follow-up in that file, the same as any other hand-edit there. */}
+              original hand-authored const in sand-levels.ts. Reconciling the
+              two (deleting the old hand-authored entry, renumbering the
+              shipped one back to the same id) is a manual follow-up in that
+              file, the same as any other hand-edit there.
+
+              `level.id >= 4` on purpose, not a fixed upper bound: levels 1-3
+              are the hand-tuned FTUE arc and stay off this list, but every
+              level from 4 onward — the beatchart run (4-30) and whatever
+              gets hand-authored past it — should always be editable here
+              without this filter needing to be revisited. */}
           <div className="editor-row">
             <select
               className="editor-import-select"
@@ -853,7 +980,7 @@ export default function LevelEditor() {
               value={importLevelId ?? ""}
               onChange={(event) => setImportLevelId(Number(event.target.value))}
             >
-              {BUILT_IN_LEVELS.filter((level) => level.id >= 4 && level.id <= 10).map((level) => (
+              {BUILT_IN_LEVELS.filter((level) => level.id >= 4).map((level) => (
                 <option key={level.id} value={level.id}>{level.name}</option>
               ))}
             </select>
@@ -881,6 +1008,55 @@ export default function LevelEditor() {
             colours are, and how tight the shot budget and radius are against all of it. Not the
             solver: that lives below as &quot;Measure difficulty&quot; and only runs one level at a time.
           </p>
+          {drafts.length > 1 && (
+            <svg
+              className="editor-difficulty-chart"
+              viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="Difficulty score across every level, in list order"
+            >
+              {[25, 50, 75].map((tier) => (
+                <line
+                  key={tier}
+                  x1={0}
+                  x2={CHART_WIDTH}
+                  y1={CHART_PAD + (1 - tier / 100) * (CHART_HEIGHT - CHART_PAD * 2)}
+                  y2={CHART_PAD + (1 - tier / 100) * (CHART_HEIGHT - CHART_PAD * 2)}
+                  stroke="rgba(255,255,255,.1)"
+                  strokeWidth={1}
+                />
+              ))}
+              <polyline
+                points={difficultyChartPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+                fill="none"
+                stroke="rgba(255,255,255,.35)"
+                strokeWidth={1.5}
+              />
+              {difficultyChartPoints.map((point) => {
+                const active = point.id === draft?.id;
+                return (
+                  <circle
+                    key={point.id}
+                    cx={point.x}
+                    cy={point.y}
+                    r={active ? 3.4 : 2}
+                    fill={hex(DIFFICULTY_HEX[point.label])}
+                    stroke={active ? "#fff" : "none"}
+                    strokeWidth={active ? 1 : 0}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      setPickedId(point.id);
+                      setAnalysis(null);
+                      history.current = { past: [], future: [] };
+                    }}
+                  >
+                    <title>{`${point.name}: ${point.score} (${DIFFICULTY_NAME[point.label]})`}</title>
+                  </circle>
+                );
+              })}
+            </svg>
+          )}
           <ol className="editor-difficulty-list">
             {drafts.map((entry) => {
               const result = difficultyById.get(entry.id);
@@ -926,12 +1102,12 @@ export default function LevelEditor() {
                 <button
                   key={entry}
                   type="button"
-                  className={`editor-swatch${entry === color && tool !== "eraser" && !wallMode ? " is-active" : ""}`}
+                  className={`editor-swatch${entry === color && !erasing && !wallMode ? " is-active" : ""}`}
                   style={{ "--swatch": hex(entry) } as React.CSSProperties}
                   onClick={() => {
                     setColor(entry);
                     setWallMode(false);
-                    if (tool === "eraser") setTool("brush");
+                    setErasing(false);
                   }}
                   aria-label={COLOR_NAME[entry]}
                   title={COLOR_NAME[entry]}
@@ -939,7 +1115,7 @@ export default function LevelEditor() {
               ))}
             </div>
             <div className="editor-row">
-              {(["brush", "bucket", "eraser", "key"] as Tool[]).map((entry) => (
+              {(["brush", "bucket", "key"] as Tool[]).map((entry) => (
                 <button
                   key={entry}
                   type="button"
@@ -947,7 +1123,7 @@ export default function LevelEditor() {
                   onClick={() => setTool(entry)}
                   title={entry === "key" ? "Paint the key that opens locked sand" : undefined}
                 >
-                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : entry === "eraser" ? "Eraser" : "Key"}
+                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : "Key"}
                 </button>
               ))}
               {/* A modifier on the brush rather than a tool of its own: a lock
@@ -958,7 +1134,8 @@ export default function LevelEditor() {
                 onClick={() => {
                   setLocking((value) => !value);
                   setWallMode(false);
-                  if (tool === "eraser" || tool === "key") setTool("brush");
+                  setErasing(false);
+                  if (tool === "key") setTool("brush");
                 }}
                 title="Paint this colour frozen: it hangs in the frame and cannot be shot until a key reaches it"
               >
@@ -966,7 +1143,7 @@ export default function LevelEditor() {
               </button>
               {/* Also a modifier, not a tool: Wall Obstacle is a material, not
                   a colour, so it slots in beside "Locked" rather than beside
-                  Brush/Fill/Eraser — mutually exclusive with locking a colour
+                  Brush/Fill/Key — mutually exclusive with locking a colour
                   down, since a cell cannot be both. */}
               <button
                 type="button"
@@ -974,16 +1151,33 @@ export default function LevelEditor() {
                 onClick={() => {
                   setWallMode((value) => !value);
                   setLocking(false);
-                  if (tool === "eraser" || tool === "key") setTool("brush");
+                  setErasing(false);
+                  if (tool === "key") setTool("brush");
                 }}
                 title="Paint a Wall Obstacle: a permanent, colourless cell no shot can ever reach or remove"
               >
                 🧱 Wall
               </button>
+              {/* Also a modifier, not a tool of its own — this is what lets it
+                  combine with Fill: Erase alone rubs out a brush-sized patch,
+                  Erase+Fill clears a whole connected region in one click. */}
+              <button
+                type="button"
+                className={`editor-button${erasing ? " is-active" : ""}`}
+                onClick={() => {
+                  setErasing((value) => !value);
+                  setLocking(false);
+                  setWallMode(false);
+                  if (tool === "key") setTool("brush");
+                }}
+                title="Erase instead of paint — combine with Fill to clear a whole connected region at once"
+              >
+                🧽 Erase
+              </button>
               {/* Each tool's size dial, shown only while that tool is up — a
                   dial for a tool nobody is holding is a control with nothing
                   to do. */}
-              {(tool === "brush" || tool === "eraser") && (
+              {tool === "brush" && (
                 <span className="editor-key-size">
                   <button
                     type="button"
@@ -1076,6 +1270,23 @@ export default function LevelEditor() {
                   onChange={(event) => setTrimWhite(event.target.checked)}
                 />
                 <span>Skip white background</span>
+              </label>
+              <label
+                className="editor-import-max-colors"
+                title="Caps how many distinct colours the imported picture uses. The most-used colours in the image survive; every other pixel is reassigned to whichever surviving colour is closest to it."
+              >
+                <span>Max colours</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={SAND_COLORS.length}
+                  value={importMaxColors}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (!Number.isFinite(value)) return;
+                    setImportMaxColors(Math.min(SAND_COLORS.length, Math.max(1, Math.round(value))));
+                  }}
+                />
               </label>
             </div>
           </div>
@@ -1308,6 +1519,34 @@ export default function LevelEditor() {
             </div>
           )}
 
+          {/* ---- suggestions ---- */}
+          <h2>Suggestions</h2>
+          <p className="editor-note">
+            Every line here traces back to one measured number crossing one named threshold — the
+            breakdown above, the solver&apos;s verdict once you&apos;ve measured it, and how this
+            level&apos;s score compares to the one before it in the chart above.
+          </p>
+          {suggestions.length === 0 ? (
+            <p className="editor-ok">No changes suggested for this level right now.</p>
+          ) : (
+            <ul className="editor-suggestions">
+              {suggestions.map((suggestion) => (
+                <li key={suggestion.id} className={`is-${suggestion.severity}`}>
+                  <span>{suggestion.text}</span>
+                  {suggestion.apply && (
+                    <button
+                      type="button"
+                      className="editor-mini"
+                      onClick={() => update(suggestion.apply!)}
+                    >
+                      {suggestion.applyLabel ?? "Apply"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
           {/* ---- ship it ---- */}
           <h2>Use this level</h2>
           <div className="editor-row">
@@ -1323,17 +1562,51 @@ export default function LevelEditor() {
                 Test in game
               </Link>
             )}
+            {draft.importedFromId !== undefined && (
+              <button
+                type="button"
+                className="editor-button is-primary"
+                disabled={updatingBuiltIn || errors.length > 0}
+                title={`Writes this level back into its own "export const" in sand-levels.ts (id ${draft.importedFromId}) — the same block "Import built-in" copied it from — instead of shipping it as a new level. If that level's picture is its own separate const (every hand-authored level's is), this deletes that const too, since nothing would reference it any more.`}
+                onClick={async () => {
+                  const id = draft.importedFromId;
+                  if (id === undefined) return;
+                  setUpdatingBuiltIn(true);
+                  try {
+                    const response = await fetch("http://localhost:4787/update-level", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id, draft }),
+                    });
+                    const payload = await response.json().catch(() => null);
+                    if (!response.ok) {
+                      throw new Error(payload?.error || "The level writer could not write the file.");
+                    }
+                    flash(`Updated ${payload.constName} (id ${id}) in sand-levels.ts`
+                      + (payload.orphanRemoved ? ` — removed the now-unused ${payload.pictureConstName}` : ""));
+                  } catch {
+                    flash("Couldn't reach the level writer — run `npm run level-writer` in a terminal, then try again.");
+                  }
+                  setUpdatingBuiltIn(false);
+                }}
+              >
+                {updatingBuiltIn ? "Writing…" : `Update Level ${draft.importedFromId} in sand-levels.ts`}
+              </button>
+            )}
             <button
               type="button"
               className="editor-button is-primary"
               disabled={shipping}
-              title="Writes every level in the list on the left into sand-levels.ts, replacing what was there before — a level you delete here disappears from the file on the next ship."
+              title="Writes every level in the list on the left into sand-levels.ts. A level you brought in with Import built-in updates its own existing const, wherever it lives — everything else (genuinely new levels only) replaces what was there before in the editor-shipped block, so a level you delete here disappears from the file on the next ship."
               onClick={async () => {
                 setShipping(true);
-                // The whole list ships together and replaces the file's
-                // editor-shipped section wholesale, so the game never ends up
-                // with more built-in levels than the editor actually has.
-                // Broken drafts are left out rather than blocking the rest.
+                // Every draft ships — the level writer itself is what keeps
+                // this from piling up duplicates: a draft imported from an
+                // existing level (`importedFromId` set) updates that level's
+                // own const in place, at its own id, rather than being handed
+                // a new one. Only what is left over (genuinely new levels)
+                // replaces the editor-shipped block wholesale. Broken drafts
+                // are left out rather than blocking the rest.
                 const shippable = drafts.filter((entry) =>
                   !validateDraft(entry).some((issue) => issue.severity === "error"));
                 try {
@@ -1347,7 +1620,8 @@ export default function LevelEditor() {
                     throw new Error(payload?.error || "The level writer could not write the file.");
                   }
                   const skipped = drafts.length - shippable.length;
-                  flash(`Shipped ${payload.count} level${payload.count === 1 ? "" : "s"} to sand-levels.ts`
+                  flash(`Shipped ${payload.count} level${payload.count === 1 ? "" : "s"} — `
+                    + `${payload.created} new, ${payload.updatedInPlace} updated in place`
                     + (skipped ? ` (${skipped} skipped for errors)` : ""));
                 } catch {
                   flash("Couldn't reach the level writer — run `npm run level-writer` in a terminal, then try again.");
@@ -1374,11 +1648,15 @@ export default function LevelEditor() {
           </div>
           <p className="editor-note">
             Saved levels already show up in the game&apos;s level switcher, and stay in this editor,
-            because they live in your browser. &quot;Ship all levels to sand-levels.ts&quot; writes
-            the whole list on the left into the source file, replacing what was there before — so the
-            file always has exactly the levels the editor has, not every level ever shipped. Run{" "}
-            <code>npm run level-writer</code> once in a terminal alongside the dev server; then this
-            button needs no copy-paste and survives clearing your browser or a fresh checkout.
+            because they live in your browser. Every level has exactly one id: shipping a level you
+            brought in with &quot;Import built-in&quot; updates that same id&apos;s own const, in place,
+            wherever it lives — never a second, unrelated one on top of it. Only what is left over,
+            genuinely new levels, replaces the file&apos;s editor-shipped block wholesale, so that block
+            always has exactly the new levels the editor has, not every level ever shipped. A single
+            level&apos;s own &quot;Update Level N in sand-levels.ts&quot; button does the same update-by-id
+            for just that one, without touching the rest of the list. Both need{" "}
+            <code>npm run level-writer</code> running once in a terminal alongside the dev server; then
+            neither needs copy-paste and both survive clearing your browser or a fresh checkout.
             &quot;Copy TypeScript&quot; exports just this one level&apos;s block, for the manual fallback
             if that terminal isn&apos;t running.
           </p>

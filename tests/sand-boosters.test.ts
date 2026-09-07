@@ -19,6 +19,7 @@ import {
   getBoosterCharges,
   parseSandLevel,
   resolveShot,
+  SORT_RADIUS_FORGIVENESS,
   spendBoosterCharge,
 } from "../app/game/sand-rules.ts";
 import { RADIUS_GAMEPLAY } from "../app/game/sand-types.ts";
@@ -169,7 +170,10 @@ test("Radius Overcharge: a shot takes exactly what the doubled (capped) disc rea
 
   const boostedRadius = effectiveSortRadius(LEVEL, "radiusOvercharge");
   assert.ok(boostedRadius > LEVEL.sortRadius, "fixture is only meaningful if the radius actually grew");
-  const oracle = cellsInRadius(state.bodies, target, boostedRadius, color, frozenSet(state));
+  // `resolveShot` sweeps a little past `effectiveSortRadius` itself — see
+  // `SORT_RADIUS_FORGIVENESS`'s own comment — so the oracle has to add the
+  // same margin, not just the number the ring is drawn from.
+  const oracle = cellsInRadius(state.bodies, target, boostedRadius + SORT_RADIUS_FORGIVENESS, color, frozenSet(state));
   assert.deepEqual(boosted.removed, oracle);
   assert.ok(
     boosted.removed.length >= plain.removed.length,
@@ -200,10 +204,12 @@ test("Prism Shot: a shot takes every loose colour in the un-doubled disc", () =>
   assert.equal(plain.outcome, "NO_MATCH", "fixture assumes the yellow bullet finds nothing here unboosted");
 
   const prism = resolveShot(level, state, hit, "prismShot");
+  // See the Radius Overcharge test above: the oracle needs the same
+  // `SORT_RADIUS_FORGIVENESS` margin `resolveShot` itself sweeps with.
   const oracle = cellsInRadius(
     state.bodies,
     center,
-    effectiveSortRadius(level, "prismShot"),
+    effectiveSortRadius(level, "prismShot") + SORT_RADIUS_FORGIVENESS,
     ammo,
     frozenSet(state),
     { matchColor: false },

@@ -646,6 +646,17 @@ button {
   border: 0; cursor: pointer;
 }
 .settings-select:active { transform: translateY(1px); }
+/* The one settings row whose control is a continuous value rather than a
+   toggle or a cycling pill — too wide to sit beside the label the way
+   Sound/Vibration/Language's controls do, so this variant stacks instead:
+   label (+ current value, pinned to the far right) on top, a full-width
+   slider underneath. */
+.settings-row--slider { flex-direction: column; align-items: stretch; gap: 10px; }
+.settings-row-value { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 700; font-size: 13px; }
+.settings-slider {
+  width: 100%; height: 6px; margin: 4px 0; border-radius: var(--r-pill);
+  background: var(--locked); accent-color: var(--accent); cursor: pointer;
+}
 .settings-section-title {
   margin: 18px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em;
   text-transform: uppercase; color: var(--muted);
@@ -665,6 +676,16 @@ button {
 .settings-devlink:hover { background: #e5d6bd; }
 .settings-devlink:active { transform: translateY(2px); }
 .settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
+/* "Reset entire game" — the one row in GameDevOption that does not just
+   reset one system (gold, one skin's lock, the reward track) but every
+   piece of persisted progress at once. The shared warning colour every other
+   destructive control in this file uses, so it does not read as just another
+   item in the same quiet brown list a tester could tap without thinking. */
+.settings-devlink.is-danger {
+  background: var(--danger); color: var(--danger-ink);
+}
+.settings-devlink.is-danger:hover { background: var(--danger-line); }
+.settings-devlink.is-danger .icon-glyph { color: var(--danger-ink); }
 /* The one dev row that takes a typed value instead of a single tap — a plain
    div styled to match `.settings-devlink` (not a button/anchor itself, since
    it holds its own interactive input and "Go" button, and nesting a control
@@ -776,7 +797,10 @@ button {
 /* Every size in this block (26 / 128 / 25px) is tuned against
    AIM_CURSOR_EDGE_MARGIN and AIM_OUTSIDE_ZONE_CANCEL_MS in
    SandCannonEngine.ts — the cozy pass recoloured it and left the geometry
-   alone on purpose. */
+   alone on purpose. `.aim-joystick`'s 128px specifically also tracks
+   JOYSTICK_RADIUS there (see its own comment) — purely how far the visible
+   knob travels, not how far a drag has to go for the aim response itself,
+   which is `JOYSTICK_RESPONSE_RADIUS` instead and free to be wider. */
 .aim-crosshair {
   position: absolute; z-index: 5; left: 50%; top: 50%; width: 26px; height: 26px;
   opacity: 0; visibility: hidden; transform: translate(-50%,-50%) scale(.84); pointer-events: none;
@@ -1056,6 +1080,13 @@ button {
 }
 .result-card h2 { margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: .01em; color: var(--ink); }
 .result-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+/* Darker than the shared `--scrim` every other modal backdrop uses — the WIN
+   screen dresses the wall behind the card with confetti and the cannon/horns
+   poking above it, and at the ordinary scrim strength that dressing read as
+   too close in value to the gameplay wall still visible around the card's
+   edges. Scoped to `.is-win` only, not `--scrim` itself, so every other
+   dialog (settings, FAIL, daily login) keeps the lighter shared value. */
+.result-screen.is-win { background: rgba(38, 28, 20, .68); }
 /* ---- WIN celebration ------------------------------------------------- */
 /* Only the WIN half of the result screen gets this — FAIL stays the plain
    status readout it always was: a two-tone card (mint header band naming
@@ -1080,6 +1111,16 @@ button {
   margin: 0; color: #fbe98f;
 }
 .result-card-body { padding: 24px; }
+/* Tailwind's preflight resets every `<img>` to `display: block` — left as a
+   plain inline `<CoinIcon/>` ahead of the text, that turns it into its own
+   full-width block box, which `text-align: center` (a property for inline
+   content, not block-box placement) does nothing to move: the icon landed
+   pinned to the row's left edge instead of sitting next to "+N gold earned".
+   Same `display: flex; align-items: center; gap` fix `.confirm-info-row`
+   already uses for this exact icon-then-text shape. */
+.result-gold-earned {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
 
 /* Wraps the card and `.win-decor` together so the decor can sit above the
    card's own top edge without fighting `.result-card`'s `overflow: hidden`
@@ -1141,27 +1182,16 @@ button {
 .win-decor-horn.is-right { right: calc(-1 * var(--horn-out)); transform: translateY(42%) rotate(6deg); }
 .win-decor-horn.is-right img { animation-delay: .95s; }
 /* `-88%` of its own height, so ~12% of the cannon (its base) stays tucked
-   behind the card — see `.win-decor`'s note on the two layers.
-   The badge art is the same cool blue as the real cannon rig still sitting
-   in the scene behind it, so on its own it reads as a continuation of that
-   rig rather than a distinct badge — easy to lose entirely against a sky or
-   sand tone in the same family. `::before` gives it a plate to sit on (the
-   same cream as the card, `--panel`) so it pops regardless of what happens
-   to be behind it, the way the two horns already do by virtue of being warm
-   gold against a cool scene. */
+   behind the card — see `.win-decor`'s note on the two layers. No plate
+   behind the badge (a prior `::before` circle here read as a stray floating
+   disc once the darker `.result-screen.is-win` scrim above made it stand
+   out) — the art's own `drop-shadow` below is what separates it from the
+   scene now, same as the two horns get by virtue of being warm gold against
+   a cool scene. */
 .win-decor-cannon {
   position: absolute; top: 0; left: 50%;
   display: block; width: 40%; transform: translate(-50%, -88%);
   animation: win-decor-pop-center .5s cubic-bezier(.34,1.56,.64,1) .1s both;
-}
-.win-decor-cannon::before {
-  content: "";
-  position: absolute; z-index: -1;
-  left: 50%; top: 8%; width: 88%; aspect-ratio: 1;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: var(--panel);
-  box-shadow: 0 4px 10px rgba(0,0,0,.25);
 }
 .win-decor-cannon img {
   display: block; width: 100%; height: auto;
@@ -1528,14 +1558,17 @@ button {
 .hub-gallery b { font-size: 11px; font-weight: 700; text-align: center; line-height: 1.3; }
 /* A locked card: same tile, no hover lift, no active press — a disabled
    `<button>` already blocks the tap itself, this just makes it read that way
-   before a finger gets there. The thumbnail dims under its own lock badge
-   instead of being swapped for a blank tile, so the shape of what is coming
-   still reads through — a silhouette, not a mystery box. */
+   before a finger gets there. The picture itself is not rendered at all for
+   a level not yet cleared (see the JSX: `PixelThumb` is skipped, not just
+   dimmed) — a mystery box rather than a silhouette, so nothing about what is
+   coming leaks through before it unlocks. This fixed square is what the
+   number badge sits on instead, since there is no picture here to set the
+   tile's own shape. */
 .hub-gallery button:disabled { cursor: default; }
 .hub-gallery button:disabled:hover { background: #d7ddf3; transform: none; }
-.hub-gallery button.is-locked .pixel-thumb { opacity: .35; filter: grayscale(1); }
 .hub-gallery button.is-locked b { color: var(--muted); }
 .hub-gallery-thumb { position: relative; width: 100%; }
+.hub-gallery button.is-locked .hub-gallery-thumb { aspect-ratio: 1; border-radius: 12px; background: var(--locked); }
 /* The locked-state badge — the level's own order number (`index + 1` at the
    call site) rather than a padlock glyph, so a glance at a locked tile still
    answers "which one is this" instead of just "not open yet". */
@@ -1584,17 +1617,26 @@ button {
 /* ---- Shop ---------------------------------------------------------------- */
 /* A full-screen takeover, same footing as the skin picker (`.skin-screen`
    below) — see the JSX comment on `.shop-screen` for why this stopped being
-   a `.hub-panel` card. A flat light brown wall now, on request — no grain,
-   no layered texture, one plain colour — so every piece of pale/cream text
-   this screen used to lean on for contrast against the old dark wood
-   (`.shop-card-name`, `.shop-section-head`, the inactive tab label) switched
-   to `--ink`/`--muted` alongside it; see each of those rules' own comment. */
+   a `.hub-panel` card. A warm, sunny-yellow "cozy market stall" look
+   (Animal Crossing / chill-game reference) instead of the old flat brown
+   wall — flat solid fills throughout, no gradients, no card outlines, no
+   drop shadows, per feedback that this screen should read as clean flat
+   colour blocks. Local `--shop-*` tokens rather than overriding the shared
+   `--gold`/`--panel`/etc. globals, so this screen can go its own warm-cozy
+   direction without dragging every other screen's gold accents (the HUD
+   gold badge, buttons elsewhere) along with it. */
 .shop-screen {
   position: absolute; z-index: 30; inset: 0;
   display: flex; flex-direction: column; align-items: center;
   padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px 0;
   overflow: hidden;
-  background: #dcc7a8;
+  --shop-sun: #ffd35c;
+  --shop-honey: #ffb238;
+  --shop-cream: #fffaf0;
+  --shop-cream-deep: #fff1cf;
+  --shop-brown: #7a4f22;
+  --shop-brown-soft: #a9793f;
+  background: #ffdf8a;
   /* `shop-screen-in`, not `hub-panel-in` — that one fades `opacity` from 0,
      and unlike `.hub-panel` (a small card already sitting over the hub's own
      dimming scrim) this element's opaque background IS what hides the
@@ -1605,17 +1647,17 @@ button {
      opaque. */
   animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
-/* Same chip the skin picker's own title uses (`.skin-heading h2`) — one
-   consistent "screen title" language across both full-screen hub takeovers.
-   No border/shadow, per feedback that nothing in this screen should carry
-   either any more — every other rule below drops them too. */
+/* The screen title as a flat cream pill, no border/shadow — same "screen
+   title" chip language the skin picker's own title uses. */
 .shop-heading {
   position: relative; margin: 0 0 16px; width: 100%; max-width: 420px;
   display: flex; align-items: center; justify-content: center;
 }
 .shop-heading h2 {
   display: inline-block; margin: 0;
-  font-size: 20px; font-weight: 800; color: var(--ink);
+  padding: 8px 22px; border-radius: var(--r-pill);
+  background: var(--shop-cream); color: var(--shop-brown);
+  font-size: 19px; font-weight: 800; letter-spacing: .01em;
 }
 /* Only mounted on the Gems tab (see the JSX) — gems have no other readout
    anywhere in the game, unlike gold's persistent top-left `.hub-gold-badge`,
@@ -1630,22 +1672,24 @@ button {
   font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums;
 }
 .shop-gem-badge .gem-icon { width: 18px; height: 18px; }
-/* The Gems/Coins segmented switch. Flat pill-in-a-pill, same shape language
-   `.tabs`-style controls use everywhere else in this file — the active
-   segment takes its currency's own colour (teal for Gems, gold for Coins) so
-   the tab itself previews what is inside before it is even open. */
+/* The Gems/Coins segmented switch — a flat cream pill housing it, the active
+   segment taking a flat fill in its own currency's colour (teal for Gems,
+   sunny yellow for Coins) so the tab previews what's inside before it's
+   even open. No outline/shadow on either the housing or the active pill. */
 .shop-tabs {
   width: 100%; max-width: 420px; margin: 0 0 20px;
-  padding: 5px; border-radius: var(--r-pill); background: rgba(0, 0, 0, .18);
+  padding: 5px; border-radius: var(--r-pill);
+  background: var(--shop-cream);
   display: flex; gap: 4px;
 }
 .shop-tab-btn {
   flex: 1; border: 0; padding: 11px 0; border-radius: var(--r-pill);
   font-size: 15px; font-weight: 800; cursor: pointer;
-  background: transparent; color: var(--ink);
+  background: transparent; color: var(--shop-brown-soft);
+  transition: background .16s, color .16s;
 }
 .shop-tab-btn.is-active.is-gems { background: var(--gem); color: var(--gem-ink); }
-.shop-tab-btn.is-active.is-coins { background: var(--gold); color: var(--gold-ink); }
+.shop-tab-btn.is-active.is-coins { background: var(--shop-sun); color: var(--shop-brown); }
 
 /* Everything below the heading/tabs scrolls in here instead of on
    `.shop-screen` itself — see that class's own comment for why (short
@@ -1657,13 +1701,15 @@ button {
 }
 .shop-panel { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 26px; }
 .shop-section-head { margin: 0 0 12px; }
-.shop-section-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
-.shop-section-head p { margin: 2px 0 0; font-size: 12px; font-weight: 700; color: var(--muted); }
+.shop-section-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--shop-brown); }
+.shop-section-head p { margin: 2px 0 0; font-size: 12px; font-weight: 700; color: var(--shop-brown-soft); }
 
 /* ---- Special Offers ---- */
 /* Stacked top to bottom rather than a side-scrolling rail — every offer
-   reads without a swipe, same reasoning the Bundles list below follows. */
-.offer-stack { display: flex; flex-direction: column; gap: 12px; }
+   reads without a swipe, same reasoning the Bundles list below follows.
+   Each card is a flat currency-identity fill (teal for the gem-only offer,
+   leafy green for the bundle one) — no outline, no shadow. */
+.offer-stack { display: flex; flex-direction: column; gap: 14px; }
 .offer-card {
   border-radius: var(--r-lg); padding: 16px;
   display: flex; flex-direction: column; gap: 10px;
@@ -1682,17 +1728,17 @@ button {
 .buy-btn {
   margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 10px 0;
   font-weight: 800; font-size: 15px; cursor: pointer;
-  background: var(--panel); color: var(--ink); width: 100%;
-  transition: transform .16s;
+  background: var(--shop-cream); color: var(--shop-brown); width: 100%;
 }
-.buy-btn:active { transform: translateY(3px); }
+.buy-btn:active { opacity: .85; }
 
 /* ---- Bundles: coins + gems together ---- */
 .bundle-list { display: flex; flex-direction: column; gap: 10px; }
 .bundle-row {
   display: flex; align-items: center; gap: 12px;
-  background: var(--panel); border-radius: var(--r-md); padding: 10px 12px;
+  background: var(--shop-cream); border-radius: var(--r-md); padding: 10px 12px;
 }
+.bundle-row.is-best { background: var(--shop-cream-deep); }
 .bundle-icon {
   flex: none; width: 44px; height: 44px; border-radius: 50%;
   background: var(--gem); color: var(--gem-ink); display: grid; place-items: center;
@@ -1703,34 +1749,34 @@ button {
   font-size: 11px; font-weight: 800; color: var(--gem-deep);
   text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px;
 }
-.bundle-amount { font-weight: 800; font-size: 15.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bundle-row.is-best .bundle-flag { color: var(--shop-honey); }
+.bundle-amount { font-weight: 800; font-size: 15.5px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
 .bundle-bonus {
   display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: var(--r-pill);
   background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 800;
 }
 .bundle-sub {
   display: flex; align-items: center; gap: 4px; margin-top: 2px;
-  font-size: 12.5px; font-weight: 700; color: var(--muted);
+  font-size: 12.5px; font-weight: 700; color: var(--shop-brown-soft);
 }
-.bundle-sub .coin-icon { width: 13px; height: 13px; color: var(--gold-line); }
+.bundle-sub .coin-icon { width: 13px; height: 13px; color: var(--shop-honey); }
 .bundle-price {
   flex: none; border: 0; border-radius: var(--r-pill); padding: 9px 16px;
   font-weight: 800; font-size: 14px; cursor: pointer;
   background: var(--gem); color: var(--gem-ink); font-variant-numeric: tabular-nums;
-  transition: transform .16s;
 }
-.bundle-row.is-best .bundle-price { background: var(--gold); color: var(--gold-ink); }
-.bundle-price:active { transform: translateY(3px); }
+.bundle-row.is-best .bundle-price { background: var(--shop-sun); color: var(--shop-brown); }
+.bundle-price:active { opacity: .85; }
 
 /* ---- Coin packs — unchanged content, just this screen's own card shape ---- */
 .pack-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .pack-card {
   position: relative;
-  background: var(--panel); border-radius: var(--r-md); padding: 14px 10px;
+  background: var(--shop-cream); border-radius: var(--r-md); padding: 14px 10px;
   display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
 }
 .pack-card .coin-icon { width: 32px; height: 32px; }
-.pack-amount { font-weight: 800; font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pack-amount { font-weight: 800; font-size: 15px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
 .pack-bonus {
   margin-left: 4px; font-size: 10.5px; font-weight: 800; color: var(--accent-ink);
   background: var(--accent); padding: 2px 8px; border-radius: var(--r-pill);
@@ -1738,10 +1784,10 @@ button {
 .pack-price {
   margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 8px 18px;
   font-weight: 800; font-size: 13.5px; cursor: pointer;
-  background: var(--gold); color: var(--gold-ink); width: 100%; font-variant-numeric: tabular-nums;
-  transition: transform .16s;
+  background: var(--shop-sun);
+  color: var(--shop-brown); width: 100%; font-variant-numeric: tabular-nums;
 }
-.pack-price:active { transform: translateY(3px); }
+.pack-price:active { opacity: .85; }
 .pack-card.is-flag::before {
   content: attr(data-flag); position: absolute; top: 8px; right: 8px;
   background: var(--danger); color: var(--danger-ink);
@@ -1759,70 +1805,87 @@ button {
   position: absolute; z-index: 32; left: 50%; bottom: calc(var(--hub-nav-height) + 18px);
   transform: translateX(-50%); max-width: 84%;
   padding: 10px 18px; border-radius: var(--r-pill);
-  background: var(--panel); color: var(--ink);
+  background: var(--shop-cream); color: var(--shop-brown);
   font-size: 12.5px; font-weight: 700; text-align: center;
   animation: toast-in .22s ease-out both;
 }
 .shop-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 24px; width: 100%; max-width: 420px;
+  gap: 30px 24px; width: 100%; max-width: 420px;
+  padding-top: 10px;
 }
-.shop-card { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-/* Sits directly on `.shop-screen`'s own light brown now (the description
-   line under it used to visually separate it from the frame below, but is
-   gone — see the JSX comment) — plain `--ink` reads fine there, the same as
-   every other label on this screen. */
-.shop-card-name { font-size: 14px; font-weight: 800; color: var(--ink); text-align: center; }
-/* The rounded-square frame from the sketch, holding a circle with the
-   booster's own icon — the exact glyph the in-play HUD tray already uses,
-   not separate shop art. Flat, no border/shadow. */
+/* Each booster is a little "toy display" stack now instead of a plain
+   name/square/price column: a nameplate ribbon clipped onto the top of a
+   blobby colour medallion, a diamond count badge pinned to its corner, and
+   a banner-shaped price tag clipped onto the medallion's bottom edge — all
+   flat colour shapes (`clip-path`, organic `border-radius`), no gradients,
+   borders or shadows anywhere in the stack. */
+.shop-card { display: flex; flex-direction: column; align-items: center; gap: 0; }
+/* The nameplate: a flat cream ribbon overlapping the medallion's top edge
+   (negative margin pulls it down onto the shape below), clipped into a
+   little banner with notched ends rather than a plain pill. */
+.shop-card-name {
+  position: relative; z-index: 2; margin: 0 0 -10px;
+  padding: 7px 16px; font-size: 12px; font-weight: 800;
+  color: var(--shop-brown); text-align: center; white-space: nowrap;
+  background: var(--shop-cream);
+  clip-path: polygon(6% 0%, 94% 0%, 100% 50%, 94% 100%, 6% 100%, 0% 50%);
+}
+/* The medallion: an organic blob (asymmetric corner radii, not a plain
+   rounded square) in the booster's own identity wash colour, holding a
+   lighter porthole circle around its icon. */
 .shop-card-frame {
   position: relative; width: 100%; max-width: 168px; aspect-ratio: 1;
   display: grid; place-items: center;
-  border: 0; border-radius: var(--r-lg); background: var(--panel);
+  border: 0; background: var(--shop-cream);
+  border-radius: 38% 62% 63% 37% / 47% 42% 58% 53%;
 }
+.shop-card-frame.is-radius { background: #cdeafc; }
+.shop-card-frame.is-prism { background: #ebdff9; }
 .shop-card-icon {
-  position: relative; width: 84%; aspect-ratio: 1; border-radius: 50%;
+  position: relative; width: 78%; aspect-ratio: 1; border-radius: 50%;
   display: grid; place-items: center;
-  background: var(--locked); border: 0;
+  background: rgba(255, 255, 255, .55); border: 0;
 }
-.shop-card-icon .booster-icon { width: 72px; height: 72px; }
+.shop-card-icon .booster-icon { width: 68px; height: 68px; }
 /* Same colours `.booster-btn.is-*.is-armed` uses in play, so a charge bought
    here is recognisably the same thing armed in the HUD tray — the tint on
    the icon glyph itself now that the ring border it used to sit on is gone. */
 .shop-card-frame.is-radius .shop-card-icon { color: #23557f; }
 .shop-card-frame.is-prism .shop-card-icon { color: #5b3f8f; }
-/* The old row layout's "Owned: N" text, kept as a small circle badge rather
-   than dropped — still worth knowing at a glance, just not part of the
-   sketch's own three elements (name/frame/price). Overlaps the icon
-   circle's own top-right edge (negative offsets, relative to
-   `.shop-card-icon` above, not the square frame around it) — a bare number,
-   no "×", the circle shape itself is what says "count" now. */
+/* The old row layout's "Owned: N" text, kept as a small badge rather than
+   dropped — now a flat diamond chip (a rotated-square silhouette via
+   `clip-path`, no rotated element to keep the digit itself upright) pinned
+   to the medallion's own corner instead of a plain circle. */
 .shop-card-owned {
-  position: absolute; top: -6px; right: -6px;
-  min-width: 22px; height: 22px; padding: 0 4px;
-  display: grid; place-items: center; border-radius: 50%;
-  background: var(--ink); color: #fff;
-  font-size: 12px; font-weight: 800;
+  position: absolute; top: 18px; right: -4px; z-index: 1;
+  width: 26px; height: 26px; padding: 0;
+  display: grid; place-items: center;
+  background: var(--shop-brown); color: #fff;
+  font-size: 11px; font-weight: 800;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
-/* The price pill: gold, not the green every other primary action in the
-   game uses — this one is money, and gold is the colour the rest of the
-   game already spends on money everywhere else (the coin badge, `CoinIcon`
-   itself). Dark brown text (`--gold-ink`, the same ink `.hub-gold-badge`'s
-   own number never needed because that badge sits on cream, but this pill
-   is gold-on-gold and needs the contrast). No border/shadow. */
+/* The price tag: the shop's sunny yellow, not the green every other primary
+   action in the game uses — this one is money, and yellow is the colour the
+   rest of the game already spends on money everywhere else (the coin badge,
+   `CoinIcon` itself). Clipped into the same notched banner shape the
+   nameplate above uses, and pulled up to hang off the medallion's bottom
+   edge like a little price tag pinned to the item — a distinct silhouette
+   from every pill-shaped button elsewhere on this screen, still flat. */
 .shop-buy-btn {
+  position: relative; z-index: 2; margin-top: -14px;
   display: flex; align-items: center; gap: 5px;
-  padding: 10px 18px; border-radius: var(--r-pill); border: 0;
-  background: var(--gold);
-  color: var(--gold-ink);
+  padding: 11px 24px; border: 0;
+  background: var(--shop-sun);
+  color: var(--shop-brown);
   font-size: 13px; font-weight: 800; cursor: pointer;
-  transition: transform .16s, opacity .16s;
+  clip-path: polygon(8% 0%, 92% 0%, 100% 50%, 92% 100%, 8% 100%, 0% 50%);
+  transition: opacity .16s;
 }
 .shop-buy-btn .coin-icon { width: 15px; height: 15px; color: inherit; }
-.shop-buy-btn:active:not(:disabled) { transform: translateY(3px); }
+.shop-buy-btn:active:not(:disabled) { opacity: .85; }
 .shop-buy-btn:disabled {
-  background: var(--panel); color: var(--muted);
+  background: var(--shop-cream); color: var(--shop-brown-soft);
   opacity: .7; cursor: default;
 }
 
@@ -2376,6 +2439,12 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    score itself with its tier name underneath — the same "name, then a stat"
    rhythm as the level list right above it, so the chart reads as part of
    that list rather than a separate widget bolted on. */
+.editor-difficulty-chart {
+  display: block; width: 100%; height: 64px; margin: 10px 0 0;
+  border: 1px solid var(--line); border-radius: 12px; background: rgba(10,6,20,.4);
+}
+.editor-difficulty-chart circle:hover { filter: brightness(1.3); }
+
 .editor-difficulty-list { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .editor-difficulty-list button {
   width: 100%; display: grid; grid-template-columns: 1fr auto; align-items: center;
@@ -2426,6 +2495,14 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 .editor-import-check {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--muted); cursor: pointer;
+}
+.editor-import-max-colors {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--muted);
+}
+.editor-import-max-colors input {
+  width: 46px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(10,6,20,.5); color: var(--ink); font-size: 12px; font-weight: 700;
 }
 .editor-canvas {
   margin-top: 14px; max-width: 100%; border-radius: 12px;
@@ -2483,6 +2560,16 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 .editor-analysis.is-too-tight, .editor-analysis.is-too-easy { border-color: rgba(255,213,74,.45); }
 .editor-analysis.is-unclearable { border-color: rgba(255,128,151,.5); }
 .editor-verdict { color: var(--muted); }
+
+.editor-suggestions { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.editor-suggestions li {
+  display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border-radius: 10px; font-size: 11px; line-height: 1.5;
+  border: 1px solid var(--line); background: rgba(10,6,20,.4);
+}
+.editor-suggestions li > span { flex: 1; min-width: 0; }
+.editor-suggestions li.is-warning { border-color: rgba(255,213,74,.4); background: rgba(255,213,74,.1); color: #ffe9a8; }
+.editor-suggestions li.is-info { color: var(--muted); }
 
 .editor-export {
   width: 100%; margin-top: 10px; min-height: 180px; resize: vertical;
@@ -2566,13 +2653,28 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    back to the hub sees it without having to read the pips. */
 .hub-track-btn.is-ready {
   background: #6a4f36;
-  animation: hub-track-ready 1.6s ease-in-out infinite;
+  animation: hub-track-ready 1.6s ease-in-out infinite, hub-track-btn-shake 1.6s ease-in-out infinite;
 }
 .hub-track-btn.is-ready:active { transform: translateY(3px); }
 .hub-track-btn:focus-visible { outline: 2px solid var(--panel); outline-offset: -4px; }
 @keyframes hub-track-ready {
   0%, 100% { box-shadow: 0 0 0 0 rgba(230, 182, 56, 0); }
   50% { box-shadow: 0 0 0 6px rgba(230, 182, 56, .22); }
+}
+/* The whole button jiggles along with the chest icon inside it now, not just
+   the icon on its own — same beat (`hub-track-shake`'s own 62/68/74/80/86%
+   timing) so the two read as one shake rather than two competing ones. Uses
+   the standalone `translate` property rather than `transform`, which
+   `:active` above and `.is-denied`'s own jolt below both already own — a
+   `transform` animation here would fight the press feedback and win every
+   frame, since an animation's value overrides a plain `:active` rule on the
+   same property for as long as it keeps running. */
+@keyframes hub-track-btn-shake {
+  0%, 62%, 100% { translate: 0 0; }
+  68% { translate: -3px 0; }
+  74% { translate: 3px 0; }
+  80% { translate: -2px 0; }
+  86% { translate: 1px 0; }
 }
 /* Tapping an incomplete track: a sharp, one-shot jolt rather than the ready
    state's idle wiggle — it needs to read as "not yet" on the SAME tap that
@@ -2622,10 +2724,13 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 }
 /* Looping diagonal stripe in emerald's two blues, rather than a static
    gradient — a bar that visibly moves reads as "actively filling" instead of
-   a flat swatch of colour. */
+   a flat swatch of colour. The two tones sit close in lightness now (a
+   toned-down pair rather than the original dark-navy/pale-sky spread, which
+   read as too harsh a contrast) — the stripe still reads as moving, just
+   without one edge of it fighting the other for attention. */
 .hub-track-fill {
   display: block; height: 100%; border-radius: var(--r-pill);
-  background-image: repeating-linear-gradient(45deg, #1f6fc9 0 9px, #7ecbff 9px 18px);
+  background-image: repeating-linear-gradient(45deg, #3d84cf 0 9px, #6ba8e0 9px 18px);
   background-size: 26px 26px;
   transition: width .45s cubic-bezier(.2,.8,.2,1);
   animation: hub-track-stripes 1s linear infinite;

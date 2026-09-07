@@ -196,6 +196,7 @@ export interface Strings {
   vibration: string;
   vibrationAria: (on: boolean) => string;
   language: string;
+  aimSensitivity: string;
 
   // ---- Result screens --------------------------------------------------------------
   frameCleared: string;
@@ -227,6 +228,8 @@ const EN_COLOR_NAME: Record<SandColor, string> = {
   pink: "PINK",
   lime: "LIME",
   brown: "BROWN",
+  white: "WHITE",
+  black: "BLACK",
 };
 
 const VI_COLOR_NAME: Record<SandColor, string> = {
@@ -240,6 +243,8 @@ const VI_COLOR_NAME: Record<SandColor, string> = {
   pink: "HỒNG",
   lime: "XANH CHANH",
   brown: "NÂU",
+  white: "TRẮNG",
+  black: "ĐEN",
 };
 
 const EN: Strings = {
@@ -351,6 +356,7 @@ const EN: Strings = {
   vibration: "Vibration",
   vibrationAria: (on) => `Vibration ${on ? "on" : "off"}`,
   language: "Language",
+  aimSensitivity: "Aim sensitivity",
 
   frameCleared: "FRAME CLEARED!",
   backToHome: "Back to home",
@@ -486,6 +492,7 @@ const VI: Strings = {
   vibration: "Rung",
   vibrationAria: (on) => `Rung ${on ? "bật" : "tắt"}`,
   language: "Ngôn ngữ",
+  aimSensitivity: "Độ nhạy ngắm",
 
   frameCleared: "ĐÃ DỌN SẠCH KHUNG!",
   backToHome: "Về trang chủ",
