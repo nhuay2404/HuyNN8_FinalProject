@@ -2874,38 +2874,47 @@ export default function SandGame() {
                 </div>
 
                 <h3 className="settings-section-title">GameDevOption</h3>
-                <a href="/editor" className="settings-devlink">
-                  <Glyph name="pencil" /> Level editor
-                </a>
-                <button type="button" className="settings-devlink" onClick={() => addGold(500)}>
-                  <CoinIcon /> +500 gold
-                </button>
-                <button type="button" className="settings-devlink" onClick={() => resetGold()}>
-                  <CoinIcon /> Reset gold
-                </button>
-                {/* Fills the bar to a claimable chest in one tap, without
-                    having to win five levels first — the only way to reach the
-                    reward screen (and the emerald behind it) while testing. */}
-                <button type="button" className="settings-devlink" onClick={() => fillRewardTrack()}>
-                  <ChestIcon /> Full reward track
-                </button>
-                <button type="button" className="settings-devlink" onClick={() => resetRewardTrack()}>
-                  <EmeraldIcon /> Reset reward track
-                </button>
-                {/* Puts every priced skin back behind its price. Does not
-                    refund anything — it exists to get back to the locked
-                    state the buy flow starts from, not to undo a purchase. */}
-                <button
-                  type="button"
-                  className="settings-devlink"
-                  onClick={() => {
-                    resetOwnedCostumes();
-                    setSelectedCostume(getSelectedCostume());
-                    setCostume(getSelectedCostume());
-                  }}
-                >
-                  <EmeraldIcon /> Relock skins
-                </button>
+                {/* Two per row, smaller — these six are all "one tap, no
+                    typing" rows, so pairing them up reads fine at half width.
+                    The two rows below that take a typed value (Jump to
+                    level, Day offset) and "Reset entire game" stay full
+                    width: an input needs the room, and the reset stays big
+                    and separate on purpose (see its own comment). */}
+                <div className="settings-devlink-grid">
+                  <a href="/editor" className="settings-devlink">
+                    <Glyph name="pencil" /> Level editor
+                  </a>
+                  <button type="button" className="settings-devlink" onClick={() => addGold(500)}>
+                    <CoinIcon /> +500 gold
+                  </button>
+                  <button type="button" className="settings-devlink" onClick={() => resetGold()}>
+                    <CoinIcon /> Reset gold
+                  </button>
+                  {/* Fills the bar to a claimable chest in one tap, without
+                      having to win five levels first — the only way to reach
+                      the reward screen (and the emerald behind it) while
+                      testing. */}
+                  <button type="button" className="settings-devlink" onClick={() => fillRewardTrack()}>
+                    <ChestIcon /> Full reward track
+                  </button>
+                  <button type="button" className="settings-devlink" onClick={() => resetRewardTrack()}>
+                    <EmeraldIcon /> Reset reward track
+                  </button>
+                  {/* Puts every priced skin back behind its price. Does not
+                      refund anything — it exists to get back to the locked
+                      state the buy flow starts from, not to undo a purchase. */}
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => {
+                      resetOwnedCostumes();
+                      setSelectedCostume(getSelectedCostume());
+                      setCostume(getSelectedCostume());
+                    }}
+                  >
+                    <EmeraldIcon /> Relock skins
+                  </button>
+                </div>
                 {/* Jumps straight into any level by its id (the number the
                     HUD and level name already show), skipping the gallery's
                     own unlock/progression check — the one place in this
@@ -3142,15 +3151,27 @@ export default function SandGame() {
                 </div>
                 <div className="daily-login-header-strip" />
                 <div className="daily-login-body">
+                  {/* The week reads as three tiers now, not seven identical
+                      chips: days 1-3 are dressed as the early "hời" days (a
+                      warm value badge, per the ask), 4-6 stay the plain
+                      chip the whole strip used to be, and day 7 breaks out
+                      into its own full-width hero card below — the one
+                      reward the whole week is building toward, sized and
+                      coloured so a player cannot mistake it for "just
+                      another day". Values are still whatever
+                      `DAILY_LOGIN_REWARDS`/the sheet says — this only
+                      changes how each tier is dressed, not what it pays. */}
                   <div className="daily-login-strip">
-                    {DAILY_LOGIN_REWARDS.map((_, index) => {
+                    {DAILY_LOGIN_REWARDS.slice(0, 6).map((_, index) => {
                       const isToday = index === dailyLogin.day;
                       const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
+                      const isValue = index < 3;
                       return (
                         <div
                           key={index}
-                          className={`daily-login-day${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
+                          className={`daily-login-day${isValue ? " is-value" : ""}${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
                         >
+                          {isValue && <span className="daily-login-value-tag" aria-hidden="true">{s.greatValue}</span>}
                           <span className="daily-login-label">{s.dayLabel(index + 1)}</span>
                           <span ref={isToday ? todayCoinRef : undefined}>
                             <CoinIcon />
@@ -3160,6 +3181,27 @@ export default function SandGame() {
                       );
                     })}
                   </div>
+                  {(() => {
+                    const index = 6;
+                    const isToday = index === dailyLogin.day;
+                    const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
+                    return (
+                      <div
+                        className={`daily-login-hero${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
+                      >
+                        <span className="daily-login-hero-tag" aria-hidden="true">{s.bestReward}</span>
+                        <span className="daily-login-hero-body">
+                          <span className="daily-login-hero-icon" ref={isToday ? todayCoinRef : undefined}>
+                            <CoinIcon />
+                          </span>
+                          <span className="daily-login-hero-text">
+                            <span className="daily-login-label">{s.dayLabel(index + 1)}</span>
+                            <strong>{dailyLoginReward(index)}</strong>
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {/* Claim only — no "Later"/"Close" text button any more, the
                       corner X above is the one dismiss action every card gets
                       for free. Already claimed today: nothing to claim, so no

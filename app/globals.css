@@ -676,6 +676,27 @@ button {
 .settings-devlink:hover { background: #e5d6bd; }
 .settings-devlink:active { transform: translateY(2px); }
 .settings-devlink .icon-glyph { width: 18px; height: 18px; flex: none; color: var(--muted); }
+/* The "one tap, no typing" GameDevOption rows (Level editor, +500 gold,
+   Reset gold, ...) two to a row instead of stacked full-width — there is
+   nothing in any of them that needs the extra width, and pairing them up
+   halves how far this section scrolls. The typed-value rows and "Reset
+   entire game" stay outside this grid (see the comment at the call site),
+   so `.settings-devlink + .settings-devlink`'s stacked-margin rule above
+   still applies between those and needs overriding only in here. */
+.settings-devlink-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin-bottom: 8px;
+}
+.settings-devlink-grid .settings-devlink {
+  padding: 10px 11px; gap: 8px; font-size: 12.5px;
+}
+.settings-devlink-grid .settings-devlink + .settings-devlink { margin-top: 0; }
+.settings-devlink-grid .icon-glyph,
+.settings-devlink-grid .coin-icon,
+.settings-devlink-grid .emerald-icon,
+.settings-devlink-grid .chest-icon {
+  width: 15px; height: 15px;
+}
 /* "Reset entire game" — the one row in GameDevOption that does not just
    reset one system (gold, one skin's lock, the reward track) but every
    piece of persisted progress at once. The shared warning colour every other
@@ -1408,11 +1429,15 @@ button {
 .daily-login-header h2 { margin: 0; color: #3a2b20; }
 .daily-login-header-strip { height: 7px; background: #e2483f; }
 .daily-login-body { padding: 20px; }
+/* Days 1-6 only now — day 7 breaks out into its own `.daily-login-hero`
+   below (see that block's own comment) — so this is a 6-, not 7-, column
+   strip. */
 .daily-login-strip {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
-  margin: 0 0 16px;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px;
+  margin: 0 0 10px;
 }
 .daily-login-day {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   padding: 8px 2px; border-radius: var(--r-md); background: var(--locked);
 }
@@ -1430,6 +1455,56 @@ button {
 .daily-login-day.is-today strong { color: var(--accent-ink); }
 .daily-login-day.is-today .daily-login-label { color: var(--accent-ink); opacity: .8; }
 .daily-login-day.is-today.is-past { animation: none; }
+/* Days 1-3: dressed as the early "great deal" tier — a warm gold wash and a
+   small floating tag, both quieter than day 7's hero treatment below so the
+   hierarchy still reads value (1-3) < plain (4-6) < hero (7). `.is-today`
+   can still land on one of these (day 1-3 opened fresh) and its own
+   background wins by cascade order (declared after `.is-value` below). */
+.daily-login-day.is-value {
+  background: var(--gold);
+}
+.daily-login-day.is-value strong { color: #6b4b12; }
+.daily-login-value-tag {
+  position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100% + 6px);
+  padding: 1px 5px; border-radius: var(--r-pill);
+  background: var(--danger); color: var(--danger-ink);
+  font-size: 6.5px; font-weight: 800; letter-spacing: .01em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Day 7's own card, full width and visibly bigger than any day-1-6 chip —
+   the reward the whole week is building toward, not just the last item in
+   a row. Same gold family `.is-value` above uses, one flat shade richer,
+   plus its own "best reward" tag so it stands out even days before it is
+   actually claimable. */
+.daily-login-hero {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  margin: 6px 0 14px; padding: 16px 14px 13px;
+  border-radius: var(--r-lg);
+  background: var(--gold-line);
+}
+.daily-login-hero-tag {
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  padding: 3px 13px; border-radius: var(--r-pill);
+  background: var(--danger); color: var(--danger-ink);
+  font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+  white-space: nowrap;
+}
+.daily-login-hero-body { display: flex; align-items: center; gap: 12px; margin-top: 3px; }
+.daily-login-hero-icon .coin-icon {
+  width: 36px; height: 36px; color: var(--gold-line);
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.18));
+}
+.daily-login-hero-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.daily-login-hero-text .daily-login-label { color: #6b4b12; opacity: .85; }
+.daily-login-hero-text strong {
+  font-size: 23px; font-weight: 800; color: #4a2f0a;
+  font-variant-numeric: tabular-nums;
+}
+.daily-login-hero.is-past { opacity: .6; }
+.daily-login-hero.is-today { animation: booster-armed-pulse 1.6s ease-in-out infinite; }
+.daily-login-hero.is-today.is-past { animation: none; }
 
 /* ---- Home screen ------------------------------------------------------- */
 /* Carried over in shape from the pre-pivot menu hub, with one thing changed:

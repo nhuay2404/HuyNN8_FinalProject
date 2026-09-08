@@ -215,6 +215,13 @@ export interface Strings {
   close: string;
   dayLabel: (n: number) => string;
   claimCoins: (amount: number) => string;
+  /** Days 1-3's small badge — one short word, since the pill it sits on is
+   * only as wide as a sixth of the card (layout only, per the request; the
+   * actual amounts are tuned separately). */
+  greatValue: string;
+  /** Day 7's own badge, on the full-width hero card — "this is the reward
+   * the whole week is building toward". */
+  bestReward: string;
 }
 
 const EN_COLOR_NAME: Record<SandColor, string> = {
@@ -371,6 +378,8 @@ const EN: Strings = {
   dailyLoginAria: "Daily login reward",
   dailyLoginTitle: "Daily Login",
   close: "Close",
+  greatValue: "Hot",
+  bestReward: "Best reward",
   dayLabel: (n) => `Day ${n}`,
   claimCoins: (amount) => `Claim ${amount} coins`,
 };
@@ -507,6 +516,8 @@ const VI: Strings = {
   dailyLoginAria: "Phần thưởng điểm danh",
   dailyLoginTitle: "Điểm Danh Hằng Ngày",
   close: "Đóng",
+  greatValue: "Hời",
+  bestReward: "Quà xịn nhất",
   dayLabel: (n) => `Ngày ${n}`,
   claimCoins: (amount) => `Nhận ${amount} xu`,
 };
