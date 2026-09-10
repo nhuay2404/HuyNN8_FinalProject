@@ -282,8 +282,16 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
  * `CANNON_MODEL_SCALE` below: pulling the rig up on its own would have
  * pushed the muzzle uncomfortably close to the picture, so the whole thing
  * is shrunk too, not just raised.
+ *
+ * Deliberately just clears the tray and no further — on request, the base
+ * should read as resting right above the dock, not floating in the open sky
+ * partway up to the picture. This briefly went up to 0.45 chasing what
+ * turned out to be a stale offline build (`outputs/3d-cannon-sort.html`),
+ * not a real clipping bug — see CHANGELOG-prototype.md's own entry on it —
+ * and got exactly the opposite complaint ("why is it up near the picture
+ * now"). 0.05 is the value that actually matches what was asked for.
  */
-const CANNON_ROOT_POSITION = new THREE.Vector3(0, 0.45, 5.25);
+const CANNON_ROOT_POSITION = new THREE.Vector3(0, 0.05, 5.25);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
 export const MUZZLE_Z = -2.18;

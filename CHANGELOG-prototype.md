@@ -6543,9 +6543,9 @@ cục lại — từ dưới lên: khay booster, súng, tranh, HUD trên cùng. 
 và súng (`top: 65%` ước lượng) sang khay full-width sát đáy khung, bo góc trên (cùng công thức
 `.hub-nav`: `left/right/bottom: 0`, `border-radius: var(--r-lg) var(--r-lg) 0 0`). Khay to hơn che luôn cả
 thân súng (chỉ còn thấy nòng), nên súng phải nâng lên và thu nhỏ theo — qua nhiều vòng chỉnh theo ảnh chụp thực
-tế người dùng gửi (`CANNON_ROOT_POSITION` từ y=-1.78 lên cuối cùng là y=0.45, `CANNON_MODEL_SCALE` từ 0.8 xuống
-0.58) để cả thân súng (bệ, đầu tròn, nòng) hiện đủ phía trên khay với khoảng hở rõ ràng, không chỉ nâng suông
-(sẽ đẩy nòng súng chạm vào đáy tranh).
+tế người dùng gửi (`CANNON_ROOT_POSITION` từ y=-1.78, `CANNON_MODEL_SCALE` từ 0.8 xuống 0.58) để cả thân súng
+(bệ, đầu tròn, nòng) hiện đủ phía trên khay với khoảng hở rõ ràng, không chỉ nâng suông (sẽ đẩy nòng súng chạm
+vào đáy tranh).
 
 Sau vòng chỉnh đầu (dừng ở y=0.05), người dùng báo lại vẫn thấy súng bị che y hệt — verify trên nhiều tỉ lệ
 khung hình khác nhau (mobile 375×812, 375×650, 340×880) trong dev server đều không tái hiện được lỗi. Truy ra
@@ -6554,10 +6554,14 @@ nguyên nhân thật: người dùng test "mobile mode" bằng file build độc
 **toàn bộ đợt việc hôm nay (FTUE, khay booster, súng) đều chưa hề có trong file họ đang xem**, không phải do vị
 trí súng còn sai. Đã build lại (`node work/build-standalone.mjs`, không commit — `/outputs/` nằm trong
 `.gitignore`, sinh ra theo yêu cầu, không phải asset trong repo), verify bằng cách serve file mới qua static
-server cục bộ: tutorial + khay booster + súng đều đúng. Nhân dịp verify lại, nâng thêm biên độ an toàn cho
-`CANNON_ROOT_POSITION.y` (0.05 → 0.45) để chừa dư khoảng hở, phòng trường hợp môi trường thật (safe-area-inset
-của thiết bị có notch/home-indicator, dev server desktop không mô phỏng được) khiến khay cao hơn so với mọi
-phép thử ở trên.
+server cục bộ: tutorial + khay booster + súng đều đúng ở đúng y=0.05.
+
+Nhân dịp đó lại nâng thêm `CANNON_ROOT_POSITION.y` lên 0.45 cho "dư khoảng hở an toàn" — nhưng đây là phỏng đoán
+sai: 0.05 vốn đã đúng ý muốn (súng nằm sát ngay trên khay), không phải súng thật sự bị che. Kết quả 0.45 đẩy
+súng lên cao hẳn, gần sát bức tranh, đúng thứ ngược lại với điều được yêu cầu — bị phản hồi ngay ("sao đặt gần
+bức tranh chi"). Trả `CANNON_ROOT_POSITION.y` về lại đúng 0.05, khớp với ảnh tham chiếu người dùng gửi (chính là
+kết quả của vòng chỉnh trước lúc nghi ngờ nhầm nguyên nhân). Bài học: đừng "phòng xa" một giá trị đã được xác
+nhận đúng bằng ảnh chụp thực tế, kể cả khi nguyên nhân báo lỗi trước đó hoá ra là thứ khác (bản build cũ).
 
 **Test:** `tsc --noEmit` sạch (2 lỗi `db/index.ts`/`worker/index.ts` có từ trước, không liên quan), 150/150
 test pass. Verify trực tiếp trên browser preview qua nhiều vòng: toàn bộ 5 bước tutorial (spotlight đúng vị trí
