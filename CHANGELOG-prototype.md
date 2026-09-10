@@ -6666,3 +6666,21 @@ GameDevOption không để sót cờ này lại.
 outro xuất hiện; tap outro reset board, thoát Home qua Settings → Home — chấm đỏ hiện đúng trên icon giỏ hàng
 (Shop) ở thanh điều hướng dưới cùng; tap vào icon đó vào thẳng màn Shop, đúng tab Coins (Radius Overcharge +
 Prism Shot hiện sẵn để mua), không phải tab Gems; `localStorage` xác nhận cờ đã bị xoá ngay sau tap đó.
+
+## 162. Giá Radius Overcharge trong Shop: 60 → 100 vàng, bằng giá Prism Shot (10/09)
+
+Yêu cầu: chỉnh giá Radius Overcharge trong Shop thành 100 vàng.
+
+**`public/design/economy.csv`:** đây mới là giá thật server dùng (đọc runtime, override hằng số mặc định) —
+sửa `boosterPriceRadiusOvercharge` từ 60 thành 100. `BOOSTER_PRICE.radiusOvercharge` (`app/game/economy.ts`,
+hằng số fallback dùng khi không có CSV — ví dụ bản build standalone offline) cũng đổi theo cho khớp, để hai nơi
+không lệch nhau.
+
+**Hệ quả kéo theo, đã rà soát:** test `sand-economy.test.ts` có một case khẳng định "Prism Shot luôn đắt hơn
+Radius Overcharge vì là buff mạnh hơn hẳn" (`BOOSTER_PRICE.prismShot > BOOSTER_PRICE.radiusOvercharge`) — giờ
+hai giá bằng nhau nên đổi lại thành `>=` (không còn strict hơn nữa, nhưng vẫn giữ ý "Prism không bao giờ rẻ hơn
+Radius"). `docs/features/economy-and-wallet.md`: cập nhật bảng giá trị mặc định và bỏ đoạn giải thích "Prism Shot
+giá cao hơn" (không còn đúng nữa).
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 150/150 test pass. Verify trực tiếp trên browser
+preview: mở Shop → tab Coins, cả Radius Overcharge lẫn Prism Shot đều hiện đúng **100**.

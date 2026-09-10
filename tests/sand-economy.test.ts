@@ -113,8 +113,8 @@ test("buyBoosterCharge fails without touching gold or inventory when the wallet 
   assert.equal(getBoosterCount("prismShot"), 0, "a failed purchase must not grant a charge");
 });
 
-test("Prism Shot costs more than Radius Overcharge — it is the strictly stronger buff (colour-agnostic vs. a bigger circle)", () => {
-  assert.ok(BOOSTER_PRICE.prismShot > BOOSTER_PRICE.radiusOvercharge);
+test("Prism Shot never costs less than Radius Overcharge — it is at least as strong a buff (colour-agnostic vs. a bigger circle)", () => {
+  assert.ok(BOOSTER_PRICE.prismShot >= BOOSTER_PRICE.radiusOvercharge);
 });
 
 // ---- daily login: computeDailyLoginState -------------------------------------

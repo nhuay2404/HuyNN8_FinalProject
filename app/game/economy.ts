@@ -102,7 +102,7 @@ function starterBoosterCharges(type: BoosterType): number {
  * worth noticeably more than a bigger circle of the same wildcard-less shot.
  */
 export const BOOSTER_PRICE: Record<BoosterType, number> = {
-  radiusOvercharge: 60,
+  radiusOvercharge: 100,
   prismShot: 100,
 };
 /** The Shop's actual price for `type` — `BOOSTER_PRICE[type]` unless
