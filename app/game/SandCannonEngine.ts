@@ -283,7 +283,7 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
  * pushed the muzzle uncomfortably close to the picture, so the whole thing
  * is shrunk too, not just raised.
  */
-const CANNON_ROOT_POSITION = new THREE.Vector3(0, 0.05, 5.25);
+const CANNON_ROOT_POSITION = new THREE.Vector3(0, 0.45, 5.25);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
 export const MUZZLE_Z = -2.18;
