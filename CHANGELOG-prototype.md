@@ -6563,6 +6563,9 @@ bức tranh chi"). Trả `CANNON_ROOT_POSITION.y` về lại đúng 0.05, khớp
 kết quả của vòng chỉnh trước lúc nghi ngờ nhầm nguyên nhân). Bài học: đừng "phòng xa" một giá trị đã được xác
 nhận đúng bằng ảnh chụp thực tế, kể cả khi nguyên nhân báo lỗi trước đó hoá ra là thứ khác (bản build cũ).
 
+Theo yêu cầu tiếp theo ("kéo xuống thêm nữa"), hạ thêm `CANNON_ROOT_POSITION.y` xuống -0.2 — súng giờ lún hẳn
+xuống khay thay vì chỉ nằm sát ngay phía trên nó. Build lại `outputs/3d-cannon-sort.html` cùng lúc.
+
 **Test:** `tsc --noEmit` sạch (2 lỗi `db/index.ts`/`worker/index.ts` có từ trước, không liên quan), 150/150
 test pass. Verify trực tiếp trên browser preview qua nhiều vòng: toàn bộ 5 bước tutorial (spotlight đúng vị trí
 orb, cả 3 caption đọc đủ chữ, 2 bước demo bắn trúng/dọn sạch mint đúng lúc hết freeze, tap cuối reset đúng board
