@@ -144,6 +144,16 @@ export interface Strings {
   affordableSuffix: string;
   youUnlocked: (name: string) => string;
   tapToContinue: string;
+  /** Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`), one
+   * string per callout beat — see `SandGame.tsx`'s `freezeFtueStep`. Shown
+   * before the orb is ever shot, spotlighting it. */
+  ftueFreezeIntro: string;
+  /** Shown right after the scripted shot freezes the board, before the
+   * scripted shots that clear it. */
+  ftueFreezeExplainThaw: string;
+  /** Shown once the freeze has thawed, right before control hands back to
+   * the player. */
+  ftueFreezeOutro: string;
   /** The Skin screen's label for a `unlockLevel` skin — replaces the emerald
    * price everywhere one would otherwise show (the grid card's price pill,
    * the main preview panel's own locked button), since the skin is not for
@@ -153,13 +163,6 @@ export interface Strings {
    * skin's own name the same way — "clear Level 20" rather than a price that
    * does not apply to it. */
   progressionLockedSuffix: (level: number) => string;
-  /** The two-button progression reveal (`levelUnlockChoice` in
-   * `SandGame.tsx`) that follows a level clear which just unlocked a skin —
-   * distinct from `youUnlocked`/`tapToContinue` above, which is the
-   * purchase-flow reveal's own single-tap dismissal. */
-  equipUnlockedQuestion: string;
-  equipNowLabel: string;
-  noContinueLabel: string;
 
   // ---- Gallery -----------------------------------------------------------------
   galleryTitle: string;
@@ -363,11 +366,11 @@ const EN: Strings = {
   affordableSuffix: ", you can afford this",
   youUnlocked: (name) => `You unlocked ${name}!`,
   tapToContinue: "Tap to continue",
+  ftueFreezeIntro: "This is a Freeze Orb — hit it and it locks the whole pile in place!",
+  ftueFreezeExplainThaw: "To break the freeze, clear every bit of sand in its colour!",
+  ftueFreezeOutro: "That's it — that's how Freeze Orb works!",
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
-  equipUnlockedQuestion: "Equip it now, or keep your current cannon?",
-  equipNowLabel: "Equip",
-  noContinueLabel: "No, continue",
 
   galleryTitle: "Gallery",
   lockedCardTitle: "Clear the level before this one to unlock",
@@ -509,13 +512,13 @@ const VI: Strings = {
   affordableSuffix: ", bạn đủ tiền mua",
   youUnlocked: (name) => `Bạn đã mở khoá ${name}!`,
   tapToContinue: "Chạm để tiếp tục",
+  ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại!",
+  ftueFreezeExplainThaw: "Muốn phá băng? Dọn sạch hết cát cùng màu với nó!",
+  ftueFreezeOutro: "Vậy đó — Freeze Orb hoạt động như thế!",
   // Kept in English on purpose — "Progression" per the design ask, the same
   // way "Blue Emerald" above stays untranslated.
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, đang khoá — hoàn thành Level ${level}`,
-  equipUnlockedQuestion: "Trang bị ngay, hay giữ pháo hiện tại?",
-  equipNowLabel: "Trang bị",
-  noContinueLabel: "Không, tiếp tục",
 
   galleryTitle: "Bộ sưu tập",
   lockedCardTitle: "Hoàn thành màn trước để mở khoá",

@@ -178,6 +178,9 @@ const CANNON_MIN_ELEVATION = -0.08;
 const CANNON_MAX_ELEVATION = 1.08;
 const GRAVITY = new THREE.Vector3(0, -9.5, 0);
 const AIM_PREDICTION_DURATION = 2.2;
+/** Sentinel `pointerId` for `runScriptedShot` — never issued by a real
+ * PointerEvent, so real touches never match it in `onAimPointerMove`/`Up`. */
+const SCRIPTED_AIM_POINTER_ID = -777;
 /** Half of `.aim-crosshair`'s own footprint at its biggest (26px base ×
  * `is-target-valid`'s 1.08 scale ≈ 28px) — the crosshair is centred on its
  * screen position, so clamping that position to this margin from the edge is
@@ -272,21 +275,33 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [0, 1],
   [0, -1],
 ];
-const CANNON_ROOT_POSITION = new THREE.Vector3(0, -1.78, 5.25);
+/**
+ * Raised from -1.78 (on request: the whole rig sat low enough that
+ * `.booster-hud`'s full-width bottom dock — see globals.css — covered the
+ * base and turret, leaving only the barrel poking out above it). Paired with
+ * `CANNON_MODEL_SCALE` below: pulling the rig up on its own would have
+ * pushed the muzzle uncomfortably close to the picture, so the whole thing
+ * is shrunk too, not just raised.
+ */
+const CANNON_ROOT_POSITION = new THREE.Vector3(0, 0.05, 5.25);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
 export const MUZZLE_Z = -2.18;
 /**
- * Uniform shrink applied to the whole rig, base to muzzle.
+ * Uniform shrink applied to the whole rig, base to muzzle. Scaled around
+ * `cannonRoot`'s own local origin (roughly the base's vertical centre), so
+ * the model shrinks toward that point from both ends rather than just
+ * getting shorter at the top.
  *
- * At full elevation the barrel used to swing high enough to cover
- * `.booster-hud` sitting above it — the whole model reads smaller purely so
- * that raised reach stays clear of the tray, not because "full size" ever
- * looked wrong. Scaled around `cannonRoot`'s own local origin (roughly the
- * base's vertical centre), so the model shrinks toward that point from both
- * ends rather than just getting shorter at the top.
+ * Originally 0.8, just enough that the barrel's own raised reach at full
+ * elevation stayed clear of `.booster-hud` when that was a small pill
+ * floating between the picture and the cannon. Taken down further once that
+ * tray became a full-width dock at the very bottom of the scene: the whole
+ * body needed to clear it now, not just the barrel's swing, and raising the
+ * rig (`CANNON_ROOT_POSITION`) without shrinking it would have crowded the
+ * muzzle up against the picture instead.
  */
-const CANNON_MODEL_SCALE = 0.8;
+const CANNON_MODEL_SCALE = 0.58;
 
 // ---- reward chest showcase -----------------------------------------------
 // The reward screen's chest is a real 3D stage (`chest-model.ts` — the chest,
@@ -1214,6 +1229,12 @@ export class SandCannonEngine {
   private showcaseShots: ShowcaseShot[] = [];
   private showcaseShotGeometry: THREE.SphereGeometry | null = null;
   private showcaseMaterials: Record<CostumeFlavor, THREE.MeshBasicMaterial> | null = null;
+
+  /** True for the whole span of `runScriptedShotSequence` (level 31's freeze
+   * FTUE) — blocks real pointer input from hijacking the aim gesture the
+   * demo is driving, without touching `canInteract()`'s own rules (the
+   * scripted shots still go through them via `canStartAim()`). */
+  private scriptedShotActive = false;
 
   /** "New cannon unlocked" celebration — see `playUnlockCelebration`. Built
    * lazily on first use since most sessions never buy a skin, and torn down
@@ -2262,8 +2283,14 @@ export class SandCannonEngine {
    * `setShowcase` for why this cannot lean on `step()`'s fixed accumulator. */
   private updateShowcase(deltaSeconds: number) {
     this.showcaseTime += deltaSeconds;
-    if (this.unlockCelebrationStart !== null) this.updateUnlockCelebration();
-    else this.cannonRoot.rotation.y = SHOWCASE_YAW + Math.sin(this.showcaseTime * SHOWCASE_SWAY_SPEED) * SHOWCASE_SWAY;
+    // The celebration itself now runs unconditionally from `animate()` (on
+    // request: it has to play mid-level too, for a level-clear unlock, not
+    // only over the skin picker's showcase rig) — see that call site's own
+    // comment. Skip the idle sway here while it's running so the two don't
+    // fight over the same `rotation.y`.
+    if (this.unlockCelebrationStart === null) {
+      this.cannonRoot.rotation.y = SHOWCASE_YAW + Math.sin(this.showcaseTime * SHOWCASE_SWAY_SPEED) * SHOWCASE_SWAY;
+    }
     this.recoil = Math.max(0, this.recoil - deltaSeconds * 4.2);
     this.barrelVisual.position.z = this.recoil * RECOIL_TRAVEL;
 
@@ -2342,15 +2369,17 @@ export class SandCannonEngine {
   }
 
   /**
-   * Plays the "new cannon unlocked" reveal: the showcase rig spins in place
-   * while a golden ring blooms and pulses around its base, in place of the
-   * showcase's own gentle sway. Runs indefinitely — there is no timer, only
-   * `stopUnlockCelebration()` ends it — because the reveal is meant to hold
-   * until the player actually taps past it, not disappear out from under
-   * them. Only meaningful while `setShowcase(true)` is up — the caller
-   * (`buySkin` in SandGame.tsx) pairs this with hiding the rest of the skin
-   * screen's own chrome so the rig and the glow are the only things on
-   * screen.
+   * Plays the "new cannon unlocked" reveal: `cannonRoot` spins in place
+   * while a golden ring blooms and pulses around its base. Runs
+   * indefinitely — there is no timer, only `stopUnlockCelebration()` ends
+   * it — because the reveal is meant to hold until the player actually taps
+   * past it, not disappear out from under them. Works equally over the skin
+   * picker's showcase rig (`buySkin` in SandGame.tsx, pairing this with
+   * hiding the rest of the skin screen's own chrome so the rig and the glow
+   * are the only things on screen) and over the real gameplay cannon
+   * mid-level (a level-clear unlock, paired there with the same reveal
+   * banner instead) — `animate()` advances it either way, not only while
+   * `setShowcase(true)` is up.
    */
   playUnlockCelebration() {
     this.ensureUnlockGlow();
@@ -3094,6 +3123,7 @@ export class SandCannonEngine {
   }
 
   private onAimPointerDown = (event: PointerEvent) => {
+    if (this.scriptedShotActive) return;
     if (!this.canStartAim()) return;
     this.aimPointer = event.pointerId;
     this.lastInputAt = performance.now();
@@ -3367,10 +3397,11 @@ export class SandCannonEngine {
     );
   }
 
-  private solveAimAtScreenPoint(screenX: number, screenY: number) {
-    const { origin, direction } = this.cameraRayForScreenPoint(screenX, screenY);
-    const hit = this.planeHit(origin, direction, true);
-    const target = hit?.point ?? this.sandPlanePoint(screenX, screenY);
+  /** Iterative yaw/elevation solve shared by `solveAimAtScreenPoint` (a real
+   * drag, aimed via a screen-space ray) and the scripted FTUE shots in
+   * `runScriptedShot` (aimed directly at a known world point) — everything
+   * past "here is the target in world space" is identical between the two. */
+  private solveAimAtWorldTarget(target: THREE.Vector3): BallisticSolution | null {
     for (let iteration = 0; iteration < 4; iteration += 1) {
       const start = this.muzzleAnchor.getWorldPosition(new THREE.Vector3());
       const desiredVelocity = this.fixedSpeedVelocity(start, target);
@@ -3390,9 +3421,156 @@ export class SandCannonEngine {
     const crossing = this.positionAt(solution.start, solution.velocity, planeTime);
     const residual = Math.hypot(crossing.x - target.x, crossing.y - target.y);
     if (residual > 0.16) return null;
+    return solution;
+  }
+
+  private solveAimAtScreenPoint(screenX: number, screenY: number) {
+    const { origin, direction } = this.cameraRayForScreenPoint(screenX, screenY);
+    const hit = this.planeHit(origin, direction, true);
+    const target = hit?.point ?? this.sandPlanePoint(screenX, screenY);
+    const solution = this.solveAimAtWorldTarget(target);
+    if (!solution) return null;
     // The grid square is what the ring is drawn on and what the shot will be
     // centred on, so it is reported whether or not sand happens to sit there.
     return { solution, cell: hit?.cell ?? null, grid: hit?.grid ?? this.gridAtPoint(target) };
+  }
+
+  /** Inverse of `gridAtPoint` — the world point (on the sand plane) a given
+   * frame cell sits at. Used only by the scripted FTUE shots, which aim at a
+   * known cell directly instead of ray-casting from a screen position. */
+  private worldPointForGrid(gx: number, gy: number): THREE.Vector3 {
+    const planeWorldZ = this.frameRoot.position.z + this.sandMesh.position.z;
+    const localX = (gx - (this.level.frame.width - 1) / 2) * this.cell;
+    const localY = (gy - (this.level.frame.height - 1) / 2) * this.cell;
+    return new THREE.Vector3(this.frameRoot.position.x + localX, this.frameRoot.position.y + localY, planeWorldZ);
+  }
+
+  /** Projects a world point to on-screen pixels within `this.host`, the same
+   * space the crosshair's `left`/`top` styles are written in. */
+  private screenPointForWorld(point: THREE.Vector3): { x: number; y: number } {
+    const ndc = point.clone().project(this.camera);
+    const width = Math.max(this.host.clientWidth, 1);
+    const height = Math.max(this.host.clientHeight, 1);
+    return { x: ((ndc.x + 1) / 2) * width, y: ((1 - ndc.y) / 2) * height };
+  }
+
+  /** Where a frame cell renders on screen right now — for the freeze
+   * tutorial's spotlight callout (`SandGame.tsx`'s `freezeFtueStep`), which
+   * has to point a highlight ring at the same cell `runScriptedShot` is
+   * about to fire at, in the same `left`/`top` pixel space the crosshair
+   * itself is positioned in. */
+  screenPointForGrid(gx: number, gy: number): { x: number; y: number } {
+    return this.screenPointForWorld(this.worldPointForGrid(gx, gy));
+  }
+
+  private waitUntilReadyToAim(): Promise<void> {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.disposed || this.canStartAim()) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+  }
+
+  /**
+   * Level 31's freeze FTUE (`SandLevelConfig.ftueFreezeDemo`): drags the aim
+   * onto `(gx, gy)` and fires — a REAL shot through `fire()`/`resolveShot`,
+   * not a cosmetic showcase round. Resolves `true` once the shot has left
+   * the barrel, `false` if the engine wasn't in a state to aim at all (the
+   * caller should just stop the sequence in that case).
+   *
+   * Blocks real pointer input for the duration via `scriptedShotActive` (set
+   * by the caller, `runScriptedShotSequence`) — see `onAimPointerDown`.
+   */
+  private runScriptedShot(gx: number, gy: number, dragMs = 650): Promise<boolean> {
+    if (!this.canStartAim()) return Promise.resolve(false);
+    const target = this.worldPointForGrid(gx, gy);
+    const startYaw = this.yaw;
+    const startElevation = this.elevation;
+    const solution = this.solveAimAtWorldTarget(target);
+    if (!solution) {
+      this.yaw = startYaw;
+      this.elevation = startElevation;
+      this.applyCannonTransform();
+      return Promise.resolve(false);
+    }
+    const finalYaw = this.yaw;
+    const finalElevation = this.elevation;
+    const finalScreen = this.screenPointForWorld(target);
+    this.yaw = startYaw;
+    this.elevation = startElevation;
+    this.applyCannonTransform();
+
+    const pointerId = SCRIPTED_AIM_POINTER_ID;
+    this.aimPointer = pointerId;
+    this.lastInputAt = performance.now();
+    this.callbacks.onEvent?.({ type: "AIM_TOUCHED" });
+    this.aimZone.classList.add("is-aiming");
+    this.crosshair.classList.add("is-visible", "is-engaged", "is-aiming", "is-target-valid");
+    const centerX = this.host.clientWidth / 2;
+    const centerY = this.host.clientHeight / 2;
+    this.aimZone.style.setProperty("--joystick-x", `${centerX}px`);
+    this.aimZone.style.setProperty("--joystick-y", `${centerY}px`);
+
+    return new Promise((resolve) => {
+      const started = performance.now();
+      const tick = (now: number) => {
+        if (this.disposed || this.aimPointer !== pointerId) {
+          resolve(false);
+          return;
+        }
+        const t = THREE.MathUtils.clamp((now - started) / dragMs, 0, 1);
+        const eased = t * t * (3 - 2 * t);
+        this.yaw = THREE.MathUtils.lerp(startYaw, finalYaw, eased);
+        this.elevation = THREE.MathUtils.lerp(startElevation, finalElevation, eased);
+        this.applyCannonTransform();
+        const screenX = THREE.MathUtils.lerp(centerX, finalScreen.x, eased);
+        const screenY = THREE.MathUtils.lerp(centerY, finalScreen.y, eased);
+        this.crosshair.style.left = `${screenX}px`;
+        this.crosshair.style.top = `${screenY}px`;
+        this.aimZone.style.setProperty("--joystick-dx", `${(screenX - centerX) * 0.5}px`);
+        this.aimZone.style.setProperty("--joystick-dy", `${(screenY - centerY) * 0.5}px`);
+        if (t >= 1) {
+          this.displayedLaunch = solution;
+          window.setTimeout(() => {
+            if (this.disposed || this.aimPointer !== pointerId) {
+              resolve(false);
+              return;
+            }
+            this.clearAimGesture();
+            this.fire(solution);
+            resolve(true);
+          }, 180);
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  /** Runs level 31's freeze FTUE end to end: an auto-drag-and-fire at each
+   * grid cell in `targets`, in order, each one waiting for the previous shot
+   * to fully land and the board to settle before starting the next drag.
+   * Stops early (returning `false`) if any shot can't be aimed — the caller
+   * should still show "Tap to continue" and hand back control either way. */
+  async runScriptedShotSequence(targets: readonly { x: number; y: number }[]): Promise<boolean> {
+    this.scriptedShotActive = true;
+    try {
+      for (const target of targets) {
+        await this.waitUntilReadyToAim();
+        const fired = await this.runScriptedShot(target.x, target.y);
+        if (!fired) return false;
+      }
+      await this.waitUntilReadyToAim();
+      return true;
+    } finally {
+      this.scriptedShotActive = false;
+    }
   }
 
   /** The frame square a world point falls in, or null if it falls outside. */
@@ -4171,6 +4349,11 @@ export class SandCannonEngine {
     this.updateWinReveal();
     this.updateCannonEntrance();
     this.updateFreezeVisualsAnimation(delta);
+    // Unconditional now, not only while `this.showcase` is up (on request:
+    // a level-clear unlock has to play the same "new cannon unlocked" spin
+    // + glow the skin picker uses, and that happens mid-level, never in
+    // showcase mode) — see `playUnlockCelebration`'s own comment.
+    if (this.unlockCelebrationStart !== null) this.updateUnlockCelebration();
     // Runs through the same pause the picker opens on top of, the same way
     // `updateFrameSpin`/`updateCannonEntrance` already do — `step()` below
     // never runs while `this.paused` (the picker is home-screen-only), so the

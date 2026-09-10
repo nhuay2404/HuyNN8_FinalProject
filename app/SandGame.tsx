@@ -583,7 +583,16 @@ function collectPlayables(): Playable[] {
  * rather than being surprised by it in an effect.
  *
  * The snapshot is cached because `useSyncExternalStore` compares it by
- * identity — rebuilding the array each call would loop forever.
+ * identity — rebuilding the array each call would loop forever. `playables`
+ * itself (the drafts read from localStorage) is only ever computed once,
+ * but `initialIndex` is re-derived every time `window.location.search`
+ * actually changes from what it was last read as — not just once, ever —
+ * so a client-side navigation into `/?level=...` (the level editor's own
+ * "Test in game" link, a same-tab route change rather than a full reload)
+ * still lands on the right level. Without that check, this module-level
+ * cache would keep answering with whatever level (or none) was in the URL
+ * the very first time this page loaded in the tab, silently stranding
+ * "Test in game" on level 1 for the rest of that session.
  */
 type Boot = { playables: Playable[]; initialIndex: number };
 
@@ -593,13 +602,16 @@ const SERVER_BOOT: Boot = {
 };
 
 let cachedBoot: Boot | null = null;
+let cachedBootSearch: string | null = null;
 
 function readBoot(): Boot {
-  if (cachedBoot) return cachedBoot;
-  const playables = collectPlayables();
-  const wanted = new URLSearchParams(window.location.search).get("level");
+  const search = window.location.search;
+  if (cachedBoot && cachedBootSearch === search) return cachedBoot;
+  const playables = cachedBoot?.playables ?? collectPlayables();
+  const wanted = new URLSearchParams(search).get("level");
   const found = wanted ? playables.findIndex((entry) => entry.level.name === wanted) : -1;
   cachedBoot = { playables, initialIndex: found >= 0 ? found : 0 };
+  cachedBootSearch = search;
   return cachedBoot;
 }
 
@@ -643,6 +655,33 @@ function markTutorialSeen(id: number) {
   } catch {
     // Private browsing or a full quota: the overlay just shows again next
     // time, which is a mild annoyance, not a broken game.
+  }
+}
+
+/**
+ * Levels whose scripted freeze demo (`SandLevelConfig.ftueFreezeDemo`) has
+ * already auto-played, this browser — same shape as `TUTORIALS_SEEN_KEY`,
+ * just its own key/list so the two features don't share bookkeeping.
+ */
+const FREEZE_FTUE_SEEN_KEY = "sand-cannon:v1:freeze-ftue-seen";
+
+function loadSeenFreezeFtue(): Set<number> {
+  try {
+    const raw = window.localStorage.getItem(FREEZE_FTUE_SEEN_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is number => typeof id === "number") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markFreezeFtueSeen(id: number) {
+  try {
+    const next = loadSeenFreezeFtue().add(id);
+    window.localStorage.setItem(FREEZE_FTUE_SEEN_KEY, JSON.stringify([...next]));
+  } catch {
+    // Private browsing or a full quota: the demo just plays again next time,
+    // which is a mild annoyance, not a broken game.
   }
 }
 
@@ -705,6 +744,53 @@ export default function SandGame() {
   // glyph's job is done the instant the player makes their own first touch on
   // the real joystick.
   const [ftueGestureOpen, setFtueGestureOpen] = useState(false);
+  /**
+   * Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`) — a
+   * beat-by-beat guided walkthrough, not one continuous auto-play, per the
+   * "make it read like a real game tutorial" ask: a callout points at the
+   * orb and waits for a tap, THEN the scripted shot plays out unobstructed,
+   * THEN the next callout explains what just happened, and so on. Null means
+   * the tutorial isn't running (either not started yet, or already finished
+   * and handed back to the player on this same attempt).
+   *
+   *   intro          — spotlight + caption on the orb, waiting for a tap
+   *   demo-freeze     — (no caption) scripted shot #1: fires at the orb
+   *   explain-thaw    — spotlight + caption again, waiting for a tap
+   *   demo-clear      — (no caption) scripted shots #2-3: clear the mint patch
+   *   outro           — plain caption, waiting for the final tap
+   *
+   * The three caption steps are the only ones a tap can be read from — see
+   * `advanceFreezeFtue`; the two "demo-*" steps are driven entirely by the
+   * effect below and advance themselves once their shots are fired.
+   */
+  const [freezeFtueStep, setFreezeFtueStep] = useState<
+    "intro" | "demo-freeze" | "explain-thaw" | "demo-clear" | "outro" | null
+  >(null);
+  // Whether the current caption step can be dismissed yet — a short grace so
+  // the tap that landed the previous step's last shot can't bleed through
+  // and instantly skip the callout that just appeared.
+  const [freezeFtueTapReady, setFreezeFtueTapReady] = useState(false);
+  useEffect(() => {
+    const captionStep = freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro";
+    if (!captionStep) return;
+    setFreezeFtueTapReady(false);
+    const timer = window.setTimeout(() => setFreezeFtueTapReady(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [freezeFtueStep]);
+  // Only "intro" and "explain-thaw" go through here — "outro"'s tap is wired
+  // to `restart` directly at the call site (JSX, further down), since it has
+  // to reset the whole board rather than just move the state machine along;
+  // see that `onClick`'s own comment for why.
+  const advanceFreezeFtue = useCallback(() => {
+    if (!freezeFtueTapReady) return;
+    setFreezeFtueStep((step) => {
+      switch (step) {
+        case "intro": return "demo-freeze";
+        case "explain-thaw": return "demo-clear";
+        default: return step;
+      }
+    });
+  }, [freezeFtueTapReady]);
 
   // The engine simulates and reports state at pixel resolution — every number
   // this component reads off `state` (remainingCells above all) is in those
@@ -713,6 +799,33 @@ export default function SandGame() {
   // already-expanded config to the engine below costs nothing extra.
   const raw = playables[Math.min(levelIndex, playables.length - 1)]?.level ?? BUILT_IN_LEVELS[0];
   const level = useMemo(() => expandLevelForPixelBoard(raw), [raw]);
+
+  // Drives the two "demo-*" freeze-tutorial steps: fires the scripted
+  // shot(s) for that beat, then moves straight to the next caption once
+  // they land — no tap gates a demo step, the shots landing is what ends
+  // it. `level.ftueFreezeTargets` is `[orb, ...clearShots]` (see its own
+  // doc comment): the orb is its own one-shot beat, everything after it is
+  // the "watch it clear" beat.
+  useEffect(() => {
+    if (!engine) return;
+    const targets = level.ftueFreezeTargets;
+    if (!targets?.length) return;
+    if (freezeFtueStep === "demo-freeze") {
+      let cancelled = false;
+      engine.runScriptedShotSequence([targets[0]]).finally(() => {
+        if (!cancelled) setFreezeFtueStep("explain-thaw");
+      });
+      return () => { cancelled = true; };
+    }
+    if (freezeFtueStep === "demo-clear") {
+      let cancelled = false;
+      engine.runScriptedShotSequence(targets.slice(1)).finally(() => {
+        if (!cancelled) setFreezeFtueStep("outro");
+      });
+      return () => { cancelled = true; };
+    }
+  }, [freezeFtueStep, engine, level]);
+
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
   const [state, setState] = useState<SandGameState>(() => createSandGameState(level));
@@ -1232,12 +1345,22 @@ export default function SandGame() {
   // Same reasoning as the Shop's own `buyConfirm`: spending a currency is
   // never a single unconfirmed tap, and emerald is scarcer than gold.
   const [skinBuyConfirm, setSkinBuyConfirm] = useState<CostumeId | null>(null);
-  // The full-screen "you unlocked it" reveal a fresh cannon purchase plays —
-  // which cannon it is celebrating, or null the rest of the time. Set by
-  // `buySkin`, cleared only by `dismissCannonUnlock` (the player's own tap) —
-  // there is no timer that closes this on its own, the reveal is meant to
-  // hold until they actually move past it.
+  // The full-screen "you unlocked it" reveal — which cannon it is
+  // celebrating, or null the rest of the time. Shared by two triggers now
+  // (on request — a level-clear unlock has to get the same reveal a fresh
+  // Shop purchase does): `buySkin` sets it from the skin screen, and the
+  // "Frame cleared" card's Continue button sets it too, further down, once
+  // `pendingLevelUnlock` says a level just unlocked one. Cleared only by
+  // `dismissCannonUnlock` (the player's own tap) — there is no timer that
+  // closes this on its own, the reveal is meant to hold until they actually
+  // move past it.
   const [cannonUnlock, setCannonUnlock] = useState<CostumeId | null>(null);
+  // Set alongside `cannonUnlock` only by the level-clear trigger, never by
+  // `buySkin` — the level index `dismissCannonUnlock` should open once the
+  // reveal closes, instead of just closing it and leaving the player
+  // sitting on the "Frame cleared" card underneath. `null` means "this
+  // reveal came from the skin screen, just close it" (`buySkin`'s own case).
+  const [cannonUnlockAdvanceTo, setCannonUnlockAdvanceTo] = useState<number | null>(null);
   // Whether the "tap to continue" prompt has appeared yet — starts false the
   // instant the reveal opens so the very first frame cannot be tapped past
   // before the player has even read the name, then flips true after a fixed
@@ -1249,24 +1372,8 @@ export default function SandGame() {
     const timer = window.setTimeout(() => setCannonUnlockTapReady(true), 2000);
     return () => window.clearTimeout(timer);
   }, [cannonUnlock]);
-  /** The reveal's own close — only reachable once `cannonUnlockTapReady`, so
-   * a tap cannot skip past the name before the prompt inviting one exists. */
-  const dismissCannonUnlock = useCallback(() => {
-    engine?.stopUnlockCelebration();
-    setCannonUnlock(null);
-  }, [engine]);
-
-  // The level-20-style progression reveal, once the player has actually
-  // tapped Continue on the "Frame cleared" card (`pendingLevelUnlock` above
-  // is what is waiting on that tap). Unlike `cannonUnlock` — a purchase's own
-  // spin-and-glow the player dismisses with a single tap anywhere — this one
-  // asks an actual question (equip it now, or keep the current cannon?), so
-  // it gets two real buttons instead. The skin is already owned by the time
-  // this is up (`unlockCostume` already ran); both buttons only decide
-  // whether it gets equipped before moving on to the next level. Its own
-  // `equipLevelUnlock`/`declineLevelUnlock` handlers sit below `openLevel`'s
-  // own declaration, since both call it.
-  const [levelUnlockChoice, setLevelUnlockChoice] = useState<CostumeId | null>(null);
+  // `dismissCannonUnlock` itself sits below `openLevel`'s own declaration,
+  // since it calls it — see that declaration's own comment.
   // A confirm left open behind a tab switch must not resurrect itself when
   // the player comes back to the skin screen — same guard the Shop's has.
   useEffect(() => {
@@ -1429,6 +1536,7 @@ export default function SandGame() {
     setToast(null);
     setArmedBooster(null);
     setRunId((id) => id + 1);
+    setFreezeFtueStep(null);
   }, [level]);
 
   const goHome = useCallback(() => {
@@ -1447,6 +1555,7 @@ export default function SandGame() {
     // player had actually dismissed it before leaving.
     setTutorialOpen(false);
     setFtueGestureOpen(false);
+    setFreezeFtueStep(null);
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -1457,21 +1566,21 @@ export default function SandGame() {
     setRunId((id) => id + 1);
   }, [playables]);
 
-  /** `levelUnlockChoice`'s own two buttons — both move on to the next level
-   * exactly the way the "Frame cleared" card's own Continue always has
-   * (`openLevel(levelIndex + 1)`); the only difference between them is
-   * whether the just-unlocked skin gets equipped first. */
-  const equipLevelUnlock = useCallback(() => {
-    if (!levelUnlockChoice) return;
-    setSelectedCostume(levelUnlockChoice);
-    setCostume(levelUnlockChoice);
-    setLevelUnlockChoice(null);
-    openLevel(levelIndex + 1);
-  }, [levelUnlockChoice, levelIndex, openLevel]);
-  const declineLevelUnlock = useCallback(() => {
-    setLevelUnlockChoice(null);
-    openLevel(levelIndex + 1);
-  }, [levelIndex, openLevel]);
+  /** The reveal's own close — only reachable once `cannonUnlockTapReady`, so
+   * a tap cannot skip past the name before the prompt inviting one exists.
+   * Advances to the next level afterward when this reveal came from a
+   * level-clear unlock (`cannonUnlockAdvanceTo` set, by the "Frame cleared"
+   * card's own Continue button below) — the skin-screen purchase case
+   * (`buySkin`) leaves it `null` and this just closes as it always has. */
+  const dismissCannonUnlock = useCallback(() => {
+    engine?.stopUnlockCelebration();
+    setCannonUnlock(null);
+    if (cannonUnlockAdvanceTo !== null) {
+      const next = cannonUnlockAdvanceTo;
+      setCannonUnlockAdvanceTo(null);
+      openLevel(next);
+    }
+  }, [engine, cannonUnlockAdvanceTo, openLevel]);
 
   /** Picking from the gallery shows that picture on the home screen, unplayed. */
   const pickFromGallery = useCallback((index: number) => {
@@ -1487,7 +1596,13 @@ export default function SandGame() {
    * (see `collectPlayables`) rather than from a plain position in the list.
    * Deliberately skips the unlock/progression check `pickFromGallery`'s own
    * gallery grid enforces (`hasClearedLevel`) — same "bypass, don't earn it"
-   * spirit as every other row in GameDevOption.
+   * spirit as every other row in GameDevOption. Does still run the freeze
+   * FTUE (`startPlaying`'s own check, duplicated here) when it jumps to
+   * level 31 unseen — on request, so testing that tutorial doesn't require
+   * clearing 30 levels first. Reads `playables[index].level` directly rather
+   * than this render's own `level`/`raw`: those still describe whatever
+   * level was showing *before* this jump, since `openLevel` above only takes
+   * effect on the next render.
    */
   const jumpToLevel = useCallback(() => {
     const wanted = Number(devLevelInput);
@@ -1498,6 +1613,11 @@ export default function SandGame() {
     setPlaying(true);
     setSettingsOpen(false);
     setDevLevelInput("");
+    const jumped = expandLevelForPixelBoard(playables[index].level);
+    if (jumped.ftueFreezeDemo && jumped.ftueFreezeTargets?.length && !loadSeenFreezeFtue().has(jumped.id)) {
+      markFreezeFtueSeen(jumped.id);
+      setFreezeFtueStep("intro");
+    }
   }, [devLevelInput, playables, openLevel]);
 
   /**
@@ -1520,6 +1640,7 @@ export default function SandGame() {
     setDevDateOffsetDays(0);
     try {
       window.localStorage.removeItem(TUTORIALS_SEEN_KEY);
+      window.localStorage.removeItem(FREEZE_FTUE_SEEN_KEY);
     } catch {
       // Nothing to clean up if storage is unavailable.
     }
@@ -1608,6 +1729,19 @@ export default function SandGame() {
     if (level.ftueGesture) {
       setFtueGestureOpen(true);
     }
+    // Level 31's freeze tutorial: marked seen the instant it starts, same as
+    // `tutorial` above — the point is "never plays again on this browser",
+    // not "played to completion", so backgrounding the tab mid-tutorial still
+    // counts. `forcedOpeningQueue` (mint, mint, mint, grass) stays in force
+    // on every future attempt regardless — that part is plain level config,
+    // read fresh every time, nothing to do with this flag. Kicks off at
+    // `"intro"`; the effect above and `advanceFreezeFtue` carry it the rest
+    // of the way from there.
+    if (level.ftueFreezeDemo && level.ftueFreezeTargets?.length
+      && !loadSeenFreezeFtue().has(level.id)) {
+      markFreezeFtueSeen(level.id);
+      setFreezeFtueStep("intro");
+    }
   }, [level]);
 
   /**
@@ -1652,9 +1786,10 @@ export default function SandGame() {
   const [wonGold, setWonGold] = useState(0);
   // A skin this exact WIN just unlocked (`costumeUnlockedByLevel`), waiting
   // on the "Frame cleared" card's own Continue tap before its reveal shows —
-  // see the Continue button below, which is what turns this into
-  // `levelUnlockChoice`. Ownership itself is already granted the moment WIN
-  // lands (`unlockCostume` below); this is purely "there is a reveal owed".
+  // see the Continue button below, which is what turns this into the same
+  // `cannonUnlock` celebration a Shop purchase gets. Ownership itself is
+  // already granted the moment WIN lands (`unlockCostume` below); this is
+  // purely "there is a reveal owed".
   const [pendingLevelUnlock, setPendingLevelUnlock] = useState<CostumeId | null>(null);
   if (state.result !== lastHandledResult) {
     // The reward track counts every win, replays included — unlike the gold
@@ -1670,7 +1805,7 @@ export default function SandGame() {
       // A progression skin tied to this level (`hero-cannon`/level 20 today)
       // is granted right here, on the very win that clears it — same beat as
       // the gold above. The player just does not see it until they tap
-      // Continue on the card that is about to show (`levelUnlockChoice`).
+      // Continue on the card that is about to show — see `cannonUnlock`.
       const unlockedCostume = costumeUnlockedByLevel(raw.id);
       if (unlockedCostume && !isCostumeOwned(unlockedCostume)) {
         unlockCostume(unlockedCostume);
@@ -2225,6 +2360,75 @@ export default function SandGame() {
           {toast && !winReveal && (
             <div key={toast.id} className={`sand-toast is-${toast.tone}`} role="status">
               {toast.text}
+            </div>
+          )}
+
+          {/* Level 31's freeze-orb tutorial — the three callout beats
+              (`freezeFtueStep` "intro"/"explain-thaw"/"outro"). Unlike the
+              unlock banner elsewhere in this file, dismissing this never calls
+              `openLevel` or touches `runId`: the whole point is a live board
+              that keeps playing on through and past the tutorial, not one
+              that resets. No background scrim of its own —
+              `.ftue-freeze-spotlight` dims everything except a ring around
+              the orb by itself (an oversized box-shadow with a hole cut where
+              the ring sits), so the board stays legible underneath instead of
+              vanishing behind a flat curtain. The "outro" beat (freeze
+              already thawed, nothing left to point at) renders no spotlight,
+              just the caption.
+              Rendered here, inside `.scene-wrap`, rather than as a sibling of
+              `.result-screen` further down — `engine.screenPointForGrid`
+              returns coordinates in `.scene-host`'s own space (the same one
+              `.aim-crosshair` is positioned in, both children of this same
+              `.scene-wrap`), which sits inset from `.game-frame`'s top edge
+              by the HUD bar's height. A sibling of `.result-screen` spans the
+              *whole* frame instead, HUD included, so the exact same `left`/
+              `top` pixel values would land too high by that inset — this is
+              the one spot in the tree where they land in the right place. */}
+          {playing && (freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro") && (
+            <div
+              className="ftue-freeze-overlay"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                // "outro"'s tap is a real restart, not just a state-machine
+                // step: on request, the player re-plays level 31 from its
+                // authored start (orb and mint patch both back, 30 shots
+                // again) rather than picking up from the live board the
+                // three demo shots already spent. `restart` itself clears
+                // `freezeFtueStep` back to null (see its own body) — same as
+                // `advanceFreezeFtue` would, just alongside the reset.
+                if (freezeFtueStep === "outro") {
+                  if (freezeFtueTapReady) restart();
+                  return;
+                }
+                advanceFreezeFtue();
+              }}
+              aria-label={`${
+                freezeFtueStep === "intro" ? s.ftueFreezeIntro
+                  : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
+                  : s.ftueFreezeOutro
+              }${freezeFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
+            >
+              {freezeFtueStep !== "outro" && level.ftueFreezeTargets?.[0] && engine && (() => {
+                const spot = engine.screenPointForGrid(level.ftueFreezeTargets[0].x, level.ftueFreezeTargets[0].y);
+                return (
+                  <div
+                    className="ftue-freeze-spotlight"
+                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
+                    aria-hidden="true"
+                  />
+                );
+              })()}
+              <div className="ftue-freeze-caption">
+                <p className="ftue-freeze-caption-text" aria-hidden="true">
+                  {freezeFtueStep === "intro" ? s.ftueFreezeIntro
+                    : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
+                    : s.ftueFreezeOutro}
+                </p>
+                {freezeFtueTapReady && (
+                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -3325,16 +3529,22 @@ export default function SandGame() {
                     <div className="result-actions">
                       {/* A win that just unlocked a progression skin
                           (`pendingLevelUnlock`) holds Continue back one more
-                          tap — instead of moving on immediately, it hands off
-                          to `levelUnlockChoice`'s own card, which is what
-                          actually calls `openLevel` once the player has
-                          picked equip-or-not. Every other win continues the
-                          same way it always has. */}
+                          tap — instead of moving on immediately, it equips
+                          the new cannon and hands off to the same
+                          `cannonUnlock` spin-and-glow reveal a Shop purchase
+                          plays (on request — the two are meant to match),
+                          with `cannonUnlockAdvanceTo` set so dismissing it is
+                          what actually calls `openLevel`. Every other win
+                          continues the same way it always has. */}
                       <button
                         type="button"
                         onClick={() => {
                           if (pendingLevelUnlock) {
-                            setLevelUnlockChoice(pendingLevelUnlock);
+                            setSelectedCostume(pendingLevelUnlock);
+                            setCostume(pendingLevelUnlock);
+                            setCannonUnlock(pendingLevelUnlock);
+                            setCannonUnlockAdvanceTo(levelIndex + 1);
+                            engine?.playUnlockCelebration();
                             setPendingLevelUnlock(null);
                             return;
                           }
@@ -3370,32 +3580,34 @@ export default function SandGame() {
 
         {/* The level-20-style progression reveal — shown once the player has
             tapped Continue on the "Frame cleared" card that just unlocked a
-            skin (`pendingLevelUnlock` → `levelUnlockChoice`, set there). Reuses
-            the same `.result-screen`/`.result-card`/`.result-actions.is-row`
-            language the skin-buy confirm dialog already uses (`skinBuyConfirm`
-            below) rather than the skin screen's own spin-and-glow reveal —
-            that one lives inside `.skin-screen` and assumes the showroom rig
-            is what is behind it, which is not true mid-level. Both buttons
-            move on to the next level either way (`equipLevelUnlock`/
-            `declineLevelUnlock`); the only choice is whether to equip first. */}
-        {levelUnlockChoice && (
-          <div
-            className="result-screen"
-            role="dialog"
-            aria-modal="true"
-            aria-label={s.youUnlocked(s.costumeName(levelUnlockChoice))}
-          >
-            <div className="result-card confirm-card">
-              <h2>{s.youUnlocked(s.costumeName(levelUnlockChoice))}</h2>
-              <p>{s.equipUnlockedQuestion}</p>
-              <div className="result-actions is-row">
-                <button type="button" onClick={equipLevelUnlock}>
-                  {s.equipNowLabel}
-                </button>
-                <button type="button" className="is-quiet" onClick={declineLevelUnlock}>
-                  {s.noContinueLabel}
-                </button>
-              </div>
+            skin (`pendingLevelUnlock`, set there). On request, this is now
+            the SAME spin-and-glow `cannon-unlock-banner` reveal a Shop
+            purchase gets (`buySkin`'s own block further down, inside
+            `.skin-screen`), not a plain equip/decline dialog — the Continue
+            button already equipped the cannon and started
+            `playUnlockCelebration()` before setting `cannonUnlock`, so all
+            this has to do is show the same banner over the level's own
+            scene instead of the skin screen's. `cannonUnlockAdvanceTo` being
+            non-null is what distinguishes this trigger from `buySkin`'s (see
+            `dismissCannonUnlock`'s own comment) — `playing` on top of that
+            just guards against ever rendering both this and the skin
+            screen's own copy at once, which should not be reachable anyway
+            since the skin screen only mounts on the hub. */}
+        {playing && cannonUnlock && cannonUnlockAdvanceTo !== null && (
+          <div className="result-screen">
+            <div
+              className="cannon-unlock-banner"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (cannonUnlockTapReady) dismissCannonUnlock();
+              }}
+              aria-label={`${s.youUnlocked(s.costumeName(cannonUnlock))}${cannonUnlockTapReady ? ` ${s.tapToContinue}.` : ""}`}
+            >
+              <p className="cannon-unlock-text" aria-hidden="true">{s.youUnlocked(s.costumeName(cannonUnlock))}</p>
+              {cannonUnlockTapReady && (
+                <p className="cannon-unlock-tap" aria-hidden="true">{s.tapToContinue}</p>
+              )}
             </div>
           </div>
         )}

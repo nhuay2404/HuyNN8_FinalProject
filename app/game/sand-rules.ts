@@ -178,6 +178,9 @@ export type ParsedLevel = {
   walls: CellCoord[];
   /** One Freeze Map trigger per connected group of `@` cells. */
   freezeTriggers: SandFreezeTrigger[];
+  /** One buried Freeze Map trigger per connected group of `@` cells on
+   * `SandLevelConfig.hiddenFreezeRows` — see that field's own comment. */
+  hiddenFreezeTriggers: SandFreezeTrigger[];
   issues: LevelIssue[];
 };
 
@@ -202,15 +205,25 @@ export type ParsedLevel = {
 export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfig {
   const scale = level.pixelScale;
   if (scale <= 1) return { ...level, pixelScale: 1 };
-  const rows = level.rows.flatMap((row) => {
-    const wide = [...row].flatMap((letter) => Array.from({ length: scale }, () => letter)).join("");
-    return Array.from({ length: scale }, () => wide);
-  });
+  const expandRows = (source: readonly string[]) =>
+    source.flatMap((row) => {
+      const wide = [...row].flatMap((letter) => Array.from({ length: scale }, () => letter)).join("");
+      return Array.from({ length: scale }, () => wide);
+    });
   return {
     ...level,
     frame: { width: level.frame.width * scale, height: level.frame.height * scale },
-    rows,
+    rows: expandRows(level.rows),
+    // Same uniform integer upscaling as `rows` above, and for the same
+    // reason: a hidden trigger authored at blueprint size has to land on
+    // the exact same expanded cells its covering sand does, or the two
+    // grids drift apart the moment the board is drawn at real resolution.
+    hiddenFreezeRows: level.hiddenFreezeRows ? expandRows(level.hiddenFreezeRows) : level.hiddenFreezeRows,
     sortRadius: level.sortRadius * scale,
+    // Scripted FTUE targets are authored in the same blueprint grid as
+    // `rows`, so they need the same uniform upscale to still land on the
+    // right cells once the board itself is expanded.
+    ftueFreezeTargets: level.ftueFreezeTargets?.map((t) => ({ x: t.x * scale, y: t.y * scale })),
     pixelScale: 1,
   };
 }
@@ -322,7 +335,27 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
     id: `freeze-${cells[0].x}-${cells[0].y}`,
     cells,
   }));
-  return { bodies, locked, keys, walls: sortCells(walls), freezeTriggers, issues };
+
+  // `hiddenFreezeRows` is a second, independent grid over the same frame —
+  // read the same top-first/y-flip way as `level.rows` above, but the only
+  // letter that means anything on it is `@`; everything else (including an
+  // actual sand letter, if one is ever accidentally drawn there) is just
+  // ignored rather than raising an issue, since this grid was never meant to
+  // hold anything but trigger markers.
+  const hiddenFreezeCells = new Set<string>();
+  (level.hiddenFreezeRows ?? []).forEach((row, index) => {
+    const y = height - 1 - index;
+    [...row].forEach((letter, x) => {
+      if (letter !== FREEZE_LETTER) return;
+      if (y >= 0 && y < height && x < width) hiddenFreezeCells.add(cellKey(x, y));
+    });
+  });
+  const hiddenFreezeTriggers = groupCells([...hiddenFreezeCells].map(parseCellKey)).map((cells) => ({
+    id: `hidden-freeze-${cells[0].x}-${cells[0].y}`,
+    cells,
+  }));
+
+  return { bodies, locked, keys, walls: sortCells(walls), freezeTriggers, hiddenFreezeTriggers, issues };
 }
 
 function parseCellKey(key: string): CellCoord {
@@ -1068,14 +1101,14 @@ export function spendBoosterCharge(type: BoosterType): void {
 // ---- Game state ---------------------------------------------------------
 
 export function createSandGameState(level: SandLevelConfig): SandGameState {
-  const { bodies, locked, keys, walls, freezeTriggers } = parseSandLevel(level);
+  const { bodies, locked, keys, walls, freezeTriggers, hiddenFreezeTriggers } = parseSandLevel(level);
   const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
   // A colour that starts entirely locked is authored into the wheel — it has to
   // be, or it could never be shot once freed — but it must not be *handed out*
   // until a key has opened it. `level.ammoQueue` itself no longer sets the
   // opening order (see `fillQueue`'s own comment) — it is still what the
   // level editor validates every board colour against.
-  const filled = fillQueue(level, [], {}, 0, bodies, frozen);
+  const filled = fillQueue(level, [], {}, 0, bodies, frozen, 0);
   return {
     phase: "READY",
     bodies,
@@ -1088,6 +1121,7 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
     keys,
     walls,
     freezeTriggers,
+    hiddenFreezeTriggers,
     freezeShotsRemaining: 0,
     result: null,
   };
@@ -1291,6 +1325,13 @@ function fillQueue(
   seed: number,
   bodies: SandBody[],
   frozen: ReadonlySet<string>,
+  /** How many shots have already been fired by the time the queue THIS CALL
+   * returns starts being loaded from — 0 at `createSandGameState`, otherwise
+   * `state.shotsUsed + 1` (this shot has already been counted as spent by
+   * the time its own `spend()` closure calls this). What lets
+   * `applyForcedOpeningQueue` know which absolute shot index each returned
+   * slot corresponds to. */
+  shotsUsedAfter: number,
   previousShootable?: ReadonlySet<SandColor>,
 ): AmmoDraw {
   const shootable = shootableColors(bodies, frozen);
@@ -1336,7 +1377,37 @@ function fillQueue(
     nextPity = drawn.pity;
     nextSeed = drawn.seed;
   }
-  return { queue: kept, ammoPity: nextPity, ammoSeed: nextSeed };
+  return { queue: applyForcedOpeningQueue(level, kept, shotsUsedAfter, shootableSet), ammoPity: nextPity, ammoSeed: nextSeed };
+}
+
+/**
+ * Overrides the front of `queue` with `level.forcedOpeningQueue`, wherever
+ * the two overlap — `queue[i]` corresponds to absolute shot index
+ * `shotsUsedAfter + i`, so a slot only gets forced while that index still
+ * falls inside the forced array; once every forced index has been fired
+ * past, every later call leaves the wheel to `fillQueue`'s own random draw
+ * again, for good. A forced colour that is not actually `shootable` right
+ * now (nothing shootable of its own, thanks to a lock the picture opens
+ * later, say) is left as the natural draw instead — this exists to make a
+ * scripted demo's targets predictable, not to ever hand out a dead bullet.
+ */
+function applyForcedOpeningQueue(
+  level: SandLevelConfig,
+  queue: SandColor[],
+  shotsUsedAfter: number,
+  shootableSet: ReadonlySet<SandColor>,
+): SandColor[] {
+  const forced = level.forcedOpeningQueue;
+  if (!forced?.length) return queue;
+  let changed = false;
+  const next = queue.map((color, i) => {
+    const absoluteIndex = shotsUsedAfter + i;
+    const pinned = absoluteIndex < forced.length ? forced[absoluteIndex] : undefined;
+    if (!pinned || !shootableSet.has(pinned) || pinned === color) return color;
+    changed = true;
+    return pinned;
+  });
+  return changed ? next : queue;
 }
 
 /**
@@ -1431,6 +1502,34 @@ function settleAfterRemoval(
   const settle = runGrainSettle(bodies, level.frame, fixtures, hint, frozen);
   return { settle, steps: settle.steps };
 }
+
+/**
+ * Splits `hiddenFreezeTriggers` into the ones fully uncovered by `bodies`
+ * (every one of their own cells now empty of sand) and the ones still
+ * buried — see `SandGameState.hiddenFreezeTriggers`'s own comment. Called
+ * after every settle that could have changed what covers one, so a trigger
+ * reveals itself the instant its last covering grain is gone (on request:
+ * "hiện ra ngay khi cát che bị dọn sạch"), not on some later shot that
+ * happens to notice.
+ */
+function revealHiddenFreezeTriggers(
+  bodies: SandBody[],
+  hiddenFreezeTriggers: SandFreezeTrigger[],
+): { revealed: SandFreezeTrigger[]; stillHidden: SandFreezeTrigger[] } {
+  if (!hiddenFreezeTriggers.length) return { revealed: [], stillHidden: hiddenFreezeTriggers };
+  const occupied = new Set<string>();
+  for (const body of bodies) {
+    for (const cell of body.cells) occupied.add(cellKey(cell.x, cell.y));
+  }
+  const revealed: SandFreezeTrigger[] = [];
+  const stillHidden: SandFreezeTrigger[] = [];
+  for (const trigger of hiddenFreezeTriggers) {
+    const uncovered = trigger.cells.every((cell) => !occupied.has(cellKey(cell.x, cell.y)));
+    (uncovered ? revealed : stillHidden).push(trigger);
+  }
+  return { revealed, stillHidden };
+}
+
 /**
  * One shot, start to finish.
  *
@@ -1522,7 +1621,7 @@ export function resolveShot(
     bodies: SandBody[],
     stillFrozen: ReadonlySet<string>,
   ): Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed" | "shotsUsed" | "freezeShotsRemaining"> => ({
-    ...fillQueue(level, state.queue.slice(1), state.ammoPity, state.ammoSeed, bodies, stillFrozen, previousShootable),
+    ...fillQueue(level, state.queue.slice(1), state.ammoPity, state.ammoSeed, bodies, stillFrozen, state.shotsUsed + 1, previousShootable),
     shotsUsed: state.shotsUsed + 1,
     freezeShotsRemaining: freezeShotsAfter,
   });
@@ -1554,11 +1653,18 @@ export function resolveShot(
       ? settleAfterRemoval(level, state.bodies, fixtures, [], false, true)
       : { settle: null, steps: [] };
     const stillFrozen = settle ? new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y))) : frozenLocked;
+    // Only the full-board settle above (`justUnfroze`) can have changed what
+    // covers a hidden trigger — an ordinary NO_MATCH with nothing removed
+    // and no settle leaves every cell exactly as it was.
+    const { revealed, stillHidden } = settle
+      ? revealHiddenFreezeTriggers(settle.bodies, state.hiddenFreezeTriggers)
+      : { revealed: [] as SandFreezeTrigger[], stillHidden: state.hiddenFreezeTriggers };
     const missed = {
       ...state,
       ...(settle ? { bodies: settle.bodies, locked: settle.locked, keys: settle.keys, walls: settle.walls } : {}),
       ...spend(settle?.bodies ?? state.bodies, stillFrozen),
-      freezeTriggers: settle?.freezeTriggers ?? nextFreezeTriggers,
+      freezeTriggers: [...(settle?.freezeTriggers ?? nextFreezeTriggers), ...revealed],
+      hiddenFreezeTriggers: stillHidden,
     };
     return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody, settle, steps };
   }
@@ -1569,6 +1675,11 @@ export function resolveShot(
   const fixtures: Fixtures = { ...fixturesOf(level, state), freezeTriggers: nextFreezeTriggers };
   const { settle, steps } = settleAfterRemoval(level, left, fixtures, removed, frozenThisShot, justUnfroze);
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
+  // On request ("freeze bị che sau lớp cát" — a trigger buried under sand
+  // reveals itself the instant every one of its own cells is uncovered):
+  // this shot just removed sand and possibly cascaded more of it, so any
+  // hidden trigger could have just lost its last covering grain.
+  const { revealed, stillHidden } = revealHiddenFreezeTriggers(settle.bodies, state.hiddenFreezeTriggers);
   let sorted: SandGameState = {
     ...state,
     bodies: settle.bodies,
@@ -1577,7 +1688,8 @@ export function resolveShot(
     locked: settle.locked,
     keys: settle.keys,
     walls: settle.walls,
-    freezeTriggers: settle.freezeTriggers,
+    freezeTriggers: [...settle.freezeTriggers, ...revealed],
+    hiddenFreezeTriggers: stillHidden,
   };
 
   // A landed shot that spends the last bullet is allowed to sweep away a tiny

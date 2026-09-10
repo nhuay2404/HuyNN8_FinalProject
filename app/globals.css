@@ -808,8 +808,9 @@ button {
 /* The picture frame sits higher in this box than the raw geometry alone
    would suggest (FRAME_CENTER_Y in SandCannonEngine.ts was raised from the
    pivot's original 1.95), on purpose: it opens a band of clear sky between
-   the frame's bottom edge and the cannon below, and that band is where
-   `.booster-hud` sits (see the "Booster HUD" block below). */
+   the frame's bottom edge and the cannon below. `.booster-hud` (see the
+   "Booster HUD" block below) docks at this box's own bottom edge instead of
+   floating in that band — below the cannon, not between it and the picture. */
 .scene-wrap {
   /* The joystick's drag surface. Spans the whole scene (picture and cannon
      alike) rather than just the band below the frame: a bigger, more forgiving
@@ -821,8 +822,6 @@ button {
      comfortably, not about where tracking stops. See `.is-out-of-bounds`
      below for what happens once a drag leaves it and stays gone. */
   --aim-touch-height: 100%;
-  /* Where the booster tray sits, vertically — see `.booster-hud` below. */
-  --booster-hud-y: 65%;
   position: absolute;
   inset: calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0;
   overflow: hidden;
@@ -1005,19 +1004,21 @@ button {
 }
 
 /* ---- Booster HUD --------------------------------------------------------- */
-/* One pill-shaped tray, not two loose buttons — the reserved band between the
-   picture and the cannon (see the comment on `.scene-wrap` above) holds a
-   single HUD box, both booster buttons sitting inside it side by side. z-index
-   sits above `.aim-zone` (4) and `.settle-badge` (7) so a tap always reaches
-   the tray, never the drag surface behind it. `--booster-hud-y` is a
-   best-effort estimate, not a measured value (the cannon is a 3D object with
-   no DOM box to anchor to) — nudge it if the tray reads as off the model. */
+/* A full-width dock at the very bottom of the scene (on request: bottom to
+   top, tray / cannon / picture / HUD) — same recipe as `.hub-nav`'s own
+   bottom bar (edge to edge, rounded top corners only, flush with the bottom
+   edge) rather than the small floating pill this used to be. The cannon
+   (a 3D object drawn on the same canvas, no DOM box of its own) sits behind
+   this in paint order but pokes up above its top edge — the dock is only as
+   tall as the buttons need, not tall enough to cover the barrel/turret.
+   z-index sits above `.aim-zone` (4) and `.settle-badge` (7) so a tap always
+   reaches the tray, never the drag surface behind it. */
 .booster-hud {
-  position: absolute; z-index: 9; left: 50%; top: var(--booster-hud-y, 65%);
-  transform: translate(-50%, -50%);
-  display: flex; align-items: center; justify-content: center; gap: 14px;
-  width: min(64%, 244px); padding: 6px 18px;
-  border-radius: var(--r-pill); background: var(--panel);
+  position: absolute; z-index: 9; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center; gap: 20px;
+  padding: 16px 24px calc(16px + env(safe-area-inset-bottom));
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--panel);
 }
 .booster-btn {
   width: 38px; height: 38px; border-radius: 50%; flex: none;
@@ -2279,6 +2280,65 @@ button {
   50% { opacity: 1; transform: scale(1.07); }
 }
 
+/* ---- Level 31's freeze-orb tutorial ----------------------------------- */
+/* The callout overlay for `freezeFtueStep`'s three caption beats
+   ("intro"/"explain-thaw"/"outro" — see SandGame.tsx). Unlike
+   `.cannon-unlock-banner`, this one carries no scrim of its own: the board
+   underneath has to stay legible through the whole tutorial, so
+   `.ftue-freeze-spotlight` below does the dimming by itself, as a ring with
+   a hole in the middle rather than a flat curtain over everything. */
+.ftue-freeze-overlay {
+  position: absolute; inset: 0; z-index: 30;
+  display: block; padding: 0; margin: 0; border: none; background: transparent;
+  cursor: pointer; pointer-events: auto;
+}
+/* The dim-everything-except-a-circle trick: an oversized `box-shadow` spread
+   from a small, otherwise invisible ring paints the whole frame, leaving only
+   its own circle bright. Positioned via inline `left`/`top` in screen space
+   (`SandCannonEngine.screenPointForGrid`) — the same space the crosshair
+   itself is placed in — so the ring always sits exactly on the cell the next
+   scripted shot is about to fire at. */
+.ftue-freeze-spotlight {
+  position: absolute; width: 64px; height: 64px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 2000px rgba(20, 16, 12, .58);
+  animation: ftue-freeze-pulse 1.35s ease-in-out infinite;
+}
+@keyframes ftue-freeze-pulse {
+  0%, 100% { box-shadow: 0 0 0 2000px rgba(20, 16, 12, .58), 0 0 0 0 rgba(255, 255, 255, .45); }
+  50% { box-shadow: 0 0 0 2000px rgba(20, 16, 12, .58), 0 0 0 12px rgba(255, 255, 255, 0); }
+}
+/* The caption card itself: sits low so it never competes with the spotlight
+   ring above the pile, styled like `.result-card` (solid panel, not the
+   unlock banner's white-on-transparent lettering) since there is no dark
+   scrim here for pale text to read against. */
+.ftue-freeze-caption {
+  position: absolute; left: 50%; bottom: max(9%, env(safe-area-inset-bottom));
+  width: calc(100% - 48px); max-width: 320px;
+  padding: 18px 22px; border-radius: var(--r-lg);
+  background: var(--panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
+  text-align: center;
+  /* Its own keyframes, not `cannon-unlock-in` — that one's `transform: scale(...)`
+     end state would replace this element's *centering* transform for as long
+     as the animation's fill-mode holds it (`both`), sliding the whole card off
+     to one side. Carrying `translateX(-50%)` through every keyframe here is
+     what keeps it centered throughout the pop-in, not just at rest. */
+  animation: ftue-freeze-caption-in .28s cubic-bezier(.2, .9, .24, 1) both;
+}
+@keyframes ftue-freeze-caption-in {
+  from { opacity: 0; transform: translateX(-50%) scale(.85); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+.ftue-freeze-caption-text {
+  margin: 0; color: var(--ink); font-size: 15px; font-weight: 700; line-height: 1.45;
+}
+.ftue-freeze-caption-tap {
+  margin: 10px 0 0; color: var(--muted);
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  animation: cannon-unlock-breathe 1.3s ease-in-out infinite;
+}
+
 /* Deliberately empty: the rig in the middle is drawn by the engine behind
    this screen, not by anything in here — this is just the flex space that
    keeps the bar/heading pinned to the top and the button/tray pinned to the
@@ -2828,6 +2888,19 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   font-size: 11px; font-weight: 900; letter-spacing: .05em; color: #ffe9a8;
   font-variant-numeric: tabular-nums;
 }
+
+/* The Freeze tool's "paint into hiddenFreezeRows instead of rows" toggle —
+   own pill rather than folded into `.editor-key-size` above, since it is a
+   checkbox (a persistent mode) next to that span's +/- buttons (one-shot
+   actions), not another number to tune. */
+.editor-freeze-hidden {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(92,200,232,.14);
+  font-size: 11px; font-weight: 700; letter-spacing: .02em; color: #cdeffc;
+  cursor: pointer;
+}
+.editor-freeze-hidden input { margin: 0; }
 
 .editor-issues { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .editor-issues li {

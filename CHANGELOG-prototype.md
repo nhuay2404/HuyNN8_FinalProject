@@ -6472,3 +6472,83 @@ thái hiện tại thay vì chỉ tô một lần lúc khởi tạo.
 browser preview: khung hub (không đóng băng) giữ đúng màu nâu/kem gốc; tiêm DOM tạm để dựng lại đúng cấu trúc
 HUD/tuyết ngoài luồng chơi thật (do thao tác kéo-bắn qua automation không ổn định) xác nhận tray xanh nhạt +
 chữ FREEZE + sọc loop + tuyết rơi có di chuyển qua nhiều khung hình.
+
+---
+
+## 159. FTUE dạy Freeze Orb (level 31): tutorial từng bước, ép thứ tự đạn mở màn, khay booster + súng bố trí lại (10/09)
+
+Yêu cầu ban đầu: riêng level 31 (giữ nguyên bức tranh) cần một FTUE "chơi thử" cho người chơi thấy công năng
+Freeze Orb — kéo ngắm tự động vào orb, bắn, đóng băng, rồi tự bắn dọn sạch màu đóng băng để hết hiệu ứng, sau
+đó trả quyền điều khiển. Qua nhiều vòng phản hồi, bản FTUE đổi từ auto-play liên tục sang **từng bước có
+callout + chờ tap** ("giống tutorial của game khác"), và bước cuối đổi từ "tiếp tục board đang bắn dở" sang
+"reset lại màn từ đầu" (đúng nghĩa đen "chơi lại màn" trong yêu cầu gốc). Tính năng mới, xuyên suốt engine,
+level data, level-writer, và UI — không phải sửa lỗi.
+
+**`forcedOpeningQueue` — ép màu đạn N phát mở màn (`sand-types.ts`, `sand-rules.ts`):** field mới trên
+`SandLevelConfig`, độc lập với FTUE (dùng được cho bất kỳ level nào cần ép thứ tự đạn mở màn). `fillQueue` nhận
+thêm tham số `shotsUsedAfter` (absolute shot index, không phải index trong queue) để `applyForcedOpeningQueue`
+override đúng màu bất kể mảng ép dài hơn độ sâu lookahead mặc định hay forced range đã hết hạn. Level 31 dùng
+field này để ghim chính xác `["mint", "mint", "mint", "grass"]` — 3 viên mint đầu cho FTUE, và **luôn áp dụng
+lại trên mọi lượt chơi/chơi lại**, không chỉ lần đầu.
+
+**Bắn demo thật, không phải hiệu ứng giả (`SandCannonEngine.ts`):** `runScriptedShot`/`runScriptedShotSequence`
+— tự tính điểm ngắm từ toạ độ lưới (`worldPointForGrid` + `solveAimAtWorldTarget`, tách ra từ
+`solveAimAtScreenPoint` để dùng chung), animate góc xoay súng + vị trí crosshair/joystick mượt trong ~650ms rồi
+gọi thẳng `fire()` — đi qua đúng pipeline `resolveShot` như một phát bắn tay thật, không phải
+`launchShowcaseShot` (vốn chỉ trang trí, không đổi state). `scriptedShotActive` chặn `onAimPointerDown` trong
+suốt lúc demo chạy để một chạm thật ngoài ý muốn không cướp mất gesture đang mô phỏng.
+
+**Tutorial từng bước (`SandGame.tsx`, `globals.css`, `i18n.ts`):** state machine
+`intro → demo-freeze → explain-thaw → demo-clear → outro`. Hai bước `intro`/`explain-thaw` là spotlight
+(`.ftue-freeze-spotlight` — vòng tròn sáng giữa nền tối, kỹ thuật "oversized box-shadow" một element duy nhất,
+không cần mask/SVG) + caption card (`.ftue-freeze-caption`) chờ tap; hai bước `demo-*` không hiện gì, chạy
+`runScriptedShotSequence` rồi tự chuyển bước khi bắn xong. Bước `outro`, theo phản hồi, gọi thẳng `restart()`
+thay vì chỉ đóng overlay — màn 31 reset lại board gốc (30 viên đạn, orb + mint nguyên vẹn), 3 phát demo không
+tính vào lượt chơi thật. Đánh dấu "đã xem" qua `localStorage` (`sand-cannon:v1:freeze-ftue-seen`) ngay lúc bắt
+đầu, giống `tutorial` — không phát lại trên cùng trình duyệt dù demo có bị bỏ dở.
+
+**Lỗi phát sinh trong quá trình làm, đã sửa:**
+- **Lật trục Y giữa toạ độ tác giả và toạ độ engine.** `parseSandLevel` đổi `row index` (thứ tự dòng viết trong
+  `rows`, trên cùng = 0) thành `y` nội bộ qua công thức `y = height - 1 - index` — toạ độ bắn ép trong
+  `ftueFreezeTargets` ban đầu tính nhầm bằng row index thẳng, khiến demo bắn trúng chỗ không phải orb. Phải
+  tính lại đúng theo công thức lật trục, verify trực tiếp bằng cách đọc `state.freezeTriggers` sau khi bắn.
+- **Spotlight lệch vị trí.** `.ftue-freeze-overlay` (chứa spotlight + caption) ban đầu render làm sibling của
+  `.result-screen`, ngoài `.scene-wrap` — trong khi `engine.screenPointForGrid` trả toạ độ trong không gian của
+  `.scene-host`/`.aim-crosshair` (nằm trong `.scene-wrap`, vốn inset thấp hơn `.game-frame` đúng bằng chiều cao
+  thanh HUD). Cùng một cặp `left`/`top` px nên rơi sai vị trí (cao hơn thực tế đúng bằng khoảng inset đó). Sửa
+  bằng cách chuyển hẳn overlay vào bên trong `.scene-wrap`.
+- **Animation keyframe ghi đè transform canh giữa.** `.ftue-freeze-caption` dùng chung `@keyframes
+  cannon-unlock-in` (vốn cho `.cannon-unlock-banner`) — keyframe này có `transform: scale(...)`, với
+  `animation-fill-mode: both` nên giữ nguyên vĩnh viễn sau khi chạy xong, đè mất `transform: translateX(-50%)`
+  đang dùng để canh giữa ngang, khiến caption card tràn hẳn ra ngoài màn hình. Tách riêng keyframe
+  `ftue-freeze-caption-in`, giữ `translateX(-50%)` xuyên suốt mọi state của animation.
+- **`readBoot()` cache theo query param chỉ tính một lần cho cả tab session.** Nút "Test in game" của Level
+  Editor điều hướng bằng client-side `<Link href="/?level=...">`, không reload trang — `cachedBoot` (module
+  singleton) vẫn giữ `initialIndex` tính từ lần load đầu tiên của tab, nên "Test in game" cho level 31 vẫn cứ
+  mở lại level đang xem trước đó. Sửa: thêm `cachedBootSearch`, so sánh `window.location.search` mỗi lần đọc,
+  chỉ tính lại `initialIndex` khi query đổi thật (giữ `playables` — phần tốn công đọc `localStorage` — không
+  tính lại).
+- **Level Editor ghi đè mất field FTUE nhiều lần.** `forcedOpeningQueue`/`ftueFreezeDemo`/`ftueFreezeTargets`
+  không có control riêng trên UI editor — draft nào import trước khi 3 field này tồn tại (hoặc chỉnh tay từ
+  trước) thì không mang theo, và "Update built-in level"/"Ship" ghi cả field đó thành rỗng, xảy ra thật ít nhất
+  2 lần trong lúc làm (người dùng vẫn đang song song chỉnh level 31 qua editor). Sửa tận gốc trong
+  `scripts/level-writer.mjs`: `preserveUneditableFtueFields` đọc 3 field này từ đúng block đang tồn tại trên đĩa
+  trước khi ghi đè, chỉ điền vào chỗ draft không mang theo — draft vẫn thắng nếu nó có ý kiến riêng, chỉ không
+  còn bị "im lặng" xoá mất field "im lặng" (không ai chỉnh) nữa. Áp dụng ở cả hai chỗ ghi (`updateLevel` và
+  `shipLevels`'s upsert), phải restart lại tiến trình `npm run level-writer` (không tự nhận code mới) để có
+  hiệu lực.
+
+**Khay booster dời xuống đáy, súng nâng lên + thu nhỏ (`globals.css`, `SandCannonEngine.ts`):** theo yêu cầu bố
+cục lại — từ dưới lên: khay booster, súng, tranh, HUD trên cùng. `.booster-hud` đổi từ pill nhỏ nổi giữa tranh
+và súng (`top: 65%` ước lượng) sang khay full-width sát đáy khung, bo góc trên (cùng công thức
+`.hub-nav`: `left/right/bottom: 0`, `border-radius: var(--r-lg) var(--r-lg) 0 0`). Khay to hơn che luôn cả
+thân súng (chỉ còn thấy nòng), nên súng phải nâng lên và thu nhỏ theo — qua 2 vòng chỉnh theo ảnh chụp thực tế
+người dùng gửi (`CANNON_ROOT_POSITION` từ y=-1.78 lên y=0.05, `CANNON_MODEL_SCALE` từ 0.8 xuống 0.58) để cả
+thân súng (bệ, đầu tròn, nòng) hiện đủ phía trên khay với khoảng hở rõ ràng, không chỉ nâng suông (sẽ đẩy nòng
+súng chạm vào đáy tranh).
+
+**Test:** `tsc --noEmit` sạch (2 lỗi `db/index.ts`/`worker/index.ts` có từ trước, không liên quan), 150/150
+test pass. Verify trực tiếp trên browser preview qua nhiều vòng: toàn bộ 5 bước tutorial (spotlight đúng vị trí
+orb, cả 3 caption đọc đủ chữ, 2 bước demo bắn trúng/dọn sạch mint đúng lúc hết freeze, tap cuối reset đúng board
+gốc), `forcedOpeningQueue` áp dụng lại đúng trên lượt chơi thật lẫn lượt chơi lại, "Test in game" từ Level
+Editor mở đúng level qua client-side nav, khay booster + súng hiển thị đúng bố cục mới ở nhiều tỉ lệ khung hình.

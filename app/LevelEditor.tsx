@@ -157,7 +157,7 @@ const DEFAULT_KEY_SCALE = 4;
 const MAX_KEY_SCALE = 16;
 
 /** Same reasoning as `DEFAULT_KEY_SCALE`/`MAX_KEY_SCALE`, for the Freeze
- * trigger's own fixed hourglass silhouette. */
+ * trigger's own fixed crystal-key silhouette. */
 const DEFAULT_FREEZE_SCALE = 4;
 const MAX_FREEZE_SCALE = 16;
 
@@ -303,11 +303,13 @@ function brushCells(draft: LevelDraft, x: number, y: number, size: number) {
   return cells;
 }
 
-/** The whole connected group of same-letter cells under (x, y), or null —
- * shared by the key tool (`KEY_LETTER`) and the Freeze tool (`FREEZE_LETTER`),
- * since both stamp a rigid shape the same way and lift it the same way. */
-function letterGroupAt(draft: LevelDraft, x: number, y: number, letter: string) {
-  if (letterAt(draft.rows, x, y, draft.height) !== letter) return null;
+/** The whole connected group of same-letter cells under (x, y) in `rows`, or
+ * null — shared by the key tool (`KEY_LETTER`), the Freeze tool
+ * (`FREEZE_LETTER` on `draft.rows`), and the Freeze tool's own hidden mode
+ * (`FREEZE_LETTER` on `draft.hiddenFreezeRows` instead), since all three
+ * stamp a rigid shape the same way and lift it the same way. */
+function letterGroupAtRows(rows: string[], height: number, x: number, y: number, letter: string) {
+  if (letterAt(rows, x, y, height) !== letter) return null;
   const found: Array<{ x: number; y: number }> = [];
   const seen = new Set<string>([`${x},${y}`]);
   const queue = [{ x, y }];
@@ -318,7 +320,7 @@ function letterGroupAt(draft: LevelDraft, x: number, y: number, letter: string) 
       const next = { x: cell.x + dx, y: cell.y + dy };
       const at = `${next.x},${next.y}`;
       if (seen.has(at)) continue;
-      if (letterAt(draft.rows, next.x, next.y, draft.height) !== letter) continue;
+      if (letterAt(rows, next.x, next.y, height) !== letter) continue;
       seen.add(at);
       queue.push(next);
     }
@@ -326,16 +328,29 @@ function letterGroupAt(draft: LevelDraft, x: number, y: number, letter: string) 
   return found;
 }
 
+function letterGroupAt(draft: LevelDraft, x: number, y: number, letter: string) {
+  return letterGroupAtRows(draft.rows, draft.height, x, y, letter);
+}
+
+/** Stamps or clears `letter` into an arbitrary rows grid — the shared
+ * primitive behind `stampCells`/`stampFreezeCells`/`clearCells` below, and
+ * behind the Freeze tool's own hidden-mode painting (SandGame.tsx's
+ * `paintAt`), which targets `draft.hiddenFreezeRows` instead of `draft.rows`
+ * and so cannot go through those three directly. */
+function stampInto(rows: string[], height: number, cells: Array<{ x: number; y: number }>, letter: string) {
+  return cells.reduce((acc, cell) => withCell(acc, cell.x, cell.y, height, letter), rows);
+}
+
 function stampCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
-  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, KEY_LETTER), draft.rows);
+  return stampInto(draft.rows, draft.height, cells, KEY_LETTER);
 }
 
 function stampFreezeCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
-  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, FREEZE_LETTER), draft.rows);
+  return stampInto(draft.rows, draft.height, cells, FREEZE_LETTER);
 }
 
 function clearCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
-  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, EMPTY_CELL), draft.rows);
+  return stampInto(draft.rows, draft.height, cells, EMPTY_CELL);
 }
 
 /** Reading a cell out of the row strings, and writing one back. */
@@ -589,6 +604,14 @@ export default function LevelEditor() {
   const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
   /** The Freeze tool's radius, in board pixels. */
   const [freezeScale, setFreezeScale] = useState(DEFAULT_FREEZE_SCALE);
+  // The Freeze tool's own second mode (on request: "freeze bị che sau lớp
+  // cát") — while on, a click stamps/clears `draft.hiddenFreezeRows` instead
+  // of `draft.rows`, burying the trigger behind whatever sand is already
+  // there rather than painting it into the open. Its own state, not folded
+  // into `tool`, because it is a modifier on the Freeze tool specifically
+  // (same footing as `locking`/`wallMode` are modifiers on the brush) —
+  // switching tools away and back keeps whichever mode was last chosen.
+  const [freezeHidden, setFreezeHidden] = useState(false);
   /** Width of the square brush nib, in board pixels. */
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [color, setColor] = useState<SandColor>("blue");
@@ -865,11 +888,21 @@ export default function LevelEditor() {
 
     // The Freeze trigger, same stamp/lift gesture as the key — a rigid shape
     // the game groups by connectivity, not a smear a freehand brush could
-    // ever produce faithfully.
+    // ever produce faithfully. `freezeHidden` sends the exact same gesture
+    // at `hiddenFreezeRows` instead of `rows` — see that field's own comment
+    // and `freezeHidden`'s own state comment.
     if (tool === "freeze") {
       update((current) => {
-        const existing = letterGroupAt(current, x, y, FREEZE_LETTER);
         const scale = Math.min(freezeScale, maxFreezeScale(current));
+        if (freezeHidden) {
+          const hiddenRows = current.hiddenFreezeRows ?? blankRows(current.width, current.height);
+          const existing = letterGroupAtRows(hiddenRows, current.height, x, y, FREEZE_LETTER);
+          const hiddenFreezeRows = existing
+            ? stampInto(hiddenRows, current.height, existing, EMPTY_CELL)
+            : stampInto(hiddenRows, current.height, freezeCellsAt(current, x, y, scale), FREEZE_LETTER);
+          return hiddenFreezeRows === hiddenRows ? current : { ...current, hiddenFreezeRows };
+        }
+        const existing = letterGroupAt(current, x, y, FREEZE_LETTER);
         const rows = existing
           ? clearCells(current, existing)
           : stampFreezeCells(current, freezeCellsAt(current, x, y, scale));
@@ -889,11 +922,21 @@ export default function LevelEditor() {
       }
       // A square nib centred on the cursor. The board is pixels now, so a
       // one-cell brush would make painting a hillside a thousand clicks.
+      // On request ("nút freeze có thể bị che sau lớp cát"): an ordinary
+      // colour/wall/lock stroke skips any cell that is already part of a
+      // Freeze trigger instead of blindly overwriting it — the brush is a
+      // blunt square stamp with no idea what it is about to cover, so
+      // without this a stroke that merely passes near a trigger silently
+      // buries it under sand, with nothing on screen to say so until the
+      // level is played and the mechanic just is not there any more.
+      // `erasing` is exempt — that is how a trigger gets cleared this way
+      // on purpose, on top of the Freeze tool's own click-to-clear gesture.
       const rows = brushCells(current, x, y, brushSize)
+        .filter((cell) => erasing || readCell(letterAt(current.rows, cell.x, cell.y, current.height)).kind !== "freeze")
         .reduce((acc, cell) => withCell(acc, cell.x, cell.y, current.height, letter), current.rows);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, locking, wallMode, erasing, keyScale, freezeScale, brushSize, update]);
+  }, [tool, color, locking, wallMode, erasing, keyScale, freezeScale, freezeHidden, brushSize, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
@@ -1057,6 +1100,34 @@ export default function LevelEditor() {
       }
     }
 
+    // A hidden Freeze trigger (on request: "freeze bị che sau lớp cát") is
+    // deliberately invisible in the real game — it is buried, that is the
+    // whole point — but the AUTHOR still has to be able to see where they
+    // put one, or there is no way to line it up with the sand meant to
+    // cover it. Drawn as a translucent cyan hatch over whatever `rows`
+    // already painted there (not the trigger's own bright bevel — that
+    // would read as "this is visible in-game", which is exactly wrong),
+    // after everything else so it always shows through.
+    if (draft.hiddenFreezeRows) {
+      context.fillStyle = "rgba(92,200,232,.4)";
+      context.strokeStyle = "rgba(236,250,255,.85)";
+      context.lineWidth = Math.max(1, cellPx * 0.12);
+      draft.hiddenFreezeRows.forEach((row, r) => {
+        [...row].forEach((letter, x) => {
+          if (letter !== FREEZE_LETTER) return;
+          const left = x * cellPx;
+          const top = r * cellPx;
+          context.fillRect(left, top, cellPx, cellPx);
+          context.beginPath();
+          context.moveTo(left + 2, top + 2);
+          context.lineTo(left + cellPx - 2, top + cellPx - 2);
+          context.moveTo(left + cellPx - 2, top + 2);
+          context.lineTo(left + 2, top + cellPx - 2);
+          context.stroke();
+        });
+      });
+    }
+
     // Grid lines last, so they sit over the paint rather than under it. At the
     // board's real resolution a line per pixel is not a grid, it is a grey
     // wash — so the fine grid only appears once cells are big enough to be
@@ -1087,7 +1158,7 @@ export default function LevelEditor() {
   const errors = issues.filter((issue) => issue.severity === "error");
   const used = draft ? coloursUsed(draft) : [];
   const painted = draft ? countPaintedCells(draft) : 0;
-  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0, freeze: 0 };
+  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0, freeze: 0, hiddenFreeze: 0 };
   // Resizing the board can leave the chosen key size too big for it, so the
   // limit is applied on the way out rather than only when the button is pressed.
   const keyScaleLimit = draft ? maxKeyScale(draft) : 1;
@@ -1556,6 +1627,21 @@ export default function LevelEditor() {
                   >
                     +
                   </button>
+                  {/* On request ("freeze bị che sau lớp cát"): while on, a
+                      click stamps/clears `draft.hiddenFreezeRows` instead of
+                      the ordinary, in-the-open trigger grid — see
+                      `freezeHidden`'s own state comment. The hatch overlay
+                      the canvas draws for it (author-only — invisible in the
+                      real game) is the one place this placement is visible
+                      at all once painted, so the label says so up front. */}
+                  <label className="editor-freeze-hidden" title="Buries the trigger behind whatever sand is already there — invisible and inert until every one of its cells is uncovered">
+                    <input
+                      type="checkbox"
+                      checked={freezeHidden}
+                      onChange={(event) => setFreezeHidden(event.target.checked)}
+                    />
+                    Hidden (under sand)
+                  </label>
                 </span>
               )}
               <button type="button" className="editor-button" onClick={undo}>Undo</button>
@@ -1722,6 +1808,8 @@ export default function LevelEditor() {
             moment a key frees it.
             {fixtures.locked > 0 && ` This picture has ${fixtures.locked} frozen cells and ${fixtures.keys} key cells.`}
             {fixtures.freeze > 0 && ` This picture has ${fixtures.freeze} Freeze trigger cells.`}
+            {fixtures.hiddenFreeze > 0
+              && ` This picture also has ${fixtures.hiddenFreeze} Freeze trigger cells hidden under sand — invisible in-game until every one of them is uncovered.`}
           </p>
           <ol className="editor-queue">
             {draft.ammoQueue.map((entry, position) => (

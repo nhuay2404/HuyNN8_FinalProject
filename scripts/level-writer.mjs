@@ -155,6 +155,38 @@ function uniqueExportNames(drafts) {
   });
 }
 
+/**
+ * `forcedOpeningQueue`/`ftueFreezeDemo`/`ftueFreezeTargets` have no editor
+ * control of their own (see their `LevelDraft` doc comments) — a draft only
+ * carries them at all if it happened to be imported after they existed on
+ * the built-in level it came from. A draft imported earlier (or edited by
+ * hand before that) silently lacks them, and writing THAT draft back with
+ * `draftToTypeScript` would erase them from the file even though nothing
+ * about them was meant to change. So before every write-back to an existing
+ * level (`updateLevel`, and `shipLevels`' own upsert of a level living
+ * outside the shipped block), this reads whatever the CURRENT on-disk block
+ * already has for these three fields and fills in only the ones the draft
+ * itself doesn't carry — the draft still wins whenever it does have an
+ * opinion, this only stops it from clobbering silence with silence.
+ */
+function preserveUneditableFtueFields(existingBlockText, draft) {
+  if (draft.forcedOpeningQueue !== undefined && draft.ftueFreezeDemo !== undefined && draft.ftueFreezeTargets !== undefined) {
+    return draft;
+  }
+  const forced = draft.forcedOpeningQueue ?? (() => {
+    const m = existingBlockText.match(/forcedOpeningQueue:\s*\[([^\]]*)\]/);
+    return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((mm) => mm[1]) : undefined;
+  })();
+  const demo = draft.ftueFreezeDemo ?? (/ftueFreezeDemo:\s*true/.test(existingBlockText) || undefined);
+  const targets = draft.ftueFreezeTargets ?? (() => {
+    const m = existingBlockText.match(/ftueFreezeTargets:\s*\[([\s\S]*?)\]/);
+    if (!m) return undefined;
+    return [...m[1].matchAll(/\{\s*x:\s*(-?\d+),\s*y:\s*(-?\d+)\s*\}/g)]
+      .map((mm) => ({ x: Number(mm[1]), y: Number(mm[2]) }));
+  })();
+  return { ...draft, forcedOpeningQueue: forced, ftueFreezeDemo: demo, ftueFreezeTargets: targets };
+}
+
 function draftToTypeScript(draft, id, constName) {
   const scale = draft.pixelScale ?? 1;
   const pixels = draft.width * draft.height * scale * scale;
@@ -163,6 +195,25 @@ function draftToTypeScript(draft, id, constName) {
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
   const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
   const freeze = (draft.freezeDuration ?? 0) > 0 ? `\n  freezeDuration: ${draft.freezeDuration},\n` : "";
+  // Freeze triggers buried under sand (on request: "freeze bị che sau lớp
+  // cát") — a second grid, same shape as `rows`, only ever present at all
+  // once the editor's own Freeze-tool "Hidden" mode has painted into it.
+  const hasHiddenFreeze = Array.isArray(draft.hiddenFreezeRows) && draft.hiddenFreezeRows.some((row) => row.includes("@"));
+  const hiddenFreezeRows = hasHiddenFreeze
+    ? `\n  hiddenFreezeRows: [\n${draft.hiddenFreezeRows.map((row) => `    ${quoted(row)},`).join("\n")}\n  ],\n`
+    : "";
+  // None of these three have an editor control of their own (see their
+  // `LevelDraft` doc comments) — they only ever get here by having survived
+  // an import from a hand-authored level that already had them, and this is
+  // what keeps them from being silently dropped the next time that level is
+  // saved from the editor.
+  const forcedOpeningQueue = Array.isArray(draft.forcedOpeningQueue) && draft.forcedOpeningQueue.length
+    ? `\n  forcedOpeningQueue: [${draft.forcedOpeningQueue.map((color) => quoted(color)).join(", ")}],\n`
+    : "";
+  const ftueFreezeDemo = draft.ftueFreezeDemo ? `\n  ftueFreezeDemo: true,\n` : "";
+  const ftueFreezeTargets = Array.isArray(draft.ftueFreezeTargets) && draft.ftueFreezeTargets.length
+    ? `\n  ftueFreezeTargets: [${draft.ftueFreezeTargets.map((t) => `{ x: ${t.x}, y: ${t.y} }`).join(", ")}],\n`
+    : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -174,11 +225,11 @@ function draftToTypeScript(draft, id, constName) {
   rows: [
 ${rows}
   ],
-
+${hiddenFreezeRows}
   // The starting rotation only — under the cycling rule this is a wheel, not a
   // budget: colours come round again until they are gone.
   ammoQueue: [${queue}],
-
+${forcedOpeningQueue}${ftueFreezeDemo}${ftueFreezeTargets}
   sortRadius: ${draft.sortRadius},
   shotLimit: ${draft.shotLimit},
 
@@ -239,7 +290,8 @@ async function shipLevels(drafts) {
     const found = findLevelBlockById(source, targetId);
     const insideShippedBlock = found && found.start >= beginIdx && found.start < endIdx;
     if (found && !insideShippedBlock) {
-      const newBlock = draftToTypeScript(draft, targetId, found.constName).replace(/\n/g, eol);
+      const merged = preserveUneditableFtueFields(source.slice(found.start, found.end), draft);
+      const newBlock = draftToTypeScript(merged, targetId, found.constName).replace(/\n/g, eol);
       source = source.slice(0, found.start) + newBlock + source.slice(found.end);
       if (found.pictureConstName) source = removeOrphanedPictureConst(source, found.pictureConstName);
       // The upsert above can shift both markers (a removed picture const, a
@@ -318,7 +370,8 @@ async function updateLevel(id, draft) {
     throw new Error(`Could not find a level with id ${id} in design/levels/sand-levels.ts.`);
   }
 
-  const newBlock = draftToTypeScript(draft, id, found.constName).replace(/\n/g, eol);
+  const merged = preserveUneditableFtueFields(source.slice(found.start, found.end), draft);
+  const newBlock = draftToTypeScript(merged, id, found.constName).replace(/\n/g, eol);
   let next = source.slice(0, found.start) + newBlock + source.slice(found.end);
 
   let orphanRemoved = false;

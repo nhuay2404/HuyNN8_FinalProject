@@ -115,6 +115,11 @@ export type LevelDraft = {
   height: number;
   /** Top row first, one letter per cell, `.` for empty — the same shape a level uses. */
   rows: string[];
+  /** A second grid over the same frame, same shape as `rows` — `@` marks a
+   * Freeze trigger hidden behind whatever `rows` draws at that cell (on
+   * request: "freeze bị che sau lớp cát"). Absent for every draft that has
+   * never used the Freeze tool's hidden mode — see `SandLevelConfig.hiddenFreezeRows`. */
+  hiddenFreezeRows?: string[];
   ammoQueue: SandColor[];
   sortRadius: number;
   shotLimit: number;
@@ -127,6 +132,18 @@ export type LevelDraft = {
    * back to `DEFAULT_FREEZE_DURATION` at play time, same as `keyFriction`
    * falling back to 0. */
   freezeDuration?: number;
+  /** Pins exact colours to the first N shots of a fresh attempt — see
+   * `SandLevelConfig.forcedOpeningQueue`. Not editable from the editor UI
+   * (no control writes to it); carried through import/export round-trips
+   * only so a hand-authored level that already has one doesn't lose it the
+   * next time it's saved from here. */
+  forcedOpeningQueue?: SandColor[];
+  /** See `SandLevelConfig.ftueFreezeDemo` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueFreezeDemo?: boolean;
+  /** See `SandLevelConfig.ftueFreezeTargets` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueFreezeTargets?: { x: number; y: number }[];
   /**
    * Set by `levelToDraft` when this draft came from "Import built-in" — the
    * numeric id of the `SandLevelConfig` it was copied from. What lets the
@@ -196,7 +213,11 @@ export function fixtureCounts(draft: LevelDraft) {
     else if (letter === FREEZE_LETTER) freeze += 1;
     else if (readCell(letter).kind === "sand" && letter === letter.toLowerCase()) locked += 1;
   }
-  return { locked, keys, freeze };
+  let hiddenFreeze = 0;
+  for (const letter of (draft.hiddenFreezeRows ?? []).join("")) {
+    if (letter === FREEZE_LETTER) hiddenFreeze += 1;
+  }
+  return { locked, keys, freeze, hiddenFreeze };
 }
 
 export function countPaintedCells(draft: LevelDraft) {
@@ -235,13 +256,20 @@ export function resizeDraft(draft: LevelDraft, width: number, height: number): L
   const { width: clampedWidth, height: clampedHeight } = clampDimensions(width, height);
   // Rows are top-first but the picture is anchored to the floor, so growing or
   // shrinking has to happen at the TOP — otherwise the sand appears to jump.
-  const rows: string[] = [];
-  for (let row = 0; row < clampedHeight; row += 1) {
-    const sourceRow = row - (clampedHeight - draft.height);
-    const source = sourceRow >= 0 && sourceRow < draft.rows.length ? draft.rows[sourceRow] : "";
-    rows.push((source + EMPTY_CELL.repeat(clampedWidth)).slice(0, clampedWidth));
-  }
-  return { ...draft, width: clampedWidth, height: clampedHeight, rows };
+  const resize = (source: readonly string[]) => {
+    const out: string[] = [];
+    for (let row = 0; row < clampedHeight; row += 1) {
+      const sourceRow = row - (clampedHeight - draft.height);
+      const sourceLine = sourceRow >= 0 && sourceRow < source.length ? source[sourceRow] : "";
+      out.push((sourceLine + EMPTY_CELL.repeat(clampedWidth)).slice(0, clampedWidth));
+    }
+    return out;
+  };
+  const rows = resize(draft.rows);
+  // Same top-anchored resize as `rows` above, so a hidden trigger never
+  // drifts out from under whatever it was authored beneath.
+  const hiddenFreezeRows = draft.hiddenFreezeRows ? resize(draft.hiddenFreezeRows) : draft.hiddenFreezeRows;
+  return { ...draft, width: clampedWidth, height: clampedHeight, rows, hiddenFreezeRows };
 }
 
 /**
@@ -257,12 +285,16 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     name: draft.name.trim() || "Untitled",
     frame: { width: draft.width, height: draft.height },
     rows: draft.rows,
+    hiddenFreezeRows: draft.hiddenFreezeRows,
     ammoQueue: [...draft.ammoQueue],
     sortRadius: draft.sortRadius,
     shotLimit: draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
     keyFriction: draft.keyFriction ?? 0,
     freezeDuration: draft.freezeDuration ?? 0,
+    forcedOpeningQueue: draft.forcedOpeningQueue,
+    ftueFreezeDemo: draft.ftueFreezeDemo,
+    ftueFreezeTargets: draft.ftueFreezeTargets,
   };
 }
 
@@ -288,12 +320,16 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     width: level.frame.width,
     height: level.frame.height,
     rows: [...level.rows],
+    hiddenFreezeRows: level.hiddenFreezeRows ? [...level.hiddenFreezeRows] : undefined,
     ammoQueue: [...level.ammoQueue],
     sortRadius: level.sortRadius,
     shotLimit: level.shotLimit,
     pixelScale: level.pixelScale,
     keyFriction: level.keyFriction,
     freezeDuration: level.freezeDuration,
+    forcedOpeningQueue: level.forcedOpeningQueue ? [...level.forcedOpeningQueue] : undefined,
+    ftueFreezeDemo: level.ftueFreezeDemo,
+    ftueFreezeTargets: level.ftueFreezeTargets ? level.ftueFreezeTargets.map((t) => ({ ...t })) : undefined,
     importedFromId: level.id,
     updatedAt: Date.now(),
   };
@@ -505,7 +541,9 @@ export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
     width: expanded.frame.width,
     height: expanded.frame.height,
     rows: expanded.rows,
+    hiddenFreezeRows: expanded.hiddenFreezeRows ? [...expanded.hiddenFreezeRows] : expanded.hiddenFreezeRows,
     sortRadius: expanded.sortRadius,
+    ftueFreezeTargets: expanded.ftueFreezeTargets ? expanded.ftueFreezeTargets.map((t) => ({ ...t })) : expanded.ftueFreezeTargets,
     pixelScale: 1,
   };
 }

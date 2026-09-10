@@ -227,6 +227,19 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
   /** Rows top-first, one letter per cell, `.` for empty. Bodies are the connected components. */
   rows: string[];
   /**
+   * A second, independent grid over the same frame — same dimensions as
+   * `rows`, top-first, `@` (`FREEZE_LETTER`) marking a Freeze Map trigger
+   * hidden *behind* whatever `rows` draws at that cell, `.` everywhere else.
+   * On request: "freeze bị che sau lớp cát" — a trigger authored here sits
+   * inert underneath ordinary sand (or empty air) with no effect on it at
+   * all — the sand above falls, gets shot, whatever it would do regardless
+   * — until every cell of the trigger's own footprint is empty in `rows`'
+   * board, at which point it reveals itself into an ordinary, shootable
+   * Freeze trigger (see `SandGameState.hiddenFreezeTriggers`). Optional and
+   * omitted by almost every level, the same way `freezeDuration` is.
+   */
+  hiddenFreezeRows?: readonly string[];
+  /**
    * Declares the level's wheel of colours — not a fixed opening order. The
    * queue a player actually sees is drawn at random (`fillQueue`/`drawAmmo`
    * in sand-rules.ts), never from this list's order directly.
@@ -286,6 +299,44 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * way most levels leave out `keyFriction`.
    */
   freezeDuration?: number;
+  /**
+   * Pins the wheel's opening shots to an exact sequence instead of leaving
+   * them to `fillQueue`'s usual random draw — index 0 is the very first
+   * round the player (or a scripted FTUE) fires, index 1 the second, and so
+   * on. Only ever consumed by `fillQueue` (sand-rules.ts) while
+   * `state.shotsUsed` is still inside this array's own length; once every
+   * index has been fired past, the wheel goes back to drawing normally, for
+   * the rest of the level and forever after (there is no "only the first
+   * time" here — a colour missing from `shootable` at the moment its index
+   * comes up is skipped rather than handed out as a dead bullet, but
+   * otherwise this applies on *every* attempt at the level, replays
+   * included, not just a first-time tutorial run).
+   *
+   * Built for `ftueFreezeDemo` below — a scripted demo firing at exact
+   * targets needs to know exactly which colour is loaded for each of its
+   * own shots — but it is a plain, general level-authoring field on its
+   * own, usable (or not) independently of that flag.
+   */
+  forcedOpeningQueue?: readonly SandColor[];
+  /**
+   * Plays the one-time "how Freeze works" demo on this level's very first
+   * attempt (per `localStorage`, the same "seen forever" bookkeeping
+   * `tutorial` below uses) — the aim drags to the level's own Freeze
+   * trigger, fires, shows the freeze take hold, fires a couple more
+   * scripted shots to clear it and let the board thaw, then hands off to
+   * the player with the exact same board and remaining shots, no reset.
+   * Requires the level to actually have a Freeze trigger in its picture;
+   * meaningless (and never read) otherwise. See `SandGame.tsx`'s own FTUE
+   * demo effect for the scripted shot sequence this drives.
+   */
+  ftueFreezeDemo?: boolean;
+  /**
+   * The scripted shots `ftueFreezeDemo` fires, in order — frame-grid cells
+   * (same top-first space as `rows`), first the level's own Freeze trigger,
+   * then wherever clears the colour Freeze is holding. Required alongside
+   * `ftueFreezeDemo: true`; unused otherwise.
+   */
+  ftueFreezeTargets?: readonly { x: number; y: number }[];
   /**
    * Boosters this level cannot be cleared without — spec §5. A hard level
    * (chương 4–5) may need a shot with `radiusOvercharge` or `prismShot` armed
@@ -410,6 +461,17 @@ export type SandGameState = {
    * untouched, for a later shot to try again once it ends.
    */
   freezeTriggers: SandFreezeTrigger[];
+  /**
+   * Freeze Map triggers authored on `SandLevelConfig.hiddenFreezeRows` —
+   * buried under sand, inert, and invisible until every cell of a given
+   * trigger's own footprint is empty in `bodies`. `resolveShot` checks this
+   * after every settle and moves a trigger over into `freezeTriggers` (an
+   * ordinary, shootable one from that point on) the instant it is fully
+   * uncovered — see `hiddenFreezeRows`'s own comment for the request this
+   * is answering. Fixed in count for the level's whole life the same way
+   * `walls` is; only which of them have moved into `freezeTriggers` changes.
+   */
+  hiddenFreezeTriggers: SandFreezeTrigger[];
   /**
    * Shots left with the whole board's gravity paused — sand that lost its
    * footing hangs exactly where it is, and a key already falling or sliding
