@@ -6376,3 +6376,99 @@ Workers, có từ trước, không liên quan tới đợt sửa này), 131/131 
 preview: chấm bi Play hiện đúng màu, 2 chốt đen daily-login đã biến mất, claim daily-login lên tiền + HUD lắc
 đúng lúc, dải giá emerald full-width/translucent/border/opaque-khi-chọn đều đúng thứ tự các vòng chỉnh, số
 khoá Gallery đổi màu nâu không còn shadow.
+
+---
+
+## 157. Ammo wheel: màu hiếm trên tranh không còn ra liên tiếp — giãn cách tối thiểu 3 viên (09/09)
+
+**Vấn đề.** `drawAmmo` (sand-rules.ts) rút ngẫu nhiên đều 100% trong số màu còn bắn được, không quan tâm màu
+đó còn bao nhiêu ô cát trên bàn. Một màu chỉ còn một mảng nhỏ (ví dụ mảng trắng bé xíu trên tranh) vẫn có
+cùng xác suất ra liên tiếp 2 viên như một màu chiếm nửa bức tranh — theo phản hồi, việc này đọc ra thành lãng
+phí/khó chịu: 2 viên liền của một màu gần như không còn gì để bắn.
+
+**Sửa.** Thêm khái niệm "màu hiếm" (`scarce`): một màu được coi là hiếm khi tổng số ô của nó hiện có trên bàn
+(gồm cả ô đang khoá/đóng băng — vẫn là một phần "lượng màu đó trên tranh" dù chưa bắn được) thấp hơn
+`SCARCE_COLOR_SHARE = 0.5` lần trung bình cộng của mọi màu còn bắn được. Ngưỡng tính theo *tỉ lệ*, không phải
+số ô tuyệt đối, nên tự thích ứng theo từng bàn cờ — và tính lại mỗi lần `fillQueue` chạy, nên một màu ban đầu
+nhiều nhưng bị bắn gần cạn giữa ván sẽ dần được xếp vào diện hiếm, đúng lúc nó thực sự ít.
+
+`drawAmmo` giờ lọc bỏ màu hiếm khỏi lượt rút cho tới khi nó đã "ngồi ngoài" đủ `SCARCE_COLOR_MIN_GAP = 2` lượt
+— tái dùng thẳng `pity` sẵn có (vốn đã đếm chính xác "đã bao nhiêu lượt rút liên tiếp không rơi vào màu này"),
+không cần thêm state mới. 2 lượt chờ nghĩa là 2 viên khác chen giữa, tức khoảng cách tối thiểu 3 vị trí (ra —
+bỏ qua — bỏ qua — được ra lại) thay vì liền kề. Nếu lọc xong không còn màu nào để chọn (mọi màu còn lại đều
+đang hiếm và chưa đủ giờ chờ — ví dụ bàn chỉ còn đúng 1 màu), rơi về lại toàn bộ danh sách `shootable` để không
+bao giờ rút vào chỗ trống. Cơ chế insurance/pity cũ (`drainOverdue`, ép một màu ra sau khi bị bỏ qua 3 lượt)
+giữ nguyên và chạy song song không xung đột — ngưỡng ép ra (pity ≥ 3) luôn muộn hơn ngưỡng "được phép rút lại"
+của màu hiếm (pity ≥ 2).
+
+**Test:** `tsc --noEmit` sạch, 150/150 test pass (bao gồm test cũ "a colour can repeat back-to-back" — bàn Sand
+Bloom có 4 màu lệch nhau nhưng không màu nào lọt ngưỡng hiếm, nên hành vi lặp liên tiếp của màu thường vẫn y
+nguyên như trước, đúng ý test đó). Verify thêm bằng 2 script tạm (không commit): (1) mô phỏng thuần logic
+`drawAmmo` qua 200 lượt rút với 1 màu hiếm trong 4 màu — khoảng cách nhỏ nhất giữa 2 lần ra màu hiếm luôn đúng
+3, còn các màu thường vẫn ra liên tiếp bình thường (39/200 lượt liền kề); (2) chạy thật qua
+`createSandGameState`/`resolveShot` của chính game (không phải bản mô phỏng lại) trên một level tự tạo — nền đỏ
+lớn, mảng vàng chỉ 5 ô — bắn 64 phát chỉ nhắm vào đỏ: vàng ra đúng 5 lần, khoảng cách nhỏ nhất giữa các lần đó
+là 3, khớp chính xác yêu cầu.
+
+---
+
+## 158. Thêm Freeze Map: cơ chế đóng băng cát, level 31-40, HUD cooldown, tuyết nền, khung tranh đổi màu (10/09)
+
+Cơ chế mới cho phép một level khoá đứng một phần bàn cát ("đóng băng") cho tới khi người chơi bắn trúng
+ô kích hoạt, theo đúng bản đặc tả `freeze-map-mechanic.md`. Đây là tính năng gameplay mới, không phải sửa lỗi
+— triển khai xuyên suốt engine, level data, và toàn bộ phần hiển thị (HUD + hiệu ứng nền + khung tranh 3D),
+qua nhiều vòng chỉnh theo phản hồi trực tiếp trên bản build.
+
+**Lõi cơ chế (`sand-rules.ts`, `sand-types.ts`, `SandCannonEngine.ts`):**
+- Ký tự `@` (`FREEZE_LETTER`) trong bảng level đánh dấu ô là **trigger đóng băng**; nhiều ô liền kề gộp thành
+  một `SandFreezeTrigger { id, cells }`, dò bằng `triggerInRadius` — cùng phép dò "không phân biệt màu" súng
+  vẫn dùng để tính khối trong tầm bắn.
+- Đếm theo **lượt bắn**, không theo thời gian thực: bắn trúng trigger → bàn đóng băng đúng
+  `level.freezeDuration ?? DEFAULT_FREEZE_DURATION` (mặc định 5) lượt kế tiếp, giảm dần 1 mỗi lượt bắn bất kể
+  bắn trúng gì, cát chỉ rơi lại (settle) khi đếm về 0. State thêm `freezeShotsRemaining` (đếm còn lại) và
+  `freezeTriggers` (trigger nào đã bị phá thì biến mất khỏi board, không kích hoạt lại được).
+  Bản đầu từng làm theo thời gian thực (`performance.now()`, đóng băng bao nhiêu lượt bắn cũng được trong một
+  khung giờ) theo yêu cầu ban đầu, sau đó **quay lại hẳn kiểu đếm lượt** theo phản hồi tiếp theo — bỏ toàn bộ
+  đồng hồ riêng khỏi engine, đúng nguyên tắc `sand-rules.ts` không giữ clock của chính nó.
+  Đã gỡ luôn override `freezeDuration` (4/5/6) ở từng level 31-39 (`design/levels/sand-levels.ts`) vì gây hiện
+  tượng HUD lúc hiện 4 phần lúc 5 phần — mọi level giờ dùng thẳng mặc định 5.
+- Level editor (`LevelEditor.tsx`, `level-drafts.ts`, `scripts/level-writer.mjs`) nhận diện và ghi được ký tự
+  `@`/field `freezeDuration` giống mọi ký tự bảng khác.
+
+**Level 31-40:** tác giả 10 level mới bám theo beat chart của bản đặc tả (level thường xen level có freeze
+trigger, độ khó tăng dần); level 40 thuần trang trí không tính là level chơi được.
+`tests/level-editor.test.ts` cập nhật kỳ vọng `BUILT_IN_LEVELS.length === 40`, id 1-40.
+
+**HUD cooldown (`SandGame.tsx`, `globals.css`, `i18n.ts`):** qua nhiều vòng chỉnh theo yêu cầu, chốt lại ở:
+- Một pill duy nhất `.freeze-cooldown-bar`, cùng hàng với HUD số đạn, **cùng shape và cùng chiều cao 44px**
+  với cả HUD đạn (`.shots-badge`) lẫn nút Settings (`.icon-button`) — bỏ hẳn phương án khung ảnh
+  `FreezeBar.png` lồng 2 lớp từng làm trước đó (đã xoá file, không còn dùng ở đâu).
+- 5 ô `.freeze-cooldown-segment` — ô còn "sống" (`freezeShotsRemaining` chưa dùng tới) sáng sọc chéo
+  trắng/xanh trời loop liên tục (kỹ thuật tile vuông của Bootstrap `.progress-bar-striped`: gập một đường
+  chéo 45° vào đúng 1 ô vuông `background-size`, dịch `background-position` đúng 1 ô mỗi vòng lặp — cách duy
+  nhất loop liền mạch mà không phải tính lượng giác).
+- Nền tray đổi từ trắng sang xanh nhạt (`#cdeefb`); chữ "FREEZE" (`s.freezeLabel`, string mới trong `i18n.ts`)
+  phủ giữa lên trên các ô bằng `.freeze-cooldown-label` (position absolute, pointer-events none, text-shadow
+  để đọc được trên cả nền sáng lẫn ô đang sọc).
+
+**Tuyết rơi nền (`.freeze-snowfall`):** khi `freezeShotsRemaining > 0`, phủ một lớp tuyết rơi lên toàn bộ
+`.scene-wrap` (không chỉ HUD một góc) — mỗi bông là một `<span>` với vị trí/kích thước/thời gian tính sẵn
+bằng công thức tại module scope (`FREEZE_SNOWFLAKES`, dùng góc vàng 137.5° để rải đều, không dùng
+`Math.random()` lúc render để tránh lệch hydration), 2 animation độc lập: `top` (0 → 100%, theo đúng chiều
+cao khung hiện tại) lo phần rơi, `transform: translateX` lo phần đung đưa qua lại. `pointer-events: none`
+xuyên suốt nên không chặn thao tác kéo ngắm bắn bên dưới.
+
+**Khung tranh 3D đổi màu khi đóng băng (`SandCannonEngine.ts`):** rail/cột khung và lớp lót/gờ trong đổi từ
+nâu gỗ + kem sang xanh đậm + xanh dương pha nhiều trắng — **chỉ trong lúc đóng băng**, không phải vĩnh viễn.
+Vòng đầu đổi màu cố định ngay lúc dựng khung (`buildFrame`) theo đúng nghĩa đen yêu cầu ban đầu; sau phản hồi
+"chỉ khi đang freeze", chuyển 3 vật liệu (`frameRailMaterial`, `frameBackingMaterial`, `frameInnerMaterial`)
+thành field của engine và thêm `syncFrameFreezeColor()` — đọc thẳng `this.state.freezeShotsRemaining`, gọi
+lại mỗi khi state đổi sau một lượt bắn (cùng chỗ gọi `syncFreezeTriggers()`) để tô lại đúng màu theo trạng
+thái hiện tại thay vì chỉ tô một lần lúc khởi tạo.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi còn lại ở `db/index.ts`/`worker/index.ts` có từ trước, không liên quan),
+150/150 test pass. Verify hành vi lõi bằng script `.mjs` tạm import thẳng `sand-rules.ts` (đếm ngược
+5→4→3→2→1→0 đúng số ô sáng mỗi bước), xoá sau khi xác nhận. Verify hiển thị bằng screenshot trực tiếp trên
+browser preview: khung hub (không đóng băng) giữ đúng màu nâu/kem gốc; tiêm DOM tạm để dựng lại đúng cấu trúc
+HUD/tuyết ngoài luồng chơi thật (do thao tác kéo-bắn qua automation không ổn định) xác nhận tray xanh nhạt +
+chữ FREEZE + sọc loop + tuyết rơi có di chuyển qua nhiều khung hình.

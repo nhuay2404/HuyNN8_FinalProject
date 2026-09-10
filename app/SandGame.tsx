@@ -13,6 +13,7 @@ import {
   COSTUMES,
   COSTUME_ORDER,
   costumePrice,
+  costumeUnlockedByLevel,
   getSelectedCostume,
   isCostumeOwned,
   markSkinBadgeSeen,
@@ -64,6 +65,7 @@ import {
   ammoRemaining,
   createSandGameState,
   currentAmmo,
+  DEFAULT_FREEZE_DURATION,
   expandLevelForPixelBoard,
   KEY_LETTER,
   nextAmmo,
@@ -147,6 +149,28 @@ const COIN_PACKS: readonly CoinPack[] = [
 
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
 const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
+
+/** How many flakes `.freeze-snowfall` renders while the board is frozen. */
+const FREEZE_SNOWFLAKE_COUNT = 26;
+
+/**
+ * Fixed layout for the Freeze Map snowfall — computed once, by formula, not
+ * `Math.random()`, so server and client render the exact same markup and a
+ * re-render never reshuffles a flake already mid-fall. The golden-angle
+ * spread (137.5°) is the standard trick for scattering N points across a
+ * span without visible clumping or repetition; everything else (size,
+ * timing) just derives from the index by a different, unrelated formula so
+ * the flakes don't all share one rhythm.
+ */
+const FREEZE_SNOWFLAKES = Array.from({ length: FREEZE_SNOWFLAKE_COUNT }, (_, index) => ({
+  left: (index * 137.5) % 100,
+  size: 3 + (index % 5) * 1.4,
+  opacity: 0.45 + (index % 4) * 0.15,
+  fallDuration: 6 + (index % 7) * 0.9,
+  fallDelay: -((index * 0.83) % 9),
+  driftDuration: 2.6 + (index % 3) * 0.7,
+  driftDelay: -((index * 0.41) % 3),
+}));
 
 /** How long the home screen's exit animation runs — the Play button shrinking, the bottom
  * bar sliding off — before it actually leaves the DOM. Kept in step with the `hub-exit`
@@ -267,12 +291,14 @@ function BoosterIcon({ type }: { type: BoosterType }) {
 
 /** A card icon per cannon costume, drawn in currentColor like the other
  * line-art here — a plain barrel for the classic cannon, the same barrel
- * ringed with rune ticks for the rune cannon, so a card reads as "what this
+ * ringed with rune ticks for the rune cannon, and topped with a small
+ * three-point pennant for the hero cannon, so a card reads as "what this
  * skin does" at a glance even without the live 3D model behind it. */
 function CostumeIcon({ id }: { id: CostumeId }) {
   const isRune = id === "rune-cannon";
+  const isHero = id === "hero-cannon";
   return (
-    <svg className={`costume-icon${isRune ? " is-rune" : ""}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <svg className={`costume-icon${isRune ? " is-rune" : ""}${isHero ? " is-hero" : ""}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <rect x="5.6" y="10.2" width="10.8" height="4.6" rx="1.6" />
       <circle cx="17.2" cy="12.5" r="3.4" />
       <rect x="7" y="15.6" width="10" height="2.4" rx="1.2" />
@@ -282,6 +308,7 @@ function CostumeIcon({ id }: { id: CostumeId }) {
           <path d="M12 3.3v2.1M20.7 12.5h-2.1M12 21.7v-2.1M3.3 12.5h2.1" />
         </>
       )}
+      {isHero && <path d="M6.6 10.2V5.6l3.2 2.3-3.2 2.3Z" strokeLinejoin="round" />}
     </svg>
   );
 }
@@ -1178,6 +1205,18 @@ export default function SandGame() {
     engine?.stopUnlockCelebration();
     setCannonUnlock(null);
   }, [engine]);
+
+  // The level-20-style progression reveal, once the player has actually
+  // tapped Continue on the "Frame cleared" card (`pendingLevelUnlock` above
+  // is what is waiting on that tap). Unlike `cannonUnlock` — a purchase's own
+  // spin-and-glow the player dismisses with a single tap anywhere — this one
+  // asks an actual question (equip it now, or keep the current cannon?), so
+  // it gets two real buttons instead. The skin is already owned by the time
+  // this is up (`unlockCostume` already ran); both buttons only decide
+  // whether it gets equipped before moving on to the next level. Its own
+  // `equipLevelUnlock`/`declineLevelUnlock` handlers sit below `openLevel`'s
+  // own declaration, since both call it.
+  const [levelUnlockChoice, setLevelUnlockChoice] = useState<CostumeId | null>(null);
   // A confirm left open behind a tab switch must not resurrect itself when
   // the player comes back to the skin screen — same guard the Shop's has.
   useEffect(() => {
@@ -1361,6 +1400,22 @@ export default function SandGame() {
     setRunId((id) => id + 1);
   }, [playables]);
 
+  /** `levelUnlockChoice`'s own two buttons — both move on to the next level
+   * exactly the way the "Frame cleared" card's own Continue always has
+   * (`openLevel(levelIndex + 1)`); the only difference between them is
+   * whether the just-unlocked skin gets equipped first. */
+  const equipLevelUnlock = useCallback(() => {
+    if (!levelUnlockChoice) return;
+    setSelectedCostume(levelUnlockChoice);
+    setCostume(levelUnlockChoice);
+    setLevelUnlockChoice(null);
+    openLevel(levelIndex + 1);
+  }, [levelUnlockChoice, levelIndex, openLevel]);
+  const declineLevelUnlock = useCallback(() => {
+    setLevelUnlockChoice(null);
+    openLevel(levelIndex + 1);
+  }, [levelIndex, openLevel]);
+
   /** Picking from the gallery shows that picture on the home screen, unplayed. */
   const pickFromGallery = useCallback((index: number) => {
     openLevel(index);
@@ -1538,6 +1593,12 @@ export default function SandGame() {
   // abstract, so a replay (no new gold, `markLevelCleared` already false)
   // correctly shows 0 rather than re-claiming the same number.
   const [wonGold, setWonGold] = useState(0);
+  // A skin this exact WIN just unlocked (`costumeUnlockedByLevel`), waiting
+  // on the "Frame cleared" card's own Continue tap before its reveal shows —
+  // see the Continue button below, which is what turns this into
+  // `levelUnlockChoice`. Ownership itself is already granted the moment WIN
+  // lands (`unlockCostume` below); this is purely "there is a reveal owed".
+  const [pendingLevelUnlock, setPendingLevelUnlock] = useState<CostumeId | null>(null);
   if (state.result !== lastHandledResult) {
     // The reward track counts every win, replays included — unlike the gold
     // above, which pays first-clears only. See the reward-track section header
@@ -1549,6 +1610,15 @@ export default function SandGame() {
       suppressGoldSyncRef.current = true;
       setPendingHomeReward((sum) => sum + granted);
       setWonGold(granted);
+      // A progression skin tied to this level (`hero-cannon`/level 20 today)
+      // is granted right here, on the very win that clears it — same beat as
+      // the gold above. The player just does not see it until they tap
+      // Continue on the card that is about to show (`levelUnlockChoice`).
+      const unlockedCostume = costumeUnlockedByLevel(raw.id);
+      if (unlockedCostume && !isCostumeOwned(unlockedCostume)) {
+        unlockCostume(unlockedCostume);
+        setPendingLevelUnlock(unlockedCostume);
+      }
     } else if (state.result?.kind === "WIN") {
       setWonGold(0);
     }
@@ -1654,6 +1724,11 @@ export default function SandGame() {
   // all three places at once.
   const previewOwned = isCostumeOwned(previewCostume);
   const previewPrice = costumePrice(previewCostume);
+  // Set only for a `unlockLevel` skin — `previewPrice` above is meaningless
+  // for one of these (always the unused 0, see `CostumeDef.unlockLevel`'s own
+  // comment), so every place that would otherwise show `previewPrice` checks
+  // this first instead.
+  const previewUnlockLevel = COSTUMES[previewCostume].unlockLevel;
   // Every skin the wallet's current Blue Emerald covers, is not yet owned,
   // and has not already had its dot dismissed (`markSkinBadgeSeen`) — drives
   // both the Skin tab's own dot (non-empty) and which card(s) in the picker
@@ -1759,6 +1834,37 @@ export default function SandGame() {
               )}
               <strong>{remainingLabel}</strong>
             </div>
+
+            {/* The Freeze Map bar: in the same row as the shot count because
+                it answers the same kind of question ("what do I have to
+                work with right now") the ammo badge does. Counted in shots,
+                not real time — `state.freezeShotsRemaining` is read straight
+                off engine state like everything else in this HUD, no local
+                clock of its own. One segment per shot of
+                `level.freezeDuration`; the leftmost `freezeShotsRemaining` of
+                them are lit, so the lit run visibly shrinks from the right
+                as shots land, same "drains right to left" read as before.
+                Same overall shape as the ammo badge, and the same 44px
+                height as the settings gear (on request). No more art on it
+                (on request, "bỏ freeze bar icon") — a plain light-blue tray
+                (`.freeze-cooldown-bar`'s own background) instead, with the
+                word FREEZE printed over the segments (`.freeze-cooldown-
+                label`) so the bar reads on its own without the art. */}
+            {state.freezeShotsRemaining > 0 && (
+              <div
+                className="freeze-cooldown-bar"
+                role="status"
+                aria-label={s.freezeCooldown(state.freezeShotsRemaining)}
+              >
+                {Array.from({ length: level.freezeDuration ?? DEFAULT_FREEZE_DURATION }, (_, index) => (
+                  <span
+                    key={index}
+                    className={`freeze-cooldown-segment${index < state.freezeShotsRemaining ? " is-lit" : ""}`}
+                  />
+                ))}
+                <span className="freeze-cooldown-label">{s.freezeLabel}</span>
+              </div>
+            )}
           </header>
         </div>
 
@@ -1896,6 +2002,35 @@ export default function SandGame() {
 
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
+
+          {/* Freeze Map's ambient tell (on request): while the board is
+              frozen, snow drifts down over the whole scene, not just the
+              HUD bar — a background effect rather than a state announced
+              only in one corner. `aria-hidden` + `pointer-events: none`
+              throughout (see `.freeze-snowfall` in globals.css): purely
+              decorative, must never intercept the aim drag underneath.
+              `FREEZE_SNOWFLAKES` is a fixed, module-level layout (not
+              `Math.random()` at render time) so server and client agree on
+              it and it never reshuffles itself on a re-render. */}
+          {state.freezeShotsRemaining > 0 && (
+            <div className="freeze-snowfall" aria-hidden="true">
+              {FREEZE_SNOWFLAKES.map((flake, index) => (
+                <span
+                  key={index}
+                  className="freeze-snowflake"
+                  style={{
+                    left: `${flake.left}%`,
+                    width: `${flake.size}px`,
+                    height: `${flake.size}px`,
+                    opacity: flake.opacity,
+                    animationDuration: `${flake.fallDuration}s, ${flake.driftDuration}s`,
+                    animationDelay: `${flake.fallDelay}s, ${flake.driftDelay}s`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
           <span className="aim-crosshair" ref={crosshairRef}>
             <span className="aim-crosshair-core" />
           </span>
@@ -2174,7 +2309,15 @@ export default function SandGame() {
                 wallet that cannot afford it still gets a live button — the
                 confirm dialog is where "not enough" is said, rather than a
                 dead control with no explanation on it. */}
-            {cannonUnlock ? null : !previewOwned ? (
+            {cannonUnlock ? null : !previewOwned && previewUnlockLevel !== undefined ? (
+              // Not for sale at any price — no Buy action, just the same
+              // "Progression" word the grid card's own price pill shows for
+              // this skin, so the two spots on this screen where a price
+              // would normally appear agree with each other.
+              <div className="skin-equip is-progression" aria-disabled="true">
+                <span className="skin-equip-label">{s.progressionLabel}</span>
+              </div>
+            ) : !previewOwned ? (
               <button
                 className="skin-equip is-buy"
                 type="button"
@@ -2207,6 +2350,10 @@ export default function SandGame() {
                   // what they would be buying before they buy it. Only the
                   // main button below changes.
                   const owned = isCostumeOwned(id);
+                  // A `unlockLevel` skin's lock reads out (and shows) which
+                  // level clears it rather than a price it was never for sale
+                  // at — see `previewUnlockLevel`'s own comment above.
+                  const unlockLevel = def.unlockLevel;
                   return (
                     <button
                       key={id}
@@ -2214,7 +2361,13 @@ export default function SandGame() {
                       className={`skin-card${previewCostume === id ? " is-previewing" : ""}${owned ? "" : " is-locked"}`}
                       onClick={() => previewCostumeCard(id)}
                       aria-pressed={previewCostume === id}
-                      aria-label={`${s.costumeName(id)}${owned ? (costume === id ? s.equippedSuffix : "") : s.lockedSuffix(costumePrice(id))}${unseenSkins.includes(id) ? s.affordableSuffix : ""}`}
+                      aria-label={`${s.costumeName(id)}${
+                        owned
+                          ? (costume === id ? s.equippedSuffix : "")
+                          : unlockLevel !== undefined
+                            ? s.progressionLockedSuffix(unlockLevel)
+                            : s.lockedSuffix(costumePrice(id))
+                      }${unseenSkins.includes(id) ? s.affordableSuffix : ""}`}
                     >
                       {/* The card-level twin of `.hub-nav-dot`: this specific
                           skin, not just "the Skin tab", is one the wallet can
@@ -2229,10 +2382,20 @@ export default function SandGame() {
                         // optimise.
                         // eslint-disable-next-line @next/next/no-img-element
                         ? <img src={thumbnail} alt="" />
-                        : <span className={`skin-card-icon${def.flavor === "magic" ? " is-magic" : ""}`}><CostumeIcon id={id} /></span>}
+                        : (
+                          <span
+                            className={`skin-card-icon${def.flavor === "magic" ? " is-magic" : ""}${id === "hero-cannon" ? " is-hero" : ""}`}
+                          >
+                            <CostumeIcon id={id} />
+                          </span>
+                        )}
                       {owned
                         ? costume === id && <span className="skin-card-tick" aria-hidden="true">✓</span>
-                        : (
+                        : unlockLevel !== undefined ? (
+                          <span className="skin-card-price is-progression" aria-hidden="true">
+                            {s.progressionLabel}
+                          </span>
+                        ) : (
                           <span className="skin-card-price" aria-hidden="true">
                             <EmeraldIcon /> {costumePrice(id)}
                           </span>
@@ -2281,6 +2444,11 @@ export default function SandGame() {
                 const milestoneReward = isMilestone
                   ? getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)
                   : null;
+                // The skin this level hands over on its first clear, if any
+                // (`hero-cannon` at level 20 today) — shown as its own badge
+                // regardless of whether this card also happens to be a gold
+                // milestone, so a level that is both never has to pick one.
+                const unlocksCostume = costumeUnlockedByLevel(entry.level.id);
                 return (
                   <button
                     key={entry.level.id}
@@ -2305,6 +2473,22 @@ export default function SandGame() {
                       {isMilestone && (
                         <span className="hub-gallery-milestone" aria-hidden="true">
                           <CoinIcon /> +{milestoneReward}
+                        </span>
+                      )}
+                      {unlocksCostume && (
+                        <span className="hub-gallery-costume-badge" aria-hidden="true">
+                          {costumeThumbnails[unlocksCostume]
+                            // The same live-rig render the skin picker's own
+                            // cards use (`costumeThumbnails`), so the badge
+                            // shows what the skin actually looks like rather
+                            // than a generic line-art stand-in. Falls back to
+                            // the icon only for the one session where this
+                            // level's card renders before the Skin tab has
+                            // ever been opened — see `costumeThumbnails`'s own
+                            // comment for why it starts out empty.
+                            // eslint-disable-next-line @next/next/no-img-element
+                            ? <img src={costumeThumbnails[unlocksCostume]} alt="" />
+                            : <CostumeIcon id={unlocksCostume} />}
                         </span>
                       )}
                     </span>
@@ -3055,7 +3239,24 @@ export default function SandGame() {
                   </p>
                   {hasNextLevel && (
                     <div className="result-actions">
-                      <button type="button" onClick={() => openLevel(levelIndex + 1)}>
+                      {/* A win that just unlocked a progression skin
+                          (`pendingLevelUnlock`) holds Continue back one more
+                          tap — instead of moving on immediately, it hands off
+                          to `levelUnlockChoice`'s own card, which is what
+                          actually calls `openLevel` once the player has
+                          picked equip-or-not. Every other win continues the
+                          same way it always has. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (pendingLevelUnlock) {
+                            setLevelUnlockChoice(pendingLevelUnlock);
+                            setPendingLevelUnlock(null);
+                            return;
+                          }
+                          openLevel(levelIndex + 1);
+                        }}
+                      >
                         {s.continueLabel}
                       </button>
                     </div>
@@ -3077,6 +3278,38 @@ export default function SandGame() {
                 </button>
                 <button type="button" className="is-quiet" onClick={goHome}>
                   {s.home}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The level-20-style progression reveal — shown once the player has
+            tapped Continue on the "Frame cleared" card that just unlocked a
+            skin (`pendingLevelUnlock` → `levelUnlockChoice`, set there). Reuses
+            the same `.result-screen`/`.result-card`/`.result-actions.is-row`
+            language the skin-buy confirm dialog already uses (`skinBuyConfirm`
+            below) rather than the skin screen's own spin-and-glow reveal —
+            that one lives inside `.skin-screen` and assumes the showroom rig
+            is what is behind it, which is not true mid-level. Both buttons
+            move on to the next level either way (`equipLevelUnlock`/
+            `declineLevelUnlock`); the only choice is whether to equip first. */}
+        {levelUnlockChoice && (
+          <div
+            className="result-screen"
+            role="dialog"
+            aria-modal="true"
+            aria-label={s.youUnlocked(s.costumeName(levelUnlockChoice))}
+          >
+            <div className="result-card confirm-card">
+              <h2>{s.youUnlocked(s.costumeName(levelUnlockChoice))}</h2>
+              <p>{s.equipUnlockedQuestion}</p>
+              <div className="result-actions is-row">
+                <button type="button" onClick={equipLevelUnlock}>
+                  {s.equipNowLabel}
+                </button>
+                <button type="button" className="is-quiet" onClick={declineLevelUnlock}>
+                  {s.noContinueLabel}
                 </button>
               </div>
             </div>

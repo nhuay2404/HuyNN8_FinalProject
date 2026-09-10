@@ -7,12 +7,14 @@
 // perspective only — never as a second layer of puzzle.
 
 /**
- * Palette letters used by the authored picture: R G Y B P O C M L N S D.
+ * Palette letters used by the authored picture: R G Y B P O C M L N S D A T
+ * U I F E H J Q V X Z.
  *
- * The same letter in lower case is that colour LOCKED, and `K` is a key cell,
- * `W` is a Wall Obstacle cell — see `SAND_COLOR_BY_LETTER`, `KEY_LETTER` and
- * `WALL_LETTER`. All survive `expandLevelForPixelBoard` untouched, because
- * expansion only ever repeats letters.
+ * The same letter in lower case is that colour LOCKED, `K` is a key cell,
+ * `W` is a Wall Obstacle cell, and `@` is a Freeze Map trigger cell — see
+ * `SAND_COLOR_BY_LETTER`, `KEY_LETTER`, `WALL_LETTER` and `FREEZE_LETTER`.
+ * All survive `expandLevelForPixelBoard` untouched, because expansion only
+ * ever repeats letters.
  */
 export type SandColor =
   | "red"
@@ -26,7 +28,19 @@ export type SandColor =
   | "lime"
   | "brown"
   | "white"
-  | "black";
+  | "black"
+  | "grass"
+  | "teal"
+  | "skyblue"
+  | "indigo"
+  | "magenta"
+  | "crimson"
+  | "darkbrown"
+  | "violet"
+  | "navy"
+  | "emerald"
+  | "rust"
+  | "mint";
 
 export const SAND_COLORS: readonly SandColor[] = [
   "red",
@@ -41,6 +55,36 @@ export const SAND_COLORS: readonly SandColor[] = [
   "brown",
   "white",
   "black",
+  // Added after the original 12 to round the hue wheel out — the first 12
+  // left two real gaps (nothing between lime and green, and a wide one
+  // between purple/blue and pink) and no fully-saturated primary red at all
+  // (`red` above sits closer to rose). Appended rather than interleaved by
+  // hue: `SAND_COLORS`' own order is gameplay's deterministic ammo-draw
+  // order (see this array's other callers), and these six have no existing
+  // level or saved seed to preserve continuity with, but inserting them
+  // earlier in the list would still shift everything after their insertion
+  // point for no reason.
+  "grass",
+  "teal",
+  "skyblue",
+  "indigo",
+  "magenta",
+  "crimson",
+  // A third batch, same "append, never interleave" rule as the six above —
+  // these round out the wheel further (a true mid-green between lime and
+  // grass, a violet between purple and magenta, a deep navy between skyblue
+  // and indigo, a rust between crimson and orange) and add tone variety the
+  // first eighteen didn't have at all: a genuinely dark brown (`brown`
+  // itself reads as tan/khaki, not dark) and a pale pastel mint. `H J Q V X
+  // Z` is what was left of the alphabet once `SAND_COLOR_BY_LETTER`'s
+  // eighteen letters plus `KEY_LETTER`/`WALL_LETTER` (K/W) were spoken for —
+  // see that map for which letter is which.
+  "darkbrown",
+  "violet",
+  "navy",
+  "emerald",
+  "rust",
+  "mint",
 ];
 
 export type CellCoord = { x: number; y: number };
@@ -86,6 +130,20 @@ export const BOOSTER_TYPES: readonly BoosterType[] = ["radiusOvercharge", "prism
  * moves or nothing does.
  */
 export type SandKey = {
+  id: string;
+  cells: CellCoord[];
+};
+
+/**
+ * A Freeze Map trigger, as the rigid pixel sprite it is drawn as.
+ *
+ * Same shape as `SandKey` for the same reason: `parseSandLevel` groups the
+ * cells an author paints (see `FREEZE_LETTER`) into connected regions, and
+ * each region is one hard target — shot as a whole, spent as a whole. Unlike
+ * a key it never moves on its own; it only ever disappears, the instant a
+ * shot's disc reaches it, whatever colour that shot was loaded with.
+ */
+export type SandFreezeTrigger = {
   id: string;
   cells: CellCoord[];
 };
@@ -215,6 +273,20 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    */
   keyFriction?: number;
   /**
+   * How many shots the board stays frozen for once a Freeze Map trigger is
+   * hit — counted in shots, not real time: the shot that hits the trigger is
+   * itself the first frozen one, and the count ticks down by one every shot
+   * after that (whatever that shot does) until it reaches zero. Shown to the
+   * player as a bar of that many segments, one per shot, emptying from the
+   * end as they go (`SandGame.tsx`'s own Freeze bar).
+   *
+   * Absent or 0 is the ordinary default (`DEFAULT_FREEZE_DURATION` in
+   * sand-rules.ts) — a level with no `@` trigger in its picture never reads
+   * this field at all, so most levels can leave it out entirely, the same
+   * way most levels leave out `keyFriction`.
+   */
+  freezeDuration?: number;
+  /**
    * Boosters this level cannot be cleared without — spec §5. A hard level
    * (chương 4–5) may need a shot with `radiusOvercharge` or `prismShot` armed
    * as the load-bearing move, not just as help.
@@ -330,6 +402,23 @@ export type SandGameState = {
    * life — set once in `createSandGameState` and never touched again.
    */
   walls: CellCoord[];
+  /**
+   * Freeze Map triggers not yet spent. A shot's disc reaching one, whatever
+   * colour it was, spends it and leaves this list — but only while Freeze is
+   * not already active (`freezeShotsRemaining` is 0); a trigger reached
+   * while a freeze is still running does nothing and stays right here,
+   * untouched, for a later shot to try again once it ends.
+   */
+  freezeTriggers: SandFreezeTrigger[];
+  /**
+   * Shots left with the whole board's gravity paused — sand that lost its
+   * footing hangs exactly where it is, and a key already falling or sliding
+   * stops mid-move, until this reaches 0. Sand is still removed normally
+   * while this is positive: only the re-settle afterward is skipped. Shown
+   * to the player as a bar of `SandLevelConfig.freezeDuration` segments,
+   * this many of them still lit.
+   */
+  freezeShotsRemaining: number;
   result: SandResult;
 };
 
@@ -382,4 +471,7 @@ export type SettleOutcome = {
   /** Wall Obstacle cells, unchanged — carried through rather than recomputed,
    * since nothing a settle does can ever move or remove one. */
   walls: CellCoord[];
+  /** Freeze Map triggers, unchanged — a settle never spends one; that only
+   * ever happens in `resolveShot`, before this outcome is built. */
+  freezeTriggers: SandFreezeTrigger[];
 };

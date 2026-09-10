@@ -7,7 +7,15 @@
 // single place the two are joined, so a level tested in the editor and a level
 // pasted into `sand-levels.ts` cannot drift apart.
 
-import { KEY_LETTER, WALL_LETTER, expandLevelForPixelBoard, parseSandLevel, runGrainSettle } from "./sand-rules.ts";
+import {
+  DEFAULT_FREEZE_DURATION,
+  FREEZE_LETTER,
+  KEY_LETTER,
+  WALL_LETTER,
+  expandLevelForPixelBoard,
+  parseSandLevel,
+  runGrainSettle,
+} from "./sand-rules.ts";
 import {
   RADIUS_GAMEPLAY,
   SAND_COLORS,
@@ -59,22 +67,42 @@ export const LETTER_BY_SAND_COLOR: Record<SandColor, string> = {
   brown: "N",
   white: "S",
   black: "D",
+  // The six added past the original 12 — same free-letter pool R G Y B P O
+  // C M L N S D already used up (plus K/W, spoken for by the key and Wall
+  // Obstacle).
+  grass: "A",
+  teal: "T",
+  skyblue: "U",
+  indigo: "I",
+  magenta: "F",
+  crimson: "E",
+  // A third batch — same free-letter pool reasoning as the six above,
+  // against what H J Q V X Z is what was left once R G Y B P O C M L N S D
+  // A T U I F E and K/W were all spoken for. See `SAND_COLOR_BY_LETTER`
+  // (sand-rules.ts), the reverse direction of this exact same mapping.
+  darkbrown: "H",
+  violet: "J",
+  navy: "Q",
+  emerald: "V",
+  rust: "X",
+  mint: "Z",
 };
 
 export const EMPTY_CELL = ".";
 /** The key's letter, re-exported so the editor never has to spell it itself. */
-export { KEY_LETTER, WALL_LETTER };
+export { DEFAULT_FREEZE_DURATION, FREEZE_LETTER, KEY_LETTER, WALL_LETTER };
 
 /** The same colour, frozen. Lower case is the whole representation of a lock. */
 export function lockedLetter(color: SandColor) {
   return LETTER_BY_SAND_COLOR[color].toLowerCase();
 }
 
-/** What a cell holds, for an editor that has to draw four different things. */
-export function readCell(letter: string): { kind: "empty" } | { kind: "key" } | { kind: "wall" }
+/** What a cell holds, for an editor that has to draw five different things. */
+export function readCell(letter: string): { kind: "empty" } | { kind: "key" } | { kind: "wall" } | { kind: "freeze" }
   | { kind: "sand"; color: SandColor; locked: boolean } {
   if (letter === KEY_LETTER) return { kind: "key" };
   if (letter === WALL_LETTER) return { kind: "wall" };
+  if (letter === FREEZE_LETTER) return { kind: "freeze" };
   const color = SAND_COLORS.find((entry) => LETTER_BY_SAND_COLOR[entry] === letter.toUpperCase());
   if (!color) return { kind: "empty" };
   return { kind: "sand", color, locked: letter === letter.toLowerCase() };
@@ -94,6 +122,11 @@ export type LevelDraft = {
   pixelScale: number | null;
   /** 0–1, how strongly a key resists rolling sideways. Absent is the same as 0. */
   keyFriction?: number;
+  /** How many shots a Freeze Map trigger freezes the board for. Absent (or 0)
+   * with no `@` painted means nothing; absent with a trigger painted falls
+   * back to `DEFAULT_FREEZE_DURATION` at play time, same as `keyFriction`
+   * falling back to 0. */
+  freezeDuration?: number;
   /**
    * Set by `levelToDraft` when this draft came from "Import built-in" — the
    * numeric id of the `SandLevelConfig` it was copied from. What lets the
@@ -152,15 +185,18 @@ export function coloursUsed(draft: LevelDraft): SandColor[] {
     present.has(LETTER_BY_SAND_COLOR[color]) || present.has(lockedLetter(color)));
 }
 
-/** Whether the picture has any frozen sand, and any key to open it with. */
+/** Whether the picture has any frozen sand, any key to open it with, and any
+ * Freeze Map trigger. */
 export function fixtureCounts(draft: LevelDraft) {
   let locked = 0;
   let keys = 0;
+  let freeze = 0;
   for (const letter of draft.rows.join("")) {
     if (letter === KEY_LETTER) keys += 1;
+    else if (letter === FREEZE_LETTER) freeze += 1;
     else if (readCell(letter).kind === "sand" && letter === letter.toLowerCase()) locked += 1;
   }
-  return { locked, keys };
+  return { locked, keys, freeze };
 }
 
 export function countPaintedCells(draft: LevelDraft) {
@@ -226,6 +262,7 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     shotLimit: draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
     keyFriction: draft.keyFriction ?? 0,
+    freezeDuration: draft.freezeDuration ?? 0,
   };
 }
 
@@ -256,6 +293,7 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     shotLimit: level.shotLimit,
     pixelScale: level.pixelScale,
     keyFriction: level.keyFriction,
+    freezeDuration: level.freezeDuration,
     importedFromId: level.id,
     updatedAt: Date.now(),
   };
@@ -325,8 +363,8 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
   // the solver here for the same reason the game hands them over: a slab that
   // is only still because it is frozen must not be reported as slumping.
   const level = draftToLevel(draft, 0);
-  const { bodies, locked, keys, walls } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls });
+  const { bodies, locked, keys, walls, freezeTriggers } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls, freezeTriggers });
   if (settled.steps.some((step) => step.kind !== "REINDEX")) {
     issues.push({
       severity: "warning",
@@ -351,6 +389,14 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
       message: "There is a key but nothing locked for it to open.",
     });
   }
+  // A duration with no trigger is a rule for a button that does not exist —
+  // harmless, but almost always a stray edit left over from a deleted one.
+  if ((draft.freezeDuration ?? 0) > 0 && !fixtures.freeze) {
+    issues.push({
+      severity: "warning",
+      message: "A freeze duration is set but there is no Freeze trigger painted for it to belong to.",
+    });
+  }
 
   const pixels = draft.width * draft.height * effectivePixelScale(draft) ** 2;
   if (pixels > PIXEL_BUDGET * 1.6) {
@@ -373,8 +419,8 @@ export function validateDraft(draft: LevelDraft): DraftIssue[] {
  */
 export function settleDraft(draft: LevelDraft): LevelDraft {
   const level = draftToLevel(draft, 0);
-  const { bodies, locked, keys, walls } = parseSandLevel(level);
-  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls });
+  const { bodies, locked, keys, walls, freezeTriggers } = parseSandLevel(level);
+  const settled = runGrainSettle(bodies, level.frame, { locked, keys, walls, freezeTriggers });
 
   const grid = new Map<string, SandColor>();
   for (const body of settled.bodies) {
@@ -383,6 +429,9 @@ export function settleDraft(draft: LevelDraft): LevelDraft {
   const frozen = new Set(settled.locked.map((cell) => `${cell.x},${cell.y}`));
   const keyCells = new Set(settled.keys.flatMap((key) => key.cells.map((cell) => `${cell.x},${cell.y}`)));
   const wallCells = new Set(settled.walls.map((cell) => `${cell.x},${cell.y}`));
+  const freezeCells = new Set(
+    settled.freezeTriggers.flatMap((trigger) => trigger.cells.map((cell) => `${cell.x},${cell.y}`)),
+  );
 
   const rows = Array.from({ length: draft.height }, (_, row) => {
     const y = draft.height - 1 - row;
@@ -395,6 +444,10 @@ export function settleDraft(draft: LevelDraft): LevelDraft {
       }
       if (wallCells.has(at)) {
         line += WALL_LETTER;
+        continue;
+      }
+      if (freezeCells.has(at)) {
+        line += FREEZE_LETTER;
         continue;
       }
       const color = grid.get(at);
@@ -517,6 +570,7 @@ export function draftToTypeScript(draft: LevelDraft, id: number) {
   // Omitted when there is nothing for it to act on, or when it is 0 — the
   // default already means "no resistance".
   const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
+  const freeze = (draft.freezeDuration ?? 0) > 0 ? `\n  freezeDuration: ${draft.freezeDuration},\n` : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -538,6 +592,6 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-${friction}};
+${friction}${freeze}};
 `;
 }

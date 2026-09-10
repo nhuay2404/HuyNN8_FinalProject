@@ -16,7 +16,7 @@ const OWNED_KEY = "cannon-sort:v1:owned-costumes";
 // Same guarded-storage contract as the two keys above.
 const BADGE_SEEN_KEY = "cannon-sort:v1:skin-badge-seen";
 
-export type CostumeId = "classic-cannon" | "rune-cannon";
+export type CostumeId = "classic-cannon" | "rune-cannon" | "hero-cannon";
 
 /** Which family of extra effects a costume plays. `classic` gets nothing on
  * top of the always-on smoke/sand-spray; `magic` adds the sparkle bling and
@@ -40,13 +40,21 @@ export type CostumeDef = {
   name: string;
   tagline: string;
   flavor: CostumeFlavor;
-  /** Blue Emerald to unlock, or 0 for a skin every player already owns.
+  /** Blue Emerald to unlock, or 0 for a skin every player already owns —
+   * unless `unlockLevel` is set, in which case this is unused (see below).
    * Priced here rather than in `economy.ts` because the price belongs to the
    * skin the same way its name and tagline do — and `economy.ts` importing
    * this file back for it would be a cycle. The CSV override still goes
    * through `costumePrice` below, so a designer tunes it in the same sheet
    * as every other number. */
   price: number;
+  /** The built-in level id (`sand-levels.ts`'s own `id`, 1-based) that hands
+   * this skin to the player for free on its first clear, instead of it being
+   * for sale. When set, `price` is ignored entirely: `isCostumeOwned` never
+   * treats this skin as free-by-default the way a `price: 0` skin normally
+   * is, and the Skin screen shows a "Progression" badge instead of a Buy
+   * button. Undefined for every currency-purchasable skin. */
+  unlockLevel?: number;
   // Returns the objects it added, so swapping a costume can take exactly
   // those back out again — see `disposeCostumeParts`.
   build: (groups: CostumeRigGroups) => THREE.Object3D[];
@@ -227,6 +235,110 @@ function buildRuneCannon(groups: CostumeRigGroups) {
   return added;
 }
 
+/**
+ * A hero's cannon: the same three masses the classic cannon is built from, at
+ * the same sizes, wearing a tunic-green and gold palette — the same
+ * green-and-gold read as a storybook adventurer's gear, without naming or
+ * modelling any specific character. `classic` flavor, not `magic`: the sparkle
+ * bling and rune overlay are the Rune Cannon's own signature, and this skin
+ * reads as sturdy travelling gear rather than as spellcraft.
+ */
+function buildHeroCannon(groups: CostumeRigGroups) {
+  const { added, attach } = collector();
+  // Same toon shading as the other two rigs, so this one catches the scene's
+  // lights instead of reading as a flat cutout next to them.
+  const ramp = getCannonToonRamp();
+  const tunic = new THREE.MeshToonMaterial({ color: 0x3fae5a, gradientMap: ramp });
+  const boots = new THREE.MeshToonMaterial({ color: 0x1f5c34, gradientMap: ramp });
+  const gold = new THREE.MeshToonMaterial({ color: 0xf4c430, gradientMap: ramp });
+  // Two more materials than the plain green/gold pair above, purely for the
+  // accessories below — a satchel needs to read as leather and not as more
+  // tunic, and a chest gem needs to read as a gem and not as more gold trim.
+  const leather = new THREE.MeshToonMaterial({ color: 0x6b4226, gradientMap: ramp });
+  const gemColor = new THREE.MeshToonMaterial({ color: 0x2fd0c4, gradientMap: ramp });
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40), boots);
+  attach(groups.cannonRoot, base);
+
+  const cradle = new THREE.Mesh(new THREE.SphereGeometry(0.62, 28, 18), tunic);
+  cradle.scale.set(1, 0.86, 1);
+  attach(groups.turret, cradle);
+
+  // A gold belt band around the cradle — the one accent that reads as
+  // "adventurer's gear" rather than "green cannon". Sits on the turret, not
+  // the pedestal, so it never competes with the engine's own ammo-tinted ring
+  // (`baseRing`, `SandCannonEngine.ts`) at the pedestal's radius.
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.045, 12, 32), gold);
+  belt.rotation.x = Math.PI / 2;
+  attach(groups.turret, belt);
+
+  // A small gem set in a gold ring on the chest — the "you've earned this"
+  // detail every adventurer skin needs one of. Embedded a hair into the
+  // cradle's own surface (radius 0.62) rather than floating in front of it.
+  const emblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.13), gemColor);
+  emblem.position.set(0, 0.04, 0.58);
+  attach(groups.turret, emblem);
+  const emblemRing = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.03, 10, 24), gold);
+  emblemRing.position.copy(emblem.position);
+  attach(groups.turret, emblemRing);
+
+  // A travelling satchel slung on the pedestal's flank, with its own gold
+  // strap buckle — the one accessory that isn't green or gold at all, so the
+  // whole skin doesn't read as a single flat hue. Sits just proud of the
+  // pedestal's own surface (radius ~1.17 at this height) so it reads as
+  // hanging off it rather than buried inside.
+  const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.24, 0.18), leather);
+  pouch.position.set(0.92, 0.03, 0.72);
+  pouch.rotation.y = 0.65;
+  attach(groups.cannonRoot, pouch);
+  const pouchStrap = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 8, 20), gold);
+  pouchStrap.position.set(0.92, 0.17, 0.72);
+  pouchStrap.rotation.x = Math.PI / 2;
+  pouchStrap.rotation.z = 0.65;
+  attach(groups.cannonRoot, pouchStrap);
+
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.38, 2.35, 28), tunic);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.z = -0.98;
+  attach(groups.barrelVisual, barrel);
+
+  // A leather grip wrap partway down the barrel, between the turret and the
+  // muzzle — the same idea as a bow's own handgrip, and what turns a plain
+  // green tube into "gear" rather than just a recoloured barrel. Sized to the
+  // barrel's own radius at this point along its taper (it widens from 0.24 at
+  // the turret to 0.38 at the muzzle) so it reads as wrapped onto the barrel,
+  // not floating around it.
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.35, 0.34, 24), leather);
+  grip.rotation.x = Math.PI / 2;
+  grip.position.z = -1.5;
+  attach(groups.barrelVisual, grip);
+
+  // Two gold bands pinning the grip's edges — no rotation needed, unlike the
+  // belt/emblem rings on the cradle above: a torus already lies flat in the
+  // XY plane by default, which is exactly "wrapped around the Z-axis barrel"
+  // with no reorientation. Radii follow the barrel's own taper at each z, the
+  // same way the grip's own two radii do.
+  const gripBandNear = new THREE.Mesh(new THREE.TorusGeometry(0.335, 0.035, 10, 28), gold);
+  gripBandNear.position.z = -1.33;
+  attach(groups.barrelVisual, gripBandNear);
+  const gripBandFar = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.035, 10, 28), gold);
+  gripBandFar.position.z = -1.67;
+  attach(groups.barrelVisual, gripBandFar);
+
+  // A small gold stud on top of the grip, like a rivet — the one asymmetric
+  // accent on the barrel, so it doesn't read as a perfectly plain sleeve from
+  // every angle.
+  const gripStud = new THREE.Mesh(new THREE.OctahedronGeometry(0.06), gold);
+  gripStud.position.set(0, 0.35, -1.5);
+  attach(groups.barrelVisual, gripStud);
+
+  const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.07, 12, 28), gold);
+  muzzle.position.z = MUZZLE_Z + 0.06;
+  attach(groups.barrelVisual, muzzle);
+
+  return added;
+}
+
 export const COSTUMES: Record<CostumeId, CostumeDef> = {
   "classic-cannon": {
     id: "classic-cannon",
@@ -247,9 +359,25 @@ export const COSTUMES: Record<CostumeId, CostumeDef> = {
     price: 500,
     build: buildRuneCannon,
   },
+  "hero-cannon": {
+    id: "hero-cannon",
+    name: "Hero Cannon",
+    tagline: "Quest. Aim. Onward.",
+    flavor: "classic",
+    // Not for sale at any price — `unlockLevel` below is what actually gates
+    // it, and `isCostumeOwned` ignores `price` entirely once that is set.
+    // Kept at 0 rather than removed only because `price` itself is still a
+    // required field on `CostumeDef`.
+    price: 0,
+    // Level 20 (`sand-levels.ts`'s `twentiethLevel`, `id: 20`) is the built-in
+    // level that hands this skin over on its first clear — see
+    // `costumeUnlockedByLevel` below for the lookup this powers.
+    unlockLevel: 20,
+    build: buildHeroCannon,
+  },
 };
 
-export const COSTUME_ORDER: CostumeId[] = ["classic-cannon", "rune-cannon"];
+export const COSTUME_ORDER: CostumeId[] = ["classic-cannon", "rune-cannon", "hero-cannon"];
 export const DEFAULT_COSTUME: CostumeId = "classic-cannon";
 
 export function getCostume(id: CostumeId) {
@@ -272,10 +400,25 @@ export function costumePrice(id: CostumeId): number {
 /** A free skin is owned by everyone from the first launch — only a priced one
  * has to be bought. Keeps `OWNED_KEY` holding just the purchases, so a skin
  * whose price is later dropped to 0 becomes free for existing players too
- * rather than staying locked behind a stored list they are not on. */
+ * rather than staying locked behind a stored list they are not on.
+ *
+ * A `unlockLevel` skin skips that "price 0 means free for everyone" rule
+ * entirely — it is never owned until `unlockCostume` actually adds it to
+ * `OWNED_KEY`, which only the level-clear handler in `SandGame.tsx` does
+ * (on that level's first win), never a purchase. */
 export function isCostumeOwned(id: CostumeId): boolean {
+  const def = getCostume(id);
+  if (def.unlockLevel !== undefined) return readOwnedCostumes().has(id);
   if (costumePrice(id) <= 0) return true;
   return readOwnedCostumes().has(id);
+}
+
+/** The skin, if any, that clearing built-in level `levelId` for the first
+ * time hands the player — the id `SandGame.tsx`'s WIN handler checks after
+ * `markLevelCleared` succeeds, so a progression skin's own unlock level lives
+ * only here rather than being hardcoded a second time at the call site. */
+export function costumeUnlockedByLevel(levelId: number): CostumeId | undefined {
+  return COSTUME_ORDER.find((id) => COSTUMES[id].unlockLevel === levelId);
 }
 
 function readOwnedCostumes(): Set<CostumeId> {
@@ -368,7 +511,12 @@ export function markSkinBadgeSeen(id: CostumeId) {
  */
 export function unseenAffordableSkins(emeralds: number): CostumeId[] {
   const seen = readSeenBadges();
-  return COSTUME_ORDER.filter((id) => !isCostumeOwned(id) && emeralds >= costumePrice(id) && !seen.has(id));
+  // A `unlockLevel` skin is excluded outright, not just filtered by price:
+  // its price is an unused 0 (see `CostumeDef.unlockLevel`'s own comment),
+  // which would otherwise read as "affordable" to every wallet, emerald or not.
+  return COSTUME_ORDER.filter(
+    (id) => getCostume(id).unlockLevel === undefined && !isCostumeOwned(id) && emeralds >= costumePrice(id) && !seen.has(id),
+  );
 }
 
 export function getSelectedCostume(): CostumeId {

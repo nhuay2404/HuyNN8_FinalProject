@@ -6,9 +6,18 @@ import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
 import { computeDifficulty, type DifficultyResult } from "./game/level-difficulty";
 import { adviseLevel, type Suggestion } from "./game/level-advisor";
-import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, jitterColorHex } from "./game/sand-color";
 import {
+  SAND_LIGHTNESS_JITTER,
+  SAND_SATURATION_JITTER,
+  freezeBevelHex,
+  jitterColorHex,
+  keyBevelHex,
+  wallBevelHex,
+} from "./game/sand-color";
+import {
+  DEFAULT_FREEZE_DURATION,
   EMPTY_CELL,
+  FREEZE_LETTER,
   KEY_LETTER,
   LETTER_BY_SAND_COLOR,
   MAX_HEIGHT,
@@ -38,11 +47,11 @@ import {
 } from "./game/level-drafts";
 import { BUILT_IN_LEVELS } from "../design/levels/sand-levels";
 import { groupCells } from "./game/sand-rules";
-import { KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./game/sand-sprites";
+import { FREEZE_SPRITE, KEY_SPRITE, PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./game/sand-sprites";
 import { SAND_COLORS, type SandColor } from "./game/sand-types";
 import { finishLoading } from "./loading-screen";
 
-type Tool = "brush" | "bucket" | "key";
+type Tool = "brush" | "bucket" | "key" | "freeze";
 
 const COLOR_NAME: Record<SandColor, string> = {
   red: "Red",
@@ -57,11 +66,59 @@ const COLOR_NAME: Record<SandColor, string> = {
   brown: "Brown",
   white: "White",
   black: "Black",
+  grass: "Grass",
+  teal: "Teal",
+  skyblue: "Sky Blue",
+  indigo: "Indigo",
+  magenta: "Magenta",
+  crimson: "Crimson",
+  darkbrown: "Dark Brown",
+  violet: "Violet",
+  navy: "Navy",
+  emerald: "Emerald",
+  rust: "Rust",
+  mint: "Mint",
 };
 
 function hex(color: SandColor) {
   return `#${SAND_COLOR_HEX[color].toString(16).padStart(6, "0")}`;
 }
+
+/** A colour's hue, 0-360, computed straight from its RGB hex — used only to
+ * sort the swatch grid below (`SORTED_SWATCH_COLORS`). A flat grey (equal
+ * R/G/B) has no real hue and lands on 0, but none of the palette's greys are
+ * perfectly flat (`white`/`black` both carry a faint warm/cool tint), so
+ * nothing here actually needs a special case for one. */
+function hueOf(colorHex: number): number {
+  const r = ((colorHex >> 16) & 0xff) / 255;
+  const g = ((colorHex >> 8) & 0xff) / 255;
+  const b = (colorHex & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  if (delta === 0) return 0;
+  let h: number;
+  if (max === r) h = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / delta + 2) / 6;
+  else h = ((r - g) / delta + 4) / 6;
+  return h * 360;
+}
+
+/**
+ * The swatch grid's own order — ascending hue, round the colour wheel once —
+ * kept entirely separate from `SAND_COLORS` itself.
+ *
+ * `SAND_COLORS`'s order is not cosmetic: `shootableColors` (sand-rules.ts)
+ * indexes into it with a seeded random pick to draw the next bullet, so
+ * reordering that array would reshuffle every already-shipped level's ammo
+ * sequence for the same seed (see `SAND_COLORS`'s own comment in
+ * sand-types.ts). This is a picker, free to read in whatever order helps an
+ * author find a colour by eye, computed once since the palette itself is a
+ * fixed, static list.
+ */
+const SORTED_SWATCH_COLORS: readonly SandColor[] = [...SAND_COLORS].sort(
+  (a, b) => hueOf(SAND_COLOR_HEX[a]) - hueOf(SAND_COLOR_HEX[b]),
+);
 
 const DIFFICULTY_NAME: Record<DifficultyResult["label"], string> = {
   easy: "Easy",
@@ -88,10 +145,6 @@ const CHART_WIDTH = 280;
 const CHART_HEIGHT = 64;
 const CHART_PAD = 6;
 
-/** The key's gold, matching what the engine paints on the board. */
-const KEY_HEX = "#ffd654";
-/** Wall Obstacle's stone grey, matching what the engine paints on the board. */
-const WALL_HEX = "#6b7280";
 /**
  * Key size, as an integer multiple of `KEY_SPRITE`'s own pixels.
  *
@@ -102,6 +155,11 @@ const WALL_HEX = "#6b7280";
  */
 const DEFAULT_KEY_SCALE = 4;
 const MAX_KEY_SCALE = 16;
+
+/** Same reasoning as `DEFAULT_KEY_SCALE`/`MAX_KEY_SCALE`, for the Freeze
+ * trigger's own fixed hourglass silhouette. */
+const DEFAULT_FREEZE_SCALE = 4;
+const MAX_FREEZE_SCALE = 16;
 
 /** Brush nib width in board pixels, and its bounds. */
 const DEFAULT_BRUSH_SIZE = 5;
@@ -129,8 +187,21 @@ function maxKeyScale(draft: LevelDraft) {
     Math.floor(draft.height / spriteHeight(KEY_SPRITE)),
   ));
 }
+
+/** `maxKeyScale`, for the Freeze trigger's own sprite. */
+function maxFreezeScale(draft: LevelDraft) {
+  return Math.max(1, Math.min(
+    MAX_FREEZE_SCALE,
+    Math.floor(draft.width / spriteWidth(FREEZE_SPRITE)),
+    Math.floor(draft.height / spriteHeight(FREEZE_SPRITE)),
+  ));
+}
 /** Matches `LOCK_DARKEN` in the engine — the same sand should look the same. */
 const LOCK_DARKEN = 0.62;
+/** How hard a cell dims once some other colour is highlighted (Ammo wheel) —
+ * darker than `LOCK_DARKEN` so "not the colour I'm hunting for" reads as a
+ * clearly different state from "locked", never confusable with it. */
+const HIGHLIGHT_DIM_STYLE = "rgba(0,0,0,.72)";
 
 /**
  * Padlock placements for the editor's preview, one per frozen region.
@@ -195,6 +266,18 @@ function keyCellsAt(draft: LevelDraft, x: number, y: number, scale: number) {
     .filter((cell) => cell.x < draft.width && cell.y < draft.height);
 }
 
+/** `keyCellsAt`, for the Freeze trigger's own sprite. */
+function freezeCellsAt(draft: LevelDraft, x: number, y: number, scale: number) {
+  const cells = spriteCells(FREEZE_SPRITE, scale);
+  const width = spriteWidth(FREEZE_SPRITE) * scale;
+  const height = spriteHeight(FREEZE_SPRITE) * scale;
+  const originX = clamp(x - Math.floor(width / 2), 0, Math.max(0, draft.width - width));
+  const originY = clamp(y - Math.floor(height / 2), 0, Math.max(0, draft.height - height));
+  return cells
+    .map((cell) => ({ x: originX + cell.x, y: originY + cell.y }))
+    .filter((cell) => cell.x < draft.width && cell.y < draft.height);
+}
+
 function clamp(value: number, low: number, high: number) {
   return Math.max(low, Math.min(high, value));
 }
@@ -220,9 +303,11 @@ function brushCells(draft: LevelDraft, x: number, y: number, size: number) {
   return cells;
 }
 
-/** The whole connected group of key cells under (x, y), or null. */
-function keyGroupAt(draft: LevelDraft, x: number, y: number) {
-  if (letterAt(draft.rows, x, y, draft.height) !== KEY_LETTER) return null;
+/** The whole connected group of same-letter cells under (x, y), or null —
+ * shared by the key tool (`KEY_LETTER`) and the Freeze tool (`FREEZE_LETTER`),
+ * since both stamp a rigid shape the same way and lift it the same way. */
+function letterGroupAt(draft: LevelDraft, x: number, y: number, letter: string) {
+  if (letterAt(draft.rows, x, y, draft.height) !== letter) return null;
   const found: Array<{ x: number; y: number }> = [];
   const seen = new Set<string>([`${x},${y}`]);
   const queue = [{ x, y }];
@@ -233,7 +318,7 @@ function keyGroupAt(draft: LevelDraft, x: number, y: number) {
       const next = { x: cell.x + dx, y: cell.y + dy };
       const at = `${next.x},${next.y}`;
       if (seen.has(at)) continue;
-      if (letterAt(draft.rows, next.x, next.y, draft.height) !== KEY_LETTER) continue;
+      if (letterAt(draft.rows, next.x, next.y, draft.height) !== letter) continue;
       seen.add(at);
       queue.push(next);
     }
@@ -243,6 +328,10 @@ function keyGroupAt(draft: LevelDraft, x: number, y: number) {
 
 function stampCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
   return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, KEY_LETTER), draft.rows);
+}
+
+function stampFreezeCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
+  return cells.reduce((rows, cell) => withCell(rows, cell.x, cell.y, draft.height, FREEZE_LETTER), draft.rows);
 }
 
 function clearCells(draft: LevelDraft, cells: Array<{ x: number; y: number }>) {
@@ -402,6 +491,40 @@ function bucketFill(rows: string[], width: number, height: number, x: number, y:
   return next;
 }
 
+/**
+ * Every grid point on the straight line from `(x0, y0)` to `(x1, y1)`,
+ * inclusive of both ends — Bresenham's algorithm, the standard way to walk a
+ * line one grid cell at a time with no gaps and no float rounding drift.
+ * Feeds the Shift-click "straight line from the last point" gesture below,
+ * the same as Photoshop's own brush: each point in order gets stamped with
+ * the brush nib, so a thick brush still draws a solid straight bar rather
+ * than a dotted one.
+ */
+function linePoints(x0: number, y0: number, x1: number, y1: number): Array<{ x: number; y: number }> {
+  const points: Array<{ x: number; y: number }> = [];
+  let x = x0;
+  let y = y0;
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    points.push({ x, y });
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+  return points;
+}
+
 const HISTORY_LIMIT = 60;
 
 /**
@@ -464,9 +587,16 @@ export default function LevelEditor() {
   const [erasing, setErasing] = useState(false);
   /** The key tool's radius, in board pixels. */
   const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
+  /** The Freeze tool's radius, in board pixels. */
+  const [freezeScale, setFreezeScale] = useState(DEFAULT_FREEZE_SCALE);
   /** Width of the square brush nib, in board pixels. */
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [color, setColor] = useState<SandColor>("blue");
+  /** Which colour the picture is dimming everything else against — set by
+   * clicking a colour in the Ammo wheel, so an author can find where it
+   * actually is in the picture without having to hunt the canvas by eye.
+   * Null means "no dimming", the ordinary view. */
+  const [highlightColor, setHighlightColor] = useState<SandColor | null>(null);
   const [analysis, setAnalysis] = useState<LevelAnalysis | null>(null);
   const [analysing, setAnalysing] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
@@ -491,6 +621,12 @@ export default function LevelEditor() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const painting = useRef(false);
   const history = useRef<{ past: LevelDraft[]; future: LevelDraft[] }>({ past: [], future: [] });
+  /** Where the brush last painted — Photoshop's own "Shift-click to connect
+   * a straight line to the last point" reads off this. Cleared whenever a
+   * fresh stroke starts somewhere a line couldn't sensibly continue from
+   * (switching levels, undo/redo), so a stray Shift-click never draws a line
+   * back to a point that picture no longer has any relation to. */
+  const lastBrushPoint = useRef<{ x: number; y: number } | null>(null);
 
   // The loading screen is painted by the root layout for every route, and only
   // the game knows when its first frame is up. The editor has no such moment,
@@ -502,6 +638,56 @@ export default function LevelEditor() {
     () => drafts.find((entry) => entry.id === selectedId) ?? null,
     [drafts, selectedId],
   );
+
+  /**
+   * `drafts`, for display only, sorted by the built-in level id each was
+   * imported from — never by when it happened to be imported.
+   *
+   * "Import built-in" (and duplicate/+New) always append to `drafts`
+   * itself, so pulling in Level 13 then Level 12 left 13 sitting above 12
+   * everywhere that just mapped over `drafts` in storage order — the Levels
+   * roster, the difficulty chart, and its bar-list underneath. Sorting a
+   * copy for display, rather than reordering `drafts`/localStorage itself,
+   * keeps every id-based lookup (`selectedId`, `history`, the Delete
+   * button's "select whatever was next to it" fallback) working off the
+   * order things actually happened in — only the three read-only listings
+   * below ever read this one. A level with no `importedFromId` (a fresh
+   * "+ New" or a duplicate) has no built-in id to sort by, so it sorts
+   * after every imported one; `Array.prototype.sort` is stable, so two such
+   * levels still keep whatever order they were created in relative to each
+   * other.
+   */
+  const orderedDrafts = useMemo(
+    () => [...drafts].sort((a, b) => (a.importedFromId ?? Infinity) - (b.importedFromId ?? Infinity)),
+    [drafts],
+  );
+
+  /**
+   * Local text buffers for the Width/Height fields, decoupled from `draft`
+   * itself.
+   *
+   * Wiring the input straight to `draft.width`/`resizeDraft` fired on every
+   * keystroke — clearing "60" to type "45" committed the empty field as `0`
+   * immediately, `resizeDraft` clamped that to `MIN_DIMENSION` and rebuilt
+   * the whole picture, and the field snapped to "12" out from under the very
+   * next digit being typed. These buffers only sync FROM the draft (picking
+   * a different level, or after a commit clamps the value) and only commit
+   * back TO it on blur or Enter, so an in-progress edit is free to pass
+   * through "", "4", "45" without any of them being clamped or fought over
+   * mid-keystroke.
+   */
+  const [widthText, setWidthText] = useState("");
+  const [heightText, setHeightText] = useState("");
+  useEffect(() => {
+    if (!draft) return;
+    setWidthText(String(draft.width));
+    setHeightText(String(draft.height));
+  }, [draft?.id, draft?.width, draft?.height]);
+
+  // A highlight names a colour in THIS picture — switching levels leaves it
+  // pointing at a colour the new picture may not even have, so it is cleared
+  // rather than carried over.
+  useEffect(() => setHighlightColor(null), [draft?.id]);
 
   /**
    * `drafts` itself stays undeferred — the canvas, the form fields, undo/redo
@@ -542,14 +728,14 @@ export default function LevelEditor() {
   const difficultyChartPoints = useMemo(() => {
     const width = CHART_WIDTH - CHART_PAD * 2;
     const height = CHART_HEIGHT - CHART_PAD * 2;
-    return drafts.map((entry, index) => {
+    return orderedDrafts.map((entry, index) => {
       const result = difficultyById.get(entry.id);
       const score = result?.score ?? 0;
-      const x = drafts.length <= 1 ? CHART_WIDTH / 2 : CHART_PAD + (index / (drafts.length - 1)) * width;
+      const x = orderedDrafts.length <= 1 ? CHART_WIDTH / 2 : CHART_PAD + (index / (orderedDrafts.length - 1)) * width;
       const y = CHART_PAD + (1 - score / 100) * height;
       return { id: entry.id, name: entry.name || "Untitled", score, label: result?.label ?? "easy", x, y };
     });
-  }, [drafts, difficultyById]);
+  }, [orderedDrafts, difficultyById]);
 
   const persist = useCallback((next: LevelDraft[]) => {
     setEdited(next);
@@ -579,6 +765,30 @@ export default function LevelEditor() {
     });
     setAnalysis(null);
   }, [selectedId]);
+
+  /** Commits the Width/Height text buffers above — see their own comment.
+   * An unparseable field (empty, mid-edit) reverts to the draft's current
+   * value instead of resizing to 0; a parseable-but-out-of-range one still
+   * goes through, so `resizeDraft`'s own clamp is what the field settles on. */
+  const commitWidth = useCallback(() => {
+    if (!draft) return;
+    const parsed = Number(widthText);
+    if (!Number.isFinite(parsed)) {
+      setWidthText(String(draft.width));
+      return;
+    }
+    update((current) => resizeDraft(current, parsed, current.height));
+  }, [draft, widthText, update]);
+
+  const commitHeight = useCallback(() => {
+    if (!draft) return;
+    const parsed = Number(heightText);
+    if (!Number.isFinite(parsed)) {
+      setHeightText(String(draft.height));
+      return;
+    }
+    update((current) => resizeDraft(current, current.width, parsed));
+  }, [draft, heightText, update]);
 
   const undo = useCallback(() => {
     const previous = history.current.past.at(-1);
@@ -641,13 +851,28 @@ export default function LevelEditor() {
     // put it back down.
     if (tool === "key") {
       update((current) => {
-        const existing = keyGroupAt(current, x, y);
+        const existing = letterGroupAt(current, x, y, KEY_LETTER);
         // Clamped against the draft being edited, not against whatever the
         // board was when the size was chosen — a board can shrink afterwards.
         const scale = Math.min(keyScale, maxKeyScale(current));
         const rows = existing
           ? clearCells(current, existing)
           : stampCells(current, keyCellsAt(current, x, y, scale));
+        return rows === current.rows ? current : { ...current, rows };
+      }, true);
+      return;
+    }
+
+    // The Freeze trigger, same stamp/lift gesture as the key — a rigid shape
+    // the game groups by connectivity, not a smear a freehand brush could
+    // ever produce faithfully.
+    if (tool === "freeze") {
+      update((current) => {
+        const existing = letterGroupAt(current, x, y, FREEZE_LETTER);
+        const scale = Math.min(freezeScale, maxFreezeScale(current));
+        const rows = existing
+          ? clearCells(current, existing)
+          : stampFreezeCells(current, freezeCellsAt(current, x, y, scale));
         return rows === current.rows ? current : { ...current, rows };
       }, true);
       return;
@@ -668,7 +893,7 @@ export default function LevelEditor() {
         .reduce((acc, cell) => withCell(acc, cell.x, cell.y, current.height, letter), current.rows);
       return rows === current.rows ? current : { ...current, rows };
     }, record);
-  }, [tool, color, locking, wallMode, erasing, keyScale, brushSize, update]);
+  }, [tool, color, locking, wallMode, erasing, keyScale, freezeScale, brushSize, update]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = cellFromEvent(event);
@@ -682,7 +907,19 @@ export default function LevelEditor() {
       // Not capturable — carry on with the stroke.
     }
     painting.current = true;
-    paintAt(cell.x, cell.y, true);
+    // Shift-click connects a straight brush stroke from wherever the brush
+    // last painted to here — Photoshop's own gesture for a straight line
+    // without needing a steady drag. Scoped to the brush tool: a "line" of
+    // bucket fills or key stamps is not a line, it is one click repeated.
+    if (event.shiftKey && tool === "brush" && lastBrushPoint.current) {
+      const points = linePoints(lastBrushPoint.current.x, lastBrushPoint.current.y, cell.x, cell.y);
+      // record only on the line's first point — like a drag, the whole line
+      // is one undo step, not one per point it passes through.
+      points.forEach((point, index) => paintAt(point.x, point.y, index === 0));
+    } else {
+      paintAt(cell.x, cell.y, true);
+    }
+    lastBrushPoint.current = cell;
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -691,6 +928,7 @@ export default function LevelEditor() {
     if (!cell) return;
     // record: false — the whole drag is one undo step.
     paintAt(cell.x, cell.y, false);
+    lastBrushPoint.current = cell;
   };
 
   const endStroke = () => {
@@ -712,22 +950,67 @@ export default function LevelEditor() {
     context.fillStyle = "#150e28";
     context.fillRect(0, 0, canvas.width, canvas.height);
 
+    // Screen-space wall/key checks for the two bevel passes below —
+    // out-of-bounds reads as "not there", so a shape sitting flush against
+    // the board's own edge is beveled on that side too, same as any other
+    // edge of its shape.
+    const isWallAt = (r: number, c: number) => readCell(draft.rows[r]?.[c] ?? EMPTY_CELL).kind === "wall";
+    const isKeyAt = (r: number, c: number) => readCell(draft.rows[r]?.[c] ?? EMPTY_CELL).kind === "key";
+    const isFreezeAt = (r: number, c: number) => readCell(draft.rows[r]?.[c] ?? EMPTY_CELL).kind === "freeze";
+
     for (let row = 0; row < draft.height; row += 1) {
       for (let x = 0; x < draft.width; x += 1) {
         const cell = readCell(draft.rows[row]?.[x] ?? EMPTY_CELL);
         if (cell.kind === "empty") continue;
         const left = x * cellPx;
         const top = row * cellPx;
+        // A wheel entry is highlighted: every cell that is not THAT sand
+        // colour dims, walls and keys included, so the one colour being
+        // hunted for is the only thing that still reads at full strength.
+        const dimmed = highlightColor !== null && !(cell.kind === "sand" && cell.color === highlightColor);
 
         if (cell.kind === "key") {
-          context.fillStyle = KEY_HEX;
+          context.fillStyle = keyBevelHex(
+            isKeyAt(row - 1, x),
+            isKeyAt(row + 1, x),
+            isKeyAt(row, x - 1),
+            isKeyAt(row, x + 1),
+          );
           context.fillRect(left, top, cellPx, cellPx);
+          if (dimmed) {
+            context.fillStyle = HIGHLIGHT_DIM_STYLE;
+            context.fillRect(left, top, cellPx, cellPx);
+          }
           continue;
         }
 
         if (cell.kind === "wall") {
-          context.fillStyle = WALL_HEX;
+          context.fillStyle = wallBevelHex(
+            isWallAt(row - 1, x),
+            isWallAt(row + 1, x),
+            isWallAt(row, x - 1),
+            isWallAt(row, x + 1),
+          );
           context.fillRect(left, top, cellPx, cellPx);
+          if (dimmed) {
+            context.fillStyle = HIGHLIGHT_DIM_STYLE;
+            context.fillRect(left, top, cellPx, cellPx);
+          }
+          continue;
+        }
+
+        if (cell.kind === "freeze") {
+          context.fillStyle = freezeBevelHex(
+            isFreezeAt(row - 1, x),
+            isFreezeAt(row + 1, x),
+            isFreezeAt(row, x - 1),
+            isFreezeAt(row, x + 1),
+          );
+          context.fillRect(left, top, cellPx, cellPx);
+          if (dimmed) {
+            context.fillStyle = HIGHLIGHT_DIM_STYLE;
+            context.fillRect(left, top, cellPx, cellPx);
+          }
           continue;
         }
 
@@ -743,12 +1026,17 @@ export default function LevelEditor() {
           SAND_LIGHTNESS_JITTER,
         );
         context.fillRect(left, top, cellPx, cellPx);
-        if (!cell.locked) continue;
-        // Shaded down rather than tinted, exactly as the engine does it: the
-        // colour underneath still has to be readable, because it is the bullet
-        // the wheel hands out once the lock opens.
-        context.fillStyle = `rgba(0,0,0,${LOCK_DARKEN})`;
-        context.fillRect(left, top, cellPx, cellPx);
+        if (cell.locked) {
+          // Shaded down rather than tinted, exactly as the engine does it: the
+          // colour underneath still has to be readable, because it is the
+          // bullet the wheel hands out once the lock opens.
+          context.fillStyle = `rgba(0,0,0,${LOCK_DARKEN})`;
+          context.fillRect(left, top, cellPx, cellPx);
+        }
+        if (dimmed) {
+          context.fillStyle = HIGHLIGHT_DIM_STYLE;
+          context.fillRect(left, top, cellPx, cellPx);
+        }
       }
     }
 
@@ -791,7 +1079,7 @@ export default function LevelEditor() {
     };
     if (cellPx >= FINE_GRID_MIN_PX) rule(1, "rgba(255,255,255,.10)");
     rule(GUIDE_GRID_STEP, "rgba(255,255,255,.16)");
-  }, [draft]);
+  }, [draft, highlightColor]);
 
   // ---- derived -----------------------------------------------------------
 
@@ -799,10 +1087,11 @@ export default function LevelEditor() {
   const errors = issues.filter((issue) => issue.severity === "error");
   const used = draft ? coloursUsed(draft) : [];
   const painted = draft ? countPaintedCells(draft) : 0;
-  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0 };
+  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0, freeze: 0 };
   // Resizing the board can leave the chosen key size too big for it, so the
   // limit is applied on the way out rather than only when the button is pressed.
   const keyScaleLimit = draft ? maxKeyScale(draft) : 1;
+  const freezeScaleLimit = draft ? maxFreezeScale(draft) : 1;
   const scale = draft ? effectivePixelScale(draft) : 1;
   const pixels = draft ? draft.width * draft.height * scale * scale : 0;
 
@@ -895,7 +1184,7 @@ export default function LevelEditor() {
         <aside className="editor-panel editor-levels">
           <h2>Levels</h2>
           <ul className="editor-level-list">
-            {drafts.map((entry) => (
+            {orderedDrafts.map((entry) => (
               <li key={entry.id}>
                 <button
                   type="button"
@@ -904,6 +1193,7 @@ export default function LevelEditor() {
                     setPickedId(entry.id);
                     setAnalysis(null);
                     history.current = { past: [], future: [] };
+                    lastBrushPoint.current = null;
                   }}
                 >
                   <strong>{entry.name || "Untitled"}</strong>
@@ -921,6 +1211,7 @@ export default function LevelEditor() {
                 persist([...drafts, created]);
                 setPickedId(created.id);
                 history.current = { past: [], future: [] };
+                lastBrushPoint.current = null;
               }}
             >
               + New
@@ -941,6 +1232,7 @@ export default function LevelEditor() {
                 persist([...drafts, duplicated]);
                 setPickedId(duplicated.id);
                 history.current = { past: [], future: [] };
+                lastBrushPoint.current = null;
               }}
             >
               Duplicate
@@ -954,6 +1246,7 @@ export default function LevelEditor() {
                 persist(remaining);
                 setPickedId(remaining[Math.max(0, index - 1)]?.id ?? null);
                 history.current = { past: [], future: [] };
+                lastBrushPoint.current = null;
               }}
             >
               Delete
@@ -995,6 +1288,7 @@ export default function LevelEditor() {
                 persist([...drafts, imported]);
                 setPickedId(imported.id);
                 history.current = { past: [], future: [] };
+                lastBrushPoint.current = null;
               }}
             >
               Import built-in
@@ -1049,6 +1343,7 @@ export default function LevelEditor() {
                       setPickedId(point.id);
                       setAnalysis(null);
                       history.current = { past: [], future: [] };
+                      lastBrushPoint.current = null;
                     }}
                   >
                     <title>{`${point.name}: ${point.score} (${DIFFICULTY_NAME[point.label]})`}</title>
@@ -1058,7 +1353,7 @@ export default function LevelEditor() {
             </svg>
           )}
           <ol className="editor-difficulty-list">
-            {drafts.map((entry) => {
+            {orderedDrafts.map((entry) => {
               const result = difficultyById.get(entry.id);
               if (!result) return null;
               return (
@@ -1070,6 +1365,7 @@ export default function LevelEditor() {
                       setPickedId(entry.id);
                       setAnalysis(null);
                       history.current = { past: [], future: [] };
+                      lastBrushPoint.current = null;
                     }}
                     title={[
                       `Board ${Math.round(result.breakdown.size * 100)}%`,
@@ -1098,7 +1394,7 @@ export default function LevelEditor() {
         <section className="editor-panel editor-canvas-panel">
           <div className="editor-tools">
             <div className="editor-swatches">
-              {SAND_COLORS.map((entry) => (
+              {SORTED_SWATCH_COLORS.map((entry) => (
                 <button
                   key={entry}
                   type="button"
@@ -1115,15 +1411,19 @@ export default function LevelEditor() {
               ))}
             </div>
             <div className="editor-row">
-              {(["brush", "bucket", "key"] as Tool[]).map((entry) => (
+              {(["brush", "bucket", "key", "freeze"] as Tool[]).map((entry) => (
                 <button
                   key={entry}
                   type="button"
                   className={`editor-button${tool === entry ? " is-active" : ""}`}
                   onClick={() => setTool(entry)}
-                  title={entry === "key" ? "Paint the key that opens locked sand" : undefined}
+                  title={
+                    entry === "key" ? "Paint the key that opens locked sand"
+                    : entry === "freeze" ? "Paint a Freeze trigger: shot by any colour, pauses the whole board's gravity for a set number of shots"
+                    : undefined
+                  }
                 >
-                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : "Key"}
+                  {entry === "brush" ? "Brush" : entry === "bucket" ? "Fill" : entry === "key" ? "Key" : "❄️ Freeze"}
                 </button>
               ))}
               {/* A modifier on the brush rather than a tool of its own: a lock
@@ -1230,6 +1530,34 @@ export default function LevelEditor() {
                   </button>
                 </span>
               )}
+              {tool === "freeze" && (
+                <span className="editor-key-size">
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setFreezeScale((value) => Math.max(1, value - 1))}
+                    disabled={freezeScale <= 1}
+                    aria-label="Smaller freeze trigger"
+                  >
+                    −
+                  </button>
+                  <b title={`ratio ×${Math.min(freezeScale, freezeScaleLimit)} of the ${spriteWidth(FREEZE_SPRITE)}×${spriteHeight(FREEZE_SPRITE)} freeze sprite`}>
+                    freeze {spriteWidth(FREEZE_SPRITE) * Math.min(freezeScale, freezeScaleLimit)}×
+                    {spriteHeight(FREEZE_SPRITE) * Math.min(freezeScale, freezeScaleLimit)}px
+                    {" "}·{" "}×{Math.min(freezeScale, freezeScaleLimit)}
+                  </b>
+                  <button
+                    type="button"
+                    className="editor-mini"
+                    onClick={() => setFreezeScale((value) => Math.min(freezeScaleLimit, value + 1))}
+                    disabled={freezeScale >= freezeScaleLimit}
+                    aria-label="Bigger freeze trigger"
+                    title={freezeScale >= freezeScaleLimit ? "A bigger trigger would not fit this frame" : undefined}
+                  >
+                    +
+                  </button>
+                </span>
+              )}
               <button type="button" className="editor-button" onClick={undo}>Undo</button>
               <button type="button" className="editor-button" onClick={redo}>Redo</button>
               <button
@@ -1324,8 +1652,12 @@ export default function LevelEditor() {
                 type="number"
                 min={MIN_DIMENSION}
                 max={MAX_WIDTH}
-                value={draft.width}
-                onChange={(event) => update((current) => resizeDraft(current, Number(event.target.value), current.height))}
+                value={widthText}
+                onChange={(event) => setWidthText(event.target.value)}
+                onBlur={commitWidth}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
               />
             </label>
             <label className="editor-field">
@@ -1334,8 +1666,12 @@ export default function LevelEditor() {
                 type="number"
                 min={MIN_DIMENSION}
                 max={MAX_HEIGHT}
-                value={draft.height}
-                onChange={(event) => update((current) => resizeDraft(current, current.width, Number(event.target.value)))}
+                value={heightText}
+                onChange={(event) => setHeightText(event.target.value)}
+                onBlur={commitHeight}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
               />
             </label>
           </div>
@@ -1358,18 +1694,50 @@ export default function LevelEditor() {
             />
           </label>
 
+          <h2>Freeze duration</h2>
+          <p className="editor-note">
+            How many shots the whole board&apos;s gravity pauses for once a Freeze trigger is hit —
+            the shot that hits it is itself the first frozen one. Only matters if the picture has a
+            Freeze trigger ({FREEZE_LETTER}) painted; left at 0 it falls back to{" "}
+            {DEFAULT_FREEZE_DURATION} shots the moment a trigger exists.
+          </p>
+          <label className="editor-field">
+            <span>Shots frozen {(draft.freezeDuration ?? 0) || `(default ${DEFAULT_FREEZE_DURATION})`}</span>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              value={draft.freezeDuration ?? 0}
+              onChange={(event) => update((current) => ({
+                ...current,
+                freezeDuration: Math.max(0, Math.round(Number(event.target.value) || 0)),
+              }))}
+            />
+          </label>
+
           <h2>Ammo wheel</h2>
           <p className="editor-note">
             Only colours you have painted can be loaded, and every painted colour has to be here —
             otherwise that sand could never be shot at. Frozen sand counts: it needs a bullet the
             moment a key frees it.
             {fixtures.locked > 0 && ` This picture has ${fixtures.locked} frozen cells and ${fixtures.keys} key cells.`}
+            {fixtures.freeze > 0 && ` This picture has ${fixtures.freeze} Freeze trigger cells.`}
           </p>
           <ol className="editor-queue">
             {draft.ammoQueue.map((entry, position) => (
               <li key={`${entry}-${position}`}>
-                <i className="editor-pip" style={{ "--swatch": hex(entry) } as React.CSSProperties} />
-                <span>{COLOR_NAME[entry]}</span>
+                <button
+                  type="button"
+                  className="editor-queue-swatch"
+                  onClick={() => {
+                    setHighlightColor((current) => (current === entry ? null : entry));
+                    canvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                  title={`Highlight every ${COLOR_NAME[entry]} cell in the picture above`}
+                >
+                  <i className="editor-pip" style={{ "--swatch": hex(entry) } as React.CSSProperties} />
+                  <span>{COLOR_NAME[entry]}</span>
+                </button>
                 <button
                   type="button"
                   className="editor-mini"

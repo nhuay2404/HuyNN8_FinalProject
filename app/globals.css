@@ -290,9 +290,9 @@ button {
    haze for the rune one — rather than the hub's flat cream showing through
    no matter what's on the pedestal. Keyed on `flavor` (`CostumeFlavor`), not
    a colour of its own on `CostumeDef`: two buckets is exactly the
-   granularity the rest of the file already uses for this
-   (`isMagicCostume()`), and a wash is a mood, not a hue precise enough to
-   need its own per-costume constant. Overrides `.is-hub` above (same
+   granularity `showcaseMaterials` (`SandCannonEngine.ts`) already uses for
+   the showcase shot's own ball colour, and a wash is a mood, not a hue
+   precise enough to need its own per-costume constant. Overrides `.is-hub` above (same
    specificity, later in the file) since the skin screen is itself a
    `!playing` hub tab and always carries both classes together. */
 /* Same wash for both flavours now: a tiled field of `MocIcon` (the hanger —
@@ -736,22 +736,37 @@ button {
   position: absolute; z-index: 31;
   top: max(var(--hud-inset), env(safe-area-inset-top));
   left: max(14px, env(safe-area-inset-left));
+  /* Bounded on the right, unlike every other corner here — this is the one
+     HUD element that can grow (the Freeze bar inside `.hud-top` flexes to
+     fill it), and an unbounded shrink-to-fit box would let that growth run
+     straight under `.settings-wrap`'s gear. `44px` is the gear's own width
+     (`.icon-button`), the two `12px`s its gap from this box and from the
+     screen edge, matching `.settings-wrap`'s own `right` inset. */
+  right: calc(44px + 12px + 12px + max(14px, env(safe-area-inset-right)));
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
 .coin-icon { width: 19px; height: 19px; flex: none; object-fit: contain; }
+/* The row itself: just `.shots-badge` most of the time, with the Freeze
+   cooldown bar (`.freeze-cooldown-bar`) joining it on the same line, to the
+   right, whenever a cooldown is actually running. `min-width: 0` is what
+   lets that bar's own `flex: 1 1 auto` actually shrink/grow to fill
+   whatever room `.hud-top-left`'s now-bounded width leaves it, instead of
+   a flex row's default `min-width: auto` refusing to size it below its
+   content. */
+.hud-top { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
 
 /* ---- Ammo HUD ---------------------------------------------------------- */
 /* §23: just the number that changes every shot, small and to the edge —
-   a casual-game HUD reads at a glance, not as a panel to study. Bigger than
-   the old shared coin/ammo pill size now that it is the only thing left in
-   this corner and has room to read as the headline stat it is. */
+   a casual-game HUD reads at a glance, not as a panel to study. Sized to
+   leave the Freeze bar beside it real room (see `.freeze-cooldown-bar`) —
+   `flex: none` so it never shrinks itself; the bar is what gives. */
 .shots-badge {
-  display: flex; align-items: center; gap: 10px; height: 56px;
-  padding: 0 20px 0 12px; border-radius: var(--r-pill);
+  display: flex; align-items: center; gap: 8px; height: 44px; flex: none;
+  padding: 0 16px 0 10px; border-radius: var(--r-pill);
   background: var(--panel);
 }
 .shots-badge strong {
-  font-size: 22px; font-weight: 800; letter-spacing: -.01em;
+  font-size: 18px; font-weight: 800; letter-spacing: -.01em;
   font-variant-numeric: tabular-nums; color: var(--ink);
 }
 .shots-icon {
@@ -759,7 +774,7 @@ button {
      muzzle band) only ever echoes — sized to read as the headline of this
      badge, not a bullet next to the number. Flat, no inset highlight band —
      a plain filled circle rather than a little lit sphere. */
-  width: 30px; height: 30px; flex: none; border-radius: 50%;
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
   background: var(--gold);
   /* Remounted (via a React `key`) every time the loaded colour actually
      changes, so this plays fresh each time rather than once ever. */
@@ -773,11 +788,11 @@ button {
    number and this is clearly "later" rather than an equal second bullet.
    The gap alone now separates it from the loaded round — no divider line. */
 .shots-upcoming {
-  display: flex; align-items: center; gap: 6px;
-  padding-left: 9px; margin-left: 1px;
+  display: flex; align-items: center; gap: 5px;
+  padding-left: 7px; margin-left: 1px;
 }
 .shots-upcoming-dot {
-  width: 12px; height: 12px; flex: none; border-radius: 50%;
+  width: 9px; height: 9px; flex: none; border-radius: 50%;
   /* Remounted (via a React `key` on the bump, same trick as `.shots-icon`)
      every time the queue moves, so every surviving slot visibly slides one
      step down the strip in step with the round that just got promoted into
@@ -1070,6 +1085,111 @@ button {
 }
 .settle-badge i:nth-child(2) { animation-delay: .15s; }
 .settle-badge i:nth-child(3) { animation-delay: .3s; }
+
+/* Freeze Map's only required feedback (freeze-map-mechanic.md §5.4): sand
+   that stops falling reads as a bug unless something on screen explains it.
+   One pill, same overall shape as the ammo badge, and the same 44px height
+   as the settings gear (on request). No more `FreezeBar.png` art on it (on
+   request, "bỏ freeze bar icon") — a plain light-blue tray instead (on
+   request, "nền màu trắng -> nền xanh nhạt"), `position: relative` so
+   `.freeze-cooldown-label` below can centre itself over the segments.
+   `flex: 1 1 auto` + `min-width: 0` fill whatever width `.hud-top-left`'s
+   own bounded box (see its comment) leaves once the ammo badge takes its
+   share, so the two together can never run under the settings gear. */
+.freeze-cooldown-bar {
+  position: relative;
+  display: flex; align-items: center; gap: 3px; height: 44px;
+  flex: 1 1 auto; min-width: 0;
+  padding: 6px 7px; border-radius: var(--r-pill); overflow: hidden;
+  background: #cdeefb;
+}
+/* Counted in shots, not real time (on request): one `.freeze-cooldown-segment`
+   per shot of `level.freezeDuration` (SandGame.tsx builds the list), the
+   leftmost `state.freezeShotsRemaining` of them lit — so the lit run visibly
+   shrinks from the right, one segment per shot, same "drains right to left"
+   read the bar always had. */
+.freeze-cooldown-segment {
+  flex: 1 1 0; min-width: 0; height: 100%; border-radius: 4px;
+  background: rgba(92, 200, 232, .18);
+}
+/* The two outer edges round to the same pill radius the HUD itself uses (on
+   request) — everything in between stays the plain small `border-radius`
+   above, so only the ends of the whole strip echo the rounded housing it
+   sits in, the way the ammo badge beside it does. */
+.freeze-cooldown-segment:first-child {
+  border-top-left-radius: var(--r-pill);
+  border-bottom-left-radius: var(--r-pill);
+}
+.freeze-cooldown-segment:last-child {
+  border-top-right-radius: var(--r-pill);
+  border-bottom-right-radius: var(--r-pill);
+}
+/* Bootstrap's `.progress-bar-striped` technique: fold one 45° diagonal into
+   a single square tile via percentage stops, pin the tile at exactly
+   `background-size`, then animate `background-position` by that same
+   distance — the only way this loops seamlessly at an angle without
+   trigonometry creeping into the numbers. Kept exactly as-is (on request,
+   "vẫn giữ nguyên loop trắng xanh trời") through every other change to this
+   bar. */
+.freeze-cooldown-segment.is-lit {
+  background-color: #5cc8e8;
+  background-image: linear-gradient(
+    45deg,
+    #eaf9ff 25%, #8fe0ff 25%, #8fe0ff 50%,
+    #eaf9ff 50%, #eaf9ff 75%, #8fe0ff 75%, #8fe0ff
+  );
+  background-size: 24px 24px;
+  animation: freeze-cooldown-stripes 900ms linear infinite;
+}
+@keyframes freeze-cooldown-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
+}
+/* The word FREEZE, on request ("nhét chữ freeze trong đó") — laid directly
+   over the segments rather than taking a slot of its own, since the bar's
+   whole width is already spent on the 5-segment countdown. `pointer-events:
+   none` + `inset: 0` centres it over the full bar regardless of how many
+   segments exist; the dark shadow is what keeps 5 uppercase letters legible
+   whether they land over a light unlit segment or the busier striped one. */
+.freeze-cooldown-label {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; letter-spacing: .06em;
+  color: #fff; text-shadow: 0 1px 2px rgba(10, 40, 60, .55);
+  pointer-events: none;
+}
+
+/* Freeze Map's ambient background tell (on request, "anim tuyết rơi ở
+   background của game"): snow drifting down over the whole scene while the
+   board is frozen, not just a HUD change in one corner. Sits inside
+   `.scene-wrap`, which is already `position: absolute` + `overflow: hidden`
+   (see its own comment), so this only needs to fill it. */
+.freeze-snowfall {
+  position: absolute; inset: 0; z-index: 4;
+  pointer-events: none; overflow: hidden;
+}
+/* Each flake gets its own `left`/size/timing as an inline style (from
+   `FREEZE_SNOWFLAKES` in SandGame.tsx — a fixed layout, not `Math.random()`
+   at render time, so it never reshuffles itself). Two independent
+   animations: `top` (a percentage of `.freeze-snowfall`'s own height, so
+   the fall distance always matches the current scene size) carries the
+   fall, `transform` carries a small side-to-side drift so the fall doesn't
+   read as a perfectly straight, mechanical line. */
+.freeze-snowflake {
+  position: absolute; top: -10%; border-radius: 50%;
+  background: #fff;
+  animation-name: freeze-snow-fall, freeze-snow-drift;
+  animation-timing-function: linear, ease-in-out;
+  animation-iteration-count: infinite, infinite;
+}
+@keyframes freeze-snow-fall {
+  from { top: -10%; }
+  to { top: 110%; }
+}
+@keyframes freeze-snow-drift {
+  0%, 100% { transform: translateX(-8px); }
+  50% { transform: translateX(8px); }
+}
 
 .sand-toast {
   /* In the clear band above the frame. Anywhere lower and it covers the sand
@@ -1665,6 +1785,28 @@ button {
   font-size: 10px; font-weight: 800;
 }
 .hub-gallery-milestone .coin-icon { width: 11px; height: 11px; color: inherit; }
+/* The progression-skin badge — the level that hands over a skin on its first
+   clear (`costumeUnlockedByLevel`, `hero-cannon`/level 20 today) gets this in
+   addition to `.hub-gallery-milestone` above, not instead of it: the two sit
+   on opposite top corners so a level that is both a gold milestone and a skin
+   unlock never has to pick one over the other. Shown even locked, same
+   teaser reasoning as the milestone pill. */
+.hub-gallery-costume-badge {
+  position: absolute; top: -7px; left: -7px; z-index: 2;
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: #eafff1; color: #2f8f4e;
+  border: 1.5px solid #2f8f4e;
+  overflow: hidden;
+}
+/* The usual case: the skin's own rendered thumbnail, same source as the Skin
+   screen's own cards (`costumeThumbnails`) — filled edge-to-edge since the
+   circle border above is already this badge's frame. */
+.hub-gallery-costume-badge img { width: 100%; height: 100%; object-fit: contain; }
+/* The rare "Skin tab never opened yet" fallback — see the JSX comment at the
+   call site. Smaller than the badge itself, same as every other line-art
+   icon here, so it doesn't touch the circle's own border. */
+.hub-gallery-costume-badge .costume-icon { width: 16px; height: 16px; stroke-width: 2; }
 
 /* ---- Gallery screen ------------------------------------------------------ */
 /* A full-screen takeover, same footing as `.shop-screen`/`.skin-screen`
@@ -2189,6 +2331,7 @@ button {
 .skin-card-icon { width: 100%; height: 100%; display: grid; place-items: center; color: var(--ink); }
 .skin-card-icon .costume-icon { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .skin-card-icon.is-magic { color: #8a5fd6; }
+.skin-card-icon.is-hero { color: #2f8f4e; }
 .skin-card-tick {
   position: absolute; right: 6px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
   background: #ffffff; color: #3e7871;
@@ -2598,8 +2741,18 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 
 .editor-queue { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
 .editor-queue li { display: flex; align-items: center; gap: 7px; font-size: 12px; }
-.editor-queue li > span { flex: 1; }
 .editor-queue-empty { color: var(--muted); font-style: italic; }
+/* Highlights this colour in the picture above — see `highlightColor` in
+   LevelEditor.tsx. A plain row masquerading as a button (reset background/
+   border/font), not a swatch button like `.editor-swatch`: this one names an
+   existing queue entry, it does not choose a new colour to paint with. */
+.editor-queue-swatch {
+  flex: 1; display: flex; align-items: center; gap: 7px; min-width: 0;
+  background: none; border: none; padding: 2px 4px; margin: -2px -4px;
+  border-radius: 6px; cursor: pointer; color: inherit; font: inherit; text-align: left;
+}
+.editor-queue-swatch:hover { background: rgba(255,255,255,.08); }
+.editor-queue-swatch > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-pip {
   width: 15px; height: 15px; flex: none; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.45); background: var(--swatch);
@@ -2878,6 +3031,14 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   display: inline-flex; align-items: center; gap: 7px;
 }
 .skin-equip.is-buy .emerald-icon { width: 19px; height: 19px; }
+/* A `unlockLevel` skin's main button: neither Buy's blue (it is never for
+   sale) nor Select's pink (it is not owned yet either) — a quiet, inert
+   green instead, cursor back to default since this one is a plain `<div>`
+   with no click handler (`.skin-equip` itself sets `cursor: pointer`). */
+.skin-equip.is-progression {
+  background: #ffffff; color: #2f8f4e; border-color: #2f8f4e;
+  cursor: default;
+}
 /* A locked tray card is still fully previewable — it just reads as locked: the
    rig behind the price is dimmed and desaturated so the price pill on top of
    it stays legible over any thumbnail. */
@@ -2907,3 +3068,8 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    into that state and staying there until another card is tapped), back to
    translucent the instant some other card takes over the selection. */
 .skin-card.is-previewing .skin-card-price { background-color: #cfe8ff; }
+/* The `unlockLevel` variant of the same strip — green rather than the
+   emerald-currency blue above, so "Progression" never reads as a price the
+   wallet could just pay off. */
+.skin-card-price.is-progression { background: rgba(207, 255, 223, .75); border-top-color: #6fbf8f; color: #1f5c34; }
+.skin-card.is-previewing .skin-card-price.is-progression { background-color: #b9f0cd; }

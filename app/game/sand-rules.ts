@@ -11,6 +11,7 @@ import type {
   SandBody,
   SandColor,
   SandFrame,
+  SandFreezeTrigger,
   SandGameState,
   SandKey,
   SandLevelConfig,
@@ -40,6 +41,23 @@ export const SAND_COLOR_BY_LETTER: Record<string, SandColor> = {
   // before white and black joined the palette.
   S: "white",
   D: "black",
+  // The six added past the original 12 — see `LETTER_BY_SAND_COLOR`
+  // (level-drafts.ts), the forward direction of this exact same mapping.
+  A: "grass",
+  T: "teal",
+  U: "skyblue",
+  I: "indigo",
+  F: "magenta",
+  E: "crimson",
+  // A third batch — `H J Q V X Z` is what was left of the alphabet once the
+  // eighteen letters above plus `KEY_LETTER`/`WALL_LETTER` (K/W) were spoken
+  // for. See `SAND_COLORS` (sand-types.ts) for why these six colours.
+  H: "darkbrown",
+  J: "violet",
+  Q: "navy",
+  V: "emerald",
+  X: "rust",
+  Z: "mint",
 };
 
 /**
@@ -60,6 +78,20 @@ export const KEY_LETTER = "K";
  * way it rests against the floor.
  */
 export const WALL_LETTER = "W";
+
+/**
+ * Freeze Map trigger's letter. Every letter of the alphabet is spoken for by
+ * `SAND_COLOR_BY_LETTER` plus `KEY_LETTER`/`WALL_LETTER`, so this reaches
+ * outside it — a single, otherwise-unused symbol works exactly the same way
+ * a letter does: `parseSandLevel` only ever compares a cell's mark against
+ * these constants and the colour map, never assumes it is one letter wide.
+ *
+ * Not a colour and not sand: like a wall, it has no colour and is never
+ * handed to the ammo wheel. Unlike a wall it is one-shot — the moment a
+ * shot's disc reaches it, whatever colour that shot carried, it is spent and
+ * gone for the rest of the level. See `freeze-map-mechanic.md`.
+ */
+export const FREEZE_LETTER = "@";
 
 /** Locked sand is the colour's letter in lower case — `y` is frozen yellow. */
 export function isLockedLetter(letter: string) {
@@ -144,6 +176,8 @@ export type ParsedLevel = {
   keys: SandKey[];
   /** Cells the picture drew as `W` — see `WALL_LETTER`'s own comment. */
   walls: CellCoord[];
+  /** One Freeze Map trigger per connected group of `@` cells. */
+  freezeTriggers: SandFreezeTrigger[];
   issues: LevelIssue[];
 };
 
@@ -195,6 +229,7 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
   const locked: CellCoord[] = [];
   const keyCells = new Set<string>();
   const walls: CellCoord[] = [];
+  const freezeCells = new Set<string>();
 
   if (level.rows.length !== height) {
     issues.push({ severity: "error", message: `frame height is ${height} but ${level.rows.length} rows were written` });
@@ -214,6 +249,10 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
       }
       if (letter === WALL_LETTER) {
         if (inside) walls.push({ x, y });
+        return;
+      }
+      if (letter === FREEZE_LETTER) {
+        if (inside) freezeCells.add(cellKey(x, y));
         return;
       }
       const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
@@ -275,7 +314,15 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
   if (keys.length && !locked.length) {
     issues.push({ severity: "warning", message: "the picture has a key but nothing locked for it to open" });
   }
-  return { bodies, locked, keys, walls: sortCells(walls), issues };
+
+  // One trigger per connected group of `@`, same reasoning as the key above —
+  // a trigger drawn several cells wide is one button, not several standing
+  // next to each other.
+  const freezeTriggers = groupCells([...freezeCells].map(parseCellKey)).map((cells) => ({
+    id: `freeze-${cells[0].x}-${cells[0].y}`,
+    cells,
+  }));
+  return { bodies, locked, keys, walls: sortCells(walls), freezeTriggers, issues };
 }
 
 function parseCellKey(key: string): CellCoord {
@@ -338,20 +385,30 @@ export function runGrainSettle(
    * lock's whole region loose from anywhere, so only the plain, keyless case
    * gets to assume the cascade stays near the hole. */
   hint?: { x: number; y: number; radius: number },
+  /**
+   * Freeze Map is active for this settle: skip every movement pass entirely
+   * (no `GRAIN_PASS`, no `KEY_MOVE`, no `UNLOCK`) and just re-derive bodies
+   * from the board exactly as it sits. Sand that just lost its footing hangs
+   * there, and a key already falling or sliding stops dead — see
+   * `freeze-map-mechanic.md` §3.
+   */
+  frozen?: boolean,
 ): SettleOutcome {
   const world = buildWorld(bodies, fixtures);
   const steps: SettleStep[] = [];
-  // A hinted, keyless settle only ever has to watch the neighbourhood of the
-  // hole a shot bit — see `settleWorldFromHole`'s own comment on why a
-  // full-frame rescan every pass is wasted work there. Anything else (no
-  // hint, or keys on the board that a lock could free from anywhere) gets
-  // the unrestricted sweep, unchanged.
-  if (hint && !fixtures.keys?.length) {
-    settleWorldFromHole(world, frame, steps, hint);
-  } else {
-    settleWorld(world, frame, steps);
+  if (!frozen) {
+    // A hinted, keyless settle only ever has to watch the neighbourhood of
+    // the hole a shot bit — see `settleWorldFromHole`'s own comment on why a
+    // full-frame rescan every pass is wasted work there. Anything else (no
+    // hint, or keys on the board that a lock could free from anywhere) gets
+    // the unrestricted sweep, unchanged.
+    if (hint && !fixtures.keys?.length) {
+      settleWorldFromHole(world, frame, steps, hint);
+    } else {
+      settleWorld(world, frame, steps);
+    }
   }
-  return finishWorld(world, frame, steps);
+  return finishWorld(world, frame, steps, fixtures.freezeTriggers ?? []);
 }
 
 // ---- the settle world ----------------------------------------------------
@@ -359,7 +416,13 @@ export function runGrainSettle(
 // grain, a key and a lock can never disagree about what is where.
 
 /** The parts of the board that are not plain falling sand. */
-export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: number; walls?: CellCoord[] };
+export type Fixtures = {
+  locked?: CellCoord[];
+  keys?: SandKey[];
+  friction?: number;
+  walls?: CellCoord[];
+  freezeTriggers?: SandFreezeTrigger[];
+};
 
 /**
  * How many settle passes a key waits at `friction: 1` before a sideways roll
@@ -368,6 +431,17 @@ export type Fixtures = { locked?: CellCoord[]; keys?: SandKey[]; friction?: numb
  */
 const FRICTION_MAX_WAIT_PASSES = 4;
 
+/**
+ * How many cells of coast a key can carry off the bottom of a slope, at most —
+ * one per actual diagonal roll it took getting there (`keyMomentum`), capped
+ * here so a very long slope does not send it skating clear across a flat
+ * floor. Independent of `friction`: that only paces *how many passes* a roll
+ * takes, never how many actual rolls happen, so two keys taking the same
+ * slope at different friction values still arrive with the same momentum and
+ * coast the same distance — see `keyPass`'s own comment.
+ */
+const KEY_COAST_MAX_CELLS = 3;
+
 type World = {
   /** Every sand cell, frozen ones included — locked sand still fills its cell. */
   grid: Map<string, SandColor>;
@@ -375,6 +449,11 @@ type World = {
   /** Wall Obstacle cells — occupied, but never in `grid`: not sand, never
    * moves, never removed. See `WALL_LETTER`'s own comment. */
   walls: Set<string>;
+  /** Freeze Map trigger cells still standing — occupied exactly like a wall
+   * until a shot spends the trigger they belong to (outside this world;
+   * `resolveShot` rebuilds fixtures with the spent one already gone before
+   * the next settle ever sees it). */
+  freezeTriggers: Set<string>;
   keys: Map<string, CellCoord[]>;
   /** Reverse index of `keys`, so occupancy is one lookup rather than a scan. */
   keyAt: Map<string, string>;
@@ -385,6 +464,17 @@ type World = {
    * instead of rolling.
    */
   keyRollWait: Map<string, number>;
+  /**
+   * Cells of coast a key has banked, one per diagonal roll it actually took
+   * (capped at `KEY_COAST_MAX_CELLS`) — spent one at a time, in `keyCoastDir`,
+   * once the slope it built the momentum on runs out. Reset to 0 the instant
+   * the key free-falls straight down instead (a drop has no direction of its
+   * own to coast in) or a coast step itself turns out to be blocked.
+   */
+  keyMomentum: Map<string, number>;
+  /** Which way (`-1`/`1`) `keyMomentum`'s banked cells actually coast — the
+   * direction of whichever diagonal roll most recently built it up. */
+  keyCoastDir: Map<string, -1 | 1>;
   friction: number;
 };
 
@@ -406,13 +496,27 @@ function buildWorld(bodies: SandBody[], fixtures: Fixtures): World {
     for (const cell of key.cells) keyAt.set(cellKey(cell.x, cell.y), key.id);
   }
   const walls = new Set((fixtures.walls ?? []).map((cell) => cellKey(cell.x, cell.y)));
-  return { grid, locked, walls, keys, keyAt, keyRollWait: new Map(), friction: fixtures.friction ?? 0 };
+  const freezeTriggers = new Set(
+    (fixtures.freezeTriggers ?? []).flatMap((trigger) => trigger.cells.map((cell) => cellKey(cell.x, cell.y))),
+  );
+  return {
+    grid,
+    locked,
+    walls,
+    freezeTriggers,
+    keys,
+    keyAt,
+    keyRollWait: new Map(),
+    keyMomentum: new Map(),
+    keyCoastDir: new Map(),
+    friction: fixtures.friction ?? 0,
+  };
 }
 
 function occupied(world: World, frame: SandFrame, x: number, y: number) {
   if (x < 0 || x >= frame.width || y < 0 || y >= frame.height) return true;
   const key = cellKey(x, y);
-  return world.grid.has(key) || world.keyAt.has(key) || world.walls.has(key);
+  return world.grid.has(key) || world.keyAt.has(key) || world.walls.has(key) || world.freezeTriggers.has(key);
 }
 
 /** The 8 neighbours of a cell — used only by `grainTarget`'s own cohesion
@@ -596,42 +700,86 @@ function moveKey(world: World, frame: SandFrame, id: string, dx: number, dy: num
 /**
  * A sideways move a key is allowed to take, throttled by `world.friction`.
  *
- * Free fall is never gated — only this, the sideways case, waits. Returns
- * `true` for both an actual move and a tick spent waiting, because either one
- * is "this key is still doing something" as far as `settleWorld` is concerned;
- * only a move that was never possible at all returns `false`.
+ * Free fall is never gated — only this, the sideways case, waits.
+ * `"blocked"` is the only outcome that was never possible at all; both
+ * `"waiting"` (a tick spent throttled) and `"moved"` (an actual shift) count
+ * as "this key is still doing something" as far as `settleWorld` is
+ * concerned, but `keyPass` needs to tell the two apart to know whether to
+ * bank coast momentum for this roll.
  */
-function rollKey(world: World, frame: SandFrame, id: string, dx: number, dy: number, steps: SettleStep[]) {
-  if (!keyCanMove(world, frame, id, dx, dy)) return false;
+function rollKey(
+  world: World,
+  frame: SandFrame,
+  id: string,
+  dx: number,
+  dy: number,
+  steps: SettleStep[],
+): "moved" | "waiting" | "blocked" {
+  if (!keyCanMove(world, frame, id, dx, dy)) return "blocked";
   const wait = Math.round(world.friction * FRICTION_MAX_WAIT_PASSES);
   const soFar = (world.keyRollWait.get(id) ?? 0) + 1;
   if (soFar <= wait) {
     world.keyRollWait.set(id, soFar);
-    return true;
+    return "waiting";
   }
   world.keyRollWait.set(id, 0);
   moveKey(world, frame, id, dx, dy, steps);
-  return true;
+  return "moved";
 }
 
-/** One pass of falling keys — same rule as a grain, applied to the whole shape. */
+/**
+ * One pass of falling keys — same rule as a grain, applied to the whole
+ * shape, plus one thing a grain does not do: coast a little once a slope
+ * runs out, rather than snapping still on the very pass the ground turns
+ * flat. Each actual diagonal roll banks one cell of momentum
+ * (`world.keyMomentum`, capped at `KEY_COAST_MAX_CELLS`); the moment neither
+ * straight down nor either diagonal is available any more, a key still
+ * holding some spends it one cell at a time in whichever direction it was
+ * last rolling (`world.keyCoastDir`), tapering off over a few passes instead
+ * of stopping dead.
+ */
 function keyPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   let moved = false;
   // Lowest key first, so one resting on another does not jump through it.
   const order = [...world.keys.keys()].sort((a, b) => lowestY(world, a) - lowestY(world, b));
   for (const id of order) {
     if (moveKey(world, frame, id, 0, -1, steps)) {
-      // Free fall, not a roll — friction never gated it, so it owes no wait.
+      // Free fall, not a roll — friction never gated it, so it owes no wait,
+      // and a straight drop has no sideways direction of its own to coast in.
       world.keyRollWait.set(id, 0);
+      world.keyMomentum.set(id, 0);
       moved = true;
       continue;
     }
+    let rolled = false;
     for (const dx of SLIDE_ORDER) {
-      if (rollKey(world, frame, id, dx, -1, steps)) {
-        moved = true;
-        break;
+      const result = rollKey(world, frame, id, dx, -1, steps);
+      if (result === "blocked") continue;
+      rolled = true;
+      if (result === "moved") {
+        const banked = Math.min(KEY_COAST_MAX_CELLS, (world.keyMomentum.get(id) ?? 0) + 1);
+        world.keyMomentum.set(id, banked);
+        world.keyCoastDir.set(id, dx);
       }
+      break;
     }
+    if (rolled) {
+      moved = true;
+      continue;
+    }
+
+    // The slope (or whatever it was rolling on) has run out — neither
+    // gravity nor a fresh diagonal has anywhere left to take it. A key that
+    // built up some roll still coasts a few more cells across the flat
+    // before it truly stops, spending its banked momentum one cell per pass.
+    const momentum = world.keyMomentum.get(id) ?? 0;
+    const coastDir = world.keyCoastDir.get(id);
+    if (momentum > 0 && coastDir !== undefined && moveKey(world, frame, id, coastDir, 0, steps)) {
+      world.keyMomentum.set(id, momentum - 1);
+      moved = true;
+      continue;
+    }
+    world.keyMomentum.set(id, 0);
   }
   return moved;
 }
@@ -740,7 +888,12 @@ function settleWorldFromHole(
 }
 
 /** Re-derive bodies from the settled grid and close the step list. */
-function finishWorld(world: World, frame: SandFrame, steps: SettleStep[]): SettleOutcome {
+function finishWorld(
+  world: World,
+  frame: SandFrame,
+  steps: SettleStep[],
+  freezeTriggers: SandFreezeTrigger[],
+): SettleOutcome {
   const settled: SandBody[] = [];
   const claimed = new Set<string>();
   for (let y = frame.height - 1; y >= 0; y -= 1) {
@@ -781,6 +934,10 @@ function finishWorld(world: World, frame: SandFrame, steps: SettleStep[]): Settl
     locked: sortCells([...world.locked].map(parseCellKey)),
     keys: [...world.keys].map(([id, cells]) => ({ id, cells: sortCells(cells) })),
     walls: sortCells([...world.walls].map(parseCellKey)),
+    // Never spent by a settle (see `freezeTriggers`'s own comment on
+    // `World`) — passed straight through rather than rebuilt from
+    // `world.freezeTriggers`, which would lose each trigger's own id.
+    freezeTriggers,
   };
 }
 
@@ -818,6 +975,37 @@ export function cellsInRadius(
   }
   return sortCells(found);
 }
+
+/**
+ * The first Freeze Map trigger a shot's disc reaches, or null.
+ *
+ * Colour-blind on purpose — a trigger is not sand, so `matchColor` never
+ * applies to it (§3 of the mechanic doc: "bắn trúng nó bằng bất kỳ màu đạn
+ * nào"). Checked against the same disc `cellsInRadius` resolves the shot's
+ * own colour against, so a shot that touches both sand and a trigger does
+ * both in one motion.
+ */
+export function triggerInRadius(
+  triggers: readonly SandFreezeTrigger[],
+  center: CellCoord,
+  radius: number,
+): SandFreezeTrigger | null {
+  const limit = radius * radius;
+  for (const trigger of triggers) {
+    for (const cell of trigger.cells) {
+      const dx = cell.x - center.x;
+      const dy = cell.y - center.y;
+      if (dx * dx + dy * dy <= limit) return trigger;
+    }
+  }
+  return null;
+}
+
+/**
+ * How many shots a Freeze Map trigger freezes the board for when a level
+ * does not say otherwise — see `SandLevelConfig.freezeDuration`.
+ */
+export const DEFAULT_FREEZE_DURATION = 5;
 
 /**
  * How far a shot reaches once `booster` is folded in.
@@ -882,7 +1070,7 @@ export function spendBoosterCharge(type: BoosterType): void {
 // ---- Game state ---------------------------------------------------------
 
 export function createSandGameState(level: SandLevelConfig): SandGameState {
-  const { bodies, locked, keys, walls } = parseSandLevel(level);
+  const { bodies, locked, keys, walls, freezeTriggers } = parseSandLevel(level);
   const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
   // A colour that starts entirely locked is authored into the wheel — it has to
   // be, or it could never be shot once freed — but it must not be *handed out*
@@ -901,13 +1089,21 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
     locked,
     keys,
     walls,
+    freezeTriggers,
+    freezeShotsRemaining: 0,
     result: null,
   };
 }
 
 /** The board's non-sand furniture, in the shape the solver wants it. */
 export function fixturesOf(level: SandLevelConfig, state: SandGameState): Fixtures {
-  return { locked: state.locked, keys: state.keys, walls: state.walls, friction: level.keyFriction ?? 0 };
+  return {
+    locked: state.locked,
+    keys: state.keys,
+    walls: state.walls,
+    freezeTriggers: state.freezeTriggers,
+    friction: level.keyFriction ?? 0,
+  };
 }
 
 /** Cell keys of everything frozen, for the lookups a shot and a redraw need. */
@@ -963,11 +1159,50 @@ export type ShotResolution = {
 type AmmoDraw = Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed">;
 
 /**
- * One random, uniform pick from `shootable` — repeats and all — plus the
- * pity/seed state the *next* draw needs. Every candidate not picked has
- * waited one draw longer, `pity` says so, and `seededUnit` is what turns
- * `seed` into this draw's pick, so the same state always produces the same
- * one (§9, this file's header comment).
+ * A colour whose remaining sand sits this far below the average of
+ * everything still shootable — see `drawAmmo`'s own comment for what this
+ * changes about how often it can come up. Half the average, not some fixed
+ * grain count: what counts as "barely any left" scales with the board, so a
+ * tiny level and a huge one both get the same *relative* read on which
+ * colour is the thin one.
+ */
+const SCARCE_COLOR_SHARE = 0.5;
+/**
+ * How many other draws a scarce colour must sit out before it is allowed to
+ * repeat. 2 — drawn, skipped, skipped, eligible again — reads as "spaced a
+ * few bullets apart", the least this could be while still being more than
+ * the "sits right next to itself" a plain uniform draw allowed.
+ */
+const SCARCE_COLOR_MIN_GAP = 2;
+
+/**
+ * Total live cells per colour, across every body — frozen cells count too:
+ * a slab still waiting on its key is still part of how much of that colour
+ * the picture actually holds, even while none of it can be shot yet.
+ */
+function cellCountsByColor(bodies: SandBody[]): Partial<Record<SandColor, number>> {
+  const counts: Partial<Record<SandColor, number>> = {};
+  for (const body of bodies) counts[body.color] = (counts[body.color] ?? 0) + body.cells.length;
+  return counts;
+}
+
+/**
+ * One random pick from `shootable` — uniform among whichever of them are
+ * actually eligible this draw — plus the pity/seed state the *next* draw
+ * needs. Every candidate not picked has waited one draw longer, `pity` says
+ * so, and `seededUnit` is what turns `seed` into this draw's pick, so the
+ * same state always produces the same one (§9, this file's header comment).
+ *
+ * `scarce` names which colours are thin enough on the board that a plain
+ * uniform draw could hand two of them out right next to each other — fine
+ * for a colour with sand to spare, but a rare one repeating immediately
+ * reads as the wheel wasting the only two bullets worth anything on the
+ * same tiny patch. A scarce colour is filtered out until it has sat out
+ * `SCARCE_COLOR_MIN_GAP` draws (`pity` already counts exactly that), so it
+ * still comes up often — insurance (`drainOverdue`) still forces it through
+ * same as any other colour — just never twice in a row. Filtering down to
+ * nothing (every remaining colour is scarce and still sitting out its gap)
+ * falls back to the full list rather than a draw with nowhere to pick from.
  *
  * No insurance logic here on purpose — see `drainOverdue`, `fillQueue`'s
  * other half. A single draw can only ever clear one colour's wait to zero,
@@ -976,9 +1211,16 @@ type AmmoDraw = Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed">;
  * drain every overdue colour first, however many there are, before spending
  * a real draw here.
  */
-function drawAmmo(shootable: readonly SandColor[], pity: Partial<Record<SandColor, number>>, seed: number) {
+function drawAmmo(
+  shootable: readonly SandColor[],
+  pity: Partial<Record<SandColor, number>>,
+  seed: number,
+  scarce: ReadonlySet<SandColor>,
+) {
   const nextSeed = seed + 1;
-  const color = shootable[Math.min(shootable.length - 1, Math.floor(seededUnit(nextSeed) * shootable.length))];
+  const eligible = shootable.filter((color) => !scarce.has(color) || (pity[color] ?? 0) >= SCARCE_COLOR_MIN_GAP);
+  const pool = eligible.length ? eligible : shootable;
+  const color = pool[Math.min(pool.length - 1, Math.floor(seededUnit(nextSeed) * pool.length))];
   const nextPity: Partial<Record<SandColor, number>> = {};
   for (const candidate of shootable) {
     nextPity[candidate] = candidate === color ? 0 : (pity[candidate] ?? 0) + 1;
@@ -1061,6 +1303,15 @@ function fillQueue(
       if (!previousShootable.has(color) && !kept.includes(color)) kept.push(color);
     }
   }
+  // Computed once per call, off the same `bodies` snapshot every draw below
+  // shares — a shot resolves before the next `fillQueue` call, never in the
+  // middle of this one, so which colours count as scarce cannot change
+  // partway through filling the queue back up.
+  const counts = cellCountsByColor(bodies);
+  const totalCells = shootable.reduce((sum, color) => sum + (counts[color] ?? 0), 0);
+  const averageCells = shootable.length ? totalCells / shootable.length : 0;
+  const scarce = new Set(shootable.filter((color) => (counts[color] ?? 0) < averageCells * SCARCE_COLOR_SHARE));
+
   let nextPity = pity;
   let nextSeed = seed;
   const target = 1 + level.nextPreviewCount;
@@ -1082,7 +1333,7 @@ function fillQueue(
       continue;
     }
     if (kept.length >= target || shootable.length === 0) break;
-    const drawn = drawAmmo(shootable, nextPity, nextSeed);
+    const drawn = drawAmmo(shootable, nextPity, nextSeed, scarce);
     kept.push(drawn.color);
     nextPity = drawn.pity;
     nextSeed = drawn.seed;
@@ -1142,7 +1393,16 @@ function withResult(level: SandLevelConfig, state: SandGameState): SandGameState
  * is nothing to normalise first: the labels it hands back are already true of
  * the settled grid.
  */
-function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures: Fixtures, removed: CellCoord[]) {
+function settleAfterRemoval(
+  level: SandLevelConfig,
+  bodies: SandBody[],
+  fixtures: Fixtures,
+  /** Cells this shot disturbed — the sand it removed, plus (when it also
+   * spent a Freeze Map trigger) the cells that trigger used to occupy. Either
+   * source opens new empty space the cascade below might start from. */
+  disturbed: CellCoord[],
+  frozen: boolean,
+) {
   // The hole a radius shot bites is one contiguous disc, so its own bounding
   // box (plus a little slack for the fall's own sideways roll) is where every
   // bit of the cascade it triggers actually starts — see `runGrainSettle`'s
@@ -1150,7 +1410,7 @@ function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures
   // board (a solid Level 2/3 picture) would otherwise pay for a full-frame
   // rescan on every settle pass just to confirm the far side never moved.
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const cell of removed) {
+  for (const cell of disturbed) {
     if (cell.x < minX) minX = cell.x;
     if (cell.x > maxX) maxX = cell.x;
     if (cell.y < minY) minY = cell.y;
@@ -1161,7 +1421,7 @@ function settleAfterRemoval(level: SandLevelConfig, bodies: SandBody[], fixtures
     y: (minY + maxY) / 2,
     radius: Math.max(maxX - minX, maxY - minY) / 2 + 1,
   };
-  const settle = runGrainSettle(bodies, level.frame, fixtures, hint);
+  const settle = runGrainSettle(bodies, level.frame, fixtures, hint, frozen);
   return { settle, steps: settle.steps };
 }
 /**
@@ -1203,13 +1463,8 @@ export function resolveShot(
   // Read before this shot changes anything — a colour missing here that is
   // shootable again after `spend` just had its lock opened this turn, see
   // `fillQueue`'s `previousShootable` parameter.
-  const frozen = frozenSet(state);
-  const previousShootable = new Set(shootableColors(state.bodies, frozen));
-
-  const spend = (bodies: SandBody[], stillFrozen: ReadonlySet<string>): Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed" | "shotsUsed"> => ({
-    ...fillQueue(level, state.queue.slice(1), state.ammoPity, state.ammoSeed, bodies, stillFrozen, previousShootable),
-    shotsUsed: state.shotsUsed + 1,
-  });
+  const frozenLocked = frozenSet(state);
+  const previousShootable = new Set(shootableColors(state.bodies, frozenLocked));
 
   // A radius shot is aimed at a place, not at a region: it takes every matching
   // grain inside the disc, across as many bodies as the disc happens to touch,
@@ -1222,18 +1477,56 @@ export function resolveShot(
   // same shot (the renderer's own call to `effectiveSortRadius`) stays
   // exactly what it always was, so only what a shot actually sweeps grew.
   const radius = effectiveSortRadius(level, booster) + SORT_RADIUS_FORGIVENESS;
-  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozen, {
+  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozenLocked, {
     matchColor: booster !== "prismShot",
   });
+
+  // Freeze Map: checked against the same disc, entirely independently of
+  // whether `removed` found anything — a trigger is not sand, so it neither
+  // needs nor cares about a colour match (`triggerInRadius`'s own comment).
+  const hitTrigger = triggerInRadius(state.freezeTriggers, { x: hit.x, y: hit.y }, radius);
+  const wasFrozen = state.freezeShotsRemaining > 0;
+  // A trigger only actually fires if Freeze isn't already running — reached
+  // while already frozen, it does nothing and is NOT spent (see
+  // `SandGameState.freezeTriggers`'s own comment), so a shot fired at an
+  // already-active effect costs nothing but its own ordinary outcome.
+  const activatedFreeze = hitTrigger !== null && !wasFrozen;
+  const nextFreezeTriggers = activatedFreeze
+    ? state.freezeTriggers.filter((trigger) => trigger.id !== hitTrigger!.id)
+    : state.freezeTriggers;
+  // The trigger-hitting shot is itself the first frozen one — the count
+  // (and the bar it drives) starts at full the instant the disc reaches the
+  // trigger, not on the next shot after it.
+  const frozenThisShot = activatedFreeze || wasFrozen;
+  const freezeShotsAfter = activatedFreeze
+    ? (level.freezeDuration ?? DEFAULT_FREEZE_DURATION)
+    : wasFrozen
+      ? Math.max(0, state.freezeShotsRemaining - 1)
+      : 0;
+
+  const spend = (
+    bodies: SandBody[],
+    stillFrozen: ReadonlySet<string>,
+  ): Pick<SandGameState, "queue" | "ammoPity" | "ammoSeed" | "shotsUsed" | "freezeShotsRemaining"> => ({
+    ...fillQueue(level, state.queue.slice(1), state.ammoPity, state.ammoSeed, bodies, stillFrozen, previousShootable),
+    shotsUsed: state.shotsUsed + 1,
+    freezeShotsRemaining: freezeShotsAfter,
+  });
+
   if (!removed.length) {
-    const missed = { ...state, ...spend(state.bodies, frozen) };
+    // Freeze starts the instant its trigger is hit, so a shot that only
+    // spent the trigger (found no sand of its own colour) never has
+    // anything left to settle — the board was already frozen for this same
+    // shot, before anything could fall.
+    const missed = { ...state, ...spend(state.bodies, frozenLocked), freezeTriggers: nextFreezeTriggers };
     return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody };
   }
   const taken = new Set(removed.map((cell) => cellKey(cell.x, cell.y)));
   const left = state.bodies
     .map((body) => ({ ...body, cells: body.cells.filter((cell) => !taken.has(cellKey(cell.x, cell.y))) }))
     .filter((body) => body.cells.length);
-  const { settle, steps } = settleAfterRemoval(level, left, fixturesOf(level, state), removed);
+  const fixtures: Fixtures = { ...fixturesOf(level, state), freezeTriggers: nextFreezeTriggers };
+  const { settle, steps } = settleAfterRemoval(level, left, fixtures, removed, frozenThisShot);
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
   let sorted: SandGameState = {
     ...state,
@@ -1243,6 +1536,7 @@ export function resolveShot(
     locked: settle.locked,
     keys: settle.keys,
     walls: settle.walls,
+    freezeTriggers: settle.freezeTriggers,
   };
 
   // A landed shot that spends the last bullet is allowed to sweep away a tiny

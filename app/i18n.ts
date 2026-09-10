@@ -109,6 +109,14 @@ export interface Strings {
   boosterAria: (name: string, left: number) => string;
   shotInFlight: string;
   sandSettling: string;
+  /** The Freeze Map bar's aria-label — `shots` is how many shots are left
+   * with the board frozen. */
+  freezeCooldown: (shots: number) => string;
+  /** Short label printed directly on the Freeze Map bar itself (on request)
+   * — unlike `freezeCooldown` above, this has no shot count baked in, since
+   * it sits on screen the whole time the bar is visible rather than being
+   * read once by a screen reader. */
+  freezeLabel: string;
 
   // ---- Toasts --------------------------------------------------------------------
   toastNotEnoughEmerald: string;
@@ -136,13 +144,28 @@ export interface Strings {
   affordableSuffix: string;
   youUnlocked: (name: string) => string;
   tapToContinue: string;
+  /** The Skin screen's label for a `unlockLevel` skin — replaces the emerald
+   * price everywhere one would otherwise show (the grid card's price pill,
+   * the main preview panel's own locked button), since the skin is not for
+   * sale at any price. */
+  progressionLabel: string;
+  /** Same skin's aria-only equivalent of `lockedSuffix`, read out with the
+   * skin's own name the same way — "clear Level 20" rather than a price that
+   * does not apply to it. */
+  progressionLockedSuffix: (level: number) => string;
+  /** The two-button progression reveal (`levelUnlockChoice` in
+   * `SandGame.tsx`) that follows a level clear which just unlocked a skin —
+   * distinct from `youUnlocked`/`tapToContinue` above, which is the
+   * purchase-flow reveal's own single-tap dismissal. */
+  equipUnlockedQuestion: string;
+  equipNowLabel: string;
+  noContinueLabel: string;
 
   // ---- Gallery -----------------------------------------------------------------
   galleryTitle: string;
   lockedCardTitle: string;
   lockedLabel: string;
   fromEditorSuffix: string;
-
   // ---- Shop --------------------------------------------------------------------
   shopTitle: string;
   gemsAria: (amount: number) => string;
@@ -237,6 +260,18 @@ const EN_COLOR_NAME: Record<SandColor, string> = {
   brown: "BROWN",
   white: "WHITE",
   black: "BLACK",
+  grass: "GRASS",
+  teal: "TEAL",
+  skyblue: "SKY BLUE",
+  indigo: "INDIGO",
+  magenta: "MAGENTA",
+  crimson: "CRIMSON",
+  darkbrown: "DARK BROWN",
+  violet: "VIOLET",
+  navy: "NAVY",
+  emerald: "EMERALD",
+  rust: "RUST",
+  mint: "MINT",
 };
 
 const VI_COLOR_NAME: Record<SandColor, string> = {
@@ -252,6 +287,18 @@ const VI_COLOR_NAME: Record<SandColor, string> = {
   brown: "NÂU",
   white: "TRẮNG",
   black: "ĐEN",
+  grass: "XANH CỎ",
+  teal: "XANH LỤC LAM",
+  skyblue: "XANH DA TRỜI",
+  indigo: "CHÀM",
+  magenta: "HỒNG CÁNH SEN",
+  crimson: "ĐỎ SON",
+  darkbrown: "NÂU ĐẬM",
+  violet: "TÍM HOA CÀ",
+  navy: "XANH HẢI QUÂN",
+  emerald: "XANH LỤC BẢO",
+  rust: "ĐỎ GẠCH",
+  mint: "XANH BẠC HÀ",
 };
 
 const EN: Strings = {
@@ -289,6 +336,8 @@ const EN: Strings = {
   boosterAria: (name, left) => `${name} — ${left} left`,
   shotInFlight: "Shot in flight",
   sandSettling: "Sand settling",
+  freezeCooldown: (shots) => `Frozen — ${shots} shot${shots === 1 ? "" : "s"} left`,
+  freezeLabel: "FREEZE",
 
   toastNotEnoughEmerald: "Not enough Blue Emerald",
   toastNoColorInRange: (color) => `No ${color} in range — shot spent`,
@@ -303,8 +352,9 @@ const EN: Strings = {
   dragToAim: "Drag to aim, release to fire",
   dragToAimCaption: "Drag to aim · release to fire",
 
-  costumeName: (id) => (id === "rune-cannon" ? "Rune Cannon" : "Field Cannon"),
-  costumeTagline: (id) => (id === "rune-cannon" ? "Charge. Sparkle. Repeat." : "Load. Aim. Boom."),
+  costumeName: (id) => (id === "rune-cannon" ? "Rune Cannon" : id === "hero-cannon" ? "Hero Cannon" : "Field Cannon"),
+  costumeTagline: (id) =>
+    id === "rune-cannon" ? "Charge. Sparkle. Repeat." : id === "hero-cannon" ? "Quest. Aim. Onward." : "Load. Aim. Boom.",
   buyLabel: "Buy",
   selectLabel: "Select",
   selectedLabel: "Selected",
@@ -313,6 +363,11 @@ const EN: Strings = {
   affordableSuffix: ", you can afford this",
   youUnlocked: (name) => `You unlocked ${name}!`,
   tapToContinue: "Tap to continue",
+  progressionLabel: "Progression",
+  progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
+  equipUnlockedQuestion: "Equip it now, or keep your current cannon?",
+  equipNowLabel: "Equip",
+  noContinueLabel: "No, continue",
 
   galleryTitle: "Gallery",
   lockedCardTitle: "Clear the level before this one to unlock",
@@ -427,6 +482,8 @@ const VI: Strings = {
   boosterAria: (name, left) => `${name} — còn ${left}`,
   shotInFlight: "Đạn đang bay",
   sandSettling: "Cát đang lắng",
+  freezeCooldown: (shots) => `Đóng băng — còn ${shots} lượt`,
+  freezeLabel: "FREEZE",
 
   toastNotEnoughEmerald: "Không đủ Blue Emerald",
   toastNoColorInRange: (color) => `Không có màu ${color} trong tầm — vẫn mất một phát`,
@@ -441,8 +498,9 @@ const VI: Strings = {
   dragToAim: "Kéo để ngắm, thả để bắn",
   dragToAimCaption: "Kéo để ngắm · thả để bắn",
 
-  costumeName: (id) => (id === "rune-cannon" ? "Pháo Rune" : "Pháo Chiến Trường"),
-  costumeTagline: (id) => (id === "rune-cannon" ? "Nạp phép. Lấp lánh. Lặp lại." : "Nạp đạn. Ngắm. Bùm."),
+  costumeName: (id) => (id === "rune-cannon" ? "Pháo Rune" : id === "hero-cannon" ? "Pháo Anh Hùng" : "Pháo Chiến Trường"),
+  costumeTagline: (id) =>
+    id === "rune-cannon" ? "Nạp phép. Lấp lánh. Lặp lại." : id === "hero-cannon" ? "Phiêu lưu. Ngắm. Tiến bước." : "Nạp đạn. Ngắm. Bùm.",
   buyLabel: "Mua",
   selectLabel: "Chọn",
   selectedLabel: "Đã chọn",
@@ -451,6 +509,13 @@ const VI: Strings = {
   affordableSuffix: ", bạn đủ tiền mua",
   youUnlocked: (name) => `Bạn đã mở khoá ${name}!`,
   tapToContinue: "Chạm để tiếp tục",
+  // Kept in English on purpose — "Progression" per the design ask, the same
+  // way "Blue Emerald" above stays untranslated.
+  progressionLabel: "Progression",
+  progressionLockedSuffix: (level) => `, đang khoá — hoàn thành Level ${level}`,
+  equipUnlockedQuestion: "Trang bị ngay, hay giữ pháo hiện tại?",
+  equipNowLabel: "Trang bị",
+  noContinueLabel: "Không, tiếp tục",
 
   galleryTitle: "Bộ sưu tập",
   lockedCardTitle: "Hoàn thành màn trước để mở khoá",

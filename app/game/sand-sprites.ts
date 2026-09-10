@@ -42,6 +42,24 @@ export const PADLOCK_SPRITE: PixelSprite = [
   "#####",
 ];
 
+/**
+ * The Freeze Map trigger — an hourglass silhouette, chosen so its shape alone
+ * (before colour ever enters it) cannot be mistaken for the key's plain disc.
+ * Like `KEY_SPRITE`, every filled cell is 4-connected — the two triangles
+ * only ever touch along the shared pinch at the centre column, never at a
+ * bare corner, so `parseSandLevel`'s connectivity grouping sees one trigger,
+ * not two.
+ */
+export const FREEZE_SPRITE: PixelSprite = [
+  "#.....#",
+  "##...##",
+  ".##.##.",
+  "..###..",
+  ".##.##.",
+  "##...##",
+  "#.....#",
+];
+
 export function spriteWidth(sprite: PixelSprite) {
   return sprite.reduce((widest, row) => Math.max(widest, row.length), 0);
 }

@@ -162,6 +162,7 @@ function draftToTypeScript(draft, id, constName) {
   const rows = draft.rows.map((row) => `    ${quoted(row)},`).join("\n");
   const queue = draft.ammoQueue.map((color) => quoted(color)).join(", ");
   const friction = (draft.keyFriction ?? 0) > 0 ? `\n  keyFriction: ${draft.keyFriction},\n` : "";
+  const freeze = (draft.freezeDuration ?? 0) > 0 ? `\n  freezeDuration: ${draft.freezeDuration},\n` : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -183,7 +184,7 @@ ${rows}
 
   // ${draft.width} x ${draft.height} blueprint at ${scale}x = ${pixels.toLocaleString()} simulated pixels.
   pixelScale: ${scale},
-${friction}};`;
+${friction}${freeze}};`;
 }
 
 function isDraft(value) {

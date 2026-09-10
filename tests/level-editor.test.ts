@@ -31,6 +31,16 @@ import {
   twentyEighthLevel,
   twentyNinthLevel,
   thirtiethLevel,
+  thirtyFirstLevel,
+  thirtySecondLevel,
+  thirtyThirdLevel,
+  thirtyFourthLevel,
+  thirtyFifthLevel,
+  thirtySixthLevel,
+  thirtySeventhLevel,
+  thirtyEighthLevel,
+  thirtyNinthLevel,
+  fortiethLevel,
   BUILT_IN_LEVELS,
 } from "../design/levels/sand-levels.ts";
 import { sandBloom } from "./level-fixtures.ts";
@@ -407,9 +417,10 @@ test("a name with a quote cannot break out of the generated string", () => {
 // ---- the shipped level stays a valid draft target -------------------------
 
 test("the built-in level list is what the game and editor both start from", () => {
-  // Thirty hand-authored levels (1-3: the tutorial arc; 4-10: beatchart arc
-  // 1; 11-20: arc 2, Wall Obstacle; 21-30: arc 3, Lock & Key) — everything
-  // past that is authored and shipped from the editor now.
+  // Forty hand-authored levels (1-3: the tutorial arc; 4-10: beatchart arc 1;
+  // 11-20: arc 2, Wall Obstacle; 21-30: arc 3, Lock & Key; 31-40: arc 4,
+  // Freeze Map) — everything past that is authored and shipped from the
+  // editor now.
   const handAuthored = [
     defaultLevel, secondConsequence, thirdLevel,
     fourthLevel, fifthLevel, sixthLevel, seventhLevel, eighthLevel, ninthLevel, tenthLevel,
@@ -417,12 +428,14 @@ test("the built-in level list is what the game and editor both start from", () =
     sixteenthLevel, seventeenthLevel, eighteenthLevel, nineteenthLevel, twentiethLevel,
     twentyFirstLevel, twentySecondLevel, twentyThirdLevel, twentyFourthLevel, twentyFifthLevel,
     twentySixthLevel, twentySeventhLevel, twentyEighthLevel, twentyNinthLevel, thirtiethLevel,
+    thirtyFirstLevel, thirtySecondLevel, thirtyThirdLevel, thirtyFourthLevel, thirtyFifthLevel,
+    thirtySixthLevel, thirtySeventhLevel, thirtyEighthLevel, thirtyNinthLevel, fortiethLevel,
   ];
   for (const level of handAuthored) assert.ok(BUILT_IN_LEVELS.includes(level));
-  assert.equal(BUILT_IN_LEVELS.length, 30);
+  assert.equal(BUILT_IN_LEVELS.length, 40);
   assert.deepEqual(
     BUILT_IN_LEVELS.map((level) => level.id),
-    Array.from({ length: 30 }, (_, index) => index + 1),
+    Array.from({ length: 40 }, (_, index) => index + 1),
     "ids are what the HUD shows",
   );
 });

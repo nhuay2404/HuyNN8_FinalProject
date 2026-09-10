@@ -14,7 +14,15 @@ import {
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
 import { sound, soundSandLanded, startAmbience, stopAmbience } from "./sound";
-import { SAND_LIGHTNESS_JITTER, SAND_SATURATION_JITTER, darkenAndSaturate, jitterColor } from "./sand-color";
+import {
+  SAND_LIGHTNESS_JITTER,
+  SAND_SATURATION_JITTER,
+  darkenAndSaturate,
+  freezeBevelRgb,
+  jitterColor,
+  keyBevelRgb,
+  wallBevelRgb,
+} from "./sand-color";
 // Only the padlock: the key's shape is whatever cells the level authored, and
 // this file draws them rather than deciding them.
 import { PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./sand-sprites";
@@ -78,11 +86,39 @@ export const SAND_COLOR_HEX: Record<SandColor, number> = {
   // Not from the designer's reference board above (it never had a white or a
   // black) — picked to match its register instead: a warm off-white rather
   // than flat #fff (which would read as a blown-out highlight, not sand),
-  // a dark graphite rather than flat #000 (which would read as a hole/shadow
-  // in the frame, and would sit too close to this file's own `WALL_HEX`
-  // (`#6b7280`, Wall Obstacle's grey) if it were any lighter).
+  // a mid graphite grey rather than flat #000 (which would read as a hole/
+  // shadow in the frame). Lightened and neutralised from an earlier, darker
+  // and slightly purple-tinted pick per feedback that it read as too close
+  // to black rather than grey — which also pushes it further from Wall
+  // Obstacle's own near-black (`wallBevelRgb`, ./sand-color) than before,
+  // not closer, so the two still never get confused for one another.
   white: 0xede7d9,
-  black: 0x2e2b31,
+  black: 0x59565c,
+  // The six below round the hue wheel out past the original 12 — grass and
+  // sky blue fill the two gaps the reference board itself never had a
+  // swatch for (see this const's own header comment), teal and indigo split
+  // the wide cool-to-warm gaps either side of them further, and magenta/
+  // crimson give the purple/pink cluster and the red cluster each a fully
+  // saturated primary the softer originals (`purple`, `red`) deliberately
+  // aren't.
+  grass: 0x4fd07a,
+  teal: 0x1fb6a6,
+  skyblue: 0x3d9be0,
+  indigo: 0x6c5ce0,
+  magenta: 0xe0459e,
+  crimson: 0xe8433f,
+  // A third batch, past even the eighteen above — see `SAND_COLORS`
+  // (sand-types.ts) for why these six specifically. Not sourced from the
+  // designer's reference board (it stopped at 18); picked by hand to land in
+  // the real gaps that board's own hues left and to add tone the first
+  // eighteen had none of (`darkbrown` actually reads dark; `brown` above is
+  // tan/khaki) rather than another mid-saturation pastel.
+  darkbrown: 0x6b4021,
+  violet: 0x9b4fd1,
+  navy: 0x2f4b8f,
+  emerald: 0x2fae5f,
+  rust: 0xd1541f,
+  mint: 0xb8f2dd,
 };
 
 // ---- inherited cannon parameters ----------------------------------------
@@ -374,20 +410,28 @@ const SAND_SPRAY_GRAVITY_SCALE = 5;
 const SAND_SPRAY_MIN_SCALE = 0.9;
 const SAND_SPRAY_MAX_SCALE = 1.6;
 
-// ---- sparkle bling (rune-cannon flavor: "magic") -------------------------
-// The rune costume's extra layer on top of the always-on smoke/sand-spray
-// above: a burst of faceted light shards at the muzzle, a thin trickle while
-// a shot is in flight, and a burst again on impact. Shards leave the pool by
+// ---- sparkle bling (rune-cannon flavor: "magic", hero-cannon's own) ------
+// One shared shard pool, two costumes' worth of colours drawn from it: the
+// rune costume's faceted light (a burst at the muzzle, a thin trickle while
+// a shot is in flight, and a burst again on impact) and the hero costume's
+// own leaf-and-gold version of the same three beats — see
+// `sparkleBlingColors`, the one place that decides which costume gets a
+// burst at all and which palette it draws from. Shards leave the pool by
 // shrinking, same as smoke — see `updateSparkles`. Also where a Prism Shot's
 // own rainbow trail draws from (`spawnPrismTrail`); sized generously enough
 // that its dense, long-lived shards don't round-robin over each other and
-// cut the ribbon short, even with a magic-costume trail alive at the same time.
+// cut the ribbon short, even with a bling trail alive at the same time.
 const SPARKLE_POOL_SIZE = 100;
 const SPARKLE_DRAG = 0.94;
 /** Roughly how often the flight trail spawns a shard — not every tick, or a
  * shot's whole arc would be one continuous smear rather than a trail. */
 const SPARKLE_TRAIL_INTERVAL = 0.03;
 const SPARKLE_COLORS = [0xffffff, 0xffd54a, 0xff8ad8, 0x9fe8ff];
+/** The Hero Cannon's own bling palette — the skin's own tunic green, gold
+ * trim and gem teal (`costumes.ts`'s `buildHeroCannon`), so the shards read
+ * as leaf-light and gold dust off the cannon's own gear rather than a second
+ * coat of the rune costume's white/pink/blue magic. */
+const HERO_SPARKLE_COLORS = [0x3fae5a, 0xf4c430, 0x2fd0c4];
 
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
@@ -508,6 +552,18 @@ const PLANE_LOCAL_Z_RATIO = 0.5;
  * size. `buildSand` reads these too, to park the back-facing picture just outside it. */
 const BACKING_Z_RATIO = -0.72;
 const BACKING_DEPTH_RATIO = 0.3;
+/**
+ * The frame's ordinary colours (wood-brown rails, cream backing/lip) versus
+ * its Freeze Map colours (dark blue rails, blue-white backing/lip) — on
+ * request, the icy look only applies while the board is actually frozen
+ * (`this.state.freezeShotsRemaining > 0`), not for the level's whole life.
+ * `syncFrameFreezeColor` swaps between these two pairs as freeze state
+ * changes; `buildFrame` just picks the starting one.
+ */
+const FRAME_RAIL_COLOR = 0xb98a5e;
+const FRAME_RAIL_COLOR_FROZEN = 0x2c5f86;
+const FRAME_INNER_COLOR = 0xd8c6a6;
+const FRAME_INNER_COLOR_FROZEN = 0xdcedf7;
 /** How fast the picture turns on the home screen, one full turn per this many seconds. */
 const IDLE_SPIN_SECONDS_PER_TURN = 10;
 /** How long the picture takes to ease back to its authored, unrotated orientation once the
@@ -608,17 +664,32 @@ const LOCK_DARKEN = 0.62;
 /** The padlock drawn on top of a locked region, and the smallest region worth one. */
 const LOCK_ICON_RGB: readonly [number, number, number] = [236, 243, 255];
 const LOCK_ICON_SHADOW_RGB: readonly [number, number, number] = [12, 10, 26];
-/** The key's own gold, and a pale glint that orbits the disc as it moves —
- * the one cue that reads as "rolling" on a shape with no notch or seam to
- * track otherwise. No drop shadow (see `redrawSand`). */
-const KEY_RGB: readonly [number, number, number] = [255, 214, 84];
+/** The key's own gold — embossed into a coin by `keyBevelRgb` (./sand-color)
+ * — plus a pale glint that orbits the disc as it moves, the one cue that
+ * reads as "rolling" on a shape with no notch or seam to track otherwise.
+ * No drop shadow (see `redrawSand`). */
 const KEY_GLINT_RGB: readonly [number, number, number] = [255, 250, 214];
-/** Wall Obstacle's stone grey — flat and colourless on purpose, so it never
- * reads as a sand colour the wheel might hand out (`LevelEditor.tsx` paints
- * the same hex for its own preview canvas). Per-cell jittered the same way
- * sand is (`jitterColor`), so a wall reads as a textured surface rather than
- * a single dead-flat rectangle. */
-const WALL_HEX = 0x6b7280;
+// ---- key idle sparkle ------------------------------------------------------
+// A slow twinkle of warm-gold shards a settled key starts giving off once it
+// has sat motionless a while — "I'm still here, still waiting on a lock" for
+// a key that can otherwise sit buried in a picture's own colours. Reuses the
+// costume sparkle pool (`spawnSparkles`) rather than a pool of its own —
+// see `updateKeyIdleSparkle`.
+/** How long a key must sit still, in real (`performance.now()`) milliseconds,
+ * before it starts sparkling — long enough that a key still mid-fall or
+ * mid-roll between settle passes never flickers one on and off. */
+const KEY_IDLE_SPARKLE_DELAY_MS = 1500;
+/** How often an idle key spawns a fresh little burst — a slow ambient
+ * twinkle, not the sparkle bling's own dense one-shot burst. */
+const KEY_IDLE_SPARKLE_INTERVAL_MS = 220;
+/** The key's own warm gold (same register as `KEY_GLINT_RGB` above), fixed
+ * regardless of the equipped cannon skin — this reads as light off the key
+ * itself, so it never goes through `sparkleBlingColors()`. */
+const KEY_IDLE_SPARKLE_COLORS = [0xfff2b8, 0xffd54a, 0xffe9a3];
+// Wall Obstacle's colour — flat matte black, embossed at its own outline,
+// colourless on purpose so it never reads as a sand colour the wheel might
+// hand out — lives in `wallBevelRgb` (./sand-color), shared with
+// `LevelEditor.tsx`'s own preview canvas so a wall looks the same in both.
 const THAW_SECONDS = 0.5;
 /** How quickly a grain eases up to full lift once the aim radius reaches it —
  * brisk, so the highlight reads as tracking the crosshair rather than lagging
@@ -897,6 +968,34 @@ export class SandCannonEngine {
   /** Wall Obstacle cells, fixed for the level's whole life — set once in
    * `buildSand` and never touched again, unlike `keys`/lock state above. */
   private walls: CellCoord[] = [];
+  /** `this.walls`, as `cellKey` strings — `redrawSand`'s bevel pass does four
+   * neighbour lookups per wall pixel every frame, so this is built once
+   * alongside `this.walls` rather than re-derived from the array on every
+   * single one of those lookups. */
+  private wallSet = new Set<string>();
+  /**
+   * Freeze Map trigger cells still standing, flattened across every trigger
+   * on the board. Unlike `walls` this is NOT fixed for the level's whole
+   * life — `syncFreezeTriggers` rebuilds it from `this.state.freezeTriggers`
+   * every time a shot resolves, since a trigger disappears the instant a
+   * shot's disc reaches it.
+   */
+  private freezeTriggers: CellCoord[] = [];
+  /** `this.freezeTriggers`, as `cellKey` strings — same reason `wallSet`
+   * exists alongside `walls`: the bevel pass needs four neighbour lookups
+   * per pixel, every redraw. */
+  private freezeTriggerSet = new Set<string>();
+  /**
+   * The frame's rails/posts and its inner backing+lip, kept as instance
+   * fields (rather than local to `buildFrame`) so `syncFrameFreezeColor` can
+   * repaint them later — on request, the frame only turns icy while the
+   * board is actually frozen (`this.state.freezeShotsRemaining > 0`), not
+   * for the level's whole life, so something has to be able to flip the
+   * colour back and forth after `buildFrame` already ran once.
+   */
+  private frameRailMaterial: THREE.MeshBasicMaterial | null = null;
+  private frameBackingMaterial: THREE.MeshBasicMaterial | null = null;
+  private frameInnerMaterial: THREE.MeshBasicMaterial | null = null;
   /**
    * How far each key has rolled, in radians, accumulated as it moves.
    *
@@ -906,6 +1005,15 @@ export class SandCannonEngine {
    * disc of its own measured radius would if it were truly rolling.
    */
   private keyRotation = new Map<string, number>();
+  /** Real-time (`performance.now()`) timestamp of each key's last actual
+   * shift — stamped at creation (`buildSand`) and on every genuine
+   * `KEY_MOVE` (`applyStep`), deleted alongside `keys`/`keyRotation` on
+   * `UNLOCK`. `updateKeyIdleSparkle` compares against this to know which
+   * keys have sat still long enough to start sparkling. */
+  private keyLastMovedAt = new Map<string, number>();
+  /** When each idle key last spawned a sparkle burst, so `updateKeyIdleSparkle`
+   * can throttle to `KEY_IDLE_SPARKLE_INTERVAL_MS` instead of every tick. */
+  private keyLastSparkleAt = new Map<string, number>();
   /** Padlock placements, and whether the locked cells have changed under them. */
   private lockRegionCache: Array<{ icon: CellCoord[] }> = [];
   private lockRegionsDirty = true;
@@ -1191,29 +1299,37 @@ export class SandCannonEngine {
     const backing = this.track(
       new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
-    // Light greige (warm light grey-brown), matching the frame's own wood
-    // tone rather than the near-black this used to be. Unlit (MeshBasic, not
-    // Lambert): flat regardless of the scene's lights, same reasoning as
-    // `railMaterial` below. DoubleSide: the picture is seen from both faces
-    // (the idle spin shows its back, via `sandMeshBack`), and this recess has
-    // to read the same colour behind either one, not just the front.
-    const backingMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xd8c6a6, side: THREE.DoubleSide }));
+    // Cream/light-greige by default, swapped to blue-white only while frozen
+    // (`syncFrameFreezeColor`, called at the end of this method) — see
+    // `frameBackingMaterial`'s own field comment for why this is kept around
+    // instead of a plain local. Unlit (MeshBasic, not Lambert): flat
+    // regardless of the scene's lights, same reasoning as `railMaterial`
+    // below. DoubleSide: the picture is seen from both faces (the idle spin
+    // shows its back, via `sandMeshBack`), and this recess has to read the
+    // same colour behind either one, not just the front.
+    const backingMaterial = this.track(
+      new THREE.MeshBasicMaterial({ color: FRAME_INNER_COLOR, side: THREE.DoubleSide }),
+    );
+    this.frameBackingMaterial = backingMaterial;
     const back = new THREE.Mesh(backing, backingMaterial);
     back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
 
-    // Flat wood-brown, unlit (MeshBasic, not Lambert — same reasoning as
-    // `backingMaterial` above): the frame reads as one flat painted colour
-    // regardless of the scene's lights, the same "sticker" look the cannon's
-    // own shell (costumes.ts) and its fixed trim (baseRing/muzzleBand below)
-    // already use, rather than a lit surface picking up shading/highlights.
-    const railMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xb98a5e }));
-    // Same light greige as `backingMaterial`: `lip` sits directly behind the
-    // sand (closer to camera than `back`), so it — not `back` — is what a
+    // Flat wood-brown by default, unlit (MeshBasic, not Lambert — same
+    // reasoning as `backingMaterial` above): the frame reads as one flat
+    // painted colour regardless of the scene's lights, the same "sticker"
+    // look the cannon's own shell (costumes.ts) and its fixed trim
+    // (baseRing/muzzleBand below) already use, rather than a lit surface
+    // picking up shading/highlights.
+    const railMaterial = this.track(new THREE.MeshBasicMaterial({ color: FRAME_RAIL_COLOR }));
+    this.frameRailMaterial = railMaterial;
+    // Same cream as `backingMaterial`: `lip` sits directly behind the sand
+    // (closer to camera than `back`), so it — not `back` — is what a
     // straight-on view actually reveals through empty sand pixels. `back`
     // only shows through at an angle, or from behind. Both have to read the
-    // same colour.
-    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: 0xd8c6a6 }));
+    // same colour, frozen or not.
+    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: FRAME_INNER_COLOR }));
+    this.frameInnerMaterial = innerMaterial;
     const horizontal = this.track(new RoundedBoxGeometry(openWidth + border * 2, border, depth, 2, border * 0.22));
     const vertical = this.track(new RoundedBoxGeometry(border, openHeight, depth, 2, border * 0.22));
 
@@ -1232,6 +1348,25 @@ export class SandCannonEngine {
     const lip = new THREE.Mesh(lipGeometry, innerMaterial);
     lip.position.z = -this.cell * 0.5;
     this.frameRoot.add(lip);
+
+    this.syncFrameFreezeColor();
+  }
+
+  /**
+   * Repaint the frame's rails and inner backing/lip for the current freeze
+   * state — dark blue + blue-white while `this.state.freezeShotsRemaining >
+   * 0`, back to wood-brown + cream the instant it isn't (on request: the icy
+   * look must track the freeze state, not stay on for the level's whole
+   * life). Called once from `buildFrame` and again anywhere freeze state can
+   * change, alongside `syncFreezeTriggers`.
+   */
+  private syncFrameFreezeColor() {
+    const frozen = this.state.freezeShotsRemaining > 0;
+    const railColor = frozen ? FRAME_RAIL_COLOR_FROZEN : FRAME_RAIL_COLOR;
+    const innerColor = frozen ? FRAME_INNER_COLOR_FROZEN : FRAME_INNER_COLOR;
+    this.frameRailMaterial?.color.setHex(railColor);
+    this.frameBackingMaterial?.color.setHex(innerColor);
+    this.frameInnerMaterial?.color.setHex(innerColor);
   }
 
   /**
@@ -1242,9 +1377,12 @@ export class SandCannonEngine {
    * it IS, not something recomputed frame to frame.
    */
   private buildSand() {
-    const { bodies, locked, keys, walls } = parseSandLevel(this.level);
+    const { bodies, locked, keys, walls, freezeTriggers } = parseSandLevel(this.level);
     const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
     this.walls = walls;
+    this.wallSet = new Set(walls.map((cell) => cellKey(cell.x, cell.y)));
+    this.freezeTriggers = freezeTriggers.flatMap((trigger) => trigger.cells);
+    this.freezeTriggerSet = new Set(this.freezeTriggers.map((cell) => cellKey(cell.x, cell.y)));
 
     for (const body of bodies) {
       for (const cell of body.cells) {
@@ -1265,7 +1403,14 @@ export class SandCannonEngine {
         });
       }
     }
-    for (const key of keys) this.keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
+    for (const key of keys) {
+      this.keys.set(key.id, key.cells.map((cell) => ({ ...cell })));
+      // A key that never moves at all (already at rest as authored) still
+      // deserves its idle sparkle once `KEY_IDLE_SPARKLE_DELAY_MS` passes —
+      // starting its clock here, not only on the first `KEY_MOVE`, is what
+      // makes that true.
+      this.keyLastMovedAt.set(key.id, performance.now());
+    }
 
     const openWidth = this.level.frame.width * this.cell;
     const openHeight = this.level.frame.height * this.cell;
@@ -1442,8 +1587,25 @@ export class SandCannonEngine {
     // shared a cell with sand, a key or a lock, so draw order against those
     // never matters — this only has to run before nothing else overwrites it.
     for (const cell of this.walls) {
-      const seed = cell.x * 733 + cell.y * 197;
-      const [r, g, b] = jitterColor(WALL_HEX, seed, SAND_SATURATION_JITTER, SAND_LIGHTNESS_JITTER);
+      // Grid y runs opposite to screen rows (see `writePixel`'s own call
+      // below), so "screen up" is `y + 1` here, not `y - 1`.
+      const hasUp = this.wallSet.has(cellKey(cell.x, cell.y + 1));
+      const hasDown = this.wallSet.has(cellKey(cell.x, cell.y - 1));
+      const hasLeft = this.wallSet.has(cellKey(cell.x - 1, cell.y));
+      const hasRight = this.wallSet.has(cellKey(cell.x + 1, cell.y));
+      const [r, g, b] = wallBevelRgb(hasUp, hasDown, hasLeft, hasRight);
+      writePixel(cell.x, height - 1 - cell.y, r, g, b, 255);
+    }
+
+    // Freeze Map triggers, same base-layer treatment as walls and for the
+    // same reason: fixed shape, never shares a cell with sand/key/lock, and
+    // gone the instant it is spent — see `freezeTriggerSet`'s own comment.
+    for (const cell of this.freezeTriggers) {
+      const hasUp = this.freezeTriggerSet.has(cellKey(cell.x, cell.y + 1));
+      const hasDown = this.freezeTriggerSet.has(cellKey(cell.x, cell.y - 1));
+      const hasLeft = this.freezeTriggerSet.has(cellKey(cell.x - 1, cell.y));
+      const hasRight = this.freezeTriggerSet.has(cellKey(cell.x + 1, cell.y));
+      const [r, g, b] = freezeBevelRgb(hasUp, hasDown, hasLeft, hasRight);
       writePixel(cell.x, height - 1 - cell.y, r, g, b, 255);
     }
 
@@ -1520,10 +1682,11 @@ export class SandCannonEngine {
     // of a *round* shape down-right leaves a one-pixel sliver of shadow colour
     // poking out past the fill along the bottom and right rim only, since the
     // fill exactly covers the shadow everywhere else — that sliver is what
-    // read as a bite taken out of the disc, not a shadow under it. The flat
-    // gold shape, plus a glint cell placed by `keyRotation` so a shape with no
-    // notch of its own still reads as turning while it moves, is the whole
-    // drawing.
+    // read as a bite taken out of the disc, not a shadow under it. The gold
+    // shape is embossed into a coin (`keyBevelRgb`, same bevel `wallBevelRgb`
+    // gives Wall Obstacle), plus a glint cell placed by `keyRotation` so a
+    // shape with no notch of its own still reads as turning while it moves —
+    // that is the whole drawing.
     for (const [id, cells] of this.keys) {
       const xs = cells.map((cell) => cell.x);
       const ys = cells.map((cell) => cell.y);
@@ -1545,8 +1708,21 @@ export class SandCannonEngine {
           glintCell = cell;
         }
       }
+      // Screen-space neighbour lookup for the bevel, scoped to this one
+      // key's own cells (a handful to a few dozen) and rebuilt every frame
+      // rather than cached like `wallSet` — unlike a wall, a key's shape
+      // never sits still long enough for a cache to pay for itself.
+      const keyCellSet = new Set(cells.map((cell) => cellKey(cell.x, cell.y)));
       for (const cell of cells) {
-        const rgb = cell === glintCell ? KEY_GLINT_RGB : KEY_RGB;
+        if (cell === glintCell) {
+          writePixel(cell.x, height - 1 - cell.y, ...KEY_GLINT_RGB, 255);
+          continue;
+        }
+        const hasUp = keyCellSet.has(cellKey(cell.x, cell.y + 1));
+        const hasDown = keyCellSet.has(cellKey(cell.x, cell.y - 1));
+        const hasLeft = keyCellSet.has(cellKey(cell.x - 1, cell.y));
+        const hasRight = keyCellSet.has(cellKey(cell.x + 1, cell.y));
+        const rgb = keyBevelRgb(hasUp, hasDown, hasLeft, hasRight);
         writePixel(cell.x, height - 1 - cell.y, ...rgb, 255);
       }
     }
@@ -1659,11 +1835,17 @@ export class SandCannonEngine {
     });
   }
 
-  /** Whether the sparkle "bling" layer and the rune radius overlay should be
-   * showing — every branch that cares asks this one question instead of
-   * naming a specific costume. */
-  private isMagicCostume() {
-    return this.costume.flavor === "magic";
+  /**
+   * The sparkle bling's own palette for the equipped costume, or `null` for
+   * a costume that gets none — every muzzle/trail/impact burst call site asks
+   * this one question instead of naming a specific costume, so a second (and
+   * third, ...) skin can carry its own bling without becoming "magic" itself
+   * or duplicating the rune costume's exact colours.
+   */
+  private sparkleBlingColors(): number[] | null {
+    if (this.costume.flavor === "magic") return SPARKLE_COLORS;
+    if (this.costume.id === "hero-cannon") return HERO_SPARKLE_COLORS;
+    return null;
   }
 
   /**
@@ -1841,8 +2023,9 @@ export class SandCannonEngine {
     const velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).multiplyScalar(SHOWCASE_SHOT_SPEED);
     this.recoil = 1;
     this.spawnMuzzleSmoke(start, velocity);
-    if (this.isMagicCostume()) {
-      this.spawnSparkleMuzzleBurst(start);
+    const bling = this.sparkleBlingColors();
+    if (bling) {
+      this.spawnSparkleMuzzleBurst(start, bling);
       this.sparkleTrailAge = 0;
     }
     const mesh = new THREE.Mesh(this.showcaseShotGeometry, this.showcaseMaterials[this.costume.flavor]);
@@ -1867,16 +2050,17 @@ export class SandCannonEngine {
       this.launchShowcaseShot();
     }
 
+    const showcaseBling = this.sparkleBlingColors();
     const survivors: ShowcaseShot[] = [];
     for (const shot of this.showcaseShots) {
       shot.time += deltaSeconds;
       const position = this.positionAt(shot.start, shot.velocity, shot.time);
       shot.mesh.position.copy(position);
-      if (this.isMagicCostume()) {
+      if (showcaseBling) {
         const ticks = Math.floor(shot.time / SPARKLE_TRAIL_INTERVAL);
         if (ticks !== shot.trailTicks) {
           shot.trailTicks = ticks;
-          this.spawnSparkleTrail(position);
+          this.spawnSparkleTrail(position, showcaseBling);
         }
       }
       if (shot.time < SHOWCASE_SHOT_FLIGHT) {
@@ -1885,7 +2069,7 @@ export class SandCannonEngine {
       }
       // It ends in mid air on purpose: there is nothing to hit in the
       // picker, and the landing effect is the thing being shown.
-      if (this.isMagicCostume()) this.spawnSparkleImpactBurst(position);
+      if (showcaseBling) this.spawnSparkleImpactBurst(position, showcaseBling);
       this.scene.remove(shot.mesh);
     }
     this.showcaseShots = survivors;
@@ -2487,6 +2671,12 @@ export class SandCannonEngine {
        * `spawnPrismTrail` uses this to paint every shard the ball's own
        * in-flight hue instead of the magic costume's random bling colours. */
       colorHex?: number;
+      /** Which palette the random pick draws from when `colorHex` is not
+       * given — defaults to `SPARKLE_COLORS`, the rune costume's own. Every
+       * gameplay call site passes `sparkleBlingColors()`'s own result through
+       * here instead, so a burst always draws from whichever costume is
+       * actually equipped rather than always the rune palette. */
+      colors?: number[];
     },
   ) {
     if (!this.sparkleShards.length) return;
@@ -2517,20 +2707,24 @@ export class SandCannonEngine {
       slot.size = size;
       slot.age = 0;
       slot.life = options.life;
-      slot.material.color.setHex(options.colorHex ?? SPARKLE_COLORS[Math.floor(Math.random() * SPARKLE_COLORS.length)]);
+      const palette = options.colors ?? SPARKLE_COLORS;
+      slot.material.color.setHex(options.colorHex ?? palette[Math.floor(Math.random() * palette.length)]);
       slot.material.opacity = 1;
       slot.mesh.visible = true;
     }
   }
 
-  /** Bling: a bright burst at the muzzle the instant a magic shot fires. */
-  private spawnSparkleMuzzleBurst(origin: THREE.Vector3) {
-    this.spawnSparkles(origin, { count: 10, size: 0.14, speed: 2, rise: 0.9, life: 0.42, gravity: -2, spread: 1 });
+  /** Bling: a bright burst at the muzzle the instant a shot fires — the
+   * equipped costume's own palette (`sparkleBlingColors`), rune's by default
+   * since every existing call predates the hero costume's own. */
+  private spawnSparkleMuzzleBurst(origin: THREE.Vector3, colors?: number[]) {
+    this.spawnSparkles(origin, { count: 10, size: 0.14, speed: 2, rise: 0.9, life: 0.42, gravity: -2, spread: 1, colors });
   }
 
-  /** The thin trail a magic shot leaves along its whole flight. */
-  private spawnSparkleTrail(point: THREE.Vector3) {
-    this.spawnSparkles(point, { count: 2, size: 0.09, speed: 0.35, rise: 0.1, life: 0.26, gravity: -1.2, spread: 0.5 });
+  /** The thin trail a shot leaves along its whole flight, in the equipped
+   * costume's own bling palette. */
+  private spawnSparkleTrail(point: THREE.Vector3, colors?: number[]) {
+    this.spawnSparkles(point, { count: 2, size: 0.09, speed: 0.35, rise: 0.1, life: 0.26, gravity: -1.2, spread: 0.5, colors });
   }
 
   /** The rainbow streak a Prism Shot leaves along its whole flight — spec
@@ -2546,9 +2740,10 @@ export class SandCannonEngine {
     this.spawnSparkles(point, { count: 2, size: 0.11, speed: 0.16, rise: 0.02, life: 0.6, gravity: -0.35, spread: 0.28, colorHex });
   }
 
-  /** Bling: the landing itself, floating outward rather than dropping. */
-  private spawnSparkleImpactBurst(point: THREE.Vector3) {
-    this.spawnSparkles(point, { count: 14, size: 0.15, speed: 2.6, rise: 1.1, life: 0.5, gravity: -2.4, spread: 1.2 });
+  /** Bling: the landing itself, floating outward rather than dropping, in
+   * the equipped costume's own bling palette. */
+  private spawnSparkleImpactBurst(point: THREE.Vector3, colors?: number[]) {
+    this.spawnSparkles(point, { count: 14, size: 0.15, speed: 2.6, rise: 1.1, life: 0.5, gravity: -2.4, spread: 1.2, colors });
   }
 
   /** Ages, drags and fades every visible shard — same shape as `updateSandSpray`. */
@@ -2570,6 +2765,66 @@ export class SandCannonEngine {
       // Solid to the last frame, like the smoke: it goes out by getting small.
       shard.mesh.scale.setScalar(Math.max(0.001, shard.size * (1 - progress * progress)));
       shard.material.opacity = 1 - progress;
+    }
+  }
+
+  /**
+   * The idle twinkle: once a key has sat still for `KEY_IDLE_SPARKLE_DELAY_MS`
+   * (`keyLastMovedAt`), it starts giving off a slow trickle of warm-gold
+   * shards from the same pool `spawnSparkles` already draws the cannon skins'
+   * own bling from — thrown at `KEY_IDLE_SPARKLE_INTERVAL_MS` rather than
+   * every tick, the same "ambient, not a burst" pacing `spawnSparkleTrail`
+   * uses for a shot's own flight trail.
+   *
+   * A key has no mesh of its own (`redrawSand` rasterises it straight onto
+   * the sand canvas, see `keys`'s own comment) — its bounding box is read
+   * fresh from `this.keys` every call, converted through `cellWorld` (which
+   * is `frameRoot`-local) and `frameRoot.localToWorld` into the world space
+   * `sparkleShards` actually lives in, since unlike `sortRing`/`aimRing`
+   * (children of `frameRoot`) the shard pool is parented directly to
+   * `this.scene`.
+   */
+  private updateKeyIdleSparkle() {
+    if (!this.keys.size) return;
+    const now = performance.now();
+    for (const [id, cells] of this.keys) {
+      const lastMoved = this.keyLastMovedAt.get(id) ?? now;
+      if (now - lastMoved < KEY_IDLE_SPARKLE_DELAY_MS) continue;
+      const lastSparkle = this.keyLastSparkleAt.get(id) ?? 0;
+      if (now - lastSparkle < KEY_IDLE_SPARKLE_INTERVAL_MS) continue;
+      this.keyLastSparkleAt.set(id, now);
+
+      const xs = cells.map((cell) => cell.x);
+      const ys = cells.map((cell) => cell.y);
+      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      // Same bounding-box radius `redrawSand`'s own glint reads off — the
+      // scatter should hug however big this particular key actually is,
+      // not a size assuming every key is `KEY_SPRITE`'s own default.
+      const cellRadius = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 || 1;
+      const { x: localX, y: localY } = this.cellWorld(centerX, centerY);
+      // In front of the sand plane by the same margin `aimRingGlow`/`aimRing`
+      // sit at, so the shards never render as if buried under the sand.
+      const origin = this.frameRoot.localToWorld(new THREE.Vector3(localX, localY, this.cell * 0.65));
+      // `spawnSparkles`' own `spread` is "world units / 0.16" (see its
+      // header comment) — this converts the key's cell-space radius to that
+      // same unit so the scatter radius tracks the key's real world size.
+      const spread = Math.max(1.4, (cellRadius * this.cell) / 0.16);
+      // Bigger and more numerous than the cannon skins' own bling
+      // (`spawnSparkleTrail`'s `size: 0.09`/`count: 2`) — a key sits back on
+      // the sand plane, much further from the camera than the cannon rig the
+      // skins' shards fly past, so the same world-space size that reads
+      // clearly there would wash out to almost nothing here.
+      this.spawnSparkles(origin, {
+        count: 3,
+        size: 0.22,
+        speed: 0.22,
+        rise: 0.32,
+        life: 0.85,
+        gravity: -0.35,
+        spread,
+        colors: KEY_IDLE_SPARKLE_COLORS,
+      });
     }
   }
 
@@ -3024,8 +3279,9 @@ export class SandCannonEngine {
     // the queue hands the next one over.
     this.chamberLoaded = false;
     this.spawnMuzzleSmoke(launch.start, launch.velocity);
-    if (this.isMagicCostume()) {
-      this.spawnSparkleMuzzleBurst(launch.start);
+    const fireBling = this.sparkleBlingColors();
+    if (fireBling) {
+      this.spawnSparkleMuzzleBurst(launch.start, fireBling);
       this.sparkleTrailAge = 0;
     }
 
@@ -3089,11 +3345,12 @@ export class SandCannonEngine {
     }
     const next = this.positionAt(projectile.start, projectile.velocity, projectile.time);
 
-    if (this.isMagicCostume()) {
+    const flightBling = this.sparkleBlingColors();
+    if (flightBling) {
       this.sparkleTrailAge += FIXED_STEP;
       if (this.sparkleTrailAge >= SPARKLE_TRAIL_INTERVAL) {
         this.sparkleTrailAge = 0;
-        this.spawnSparkleTrail(next);
+        this.spawnSparkleTrail(next, flightBling);
       }
     }
 
@@ -3197,7 +3454,8 @@ export class SandCannonEngine {
     this.triggerFrameRecoil(contact);
     haptic("impact");
     sound("impact");
-    if (this.isMagicCostume()) this.spawnSparkleImpactBurst(contact);
+    const impactBling = this.sparkleBlingColors();
+    if (impactBling) this.spawnSparkleImpactBurst(contact, impactBling);
 
     // Sand under the impact centres the disc on that grain; empty air centres it
     // on the square the shot came down in. Either way the disc has a centre and
@@ -3246,6 +3504,8 @@ export class SandCannonEngine {
       // is known. The shake is queued as a purely cosmetic beat, appended
       // behind whatever is already animating rather than replacing it.
       this.state = resolution.state;
+      this.syncFreezeTriggers();
+      this.syncFrameFreezeColor();
       this.callbacks.onState(this.cloneState());
       this.beats.push({ kind: "SHAKE_AREA", center, radius: radiusUsed, ms: NO_MATCH_SHAKE_MS });
       return;
@@ -3300,6 +3560,8 @@ export class SandCannonEngine {
     // `canInteract()` stays closed and the "still moving" dots (see
     // `.settle-badge`) show until `advanceBeats` clears the queue below.
     this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
+    this.syncFreezeTriggers();
+    this.syncFrameFreezeColor();
     this.callbacks.onState(this.cloneState());
     if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
     if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
@@ -3388,6 +3650,9 @@ export class SandCannonEngine {
           cell.x += step.dx;
           cell.y += step.dy;
         }
+        // A genuine shift — `KEY_MOVE` is only ever emitted for one (see
+        // `sand-rules.ts`'s own settle solver) — resets the idle clock.
+        this.keyLastMovedAt.set(step.keyId, performance.now());
       }
       return;
     }
@@ -3404,6 +3669,8 @@ export class SandCannonEngine {
       this.lockRegionsDirty = true;
       this.keys.delete(step.keyId);
       this.keyRotation.delete(step.keyId);
+      this.keyLastMovedAt.delete(step.keyId);
+      this.keyLastSparkleAt.delete(step.keyId);
       haptic("bodyCleared");
       sound("bodyCleared");
       this.callbacks.onEvent?.({ type: "UNLOCKED", cells: step.cells.length });
@@ -3514,6 +3781,17 @@ export class SandCannonEngine {
     if (phase === "READY") this.lastInputAt = performance.now();
   }
 
+  /**
+   * Re-derive `freezeTriggers`/`freezeTriggerSet` from `this.state` — called
+   * after every shot resolves. Unlike `walls` (baked once in `buildSand` and
+   * never touched again), a trigger can vanish mid-level, so the render-side
+   * copy has to be refreshed whenever the state that owns the truth changes.
+   */
+  private syncFreezeTriggers() {
+    this.freezeTriggers = this.state.freezeTriggers.flatMap((trigger) => trigger.cells);
+    this.freezeTriggerSet = new Set(this.freezeTriggers.map((cell) => cellKey(cell.x, cell.y)));
+  }
+
   private cloneState(): SandGameState {
     return { ...this.state, bodies: this.state.bodies.map((body) => ({ ...body, cells: [...body.cells] })) };
   }
@@ -3559,6 +3837,7 @@ export class SandCannonEngine {
     this.updateMuzzleSmoke(FIXED_STEP);
     this.updateSandSpray(FIXED_STEP);
     this.updateSparkles(FIXED_STEP);
+    this.updateKeyIdleSparkle();
 
     if (this.sortRing?.visible) {
       this.sortRingAge += FIXED_STEP;
