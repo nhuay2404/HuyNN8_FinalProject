@@ -6684,3 +6684,89 @@ giá cao hơn" (không còn đúng nữa).
 
 **Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 150/150 test pass. Verify trực tiếp trên browser
 preview: mở Shop → tab Coins, cả Radius Overcharge lẫn Prism Shot đều hiện đúng **100**.
+
+## 163. Thêm 10 level mới (41-50): arc 5 "tổng hợp mọi cơ chế", dựa theo sheet beatchart-50 (10/09)
+
+Yêu cầu: dựa trên `sand-cannon-sort-beatchart-50.csv` (bản mở rộng beatchart từ 40 lên 50 màn), tạo tiếp level 41
+tới 50. Theo đúng tinh thần sheet: arc 5 **không dạy cơ chế mới nào** — chỉ tái tổ hợp 3 cơ chế đã có (Wall
+Obstacle, Lock & Key, Freeze Map) ở cường độ cao hơn arc 4, xen kẽ 2 cặp "khó dần rồi thở" (41-45) và một cặp khó
+kép (46-47) trước khi hạ xuống breather (48), lên đỉnh thật (49 — SPIKE khó nhất toàn bộ 50 màn), rồi capstone
+trình diễn (50).
+
+**Không có solver dựng sẵn để tự động kiểm — nên tự dựng một cái tạm.** `app/game/level-analysis.ts` đã có sẵn
+đúng công cụ cần (`playStrong`/`analyseLevel`, dùng để đo `shotLimit` cho toàn bộ 40 level trước đó — xem
+comment "Measured with analyseLevel" ở level 39/40), nhưng chưa từng dùng để *thiết kế* level từ đầu, chỉ để đo
+lại level đã vẽ tay xong. Dựng một script Node tạm (`scratch-gen-levels.mjs`, đã xoá sau khi dùng xong) sinh
+`rows` bằng hàm dựng dải màu ngang + hình thoi cho key/freeze + hình chữ nhật cho wall/lock, thay vì gõ tay từng
+ký tự — rồi chạy thẳng `parseSandLevel`/`playStrong` thật (không phải bản sao chép) lên từng bản nháp để xác
+nhận **giải được** trước khi chép vào `sand-levels.ts`, thay vì đoán suông theo cảm tính như một bản nháp thô sẽ
+phải làm.
+
+**Lỗi phát sinh trong lúc dựng, đã sửa cả hai:**
+- **Hai mảng khoá cùng màu làm rối "AI chơi mạnh".** `playStrong`'s `bestShot` (level-analysis.ts) tính "shot
+  lấy được bao nhiêu ô" mà **không loại trừ ô đang bị khoá** (`cellsInRadius` gọi thiếu tham số `frozen`) — nếu
+  2 mảng khoá độc lập cùng màu tồn tại cùng lúc (1 đã mở, 1 chưa), thuật toán cứ nhắm vào mảng CHƯA mở (vì đếm
+  nhầm ô khoá là "lấy được") thay vì mảng đã mở thật sự lấy được, bắn hoài không tiến — kẹt vĩnh viễn. Phát hiện
+  bằng cách debug trực tiếp `resolveShot` (`outcome: "NO_MATCH"` dù `bestShot` báo `take: 40`). Sửa bằng cách cho
+  mỗi mảng khoá độc lập một màu khoá RIÊNG (violet, navy... thay vì dùng chung 1 màu khoá cho 2-4 mảng như ý
+  tưởng ban đầu) — không sửa `bestShot` dùng chung (ngoài phạm vi yêu cầu, và các level cũ 1-40 có thể đang dựa
+  vào hành vi hiện tại của nó).
+- **Chìa trôi ngang qua mảng khoá thay vì rơi trúng.** Ban đầu vẽ mảng khoá là một hình chữ nhật hẹp (không phải
+  full-width) — không có `keyFriction`, chìa có thể "trôi" sang ngang theo độ dốc cát lúc dọn không đều, tuột ra
+  khỏi cột toạ độ của mảng khoá và rơi thẳng xuống đáy mà không bao giờ chạm khoá. Sửa bằng cách đổi toàn bộ
+  mảng khoá sang **dải full-width** (giống hệt cách 10 level Freeze Map trước đó — 31-40 — đã làm), để bất kỳ vị
+  trí ngang nào của chìa khi rơi tới đúng độ cao cũng chắc chắn chạm khoá.
+
+**Đơn giản hoá có chủ đích so với sheet gốc:** sheet mô tả nhiều ổ khoá "chuỗi"/"chuỗi lồng" (khoá B chỉ mở được
+sau khi khoá A mở) — thử dựng đúng cơ chế ép thứ tự vật lý (khoá B ban đầu tựa ngay trên khoá A, chỉ rơi tiếp
+được khi A tan) nhưng rủi ro cao (chạm nhau từ đầu ván là tự mở luôn, không cần người chơi làm gì) nên chọn
+phương án an toàn hơn: **N ổ khoá độc lập** mỗi ổ tự có khoá + đường rơi riêng, không ép thứ tự cứng — người chơi
+vẫn phải tự tìm và dọn đường tới từng cái, chỉ là không có ràng buộc "phải mở A trước B". Việc này khiến vài màu
+khoá vượt số lượng CSV liệt kê (VD level 47/49 dùng thêm navy/violet ngoài "+P bị khoá" gốc) — đổi lại đảm bảo
+giải được, đã verify bằng `playStrong` thật cho cả 10 màn.
+
+**Wall/Freeze bố trí tách vùng, không chồng lấn ổ khoá:** mỗi cụm tường và mỗi ổ khoá được đặt ở dải hàng
+(row-range) riêng, không giao nhau — tránh tình huống tường "cắt" một phần dải khoá full-width thành từng khúc
+rời rạc rồi phải xử lý thêm logic không cần thiết. Cách này khớp đúng khuôn của level 39/40 cũ (tường tạm dừng ở
+đúng hàng có khoá).
+
+**`shotLimit` đo bằng `analyseLevel`, không copy số ước lượng thô trong CSV.** CSV tự ước `min_shots`/`shotLimit`
+chỉ là phỏng đoán narrative, không tính tới việc tường chia đôi một dải màu thành 2 thân riêng (mỗi thân cần bắn
+riêng, tốn thêm lượt) — đúng như level 39/40 cũ đã lệch xa số CSV gốc (comment "Measured with analyseLevel" của
+chúng). 10 màn mới cũng vậy: đo `strongShots` thật rồi cộng slack theo độ khó (breather 44/45/48/50: slack
+14-15, để "too-easy" đúng nghĩa màn thở; Vary/Combine 41-43/46-47: slack 3-8, verdict "good"; SPIKE 49: slack 3,
+khớp đúng slack của SPIKE cũ nhất — level 39 — cũng chỉ 3).
+
+**Cấu hình 10 level (`design/levels/sand-levels.ts`, tên export `fortyFirstLevel`..`fiftiethLevel`):**
+- **41 Hang động bí ẩn** (Vary 6) — Wall × Lock&Key, 2 ổ khoá độc lập (green), 1 tường chia đôi khung.
+  `shotLimit: 56`.
+- **42 Cầu treo lắc lư** (Vary 7) — Freeze × Lock&Key, 2 ổ khoá độc lập (red), không tường. `shotLimit: 59`,
+  `freezeDuration: 6`.
+- **43 Cầu treo gãy nhịp** (Vary 7) — cùng bậc với 42, đổi tổ hợp: thêm 1 tường nhỏ trang trí không chặn đường
+  chính. 2 ổ khoá độc lập (pink, violet). `shotLimit: 64`, `freezeDuration: 5`.
+- **44 Vườn hoa yên tĩnh** (Breather 4) — chỉ còn 1 tường nhỏ trang trí. `shotLimit: 46`.
+- **45 Vườn hoa sương sớm** (Breather 5) — tường nhỏ + 1 ổ khoá đơn giản (khoá một phần màu brown đã có sẵn
+  trong bánh xe, không phải màu khoá riêng). `shotLimit: 53`.
+- **46 Thành trì băng giá** (Combine 8) — mở cặp khó nhất: mọi cơ chế cùng lúc, 3 ổ khoá độc lập (purple, navy,
+  violet), 2 cụm tường, 1 Freeze. `shotLimit: 71`, `freezeDuration: 5`.
+- **47 Thành trì sụp đổ** (Combine 9) — đóng cặp khó nhất, nặng hơn 46 rõ rệt: 3 ổ khoá độc lập, 2 cụm tường
+  lớn, Freeze dài hơn. `shotLimit: 71`, `freezeDuration: 6`.
+- **48 Bến cảng lặng gió** (Breather 4) — chỉ 1 ổ khoá nhỏ (brown, rơi thẳng, không friction), nghỉ trước spike
+  cuối. `shotLimit: 51`.
+- **49 Ngọn hải đăng cuối cùng** (SPIKE 10) — màn khó nhất 50 màn: 4 ổ khoá độc lập (purple, navy, green,
+  violet), 3 cụm tường, 1 Freeze, canvas 68×78 (5.304px — trong ngưỡng "comfort budget" ×1.6 của
+  `PIXEL_BUDGET`, xem `level-drafts.ts`, nên không cần giảm kích thước như CSV cảnh báo). `shotLimit: 80`,
+  `freezeDuration: 6`.
+- **50 Bình minh trên đỉnh núi** (Breather 5, capstone) — mọi cơ chế có mặt nhưng mức trang trí, mở gần như
+  ngay lập tức. `shotLimit: 68`.
+
+**`tests/level-editor.test.ts`:** cập nhật assertion cứng "đúng 40 level, id 1..40" thành "đúng 50 level, id
+1..50", import thêm 10 tên level mới.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan, `db/index.ts`/`worker/index.ts`), 150/150 test pass
+(sau khi sửa assertion 40→50). Cả 10 level verify bằng `playStrong` thật: `won: true`, `remaining: 0`, không
+lỗi `parseSandLevel` nào. Verify trực tiếp trên browser: "Level (1-50)" hiện đúng ở GameDevOption (xác nhận
+`BUILT_IN_LEVELS` đã có 50 phần tử), nhảy tới level 41 — tường/khoá/màu hiện đúng bố cục, bắn thử một phát hiển
+thị đúng "Missed the frame" khi hụt và bắn trúng khi ngắm lại; nhảy tới level 49 (nặng nhất) — cả 4 khoá, 3 cụm
+tường, 1 nút Freeze đều hiện đúng, không lỗi console mới (chỉ còn 1 warning React có từ trước, tái hiện y hệt ở
+level 1, không liên quan). Rebuild `outputs/3d-cannon-sort.html`.
