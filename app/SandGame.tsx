@@ -172,6 +172,31 @@ const FREEZE_SNOWFLAKES = Array.from({ length: FREEZE_SNOWFLAKE_COUNT }, (_, ind
   driftDelay: -((index * 0.41) % 3),
 }));
 
+/** How many pieces `.prism-confetti` renders while Prism Shot is armed. */
+const PRISM_CONFETTI_COUNT = 22;
+
+/** Prism Shot's own palette — the same 7-colour rainbow spread the rejected
+ * background/HUD stripe treatment used, kept here as the one place that
+ * idea survives. */
+const PRISM_CONFETTI_COLORS = ["#ff3b3b", "#ff9f1c", "#ffd60a", "#2ec4b6", "#3a86ff", "#8338ec", "#ff006e"];
+
+/**
+ * Fixed layout for Prism Shot's confetti — same reasoning as
+ * `FREEZE_SNOWFLAKES` just above: computed once, by formula, not
+ * `Math.random()`, so it never reshuffles itself on a re-render. Reuses
+ * `.win-confetti-piece`'s own `win-confetti-fall` keyframe (globals.css) via
+ * `.prism-confetti-piece`, just spread over the whole scene continuously
+ * instead of once behind the win card.
+ */
+const PRISM_CONFETTI = Array.from({ length: PRISM_CONFETTI_COUNT }, (_, index) => ({
+  left: (index * 137.5) % 100,
+  size: 5 + (index % 4) * 2,
+  duration: 2.6 + (index % 5) * 0.5,
+  delay: -((index * 0.63) % 3),
+  drift: (index % 2 === 0 ? 1 : -1) * (10 + (index % 3) * 6),
+  color: PRISM_CONFETTI_COLORS[index % PRISM_CONFETTI_COLORS.length],
+}));
+
 /** How long the home screen's exit animation runs — the Play button shrinking, the bottom
  * bar sliding off — before it actually leaves the DOM. Kept in step with the `hub-exit`
  * keyframes' duration in globals.css; the two are not read from one source because one is
@@ -709,6 +734,31 @@ export default function SandGame() {
   // booster is armed. The engine is the source of truth (it is what enforces
   // spec §3's no-cancel, no-swap rule); this only echoes it for the HUD.
   const [armedBooster, setArmedBooster] = useState<BoosterType | null>(null);
+  // Bumped once per Radius Overcharge impact (`BOOSTER_IMPACT`) — the actual
+  // shake is a CSS animation restarted by the effect below keyed on this
+  // number, not a class this state directly renders, since the same class
+  // held constant across two bumps would not replay the animation on its
+  // own (on request: "rung chuyển toàn HUD").
+  const [radiusShakeBump, setRadiusShakeBump] = useState(0);
+  const hudAmmoClusterRef = useRef<HTMLDivElement | null>(null);
+  const hudSettingsRef = useRef<HTMLDivElement | null>(null);
+  // Replays `.hud-radius-shake` on both HUD clusters every time
+  // `radiusShakeBump` changes — toggling the class off then on (with a
+  // forced reflow between the two) restarts the CSS animation without
+  // remounting either cluster's own DOM, which would also reset unrelated
+  // per-element animations already living inside them (the ammo badge's own
+  // bump-driven slide, the freeze bar's mount-in pop). `hudSettingsRef` is
+  // null whenever the settings gear itself is not mounted (chest/unlock/win
+  // screens) — skipped rather than an error, same as any other ref guard.
+  useEffect(() => {
+    if (radiusShakeBump === 0) return;
+    for (const el of [hudAmmoClusterRef.current, hudSettingsRef.current]) {
+      if (!el) continue;
+      el.classList.remove("hud-radius-shake");
+      void el.offsetWidth;
+      el.classList.add("hud-radius-shake");
+    }
+  }, [radiusShakeBump]);
   const toastTimer = useRef<number | null>(null);
   // The player's gold + booster inventory. `economy.ts` is the source of
   // truth (localStorage-backed); this just re-renders whenever it changes —
@@ -1303,6 +1353,13 @@ export default function SandGame() {
         case "BOOSTER_DISARMED":
           pushToast(s.toastBoosterCancelled(s.boosterName(event.booster)), "warn");
           break;
+        case "BOOSTER_IMPACT":
+          // Only Radius Overcharge has a screen shake (on request); Prism
+          // Shot's own tell is the continuous rainbow overlay instead, keyed
+          // straight off `armedBooster` further down rather than a one-shot
+          // event like this.
+          if (event.booster === "radiusOvercharge") setRadiusShakeBump((n) => n + 1);
+          break;
         default:
           break;
       }
@@ -1780,7 +1837,7 @@ export default function SandGame() {
             picture or the cannon underneath it. The coin balance used to sit
             above this row — see `wallet.gold` for where it is still tracked —
             but this corner is ammo-only now. */}
-        <div className="hud-top-left">
+        <div className="hud-top-left" ref={hudAmmoClusterRef}>
           <header className="hud-top" hidden={!playing || winReveal}>
             {/* The dot is the bullet in the chamber, not a generic "ammo" icon —
                 it takes the loaded colour so the badge answers "what am I about
@@ -1882,7 +1939,7 @@ export default function SandGame() {
             can get stuck on, and a gear floating over it would be the only
             thing on that frame besides the chest. */}
         {!chest && !cannonUnlock && !winReveal && (
-          <div className="settings-wrap">
+          <div className="settings-wrap" ref={hudSettingsRef}>
             <button
               type="button"
               className="icon-button settings-button"
@@ -2002,6 +2059,33 @@ export default function SandGame() {
 
         <div className="scene-wrap">
           <div className="scene-host" ref={hostRef} />
+
+          {/* Prism Shot's own tell (on request — the rainbow background/HUD
+              stripe treatment tried before this was pulled back in favour of
+              something simpler): confetti falling over the scene while the
+              booster is armed. `PRISM_CONFETTI` is a fixed, module-level
+              layout (not `Math.random()` at render time), same reasoning as
+              `FREEZE_SNOWFLAKES` just below — server and client agree on it,
+              and it never reshuffles itself on a re-render. */}
+          {armedBooster === "prismShot" && (
+            <div className="prism-confetti" aria-hidden="true">
+              {PRISM_CONFETTI.map((piece, index) => (
+                <span
+                  key={index}
+                  className="prism-confetti-piece"
+                  style={{
+                    left: `${piece.left}%`,
+                    width: `${piece.size}px`,
+                    height: `${piece.size}px`,
+                    background: piece.color,
+                    animationDuration: `${piece.duration}s`,
+                    animationDelay: `${piece.delay}s`,
+                    "--drift": `${piece.drift}px`,
+                  } as React.CSSProperties}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Freeze Map's ambient tell (on request): while the board is
               frozen, snow drifts down over the whole scene, not just the

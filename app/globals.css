@@ -1102,6 +1102,21 @@ button {
   flex: 1 1 auto; min-width: 0;
   padding: 6px 7px; border-radius: var(--r-pill); overflow: hidden;
   background: #cdeefb;
+  transform-origin: left center;
+  /* On request ("HUD freeze progression bar cũng có anim xuất hiện"): this
+     `<div>` only exists in the DOM while `freezeShotsRemaining > 0`
+     (SandGame.tsx's `&&`), so it mounts fresh exactly once per freeze
+     activation — a plain mount animation is enough, no JS state needed to
+     replay it. `transform-origin: left center`: it grows outward from the
+     side touching the ammo badge, the same "small -> full" read the frame's
+     own radial colour ripple uses. `both` holds the from-state until the
+     animation actually starts and the to-state once it ends, so there's no
+     first-frame flash at full size. */
+  animation: freeze-cooldown-bar-in 380ms cubic-bezier(.34, 1.56, .64, 1) both;
+}
+@keyframes freeze-cooldown-bar-in {
+  from { transform: scale(.55); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 /* Counted in shots, not real time (on request): one `.freeze-cooldown-segment`
    per shot of `level.freezeDuration` (SandGame.tsx builds the list), the
@@ -1189,6 +1204,52 @@ button {
 @keyframes freeze-snow-drift {
   0%, 100% { transform: translateX(-8px); }
   50% { transform: translateX(8px); }
+}
+
+/* ---- Booster impact/ambient effects ------------------------------------ */
+/* Radius Overcharge's screen shake (on request: "rung chuyển toàn HUD...
+   rung có tốc độ giảm dần đến khi dừng rung") — applied to both HUD clusters
+   (`.hud-top-left`, `.settings-wrap`) by a `classList` toggle in SandGame.tsx
+   rather than a class this file's own React state renders directly: the
+   class has to be removed and re-added (with a forced reflow between the
+   two) to replay on a second Radius shot, which a plain conditional
+   className can't do on its own when the condition doesn't change value.
+   The keyframes carry the decay themselves — each swing is a smaller
+   fraction of the last, the same "settles down, doesn't cut off" shape
+   `SandCannonEngine.ts`'s own exponential-decay version of this shake uses
+   for the picture (see `RADIUS_SHAKE_DECAY_PER_SECOND`'s own comment) —
+   translation-only (no rotation) so it never fights the layout's own
+   `transform-origin` assumptions elsewhere. */
+.hud-radius-shake {
+  animation: hud-radius-shake 700ms cubic-bezier(.36, .07, .19, .97) both;
+}
+@keyframes hud-radius-shake {
+  0%   { transform: translate(0, 0); }
+  8%   { transform: translate(-7px, 4px); }
+  16%  { transform: translate(6px, -4px); }
+  24%  { transform: translate(-5px, 3px); }
+  32%  { transform: translate(4px, -3px); }
+  40%  { transform: translate(-3.2px, 2.2px); }
+  48%  { transform: translate(2.6px, -1.8px); }
+  56%  { transform: translate(-2px, 1.4px); }
+  64%  { transform: translate(1.5px, -1px); }
+  72%  { transform: translate(-1px, .7px); }
+  80%  { transform: translate(.7px, -.5px); }
+  88%  { transform: translate(-.4px, .3px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* Prism Shot's own tell (on request — the rainbow background/HUD stripe
+   treatment tried before this was pulled back in favour of something
+   simpler): confetti falling over the whole scene while the booster is
+   armed, reusing `.win-confetti-piece`'s own `win-confetti-fall` keyframe
+   (see the "Result" section below) rather than a second near-identical one —
+   only the container differs (the whole scene, continuously, instead of
+   once behind the win card). */
+.prism-confetti { position: absolute; inset: 0; z-index: 4; overflow: hidden; pointer-events: none; }
+.prism-confetti-piece {
+  position: absolute; top: -8%; border-radius: 2px;
+  opacity: 0; animation: win-confetti-fall linear infinite;
 }
 
 .sand-toast {

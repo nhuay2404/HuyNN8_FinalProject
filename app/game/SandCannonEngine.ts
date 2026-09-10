@@ -43,6 +43,7 @@ import type {
   BoosterType,
   CellCoord,
   SandColor,
+  SandFreezeTrigger,
   SandGameState,
   SandLevelConfig,
   SettleStep,
@@ -206,6 +207,25 @@ const RECOIL_TRAVEL = 0.23;
 const FRAME_RECOIL_DECAY_PER_SECOND = 7.5;
 const FRAME_RECOIL_TILT = 0.05;
 const FRAME_RECOIL_PUSH = 0.05;
+/**
+ * Radius Overcharge's own screen shake, layered on top of `frameRecoil`
+ * above rather than replacing it — see `radiusShakeAmplitude`'s own field
+ * comment. `_TILT` is noticeably bigger than `FRAME_RECOIL_TILT` (on
+ * request: "tranh rung mạnh hơn" — the picture shakes harder for this
+ * booster specifically). `_DECAY_PER_SECOND` is an exponential rate, not a
+ * linear one like `FRAME_RECOIL_DECAY_PER_SECOND`: linear decay stops dead
+ * the instant it hits zero, which reads as a cut; exponential decay's own
+ * shrinking step size is what makes the last few wobbles visibly smaller
+ * than the ones before them, i.e. an actual slow-down rather than a shake at
+ * constant strength that just switches off.
+ */
+const RADIUS_SHAKE_DECAY_PER_SECOND = 3.4;
+const RADIUS_SHAKE_FREQUENCY_HZ = 10;
+const RADIUS_SHAKE_TILT = 0.11;
+/** Below this amplitude the wobble is visually zero — clamped here rather
+ * than left to asymptote forever, since exponential decay never actually
+ * reaches 0 on its own. */
+const RADIUS_SHAKE_STOP_THRESHOLD = 0.01;
 
 /**
  * The "come back and shoot" nudge for a player who has stopped touching the
@@ -557,13 +577,17 @@ const BACKING_DEPTH_RATIO = 0.3;
  * its Freeze Map colours (dark blue rails, blue-white backing/lip) — on
  * request, the icy look only applies while the board is actually frozen
  * (`this.state.freezeShotsRemaining > 0`), not for the level's whole life.
- * `syncFrameFreezeColor` swaps between these two pairs as freeze state
- * changes; `buildFrame` just picks the starting one.
+ * `syncFreezeVisuals`/`beginFreezeVisualsTransition` swap between these two
+ * pairs (via an outward ripple, not an instant cut) as freeze state changes;
+ * `buildFrame` just picks the starting one, instantly, with
+ * `applyFreezeVisualsInstant`.
  */
 const FRAME_RAIL_COLOR = 0xb98a5e;
 const FRAME_RAIL_COLOR_FROZEN = 0x2c5f86;
 const FRAME_INNER_COLOR = 0xd8c6a6;
 const FRAME_INNER_COLOR_FROZEN = 0xdcedf7;
+/** How long the frame's colour ripple takes to grow in or shrink away, in ms. */
+const FRAME_FREEZE_TRANSITION_MS = 550;
 /** How fast the picture turns on the home screen, one full turn per this many seconds. */
 const IDLE_SPIN_SECONDS_PER_TURN = 10;
 /** How long the picture takes to ease back to its authored, unrotated orientation once the
@@ -746,7 +770,11 @@ export type SandEngineEvent =
   | { type: "BOOSTER_ARMED"; booster: BoosterType }
   /** The armed booster was tapped a second time and cancelled before firing —
    * no shot spent, no charge spent. */
-  | { type: "BOOSTER_DISARMED"; booster: BoosterType };
+  | { type: "BOOSTER_DISARMED"; booster: BoosterType }
+  /** A booster-charged shot just landed (on request: Radius Overcharge's
+   * screen shake) — fired once per impact, from `handleImpact`, whichever
+   * booster (if any) that specific shot spent. */
+  | { type: "BOOSTER_IMPACT"; booster: BoosterType };
 
 export type SandEngineCallbacks = {
   onState: (state: SandGameState) => void;
@@ -985,17 +1013,48 @@ export class SandCannonEngine {
    * exists alongside `walls`: the bevel pass needs four neighbour lookups
    * per pixel, every redraw. */
   private freezeTriggerSet = new Set<string>();
+  /** Which trigger each of `this.freezeTriggers`' cells belongs to, keyed by
+   * `cellKey` — `redrawSand` reads this against `aimedFreezeTriggerId` to
+   * decide which cells (if any) get this frame's white aim-highlight. A
+   * board can hold more than one trigger, so "is *a* trigger aimed at" is
+   * not enough on its own: this is what lets the highlight single out the
+   * one actually under the crosshair. */
+  private freezeCellTriggerId = new Map<string, string>();
+  /** The trigger the crosshair is currently directly over, or null — set by
+   * `updateAimPreview` every time the aim point moves, on request ("cục
+   * freeze sẽ highlight lên bằng shadow trắng" khi crosshair nhắm vào nó).
+   * Mirrors `triggerAtCell`'s own exact-cell-hit rule (sand-rules.ts) so the
+   * highlight only lights up exactly what a shot fired right now would
+   * actually arm — never a trigger merely within blast range. */
+  private aimedFreezeTriggerId: string | null = null;
   /**
-   * The frame's rails/posts and its inner backing+lip, kept as instance
-   * fields (rather than local to `buildFrame`) so `syncFrameFreezeColor` can
-   * repaint them later — on request, the frame only turns icy while the
-   * board is actually frozen (`this.state.freezeShotsRemaining > 0`), not
-   * for the level's whole life, so something has to be able to flip the
-   * colour back and forth after `buildFrame` already ran once.
+   * One entry per frame piece (backing, lip, 2 rails, 2 posts), each holding
+   * the live uniform objects `createFrameFreezeMaterial` wired into that
+   * piece's shader — kept around (rather than local to `buildFrame`) so
+   * `applyFreezeVisualsInstant`/`beginFreezeVisualsTransition` can repaint
+   * them later. `isRail` picks which of the two colour pairs
+   * (FRAME_RAIL_COLOR* vs FRAME_INNER_COLOR*) that piece swaps between.
    */
-  private frameRailMaterial: THREE.MeshBasicMaterial | null = null;
-  private frameBackingMaterial: THREE.MeshBasicMaterial | null = null;
-  private frameInnerMaterial: THREE.MeshBasicMaterial | null = null;
+  private frameFreezeMaterials: {
+    uniforms: {
+      uProgress: { value: number };
+      uColorFrom: { value: THREE.Color };
+      uColorTo: { value: THREE.Color };
+      uCenterLocal: { value: THREE.Vector2 };
+      uMaxRadius: { value: number };
+      uFringe: { value: number };
+    };
+    isRail: boolean;
+  }[] = [];
+  /** Whether the frame/cannon are currently in (or animating toward) their
+   * frozen look — compared against `state.freezeShotsRemaining > 0` by
+   * `syncFreezeVisuals` to decide whether a new transition needs to start. */
+  private freezeVisualsIsFrozen = false;
+  /** Whether `updateFreezeVisualsAnimation` has a transition to advance this
+   * frame — cheap early-out so it costs nothing while settled either way. */
+  private freezeVisualsAnimating = false;
+  /** 0..1 through the current transition (or already-finished at 1). */
+  private freezeVisualsAnimT = 1;
   /**
    * How far each key has rolled, in radians, accumulated as it moves.
    *
@@ -1044,6 +1103,17 @@ export class SandCannonEngine {
   private frameRecoil = 0;
   private frameRecoilOffsetX = 0;
   private frameRecoilOffsetY = 0;
+  /**
+   * Radius Overcharge's own screen shake (on request: "tranh rung mạnh
+   * hơn... rung có tốc độ giảm dần đến khi dừng") — an oscillation layered
+   * on top of `frameRecoil` above, not a replacement for it. `radiusShakeTime`
+   * is the oscillation's own running clock (only advances while a shake is
+   * live); `radiusShakeAmplitude` starts at 1 on a Radius impact and decays
+   * exponentially toward 0 every step, which is what makes the wobble settle
+   * out smoothly instead of cutting off abruptly once it gets small.
+   */
+  private radiusShakeAmplitude = 0;
+  private radiusShakeTime = 0;
   /**
    * `performance.now()` of the last real input — a pointer going down on the
    * aim zone, or the phase settling back to READY after a shot. Read by
@@ -1296,77 +1366,218 @@ export class SandCannonEngine {
     this.frameRoot.scale.setScalar(this.idle ? HUB_FRAME_SCALE : 1);
     this.scene.add(this.frameRoot);
 
+    // How far a colour-swap ripple has to travel to clear the frame's own
+    // farthest corner — the shared "clock" every piece below reads its own
+    // `uProgress * uMaxRadius` against, so a single 0..1 progress value
+    // sweeps outward from the picture's centre continuously across the
+    // backing, the lip and all four rail/post pieces at once, rather than
+    // each piece flipping colour on its own separate schedule. `* 1.1`: a
+    // small margin past the true corner distance so the very last few
+    // pixels are fully swept by the time `uProgress` reaches 1, instead of
+    // sitting exactly on the smoothstep's fifty-fifty midpoint.
+    const freezeMaxRadius = Math.hypot((openWidth + border * 2) / 2, (openHeight + border * 2) / 2) * 1.1;
+    const freezeFringe = border * 0.3;
+    this.frameFreezeMaterials = [];
+
     const backing = this.track(
       new THREE.BoxGeometry(openWidth + border * 0.5, openHeight + border * 0.5, this.cell * BACKING_DEPTH_RATIO),
     );
     // Cream/light-greige by default, swapped to blue-white only while frozen
-    // (`syncFrameFreezeColor`, called at the end of this method) — see
-    // `frameBackingMaterial`'s own field comment for why this is kept around
-    // instead of a plain local. Unlit (MeshBasic, not Lambert): flat
-    // regardless of the scene's lights, same reasoning as `railMaterial`
+    // — see `createFrameFreezeMaterial`'s own comment for how the swap
+    // itself plays as an outward ripple rather than an instant colour
+    // change. Unlit apart from that ripple shader (no Lambert/Phong): flat
+    // regardless of the scene's lights, same reasoning as the rail material
     // below. DoubleSide: the picture is seen from both faces (the idle spin
     // shows its back, via `sandMeshBack`), and this recess has to read the
     // same colour behind either one, not just the front.
-    const backingMaterial = this.track(
-      new THREE.MeshBasicMaterial({ color: FRAME_INNER_COLOR, side: THREE.DoubleSide }),
+    const backingMaterial = this.createFrameFreezeMaterial(
+      new THREE.Vector2(0, 0),
+      false,
+      freezeMaxRadius,
+      freezeFringe,
+      true,
     );
-    this.frameBackingMaterial = backingMaterial;
     const back = new THREE.Mesh(backing, backingMaterial);
     back.position.z = this.cell * BACKING_Z_RATIO;
     this.frameRoot.add(back);
 
-    // Flat wood-brown by default, unlit (MeshBasic, not Lambert — same
-    // reasoning as `backingMaterial` above): the frame reads as one flat
-    // painted colour regardless of the scene's lights, the same "sticker"
-    // look the cannon's own shell (costumes.ts) and its fixed trim
-    // (baseRing/muzzleBand below) already use, rather than a lit surface
-    // picking up shading/highlights.
-    const railMaterial = this.track(new THREE.MeshBasicMaterial({ color: FRAME_RAIL_COLOR }));
-    this.frameRailMaterial = railMaterial;
-    // Same cream as `backingMaterial`: `lip` sits directly behind the sand
-    // (closer to camera than `back`), so it — not `back` — is what a
-    // straight-on view actually reveals through empty sand pixels. `back`
-    // only shows through at an angle, or from behind. Both have to read the
-    // same colour, frozen or not.
-    const innerMaterial = this.track(new THREE.MeshBasicMaterial({ color: FRAME_INNER_COLOR }));
-    this.frameInnerMaterial = innerMaterial;
+    // Flat wood-brown by default, unlit apart from the same ripple shader —
+    // the frame reads as one flat painted colour regardless of the scene's
+    // lights, the same "sticker" look the cannon's own shell (costumes.ts)
+    // and its fixed trim (baseRing/muzzleBand below) already use, rather
+    // than a lit surface picking up shading/highlights. Each of the 4
+    // rail/post pieces gets its OWN material (not one shared one, unlike
+    // before) because each needs its own `uCenterLocal` — the mesh's own
+    // offset from the picture's centre — for the ripple to read as
+    // continuous across the whole assembled frame rather than four separate
+    // rings each centred on its own piece.
     const horizontal = this.track(new RoundedBoxGeometry(openWidth + border * 2, border, depth, 2, border * 0.22));
     const vertical = this.track(new RoundedBoxGeometry(border, openHeight, depth, 2, border * 0.22));
 
     for (const sign of [1, -1]) {
-      const rail = new THREE.Mesh(horizontal, railMaterial);
-      rail.position.set(0, sign * (openHeight + border) * 0.5, 0);
+      const railCenter = new THREE.Vector2(0, (sign * (openHeight + border)) / 2);
+      const rail = new THREE.Mesh(
+        horizontal,
+        this.createFrameFreezeMaterial(railCenter, true, freezeMaxRadius, freezeFringe, false),
+      );
+      rail.position.set(railCenter.x, railCenter.y, 0);
       this.frameRoot.add(rail);
-      const post = new THREE.Mesh(vertical, railMaterial);
-      post.position.set(sign * (openWidth + border) * 0.5, 0, 0);
+
+      const postCenter = new THREE.Vector2((sign * (openWidth + border)) / 2, 0);
+      const post = new THREE.Mesh(
+        vertical,
+        this.createFrameFreezeMaterial(postCenter, true, freezeMaxRadius, freezeFringe, false),
+      );
+      post.position.set(postCenter.x, postCenter.y, 0);
       this.frameRoot.add(post);
     }
 
     // A thin lip on the inside edge so the opening reads as a recess holding
-    // the sand rather than a picture printed flush on the wall.
+    // the sand rather than a picture printed flush on the wall. Same cream
+    // as `backingMaterial`: `lip` sits directly behind the sand (closer to
+    // camera than `back`), so it — not `back` — is what a straight-on view
+    // actually reveals through empty sand pixels. `back` only shows through
+    // at an angle, or from behind. Both have to read the same colour, and
+    // ripple in step, frozen or not.
     const lipGeometry = this.track(new THREE.BoxGeometry(openWidth, openHeight, this.cell * 0.16));
-    const lip = new THREE.Mesh(lipGeometry, innerMaterial);
+    const lip = new THREE.Mesh(
+      lipGeometry,
+      this.createFrameFreezeMaterial(new THREE.Vector2(0, 0), false, freezeMaxRadius, freezeFringe, false),
+    );
     lip.position.z = -this.cell * 0.5;
     this.frameRoot.add(lip);
 
-    this.syncFrameFreezeColor();
+    this.applyFreezeVisualsInstant(this.state.freezeShotsRemaining > 0);
   }
 
   /**
-   * Repaint the frame's rails and inner backing/lip for the current freeze
-   * state — dark blue + blue-white while `this.state.freezeShotsRemaining >
-   * 0`, back to wood-brown + cream the instant it isn't (on request: the icy
-   * look must track the freeze state, not stay on for the level's whole
-   * life). Called once from `buildFrame` and again anywhere freeze state can
-   * change, alongside `syncFreezeTriggers`.
+   * Builds one frame piece's material: a plain flat colour apart from one
+   * ripple effect (on request — the colour swap animates as an outward
+   * ring from the picture's centre rather than snapping instantly). Since
+   * `MeshBasicMaterial` has no per-pixel colour hook of its own, this
+   * grafts one on via `onBeforeCompile`: a varying carries each fragment's
+   * position in the *picture's* local space (`position.xy + uCenterLocal`,
+   * where `uCenterLocal` is this particular mesh's own offset from that
+   * shared centre — see the call sites above), and the single line that
+   * normally reads `vec4 diffuseColor = vec4( diffuse, opacity )` is
+   * replaced with a mix between `uColorFrom`/`uColorTo` keyed on whether
+   * that fragment's distance from centre has been overtaken yet by the
+   * growing `uProgress * uMaxRadius` ring.
    */
-  private syncFrameFreezeColor() {
+  private createFrameFreezeMaterial(
+    centerLocal: THREE.Vector2,
+    isRail: boolean,
+    maxRadius: number,
+    fringe: number,
+    doubleSide: boolean,
+  ): THREE.MeshBasicMaterial {
+    const baseColor = isRail ? FRAME_RAIL_COLOR : FRAME_INNER_COLOR;
+    const uniforms = {
+      uProgress: { value: 1 },
+      uColorFrom: { value: new THREE.Color(baseColor) },
+      uColorTo: { value: new THREE.Color(baseColor) },
+      uCenterLocal: { value: centerLocal },
+      uMaxRadius: { value: maxRadius },
+      uFringe: { value: fringe },
+    };
+    const material = new THREE.MeshBasicMaterial({ side: doubleSide ? THREE.DoubleSide : THREE.FrontSide });
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec2 vFreezeXY;\nuniform vec2 uCenterLocal;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFreezeXY = position.xy + uCenterLocal;");
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec2 vFreezeXY;\nuniform float uProgress;\nuniform float uMaxRadius;\nuniform float uFringe;\nuniform vec3 uColorFrom;\nuniform vec3 uColorTo;",
+        )
+        .replace(
+          "vec4 diffuseColor = vec4( diffuse, opacity );",
+          `float freezeDist = length( vFreezeXY );
+           float freezeRadius = uProgress * uMaxRadius;
+           float freezeEdge = smoothstep( freezeRadius - uFringe, freezeRadius + uFringe, freezeDist );
+           vec4 diffuseColor = vec4( mix( uColorTo, uColorFrom, freezeEdge ), opacity );`,
+        );
+    };
+    this.frameFreezeMaterials.push({ uniforms, isRail });
+    return this.track(material);
+  }
+
+  /**
+   * Snap the frame straight to its settled colours for `frozen`, no ripple —
+   * used only from `buildFrame`, since a level's opening frame has nothing
+   * to animate *from* yet. Every later change goes through
+   * `syncFreezeVisuals`/`beginFreezeVisualsTransition` instead, which is
+   * what actually plays the ripple.
+   */
+  private applyFreezeVisualsInstant(frozen: boolean) {
+    for (const entry of this.frameFreezeMaterials) {
+      const color = entry.isRail
+        ? frozen ? FRAME_RAIL_COLOR_FROZEN : FRAME_RAIL_COLOR
+        : frozen ? FRAME_INNER_COLOR_FROZEN : FRAME_INNER_COLOR;
+      entry.uniforms.uColorFrom.value.setHex(color);
+      entry.uniforms.uColorTo.value.setHex(color);
+      entry.uniforms.uProgress.value = 1;
+    }
+    this.freezeVisualsIsFrozen = frozen;
+    this.freezeVisualsAnimating = false;
+    this.freezeVisualsAnimT = 1;
+  }
+
+  /**
+   * Called alongside `syncFreezeTriggers`, anywhere a shot can change
+   * `state.freezeShotsRemaining` — starts a ripple transition (see
+   * `beginFreezeVisualsTransition`) exactly when frozen-vs-not actually
+   * flips, and does nothing the other `freezeShotsRemaining - 1`-per-shot
+   * ticks while already frozen (there is nothing to re-animate: the frame is
+   * already fully in its frozen colours).
+   */
+  private syncFreezeVisuals() {
     const frozen = this.state.freezeShotsRemaining > 0;
-    const railColor = frozen ? FRAME_RAIL_COLOR_FROZEN : FRAME_RAIL_COLOR;
-    const innerColor = frozen ? FRAME_INNER_COLOR_FROZEN : FRAME_INNER_COLOR;
-    this.frameRailMaterial?.color.setHex(railColor);
-    this.frameBackingMaterial?.color.setHex(innerColor);
-    this.frameInnerMaterial?.color.setHex(innerColor);
+    if (frozen === this.freezeVisualsIsFrozen) return;
+    this.beginFreezeVisualsTransition(frozen);
+  }
+
+  /**
+   * Arms a `FRAME_FREEZE_TRANSITION_MS`-long transition toward `targetFrozen`
+   * — `updateFreezeVisualsAnimation` (called every rendered frame from
+   * `animate()`) is what actually advances it. Sets each frame material's
+   * `uColorFrom`/`uColorTo` for the direction this transition runs, so the
+   * ripple always reveals the *new* state, whichever way it's headed.
+   */
+  private beginFreezeVisualsTransition(targetFrozen: boolean) {
+    for (const entry of this.frameFreezeMaterials) {
+      const from = entry.isRail
+        ? targetFrozen ? FRAME_RAIL_COLOR : FRAME_RAIL_COLOR_FROZEN
+        : targetFrozen ? FRAME_INNER_COLOR : FRAME_INNER_COLOR_FROZEN;
+      const to = entry.isRail
+        ? targetFrozen ? FRAME_RAIL_COLOR_FROZEN : FRAME_RAIL_COLOR
+        : targetFrozen ? FRAME_INNER_COLOR_FROZEN : FRAME_INNER_COLOR;
+      entry.uniforms.uColorFrom.value.setHex(from);
+      entry.uniforms.uColorTo.value.setHex(to);
+      entry.uniforms.uProgress.value = 0;
+    }
+    this.freezeVisualsIsFrozen = targetFrozen;
+    this.freezeVisualsAnimating = true;
+    this.freezeVisualsAnimT = 0;
+  }
+
+  /**
+   * Advances whatever `beginFreezeVisualsTransition` armed — the frame's
+   * colour ripple. Runs every rendered frame regardless of pause state, same
+   * footing as `updateFrameSpin` — freeze can only actually change mid-play,
+   * but there is no reason to special-case that here when a no-op
+   * `!freezeVisualsAnimating` return already covers idle.
+   */
+  private updateFreezeVisualsAnimation(deltaMs: number) {
+    if (!this.freezeVisualsAnimating) return;
+    this.freezeVisualsAnimT = Math.min(1, this.freezeVisualsAnimT + deltaMs / FRAME_FREEZE_TRANSITION_MS);
+    // Ease-out cubic: fast start, gentle settle — a ripple that decelerates
+    // as it clears the frame's corners rather than arriving abruptly.
+    const eased = 1 - (1 - this.freezeVisualsAnimT) ** 3;
+    for (const entry of this.frameFreezeMaterials) entry.uniforms.uProgress.value = eased;
+
+    if (this.freezeVisualsAnimT >= 1) this.freezeVisualsAnimating = false;
   }
 
   /**
@@ -1381,8 +1592,7 @@ export class SandCannonEngine {
     const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
     this.walls = walls;
     this.wallSet = new Set(walls.map((cell) => cellKey(cell.x, cell.y)));
-    this.freezeTriggers = freezeTriggers.flatMap((trigger) => trigger.cells);
-    this.freezeTriggerSet = new Set(this.freezeTriggers.map((cell) => cellKey(cell.x, cell.y)));
+    this.setFreezeTriggerFields(freezeTriggers);
 
     for (const body of bodies) {
       for (const cell of body.cells) {
@@ -1600,12 +1810,25 @@ export class SandCannonEngine {
     // Freeze Map triggers, same base-layer treatment as walls and for the
     // same reason: fixed shape, never shares a cell with sand/key/lock, and
     // gone the instant it is spent — see `freezeTriggerSet`'s own comment.
+    // The one the crosshair is directly over (on request: "stroke chứ không
+    // phải fill lớp màu trắng lên") gets a white outline, not a white fill —
+    // only the pixels on its own silhouette's edge (touching a cell that is
+    // NOT part of this same trigger) turn solid white; every interior pixel
+    // keeps its ordinary icy fill untouched.
+    const aimedFreezeId = this.aimedFreezeTriggerId;
     for (const cell of this.freezeTriggers) {
       const hasUp = this.freezeTriggerSet.has(cellKey(cell.x, cell.y + 1));
       const hasDown = this.freezeTriggerSet.has(cellKey(cell.x, cell.y - 1));
       const hasLeft = this.freezeTriggerSet.has(cellKey(cell.x - 1, cell.y));
       const hasRight = this.freezeTriggerSet.has(cellKey(cell.x + 1, cell.y));
-      const [r, g, b] = freezeBevelRgb(hasUp, hasDown, hasLeft, hasRight);
+      let [r, g, b] = freezeBevelRgb(hasUp, hasDown, hasLeft, hasRight);
+      if (aimedFreezeId !== null && this.freezeCellTriggerId.get(cellKey(cell.x, cell.y)) === aimedFreezeId) {
+        const sameUp = this.freezeCellTriggerId.get(cellKey(cell.x, cell.y + 1)) === aimedFreezeId;
+        const sameDown = this.freezeCellTriggerId.get(cellKey(cell.x, cell.y - 1)) === aimedFreezeId;
+        const sameLeft = this.freezeCellTriggerId.get(cellKey(cell.x - 1, cell.y)) === aimedFreezeId;
+        const sameRight = this.freezeCellTriggerId.get(cellKey(cell.x + 1, cell.y)) === aimedFreezeId;
+        if (!sameUp || !sameDown || !sameLeft || !sameRight) [r, g, b] = [255, 255, 255];
+      }
       writePixel(cell.x, height - 1 - cell.y, r, g, b, 255);
     }
 
@@ -3211,10 +3434,22 @@ export class SandCannonEngine {
   private updateAimPreview() {
     if (this.aimPointer === null || !this.canInteract()) {
       this.showIdleCrosshair();
+      this.aimedFreezeTriggerId = null;
       return;
     }
     const cursor = this.cursorForCurrentStick();
     const solved = this.solveAimAtScreenPoint(cursor.x, cursor.y);
+    // On request ("cục freeze sẽ highlight lên bằng shadow trắng" khi
+    // crosshair nhắm vào nó): an exact-cell match against `freezeCellTriggerId`,
+    // the same rule `triggerAtCell` (sand-rules.ts) uses to decide whether a
+    // shot fired right now would actually arm it — the highlight never lights
+    // up a trigger this shot would only sweep past. Gated on `aimArmed` like
+    // `liftTarget` just below: a bare touch-down with no drag yet previews
+    // nothing, freeze included.
+    this.aimedFreezeTriggerId =
+      solved?.grid && this.aimArmed
+        ? this.freezeCellTriggerId.get(cellKey(solved.grid.x, solved.grid.y)) ?? null
+        : null;
     this.displayedLaunch = solved?.solution ?? null;
     this.displayedAimArmed = this.aimArmed;
     this.crosshair.style.left = `${THREE.MathUtils.clamp(cursor.x, AIM_CURSOR_EDGE_MARGIN, Math.max(AIM_CURSOR_EDGE_MARGIN, this.host.clientWidth - AIM_CURSOR_EDGE_MARGIN))}px`;
@@ -3452,6 +3687,19 @@ export class SandCannonEngine {
     this.clearProjectile();
     if (!ammo) return;
     this.triggerFrameRecoil(contact);
+    if (booster) {
+      this.callbacks.onEvent?.({ type: "BOOSTER_IMPACT", booster });
+      // Radius Overcharge's own tell (on request): a bigger, decaying
+      // oscillation layered on top of the ordinary per-shot recoil flinch
+      // above — `step()` is what plays it out. Reset on every radius impact
+      // rather than added to whatever is left of a previous one, so back-to-
+      // back Radius shots each read as their own full kick instead of
+      // stacking into something wilder than any single shot earned.
+      if (booster === "radiusOvercharge") {
+        this.radiusShakeAmplitude = 1;
+        this.radiusShakeTime = 0;
+      }
+    }
     haptic("impact");
     sound("impact");
     const impactBling = this.sparkleBlingColors();
@@ -3503,11 +3751,33 @@ export class SandCannonEngine {
       // state (and the ability to aim again) applies the instant the outcome
       // is known. The shake is queued as a purely cosmetic beat, appended
       // behind whatever is already animating rather than replacing it.
-      this.state = resolution.state;
-      this.syncFreezeTriggers();
-      this.syncFrameFreezeColor();
-      this.callbacks.onState(this.cloneState());
       this.beats.push({ kind: "SHAKE_AREA", center, radius: radiusUsed, ms: NO_MATCH_SHAKE_MS });
+      // A NO_MATCH shot ordinarily has nothing to settle — but the one that
+      // also happens to tick Freeze's count down to 0 forces a whole-board
+      // settle regardless (see `justUnfroze` in sand-rules.ts), so this can
+      // arrive with real `steps` to play even though nothing was removed.
+      // Same STEP/HOLD beat playback the matched-shot path below uses, just
+      // with no CLEAR beat first since there is nothing to flash away.
+      if (resolution.steps.length) {
+        const timed = resolution.steps.reduce((total, step) => total + (step.kind === "REINDEX" ? 0 : 1), 0);
+        const perStep = this.settleStepMs(timed);
+        this.beats.push(
+          ...resolution.steps.map((step): Beat => ({
+            kind: "STEP",
+            step,
+            ms: step.kind === "REINDEX" ? 0 : perStep,
+          })),
+          { kind: "HOLD", ms: SETTLE_TAIL_MS },
+        );
+        this.settleLandings = 0;
+        this.nextShotAt = Math.max(this.nextShotAt, performance.now() + CLEAR_DURATION_MS);
+        this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
+      } else {
+        this.state = resolution.state;
+      }
+      this.syncFreezeTriggers();
+      this.syncFreezeVisuals();
+      this.callbacks.onState(this.cloneState());
       return;
     }
 
@@ -3561,7 +3831,7 @@ export class SandCannonEngine {
     // `.settle-badge`) show until `advanceBeats` clears the queue below.
     this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
     this.syncFreezeTriggers();
-    this.syncFrameFreezeColor();
+    this.syncFreezeVisuals();
     this.callbacks.onState(this.cloneState());
     if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
     if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
@@ -3782,14 +4052,24 @@ export class SandCannonEngine {
   }
 
   /**
-   * Re-derive `freezeTriggers`/`freezeTriggerSet` from `this.state` — called
-   * after every shot resolves. Unlike `walls` (baked once in `buildSand` and
-   * never touched again), a trigger can vanish mid-level, so the render-side
-   * copy has to be refreshed whenever the state that owns the truth changes.
+   * Re-derive `freezeTriggers`/`freezeTriggerSet`/`freezeCellTriggerId` from
+   * `this.state` — called after every shot resolves. Unlike `walls` (baked
+   * once in `buildSand` and never touched again), a trigger can vanish
+   * mid-level, so the render-side copy has to be refreshed whenever the
+   * state that owns the truth changes.
    */
   private syncFreezeTriggers() {
-    this.freezeTriggers = this.state.freezeTriggers.flatMap((trigger) => trigger.cells);
+    this.setFreezeTriggerFields(this.state.freezeTriggers);
+  }
+
+  /** Shared by `buildSand` and `syncFreezeTriggers`: rebuilds every
+   * render-side view of the trigger list from one source of truth. */
+  private setFreezeTriggerFields(triggers: readonly SandFreezeTrigger[]) {
+    this.freezeTriggers = triggers.flatMap((trigger) => trigger.cells);
     this.freezeTriggerSet = new Set(this.freezeTriggers.map((cell) => cellKey(cell.x, cell.y)));
+    this.freezeCellTriggerId = new Map(
+      triggers.flatMap((trigger) => trigger.cells.map((cell) => [cellKey(cell.x, cell.y), trigger.id] as const)),
+    );
   }
 
   private cloneState(): SandGameState {
@@ -3829,8 +4109,26 @@ export class SandCannonEngine {
     // push back is the same for every hit regardless of where it landed.
     this.frameRecoil = Math.max(0, this.frameRecoil - FIXED_STEP * FRAME_RECOIL_DECAY_PER_SECOND);
     const idleShakeZ = this.updateIdleHint(deltaMs);
-    this.frameRoot.rotation.x = -this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetY;
-    this.frameRoot.rotation.z = this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetX + idleShakeZ;
+    // Radius Overcharge's own shake — see `radiusShakeAmplitude`'s own field
+    // comment for why this decays exponentially (a real slow-down) rather
+    // than linearly (a shake at constant strength that just switches off).
+    // Two different frequency multipliers/phases for x vs z is what keeps
+    // the wobble reading as an actual shake rather than one axis just
+    // trailing the other by a fixed beat.
+    let radiusShakeX = 0;
+    let radiusShakeZ = 0;
+    if (this.radiusShakeAmplitude > RADIUS_SHAKE_STOP_THRESHOLD) {
+      this.radiusShakeTime += FIXED_STEP;
+      radiusShakeX = Math.sin(this.radiusShakeTime * RADIUS_SHAKE_FREQUENCY_HZ * Math.PI * 2)
+        * this.radiusShakeAmplitude * RADIUS_SHAKE_TILT;
+      radiusShakeZ = Math.sin(this.radiusShakeTime * RADIUS_SHAKE_FREQUENCY_HZ * Math.PI * 2 * 1.37 + 1.1)
+        * this.radiusShakeAmplitude * RADIUS_SHAKE_TILT;
+      this.radiusShakeAmplitude *= Math.exp(-RADIUS_SHAKE_DECAY_PER_SECOND * FIXED_STEP);
+    } else {
+      this.radiusShakeAmplitude = 0;
+    }
+    this.frameRoot.rotation.x = -this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetY + radiusShakeX;
+    this.frameRoot.rotation.z = this.frameRecoil * FRAME_RECOIL_TILT * this.frameRecoilOffsetX + idleShakeZ + radiusShakeZ;
     this.frameRoot.position.z = SAND_PLANE_Z - this.frameRecoil * FRAME_RECOIL_PUSH;
 
     this.updateAmmoModel();
@@ -3872,6 +4170,7 @@ export class SandCannonEngine {
     this.updateFrameSpin(delta);
     this.updateWinReveal();
     this.updateCannonEntrance();
+    this.updateFreezeVisualsAnimation(delta);
     // Runs through the same pause the picker opens on top of, the same way
     // `updateFrameSpin`/`updateCannonEntrance` already do — `step()` below
     // never runs while `this.paused` (the picker is home-screen-only), so the

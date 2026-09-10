@@ -977,25 +977,23 @@ export function cellsInRadius(
 }
 
 /**
- * The first Freeze Map trigger a shot's disc reaches, or null.
+ * The Freeze Map trigger the crosshair is directly over, or null.
  *
- * Colour-blind on purpose — a trigger is not sand, so `matchColor` never
- * applies to it (§3 of the mechanic doc: "bắn trúng nó bằng bất kỳ màu đạn
- * nào"). Checked against the same disc `cellsInRadius` resolves the shot's
- * own colour against, so a shot that touches both sand and a trigger does
- * both in one motion.
+ * An exact cell match, not a disc reach (on request: "chỉ khi crosshair nhắm
+ * vào Freeze thì nó mới kích hoạt được") — a shot that merely sweeps past a
+ * trigger on its way to sand nearby no longer arms it; the impact point
+ * itself (`hit.x`/`hit.y`, always an integer cell — see `handleImpact`'s own
+ * `center`) has to land on one of the trigger's own cells. Colour-blind on
+ * purpose either way — a trigger is not sand, so `matchColor` never applies
+ * to it (§3 of the mechanic doc: "bắn trúng nó bằng bất kỳ màu đạn nào").
  */
-export function triggerInRadius(
+export function triggerAtCell(
   triggers: readonly SandFreezeTrigger[],
-  center: CellCoord,
-  radius: number,
+  cell: CellCoord,
 ): SandFreezeTrigger | null {
-  const limit = radius * radius;
   for (const trigger of triggers) {
-    for (const cell of trigger.cells) {
-      const dx = cell.x - center.x;
-      const dy = cell.y - center.y;
-      if (dx * dx + dy * dy <= limit) return trigger;
+    for (const triggerCell of trigger.cells) {
+      if (triggerCell.x === cell.x && triggerCell.y === cell.y) return trigger;
     }
   }
   return null;
@@ -1402,6 +1400,13 @@ function settleAfterRemoval(
    * source opens new empty space the cascade below might start from. */
   disturbed: CellCoord[],
   frozen: boolean,
+  /** Force the unhinted, whole-frame `settleWorld` sweep regardless of how
+   * small `disturbed` is — set only on the shot that just unfroze the board
+   * (see that call site's own comment): sand anywhere could have gone
+   * unsupported during however many shots the board sat frozen, not just
+   * near this one shot's own disturbance, so the ordinary hole-hinted pass
+   * below is not enough to find it all. */
+  fullSweep: boolean = false,
 ) {
   // The hole a radius shot bites is one contiguous disc, so its own bounding
   // box (plus a little slack for the fall's own sideways roll) is where every
@@ -1416,11 +1421,13 @@ function settleAfterRemoval(
     if (cell.y < minY) minY = cell.y;
     if (cell.y > maxY) maxY = cell.y;
   }
-  const hint = {
-    x: (minX + maxX) / 2,
-    y: (minY + maxY) / 2,
-    radius: Math.max(maxX - minX, maxY - minY) / 2 + 1,
-  };
+  const hint = fullSweep || disturbed.length === 0
+    ? undefined
+    : {
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2,
+        radius: Math.max(maxX - minX, maxY - minY) / 2 + 1,
+      };
   const settle = runGrainSettle(bodies, level.frame, fixtures, hint, frozen);
   return { settle, steps: settle.steps };
 }
@@ -1481,10 +1488,10 @@ export function resolveShot(
     matchColor: booster !== "prismShot",
   });
 
-  // Freeze Map: checked against the same disc, entirely independently of
-  // whether `removed` found anything — a trigger is not sand, so it neither
-  // needs nor cares about a colour match (`triggerInRadius`'s own comment).
-  const hitTrigger = triggerInRadius(state.freezeTriggers, { x: hit.x, y: hit.y }, radius);
+  // Freeze Map: an exact hit on the trigger's own cell, entirely independent
+  // of `removed`/the sand disc above — see `triggerAtCell`'s own comment for
+  // why this is no longer radius-based.
+  const hitTrigger = triggerAtCell(state.freezeTriggers, { x: hit.x, y: hit.y });
   const wasFrozen = state.freezeShotsRemaining > 0;
   // A trigger only actually fires if Freeze isn't already running — reached
   // while already frozen, it does nothing and is NOT spent (see
@@ -1494,15 +1501,22 @@ export function resolveShot(
   const nextFreezeTriggers = activatedFreeze
     ? state.freezeTriggers.filter((trigger) => trigger.id !== hitTrigger!.id)
     : state.freezeTriggers;
-  // The trigger-hitting shot is itself the first frozen one — the count
-  // (and the bar it drives) starts at full the instant the disc reaches the
-  // trigger, not on the next shot after it.
-  const frozenThisShot = activatedFreeze || wasFrozen;
   const freezeShotsAfter = activatedFreeze
     ? (level.freezeDuration ?? DEFAULT_FREEZE_DURATION)
     : wasFrozen
       ? Math.max(0, state.freezeShotsRemaining - 1)
       : 0;
+  // Gravity is locked for exactly the shots that leave the board frozen
+  // *afterward* (`freezeShotsAfter > 0`), not the ones where it merely
+  // started the shot frozen. That makes two things true from the same
+  // check: the trigger-hitting shot is itself the first frozen one (count
+  // starts at full the instant the disc reaches the trigger, so
+  // `freezeShotsAfter` is already > 0 for it) — and, on request, the LAST
+  // frozen shot (the one that ticks `freezeShotsRemaining` down to 0) is the
+  // one that unfreezes it: sand settles immediately on that same shot
+  // instead of sitting locked one shot longer, waiting for the next one to
+  // notice the count already hit 0.
+  const frozenThisShot = freezeShotsAfter > 0;
 
   const spend = (
     bodies: SandBody[],
@@ -1513,20 +1527,47 @@ export function resolveShot(
     freezeShotsRemaining: freezeShotsAfter,
   });
 
+  // The shot that ticks `freezeShotsRemaining` down to 0 unfreezes the WHOLE
+  // board, not just wherever this one shot happened to land — over however
+  // many shots the board sat frozen, sand elsewhere could have lost its own
+  // support any number of times with gravity switched off, and none of that
+  // ever got a chance to fall. A localised, hole-hinted settle (the ordinary
+  // case, `settleAfterRemoval`'s own ` hint`) only ever re-checks the
+  // neighbourhood of THIS shot's disturbance, so it would leave every other
+  // orphaned pocket hanging in place forever — exactly the "cát đứng yên
+  // chứ không chịu sụp xuống hết" bug this is fixing. `fullSweep: true`
+  // below is what forces the unhinted, whole-frame `settleWorld` pass
+  // instead, on this shot only.
+  const justUnfroze = wasFrozen && freezeShotsAfter === 0;
+
   if (!removed.length) {
     // Freeze starts the instant its trigger is hit, so a shot that only
     // spent the trigger (found no sand of its own colour) never has
     // anything left to settle — the board was already frozen for this same
-    // shot, before anything could fall.
-    const missed = { ...state, ...spend(state.bodies, frozenLocked), freezeTriggers: nextFreezeTriggers };
-    return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody };
+    // shot, before anything could fall. But a shot that only ticks the
+    // count down to 0 (still no sand of its own colour in reach) is exactly
+    // `justUnfroze`, and still has to run the same whole-frame settle the
+    // matched-shot path below runs, or nothing anywhere on the board would
+    // ever fall for it either.
+    const fixtures: Fixtures = { ...fixturesOf(level, state), freezeTriggers: nextFreezeTriggers };
+    const { settle, steps } = justUnfroze
+      ? settleAfterRemoval(level, state.bodies, fixtures, [], false, true)
+      : { settle: null, steps: [] };
+    const stillFrozen = settle ? new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y))) : frozenLocked;
+    const missed = {
+      ...state,
+      ...(settle ? { bodies: settle.bodies, locked: settle.locked, keys: settle.keys, walls: settle.walls } : {}),
+      ...spend(settle?.bodies ?? state.bodies, stillFrozen),
+      freezeTriggers: settle?.freezeTriggers ?? nextFreezeTriggers,
+    };
+    return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody, settle, steps };
   }
   const taken = new Set(removed.map((cell) => cellKey(cell.x, cell.y)));
   const left = state.bodies
     .map((body) => ({ ...body, cells: body.cells.filter((cell) => !taken.has(cellKey(cell.x, cell.y))) }))
     .filter((body) => body.cells.length);
   const fixtures: Fixtures = { ...fixturesOf(level, state), freezeTriggers: nextFreezeTriggers };
-  const { settle, steps } = settleAfterRemoval(level, left, fixtures, removed, frozenThisShot);
+  const { settle, steps } = settleAfterRemoval(level, left, fixtures, removed, frozenThisShot, justUnfroze);
   const stillFrozen = new Set(settle.locked.map((cell) => cellKey(cell.x, cell.y)));
   let sorted: SandGameState = {
     ...state,
