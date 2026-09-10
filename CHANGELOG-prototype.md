@@ -6564,8 +6564,11 @@ kết quả của vòng chỉnh trước lúc nghi ngờ nhầm nguyên nhân). 
 nhận đúng bằng ảnh chụp thực tế, kể cả khi nguyên nhân báo lỗi trước đó hoá ra là thứ khác (bản build cũ).
 
 Theo yêu cầu tiếp theo ("kéo xuống thêm nữa"), hạ thêm `CANNON_ROOT_POSITION.y` xuống -0.2, rồi hạ tiếp lần nữa
-xuống -0.45 — súng giờ lún khá sâu vào khay thay vì chỉ nằm sát ngay phía trên nó. Build lại
-`outputs/3d-cannon-sort.html` sau mỗi lần chỉnh.
+xuống -0.45 — súng giờ lún khá sâu vào khay thay vì chỉ nằm sát ngay phía trên nó. Sau đó, theo yêu cầu "nhích
+lên 1 tí, phóng to canon ra chút": nhích `y` lên lại -0.3 và tăng `CANNON_MODEL_SCALE` từ 0.58 lên 0.68. Build
+lại `outputs/3d-cannon-sort.html` sau mỗi lần chỉnh. Đã qua nhiều vòng chỉnh liên tiếp bằng mắt theo phản hồi
+trực tiếp — hai hằng số này giờ nên coi là "chỉnh bằng mắt so với khay/tranh thật", không phải suy luận hình
+học; xem lịch sử đủ các giá trị đã thử ở các mục ngay phía trên nếu cần đối chiếu.
 
 **Test:** `tsc --noEmit` sạch (2 lỗi `db/index.ts`/`worker/index.ts` có từ trước, không liên quan), 150/150
 test pass. Verify trực tiếp trên browser preview qua nhiều vòng: toàn bộ 5 bước tutorial (spotlight đúng vị trí

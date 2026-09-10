@@ -276,23 +276,18 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [0, -1],
 ];
 /**
- * Raised from -1.78 (on request: the whole rig sat low enough that
- * `.booster-hud`'s full-width bottom dock — see globals.css — covered the
- * base and turret, leaving only the barrel poking out above it). Paired with
- * `CANNON_MODEL_SCALE` below: pulling the rig up on its own would have
- * pushed the muzzle uncomfortably close to the picture, so the whole thing
- * is shrunk too, not just raised.
- *
- * Deliberately sits low, base settled down into the tray rather than
- * hovering just above it — on request, lowered twice more after 0.05 first
- * read as resting cleanly clear of the dock. This briefly went up to 0.45
- * chasing what turned out to be a stale offline build
- * (`outputs/3d-cannon-sort.html`), not a real clipping bug — see
- * CHANGELOG-prototype.md's own entry on it — and got the opposite complaint
- * ("why is it up near the picture now"); every value since has gone the
- * other way, deeper into the tray, not further clear of it.
+ * Raised from its original -1.78 (`.booster-hud`'s full-width bottom dock —
+ * see globals.css — used to cover the base and turret, leaving only the
+ * barrel poking out above it), then tuned by eye across several more rounds
+ * of feedback — base deliberately settled down into the tray rather than
+ * hovering just above it. `CHANGELOG-prototype.md` has the blow-by-blow if
+ * a future value here looks surprising; the short version is that this
+ * number has moved several times in both directions and eyeballing it live
+ * against the actual dock is more reliable than reasoning about it in the
+ * abstract. Paired with `CANNON_MODEL_SCALE` below: raising the rig without
+ * shrinking it pushes the muzzle uncomfortably close to the picture.
  */
-const CANNON_ROOT_POSITION = new THREE.Vector3(0, -0.45, 5.25);
+const CANNON_ROOT_POSITION = new THREE.Vector3(0, -0.3, 5.25);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
 export const MUZZLE_Z = -2.18;
@@ -310,7 +305,7 @@ export const MUZZLE_Z = -2.18;
  * rig (`CANNON_ROOT_POSITION`) without shrinking it would have crowded the
  * muzzle up against the picture instead.
  */
-const CANNON_MODEL_SCALE = 0.58;
+const CANNON_MODEL_SCALE = 0.68;
 
 // ---- reward chest showcase -----------------------------------------------
 // The reward screen's chest is a real 3D stage (`chest-model.ts` — the chest,
