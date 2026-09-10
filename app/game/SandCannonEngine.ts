@@ -2553,6 +2553,18 @@ export class SandCannonEngine {
   }
 
   /**
+   * How many charges of `type` are actually available right now — the
+   * level's own forced allotment (`SandGameState.boosterChargesOverride`,
+   * seeded from `SandLevelConfig.forcedBoosterCharges`) if it has an opinion
+   * for this type, otherwise the real wallet (`getBoosterCharges`). Reused
+   * by both `armBooster`'s own charge check and `fire()`'s spend below, so
+   * the two can never disagree about which pool of charges is live.
+   */
+  private effectiveBoosterCharges(type: BoosterType): number {
+    return this.state.boosterChargesOverride?.[type] ?? getBoosterCharges(type);
+  }
+
+  /**
    * Arms `type` for the next shot, toggling it back off if it is already the
    * one armed — a second tap on the same booster button cancels it rather
    * than doing nothing, spending no charge either way. Still a no-op to arm
@@ -2570,7 +2582,7 @@ export class SandCannonEngine {
       return;
     }
     if (this.armedBooster !== null) return;
-    if (getBoosterCharges(type) <= 0) return;
+    if (this.effectiveBoosterCharges(type) <= 0) return;
     this.armedBooster = type;
     this.syncBoosterOverlay();
     this.callbacks.onBoosterChange?.(this.armedBooster);
@@ -3577,6 +3589,32 @@ export class SandCannonEngine {
     }
   }
 
+  /**
+   * Level 3's booster FTUE (`SandLevelConfig.ftueBoosterDemo`): arms
+   * `booster` exactly like a real tap on its own tray button (same
+   * `armBooster`, same charge check via `effectiveBoosterCharges` — the
+   * level's own `forcedBoosterCharges` is what actually guarantees this
+   * succeeds regardless of the player's real wallet), then runs one
+   * scripted drag-and-fire shot at `(gx, gy)` with it armed — a real,
+   * state-mutating boosted shot through `fire()`/`resolveShot`, the same as
+   * `runScriptedShot` is for a plain one. Resolves `false` without firing
+   * anything if `armBooster` couldn't actually arm (phase not READY, the
+   * other booster already armed, or — should never happen once
+   * `forcedBoosterCharges` is set correctly — no charges); the caller
+   * should treat that the same as a scripted shot that failed to aim.
+   */
+  async runScriptedBoosterShot(booster: BoosterType, gx: number, gy: number): Promise<boolean> {
+    this.scriptedShotActive = true;
+    try {
+      await this.waitUntilReadyToAim();
+      this.armBooster(booster);
+      if (this.armedBooster !== booster) return false;
+      return await this.runScriptedShot(gx, gy);
+    } finally {
+      this.scriptedShotActive = false;
+    }
+  }
+
   /** The frame square a world point falls in, or null if it falls outside. */
   private gridAtPoint(point: THREE.Vector3) {
     const local = point.clone().sub(this.frameRoot.position);
@@ -3709,9 +3747,23 @@ export class SandCannonEngine {
     this.armedBooster = null;
     this.syncBoosterOverlay();
     this.callbacks.onBoosterChange?.(null);
-    // The wallet charge this armed shot cost — see `spendBoosterCharge`'s own
-    // comment for why this is the one and only place it is spent.
-    if (booster) spendBoosterCharge(booster);
+    // The charge this armed shot cost — see `spendBoosterCharge`'s own
+    // comment for why this is the one and only place it is spent. A level
+    // that forces this type's charges (`boosterChargesOverride`) spends down
+    // its own local count instead of the real wallet — same pool
+    // `effectiveBoosterCharges`/`armBooster` just checked, so arming and
+    // spending never disagree about which one is live.
+    if (booster) {
+      const overrideCharges = this.state.boosterChargesOverride?.[booster];
+      if (overrideCharges !== undefined) {
+        this.state = {
+          ...this.state,
+          boosterChargesOverride: { ...this.state.boosterChargesOverride, [booster]: Math.max(0, overrideCharges - 1) },
+        };
+      } else {
+        spendBoosterCharge(booster);
+      }
+    }
 
     if (!this.projectileMesh) {
       const geometry = this.track(new THREE.SphereGeometry(PROJECTILE_RADIUS, 12, 8));

@@ -338,6 +338,39 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    */
   ftueFreezeTargets?: readonly { x: number; y: number }[];
   /**
+   * Pins exact booster charge counts for this level, independent of the
+   * player's real wallet (`economy.ts`) — every attempt, FTUE or replay,
+   * gets exactly this many, same "level-scoped, not global economy"
+   * reasoning as `forcedOpeningQueue` above. Tracked at runtime as
+   * `SandGameState.boosterChargesOverride`, which `createSandGameState`
+   * seeds from this and the engine spends down instead of touching the real
+   * wallet — see `SandCannonEngine.armBooster`/`fire`. A level without this
+   * just reads the wallet as normal; a booster type absent from the map
+   * (but present on the map for the OTHER type) also just reads the wallet
+   * for that one type.
+   */
+  forcedBoosterCharges?: Partial<Record<BoosterType, number>>;
+  /**
+   * Plays the one-time "how boosters work" demo on this level's very first
+   * attempt (level 3) — same "seen forever" bookkeeping as `ftueFreezeDemo`.
+   * A spotlight+caption on the Radius Overcharge button, a scripted shot
+   * with it armed, then the same for Prism Shot, then hands off to the
+   * player with the exact same board and remaining shots, no reset until
+   * the final "tap to continue" (which — unlike `ftueFreezeDemo` — DOES
+   * reset the level: the two demo shots are meant to cost nothing against
+   * the player's own attempt). Requires `forcedBoosterCharges` (the demo
+   * arms real boosters through the real `fire()`/`resolveShot` pipeline, so
+   * it needs charges to spend) and `ftueBoosterTargets`; meaningless (and
+   * never read) without both.
+   */
+  ftueBoosterDemo?: boolean;
+  /**
+   * The scripted shots `ftueBoosterDemo` fires, in order — `[radiusTarget,
+   * prismTarget]`, frame-grid cells (same top-first space as `rows`).
+   * Required alongside `ftueBoosterDemo: true`; unused otherwise.
+   */
+  ftueBoosterTargets?: readonly { x: number; y: number }[];
+  /**
    * Boosters this level cannot be cleared without — spec §5. A hard level
    * (chương 4–5) may need a shot with `radiusOvercharge` or `prismShot` armed
    * as the load-bearing move, not just as help.
@@ -481,6 +514,15 @@ export type SandGameState = {
    * this many of them still lit.
    */
   freezeShotsRemaining: number;
+  /**
+   * Remaining charges for boosters this level force-provides
+   * (`SandLevelConfig.forcedBoosterCharges`) — seeded from that field by
+   * `createSandGameState`, spent down by `SandCannonEngine.fire` instead of
+   * the real wallet (`economy.ts`) whenever a booster type is present here.
+   * Undefined (the field, or a given booster type within it) means "read
+   * the real wallet as normal" — most levels never set this at all.
+   */
+  boosterChargesOverride?: Partial<Record<BoosterType, number>>;
   result: SandResult;
 };
 

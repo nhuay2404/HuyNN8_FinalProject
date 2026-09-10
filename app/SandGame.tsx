@@ -685,6 +685,64 @@ function markFreezeFtueSeen(id: number) {
   }
 }
 
+/**
+ * Levels whose scripted booster demo (`SandLevelConfig.ftueBoosterDemo`) has
+ * already auto-played, this browser — same shape as `FREEZE_FTUE_SEEN_KEY`,
+ * its own key so the two FTUE features don't share bookkeeping.
+ */
+const BOOSTER_FTUE_SEEN_KEY = "sand-cannon:v1:booster-ftue-seen";
+
+function loadSeenBoosterFtue(): Set<number> {
+  try {
+    const raw = window.localStorage.getItem(BOOSTER_FTUE_SEEN_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is number => typeof id === "number") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markBoosterFtueSeen(id: number) {
+  try {
+    const next = loadSeenBoosterFtue().add(id);
+    window.localStorage.setItem(BOOSTER_FTUE_SEEN_KEY, JSON.stringify([...next]));
+  } catch {
+    // Private browsing or a full quota: the demo just plays again next time,
+    // which is a mild annoyance, not a broken game.
+  }
+}
+
+/**
+ * Whether the "go buy the boosters you just tried" red dot on the Shop tab
+ * should be showing — a plain on/off flag, not per-level like the FTUE-seen
+ * keys above, because it means "there is an unactioned hint right now", not
+ * "level N has been shown this". Turned on the moment the booster FTUE's demo
+ * finishes (`boosterFtueStep` reaching "outro"), turned off the moment the
+ * player actually taps into Shop from it — see the `hub-nav` button below.
+ * Same guarded-storage contract as `loadSeenBoosterFtue`: a browser that
+ * refuses storage just means the dot never shows, which is the safe
+ * direction to fail in.
+ */
+const BOOSTER_SHOP_HINT_KEY = "sand-cannon:v1:booster-shop-hint";
+
+function loadBoosterShopHint(): boolean {
+  try {
+    return window.localStorage.getItem(BOOSTER_SHOP_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setBoosterShopHint(active: boolean) {
+  try {
+    if (active) window.localStorage.setItem(BOOSTER_SHOP_HINT_KEY, "1");
+    else window.localStorage.removeItem(BOOSTER_SHOP_HINT_KEY);
+  } catch {
+    // Nothing to persist if storage is unavailable — the dot just won't
+    // survive a reload, same fallback as everything else here.
+  }
+}
+
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
@@ -792,6 +850,45 @@ export default function SandGame() {
     });
   }, [freezeFtueTapReady]);
 
+  /**
+   * Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`) — same
+   * beat-by-beat shape as `freezeFtueStep` just above, teaching two
+   * boosters back to back instead of one mechanic's before/after:
+   *
+   *   intro-radius   — spotlight + caption on the Radius Overcharge button
+   *   demo-radius    — (no caption) scripted shot #1: fires with it armed
+   *   intro-prism    — spotlight + caption on the Prism Shot button
+   *   demo-prism     — (no caption) scripted shot #2: fires with it armed
+   *   outro          — plain caption, waiting for the final tap (resets
+   *                    the level via `restart()`, same reasoning as
+   *                    `freezeFtueStep`'s own "outro" — the two demo shots
+   *                    are not meant to cost the player anything)
+   */
+  const [boosterFtueStep, setBoosterFtueStep] = useState<
+    "intro-radius" | "demo-radius" | "intro-prism" | "demo-prism" | "outro" | null
+  >(null);
+  const [boosterFtueTapReady, setBoosterFtueTapReady] = useState(false);
+  useEffect(() => {
+    const captionStep = boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism" || boosterFtueStep === "outro";
+    if (!captionStep) return;
+    setBoosterFtueTapReady(false);
+    const timer = window.setTimeout(() => setBoosterFtueTapReady(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [boosterFtueStep]);
+  // Only "intro-radius" and "intro-prism" go through here — "outro"'s tap is
+  // wired to `restart` directly at the call site, same reasoning as
+  // `advanceFreezeFtue`'s own comment.
+  const advanceBoosterFtue = useCallback(() => {
+    if (!boosterFtueTapReady) return;
+    setBoosterFtueStep((step) => {
+      switch (step) {
+        case "intro-radius": return "demo-radius";
+        case "intro-prism": return "demo-prism";
+        default: return step;
+      }
+    });
+  }, [boosterFtueTapReady]);
+
   // The engine simulates and reports state at pixel resolution — every number
   // this component reads off `state` (remainingCells above all) is in those
   // terms, so the level it reasons about here has to be expanded the same way,
@@ -825,6 +922,48 @@ export default function SandGame() {
       return () => { cancelled = true; };
     }
   }, [freezeFtueStep, engine, level]);
+
+  // Drives the two "demo-*" booster-tutorial steps — same shape as the
+  // freeze one just above, except each demo shot also arms the booster it
+  // is teaching first (`runScriptedBoosterShot`, not the plain
+  // `runScriptedShotSequence`). `level.ftueBoosterTargets` is
+  // `[radiusTarget, prismTarget]` (see its own doc comment).
+  useEffect(() => {
+    if (!engine) return;
+    const targets = level.ftueBoosterTargets;
+    if (!targets || targets.length < 2) return;
+    if (boosterFtueStep === "demo-radius") {
+      let cancelled = false;
+      engine.runScriptedBoosterShot("radiusOvercharge", targets[0].x, targets[0].y).finally(() => {
+        if (!cancelled) setBoosterFtueStep("intro-prism");
+      });
+      return () => { cancelled = true; };
+    }
+    if (boosterFtueStep === "demo-prism") {
+      let cancelled = false;
+      engine.runScriptedBoosterShot("prismShot", targets[1].x, targets[1].y).finally(() => {
+        if (!cancelled) setBoosterFtueStep("outro");
+      });
+      return () => { cancelled = true; };
+    }
+  }, [boosterFtueStep, engine, level]);
+
+  // The Shop tab's "go buy the boosters you just tried" red dot
+  // (`BOOSTER_SHOP_HINT_KEY`) — lit the instant the demo finishes, so it's
+  // waiting on the hub-nav the moment the player backs out to Home (the nav
+  // itself is what's hidden during play, not this flag). Kept as its own
+  // piece of state, not read fresh from storage on every render like
+  // `unseenAffordableSkins`, because there's no wallet/level input to
+  // recompute it from — it only ever changes on these two explicit edges.
+  const [boosterShopHint, setBoosterShopHintState] = useState(false);
+  useEffect(() => {
+    setBoosterShopHintState(loadBoosterShopHint());
+  }, []);
+  useEffect(() => {
+    if (boosterFtueStep !== "outro") return;
+    setBoosterShopHint(true);
+    setBoosterShopHintState(true);
+  }, [boosterFtueStep]);
 
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
@@ -1537,6 +1676,7 @@ export default function SandGame() {
     setArmedBooster(null);
     setRunId((id) => id + 1);
     setFreezeFtueStep(null);
+    setBoosterFtueStep(null);
   }, [level]);
 
   const goHome = useCallback(() => {
@@ -1556,6 +1696,7 @@ export default function SandGame() {
     setTutorialOpen(false);
     setFtueGestureOpen(false);
     setFreezeFtueStep(null);
+    setBoosterFtueStep(null);
   }, [level]);
 
   const openLevel = useCallback((index: number) => {
@@ -1618,6 +1759,11 @@ export default function SandGame() {
       markFreezeFtueSeen(jumped.id);
       setFreezeFtueStep("intro");
     }
+    if (jumped.ftueBoosterDemo && jumped.ftueBoosterTargets && jumped.ftueBoosterTargets.length >= 2
+      && !loadSeenBoosterFtue().has(jumped.id)) {
+      markBoosterFtueSeen(jumped.id);
+      setBoosterFtueStep("intro-radius");
+    }
   }, [devLevelInput, playables, openLevel]);
 
   /**
@@ -1641,6 +1787,8 @@ export default function SandGame() {
     try {
       window.localStorage.removeItem(TUTORIALS_SEEN_KEY);
       window.localStorage.removeItem(FREEZE_FTUE_SEEN_KEY);
+      window.localStorage.removeItem(BOOSTER_FTUE_SEEN_KEY);
+      window.localStorage.removeItem(BOOSTER_SHOP_HINT_KEY);
     } catch {
       // Nothing to clean up if storage is unavailable.
     }
@@ -1741,6 +1889,15 @@ export default function SandGame() {
       && !loadSeenFreezeFtue().has(level.id)) {
       markFreezeFtueSeen(level.id);
       setFreezeFtueStep("intro");
+    }
+    // Level 3's booster tutorial: same "marked seen the instant it starts"
+    // reasoning as the freeze one just above. `forcedBoosterCharges` (3
+    // Radius Overcharge, 2 Prism Shot) stays in force on every future
+    // attempt regardless, same as `forcedOpeningQueue` does for ammo.
+    if (level.ftueBoosterDemo && level.ftueBoosterTargets && level.ftueBoosterTargets.length >= 2
+      && !loadSeenBoosterFtue().has(level.id)) {
+      markBoosterFtueSeen(level.id);
+      setBoosterFtueStep("intro-radius");
     }
   }, [level]);
 
@@ -2321,7 +2478,12 @@ export default function SandGame() {
           {playing && !level.ftueGesture && !winReveal && (
             <div className="booster-hud">
               {(["radiusOvercharge", "prismShot"] as const).map((type) => {
-                const charges = wallet.boosters[type];
+                // A level with `forcedBoosterCharges` (level 3's booster
+                // tutorial) reads its own level-scoped count instead of the
+                // real wallet — see `SandGameState.boosterChargesOverride`'s
+                // own doc comment. Absent for every other level, which falls
+                // straight back to the wallet exactly as before.
+                const charges = state.boosterChargesOverride?.[type] ?? wallet.boosters[type];
                 return (
                   <button
                     key={type}
@@ -2426,6 +2588,73 @@ export default function SandGame() {
                     : s.ftueFreezeOutro}
                 </p>
                 {freezeFtueTapReady && (
+                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Level 3's booster tutorial — same shape as the freeze-orb one
+              just above (reuses its `.ftue-freeze-*` classes: the spotlight/
+              caption/dim-the-rest styling is entirely generic, nothing about
+              it is freeze-specific), teaching Radius Overcharge then Prism
+              Shot back to back instead of one mechanic's before/after.
+              The spotlight here points at a real DOM element (the armed
+              booster's own tray button) rather than a 3D grid cell, so it
+              reads straight off `getBoundingClientRect()` instead of
+              `engine.screenPointForGrid` — both land in the same
+              `.scene-wrap`-relative pixel space `.ftue-freeze-spotlight`
+              expects, since `.booster-hud` is a child of this same
+              `.scene-wrap` too. */}
+          {playing && (boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism" || boosterFtueStep === "outro") && (
+            <div
+              className="ftue-freeze-overlay"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                // "outro"'s tap resets the level, same reasoning as the
+                // freeze tutorial's own outro — the two demo shots (one
+                // Radius Overcharge, one Prism Shot) are not meant to cost
+                // the player anything against their own attempt.
+                if (boosterFtueStep === "outro") {
+                  if (boosterFtueTapReady) restart();
+                  return;
+                }
+                advanceBoosterFtue();
+              }}
+              aria-label={`${
+                boosterFtueStep === "intro-radius" ? s.ftueBoosterRadiusIntro
+                  : boosterFtueStep === "intro-prism" ? s.ftueBoosterPrismIntro
+                  : s.ftueBoosterOutro
+              }${boosterFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
+            >
+              {boosterFtueStep !== "outro" && (() => {
+                const button = document.querySelector<HTMLElement>(
+                  boosterFtueStep === "intro-radius" ? ".booster-btn.is-radius" : ".booster-btn.is-prism",
+                );
+                const container = document.querySelector<HTMLElement>(".scene-wrap");
+                if (!button || !container) return null;
+                const buttonRect = button.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                const spot = {
+                  x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
+                  y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
+                };
+                return (
+                  <div
+                    className="ftue-freeze-spotlight"
+                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
+                    aria-hidden="true"
+                  />
+                );
+              })()}
+              <div className="ftue-freeze-caption">
+                <p className="ftue-freeze-caption-text" aria-hidden="true">
+                  {boosterFtueStep === "intro-radius" ? s.ftueBoosterRadiusIntro
+                    : boosterFtueStep === "intro-prism" ? s.ftueBoosterPrismIntro
+                    : s.ftueBoosterOutro}
+                </p>
+                {boosterFtueTapReady && (
                   <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
                 )}
               </div>
@@ -3170,9 +3399,22 @@ export default function SandGame() {
                 type="button"
                 className={entry === tab ? "is-active" : ""}
                 data-tab={entry}
-                onClick={() => setTab(entry)}
+                onClick={() => {
+                  setTab(entry);
+                  // The Shop's own hint dot: a tap here is exactly the
+                  // "go buy the boosters you just tried" action it was
+                  // asking for, so land straight on the Coins tab (the
+                  // booster shop, `shopTab`'s default anyway) and clear it —
+                  // same "a look is enough to dismiss it" contract as
+                  // `previewCostumeCard`'s `markSkinBadgeSeen` above.
+                  if (entry === "shop" && boosterShopHint) {
+                    setShopTab("coins");
+                    setBoosterShopHint(false);
+                    setBoosterShopHintState(false);
+                  }
+                }}
                 aria-current={entry === tab ? "page" : undefined}
-                aria-label={`${HUB_TAB_NAME[entry]}${entry === "skin" && unseenSkins.length > 0 ? s.skinTabHasOfferSuffix : ""}`}
+                aria-label={`${HUB_TAB_NAME[entry]}${entry === "skin" && unseenSkins.length > 0 ? s.skinTabHasOfferSuffix : ""}${entry === "shop" && boosterShopHint ? s.shopTabHasBoosterHintSuffix : ""}`}
                 title={HUB_TAB_NAME[entry]}
               >
                 <span className="hub-nav-bubble">
@@ -3183,6 +3425,11 @@ export default function SandGame() {
                       "buy now", so it stays lit even mid-preview until that
                       card is actually looked at. */}
                   {entry === "skin" && unseenSkins.length > 0 && (
+                    <span className="hub-nav-dot" aria-hidden="true" />
+                  )}
+                  {/* Same dot, same class, different trigger — see
+                      `boosterShopHint`'s own doc comment above. */}
+                  {entry === "shop" && boosterShopHint && (
                     <span className="hub-nav-dot" aria-hidden="true" />
                   )}
                 </span>

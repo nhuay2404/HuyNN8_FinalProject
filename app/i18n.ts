@@ -81,6 +81,7 @@ export interface Strings {
   sectionsNav: string;
   closeTab: (tabName: string) => string;
   skinTabHasOfferSuffix: string;
+  shopTabHasBoosterHintSuffix: string;
   notBuiltYet: string;
   customizeBlurb: string;
   homeScreenAria: string;
@@ -154,6 +155,18 @@ export interface Strings {
   /** Shown once the freeze has thawed, right before control hands back to
    * the player. */
   ftueFreezeOutro: string;
+  /** Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`), same
+   * shape as `ftueFreezeIntro` above — see `SandGame.tsx`'s
+   * `boosterFtueStep`. Shown spotlighting the Radius Overcharge button,
+   * before its scripted demo shot fires. */
+  ftueBoosterRadiusIntro: string;
+  /** Shown spotlighting the Prism Shot button, before ITS scripted demo
+   * shot fires. */
+  ftueBoosterPrismIntro: string;
+  /** Shown once both demo shots have fired, right before control hands
+   * back to the player (who gets the level's full `forcedBoosterCharges`
+   * again — the level resets on this beat's tap, unlike freeze's). */
+  ftueBoosterOutro: string;
   /** The Skin screen's label for a `unlockLevel` skin — replaces the emerald
    * price everywhere one would otherwise show (the grid card's price pill,
    * the main preview panel's own locked button), since the skin is not for
@@ -313,6 +326,7 @@ const EN: Strings = {
   sectionsNav: "Sections",
   closeTab: (tabName) => `Close ${tabName}`,
   skinTabHasOfferSuffix: " — a skin you can afford is waiting",
+  shopTabHasBoosterHintSuffix: " — go stock up on the boosters you just tried",
   notBuiltYet: "Not built yet.",
   customizeBlurb: "Where the frame, the sand texture and the board's colours would be set.",
   homeScreenAria: "Home screen",
@@ -369,6 +383,9 @@ const EN: Strings = {
   ftueFreezeIntro: "This is a Freeze Orb — hit it and it locks the whole pile in place!",
   ftueFreezeExplainThaw: "To break the freeze, clear every bit of sand in its colour!",
   ftueFreezeOutro: "That's it — that's how Freeze Orb works!",
+  ftueBoosterRadiusIntro: "This is Radius Overcharge — it doubles your blast radius for one shot. Watch!",
+  ftueBoosterPrismIntro: "This is Prism Shot — it clears every colour in reach, not just the one you're holding. Watch!",
+  ftueBoosterOutro: "That's it — you've got 3 Radius Overcharge and 2 Prism Shot to try yourself!",
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
 
@@ -459,6 +476,7 @@ const VI: Strings = {
   sectionsNav: "Điều hướng",
   closeTab: (tabName) => `Đóng ${tabName}`,
   skinTabHasOfferSuffix: " — có skin bạn đủ tiền mua",
+  shopTabHasBoosterHintSuffix: " — mua thêm booster bạn vừa dùng thử",
   notBuiltYet: "Chưa xây dựng xong.",
   customizeBlurb: "Nơi bạn sẽ chỉnh khung tranh, chất liệu cát và màu sắc của bảng.",
   homeScreenAria: "Màn hình chính",
@@ -515,6 +533,9 @@ const VI: Strings = {
   ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại!",
   ftueFreezeExplainThaw: "Muốn phá băng? Dọn sạch hết cát cùng màu với nó!",
   ftueFreezeOutro: "Vậy đó — Freeze Orb hoạt động như thế!",
+  ftueBoosterRadiusIntro: "Đây là Radius Overcharge — tăng gấp đôi bán kính bắn cho 1 phát! Xem nhé!",
+  ftueBoosterPrismIntro: "Đây là Prism Shot — dọn sạch mọi màu trong tầm bắn, không chỉ màu đang cầm! Xem nhé!",
+  ftueBoosterOutro: "Vậy đó — bạn có sẵn 3 Radius Overcharge và 2 Prism Shot để tự thử!",
   // Kept in English on purpose — "Progression" per the design ask, the same
   // way "Blue Emerald" above stays untranslated.
   progressionLabel: "Progression",

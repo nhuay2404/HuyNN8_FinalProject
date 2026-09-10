@@ -19,6 +19,7 @@ import {
 import {
   RADIUS_GAMEPLAY,
   SAND_COLORS,
+  type BoosterType,
   type SandColor,
   type SandLevelConfig,
 } from "./sand-types.ts";
@@ -144,6 +145,15 @@ export type LevelDraft = {
   /** See `SandLevelConfig.ftueFreezeTargets` — same "carried through, not
    * editable here" reasoning as `forcedOpeningQueue` above. */
   ftueFreezeTargets?: { x: number; y: number }[];
+  /** See `SandLevelConfig.forcedBoosterCharges` — same "carried through,
+   * not editable here" reasoning as `forcedOpeningQueue` above. */
+  forcedBoosterCharges?: Partial<Record<BoosterType, number>>;
+  /** See `SandLevelConfig.ftueBoosterDemo` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueBoosterDemo?: boolean;
+  /** See `SandLevelConfig.ftueBoosterTargets` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueBoosterTargets?: { x: number; y: number }[];
   /**
    * Set by `levelToDraft` when this draft came from "Import built-in" — the
    * numeric id of the `SandLevelConfig` it was copied from. What lets the
@@ -295,6 +305,9 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     forcedOpeningQueue: draft.forcedOpeningQueue,
     ftueFreezeDemo: draft.ftueFreezeDemo,
     ftueFreezeTargets: draft.ftueFreezeTargets,
+    forcedBoosterCharges: draft.forcedBoosterCharges,
+    ftueBoosterDemo: draft.ftueBoosterDemo,
+    ftueBoosterTargets: draft.ftueBoosterTargets,
   };
 }
 
@@ -330,6 +343,9 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     forcedOpeningQueue: level.forcedOpeningQueue ? [...level.forcedOpeningQueue] : undefined,
     ftueFreezeDemo: level.ftueFreezeDemo,
     ftueFreezeTargets: level.ftueFreezeTargets ? level.ftueFreezeTargets.map((t) => ({ ...t })) : undefined,
+    forcedBoosterCharges: level.forcedBoosterCharges ? { ...level.forcedBoosterCharges } : undefined,
+    ftueBoosterDemo: level.ftueBoosterDemo,
+    ftueBoosterTargets: level.ftueBoosterTargets ? level.ftueBoosterTargets.map((t) => ({ ...t })) : undefined,
     importedFromId: level.id,
     updatedAt: Date.now(),
   };
@@ -544,6 +560,7 @@ export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
     hiddenFreezeRows: expanded.hiddenFreezeRows ? [...expanded.hiddenFreezeRows] : expanded.hiddenFreezeRows,
     sortRadius: expanded.sortRadius,
     ftueFreezeTargets: expanded.ftueFreezeTargets ? expanded.ftueFreezeTargets.map((t) => ({ ...t })) : expanded.ftueFreezeTargets,
+    ftueBoosterTargets: expanded.ftueBoosterTargets ? expanded.ftueBoosterTargets.map((t) => ({ ...t })) : expanded.ftueBoosterTargets,
     pixelScale: 1,
   };
 }

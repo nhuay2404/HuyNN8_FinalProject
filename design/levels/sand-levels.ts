@@ -188,9 +188,41 @@ export const thirdLevel: SandLevelConfig = {
   shotLimit: 26,
   pixelScale: 5,
 
+  // Pins the opening shot to yellow — Radius Overcharge widens the DISC, it
+  // does not stop the shot from still needing the loaded ammo to match (only
+  // Prism Shot ignores colour). Without this the radius demo shot fires
+  // whatever colour the normal wheel happens to draw first, which can (and,
+  // once observed live, did) clear a boosted disc's worth of orange instead
+  // of the yellow body it's actually meant to show off. Only the first slot
+  // needs pinning: the second (Prism) demo shot doesn't care what it's
+  // loaded with.
+  forcedOpeningQueue: ["yellow"],
+  // FTUE: teaches Radius Overcharge then Prism Shot, one scripted demo shot
+  // each. `forcedBoosterCharges` guarantees both are actually armable for
+  // the demo (and for the player's own first — and every later — attempt)
+  // regardless of their real wallet; it is spent down independently of it,
+  // same "level-scoped, not global economy" reasoning as `forcedOpeningQueue`.
+  forcedBoosterCharges: { radiusOvercharge: 3, prismShot: 2 },
+  ftueBoosterDemo: true,
+  // Blueprint-grid coordinates (`expandLevelForPixelBoard` scales these by
+  // `pixelScale` the same way it does `rows`) — verified against the actual
+  // board, not hand-derived from the picture above:
+  //   - radius target: dead centre of the yellow body — a normal shot here
+  //     clears ~27% of it, the boosted radius clears ~93%, a dramatic and
+  //     legible "that's what doubling the radius does" beat.
+  //   - prism target: the widest row of the orange cone, right at its edge
+  //     against the blue background — orange, blue, AND yellow (the cone's
+  //     point) all sit within a normal shot's reach here, so Prism visibly
+  //     clears all three colours at once instead of just one.
+  ftueBoosterTargets: [
+    { x: 7, y: 4 }, // yellow body centre — Radius Overcharge demo
+    { x: 2, y: 8 }, // orange/blue boundary — Prism Shot demo
+  ],
+
   notes: "Introduces the shot budget — the first level that can actually be "
     + "lost to running out of shots, now that Level 1/2 have taught "
-    + "aim-and-fire and the ammo queue separately.",
+    + "aim-and-fire and the ammo queue separately. Also the boosters' own "
+    + "FTUE — see ftueBoosterDemo.",
 };
 
 /**

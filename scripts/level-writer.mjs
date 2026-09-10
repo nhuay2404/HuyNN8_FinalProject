@@ -156,23 +156,25 @@ function uniqueExportNames(drafts) {
 }
 
 /**
- * `forcedOpeningQueue`/`ftueFreezeDemo`/`ftueFreezeTargets` have no editor
- * control of their own (see their `LevelDraft` doc comments) — a draft only
- * carries them at all if it happened to be imported after they existed on
- * the built-in level it came from. A draft imported earlier (or edited by
- * hand before that) silently lacks them, and writing THAT draft back with
- * `draftToTypeScript` would erase them from the file even though nothing
- * about them was meant to change. So before every write-back to an existing
- * level (`updateLevel`, and `shipLevels`' own upsert of a level living
- * outside the shipped block), this reads whatever the CURRENT on-disk block
- * already has for these three fields and fills in only the ones the draft
- * itself doesn't carry — the draft still wins whenever it does have an
- * opinion, this only stops it from clobbering silence with silence.
+ * `forcedOpeningQueue`/`ftueFreezeDemo`/`ftueFreezeTargets` (and, the same
+ * way, `forcedBoosterCharges`/`ftueBoosterDemo`/`ftueBoosterTargets`) have no
+ * editor control of their own (see their `LevelDraft` doc comments) — a
+ * draft only carries them at all if it happened to be imported after they
+ * existed on the built-in level it came from. A draft imported earlier (or
+ * edited by hand before that) silently lacks them, and writing THAT draft
+ * back with `draftToTypeScript` would erase them from the file even though
+ * nothing about them was meant to change. So before every write-back to an
+ * existing level (`updateLevel`, and `shipLevels`' own upsert of a level
+ * living outside the shipped block), this reads whatever the CURRENT
+ * on-disk block already has for these six fields and fills in only the ones
+ * the draft itself doesn't carry — the draft still wins whenever it does
+ * have an opinion, this only stops it from clobbering silence with silence.
  */
 function preserveUneditableFtueFields(existingBlockText, draft) {
-  if (draft.forcedOpeningQueue !== undefined && draft.ftueFreezeDemo !== undefined && draft.ftueFreezeTargets !== undefined) {
-    return draft;
-  }
+  const allPresent = draft.forcedOpeningQueue !== undefined && draft.ftueFreezeDemo !== undefined
+    && draft.ftueFreezeTargets !== undefined && draft.forcedBoosterCharges !== undefined
+    && draft.ftueBoosterDemo !== undefined && draft.ftueBoosterTargets !== undefined;
+  if (allPresent) return draft;
   const forced = draft.forcedOpeningQueue ?? (() => {
     const m = existingBlockText.match(/forcedOpeningQueue:\s*\[([^\]]*)\]/);
     return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((mm) => mm[1]) : undefined;
@@ -184,7 +186,29 @@ function preserveUneditableFtueFields(existingBlockText, draft) {
     return [...m[1].matchAll(/\{\s*x:\s*(-?\d+),\s*y:\s*(-?\d+)\s*\}/g)]
       .map((mm) => ({ x: Number(mm[1]), y: Number(mm[2]) }));
   })();
-  return { ...draft, forcedOpeningQueue: forced, ftueFreezeDemo: demo, ftueFreezeTargets: targets };
+  const boosterCharges = draft.forcedBoosterCharges ?? (() => {
+    const m = existingBlockText.match(/forcedBoosterCharges:\s*\{([^}]*)\}/);
+    if (!m) return undefined;
+    const charges = {};
+    for (const cm of m[1].matchAll(/(radiusOvercharge|prismShot):\s*(-?\d+)/g)) charges[cm[1]] = Number(cm[2]);
+    return charges;
+  })();
+  const boosterDemo = draft.ftueBoosterDemo ?? (/ftueBoosterDemo:\s*true/.test(existingBlockText) || undefined);
+  const boosterTargets = draft.ftueBoosterTargets ?? (() => {
+    const m = existingBlockText.match(/ftueBoosterTargets:\s*\[([\s\S]*?)\]/);
+    if (!m) return undefined;
+    return [...m[1].matchAll(/\{\s*x:\s*(-?\d+),\s*y:\s*(-?\d+)\s*\}/g)]
+      .map((mm) => ({ x: Number(mm[1]), y: Number(mm[2]) }));
+  })();
+  return {
+    ...draft,
+    forcedOpeningQueue: forced,
+    ftueFreezeDemo: demo,
+    ftueFreezeTargets: targets,
+    forcedBoosterCharges: boosterCharges,
+    ftueBoosterDemo: boosterDemo,
+    ftueBoosterTargets: boosterTargets,
+  };
 }
 
 function draftToTypeScript(draft, id, constName) {
@@ -214,6 +238,16 @@ function draftToTypeScript(draft, id, constName) {
   const ftueFreezeTargets = Array.isArray(draft.ftueFreezeTargets) && draft.ftueFreezeTargets.length
     ? `\n  ftueFreezeTargets: [${draft.ftueFreezeTargets.map((t) => `{ x: ${t.x}, y: ${t.y} }`).join(", ")}],\n`
     : "";
+  const boosterChargeEntries = draft.forcedBoosterCharges
+    ? Object.entries(draft.forcedBoosterCharges).filter(([, count]) => count !== undefined)
+    : [];
+  const forcedBoosterCharges = boosterChargeEntries.length
+    ? `\n  forcedBoosterCharges: { ${boosterChargeEntries.map(([type, count]) => `${type}: ${count}`).join(", ")} },\n`
+    : "";
+  const ftueBoosterDemo = draft.ftueBoosterDemo ? `\n  ftueBoosterDemo: true,\n` : "";
+  const ftueBoosterTargets = Array.isArray(draft.ftueBoosterTargets) && draft.ftueBoosterTargets.length
+    ? `\n  ftueBoosterTargets: [${draft.ftueBoosterTargets.map((t) => `{ x: ${t.x}, y: ${t.y} }`).join(", ")}],\n`
+    : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -229,7 +263,7 @@ ${hiddenFreezeRows}
   // The starting rotation only — under the cycling rule this is a wheel, not a
   // budget: colours come round again until they are gone.
   ammoQueue: [${queue}],
-${forcedOpeningQueue}${ftueFreezeDemo}${ftueFreezeTargets}
+${forcedOpeningQueue}${ftueFreezeDemo}${ftueFreezeTargets}${forcedBoosterCharges}${ftueBoosterDemo}${ftueBoosterTargets}
   sortRadius: ${draft.sortRadius},
   shotLimit: ${draft.shotLimit},
 

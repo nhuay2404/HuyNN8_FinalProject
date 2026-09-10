@@ -6575,3 +6575,94 @@ test pass. Verify trực tiếp trên browser preview qua nhiều vòng: toàn b
 orb, cả 3 caption đọc đủ chữ, 2 bước demo bắn trúng/dọn sạch mint đúng lúc hết freeze, tap cuối reset đúng board
 gốc), `forcedOpeningQueue` áp dụng lại đúng trên lượt chơi thật lẫn lượt chơi lại, "Test in game" từ Level
 Editor mở đúng level qua client-side nav, khay booster + súng hiển thị đúng bố cục mới ở nhiều tỉ lệ khung hình.
+
+## 160. FTUE dạy Radius Overcharge + Prism Shot (level 3): cùng flow như Freeze Orb, ép sẵn 3/2 lượt booster không đụng ví thật (10/09)
+
+Yêu cầu: áp cùng flow FTUE từng bước của level 31 (Freeze Orb) cho level 3, nhưng dạy hai booster Radius
+Overcharge và Prism Shot thay vì Freeze Orb — trình bày xong cho chơi lại từ đầu giống level 31, và màn 3 phải
+mặc định cấp sẵn 3 lượt Radius + 2 lượt Prism cho người chơi, độc lập với ví thật của họ.
+
+**`forcedBoosterCharges` — ép số lượt booster theo màn, không đụng ví thật (`sand-types.ts`, `sand-rules.ts`,
+`SandCannonEngine.ts`):** cùng triết lý với `forcedOpeningQueue` (level-scoped, không phải kinh tế toàn cục).
+Field mới trên `SandLevelConfig`; `createSandGameState` seed thành `SandGameState.boosterChargesOverride` (bản
+sao riêng mỗi lượt chơi, kể cả restart). Engine thêm `effectiveBoosterCharges(type)` — đọc override nếu màn có
+khai báo, không thì đọc ví thật (`getBoosterCharges`) như cũ; `armBooster` đổi sang gọi hàm này thay vì đọc thẳng
+ví. `fire()` khi bắn có booster: nếu override tồn tại cho đúng loại đó thì trừ trên bản sao trong state (không
+gọi `spendBoosterCharge`), không thì trừ ví thật như trước — một màn không khai báo field này thì hành xử y hệt
+hiện tại, không đổi gì.
+
+**`runScriptedBoosterShot` (`SandCannonEngine.ts`):** phát demo thật cho booster — arm booster đó qua đúng
+`armBooster` (đi qua đúng đường kiểm tra lượt còn lại ở trên), rồi tái dùng `runScriptedShot` có sẵn để bắn một
+phát ngắm-động-thật vào toạ độ chỉ định. Không phải hiệu ứng giả — đi qua đúng pipeline `fire()`/`resolveShot()`.
+
+**Tutorial từng bước (`SandGame.tsx`, `i18n.ts`):** state machine
+`intro-radius → demo-radius → intro-prism → demo-prism → outro`, song song với state machine freeze của level
+31 (không gộp chung — hai luồng độc lập, cùng chạy được nếu sau này có màn cần cả hai). Hai bước `intro-*` là
+spotlight + caption chờ tap; khác biệt so với freeze: spotlight ở đây khoanh tròn một **nút UI** (`.booster-btn
+.is-radius`/`.is-prism`) chứ không phải một ô lưới 3D, nên tính toạ độ bằng
+`getBoundingClientRect()` của nút trừ đi `getBoundingClientRect()` của `.scene-wrap`, thay vì
+`engine.screenPointForGrid`. Tái dùng nguyên xi các class CSS `.ftue-freeze-overlay`/`-spotlight`/`-caption` có
+sẵn (bản chất là "làm tối nền trừ một vòng tròn + caption card", không có gì đặc thù riêng cho freeze) thay vì
+tạo bản sao đổi tên — giữ diff nhỏ. Bước `outro` tap để `restart()`, y hệt level 31 — reset lại board gốc (26
+viên đạn, tranh nguyên vẹn, badge booster về lại 3/2). Đánh dấu "đã xem" qua `localStorage`
+(`sand-cannon:v1:booster-ftue-seen`), độc lập với key của freeze.
+
+**Cấu hình level 3 (`design/levels/sand-levels.ts`):** `forcedBoosterCharges: { radiusOvercharge: 3, prismShot:
+2 }`, `ftueBoosterDemo: true`, `ftueBoosterTargets: [{x:7,y:4}, {x:2,y:8}]` (toạ độ hệ blueprint, đã lật trục Y
+đúng công thức `y = height - 1 - rowIndex` như level 31, `expandLevelForPixelBoard` tự nhân `pixelScale` khi vào
+engine) — phát đầu nhắm giữa thân màu vàng (demo Radius), phát hai nhắm ranh giới cam/xanh dương (demo Prism, cố
+tình chọn chỗ có 2 màu để thấy rõ Prism dọn nhiều màu cùng lúc mà Radius không làm được).
+
+**Lỗi phát sinh, đã sửa: Radius Overcharge không tắt yêu cầu trùng màu đạn.** `cellsInRadius` có
+`matchColor: booster !== "prismShot"` — tức Radius Overcharge chỉ phóng to bán kính quét, **không** cho phép bắn
+xuyên màu như Prism. Ban đầu level 3 không ép `forcedOpeningQueue`, nên phát demo Radius nạp đúng màu đầu tiên
+theo bánh xe đạn bình thường (cam, không phải vàng) — verify bằng debug hook tạm (`window.__debugEngine`, đọc
+`state.bodies` đếm theo màu) cho thấy sau demo, cam giảm 900→776 nhưng vàng (mục tiêu thật) không đổi, dù toạ độ
+mục tiêu đã tính đúng nằm trên ô vàng. Sửa bằng thêm `forcedOpeningQueue: ["yellow"]` cho level 3 — ép đúng phát
+mở màn là đạn vàng để bán kính phóng to thật sự "ăn" được vùng vàng dự định; verify lại: vàng 1800→122 (dọn 93%)
+sau demo Radius. Phát demo Prism (đạn xanh dương theo bánh xe) không cần ép gì — Prism vốn không quan tâm màu
+đạn, dọn được cả cam lẫn xanh dương cùng lúc đúng như minh hoạ.
+
+**`level-writer.mjs`:** `preserveUneditableFtueFields` mở rộng thêm 3 field mới (`forcedBoosterCharges`/
+`ftueBoosterDemo`/`ftueBoosterTargets`), cùng lý do và cơ chế với 3 field freeze đã có — draft cũ (import trước
+khi field tồn tại) không còn xoá mất chúng khi ghi lại. `draftToTypeScript` serialize thêm 3 field này ra
+TypeScript literal.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 150/150 test pass. Verify trực tiếp trên browser
+preview: vào level 3 qua Settings → GameDevOption jump-and-Go (ví thật đang 0/0 hai loại booster — chứng minh
+override thật sự độc lập với ví), spotlight đúng nút Radius rồi đúng nút Prism, demo Radius dọn ~93% vùng vàng,
+demo Prism dọn nhiều màu cùng lúc, outro hiện đúng caption + badge 3/2, tap outro reset đúng board gốc (26 viên
+đạn, tranh nguyên vẹn). Xoá debug hook `window.__debugEngine` và script toạ độ tạm sau khi verify xong.
+
+## 161. Chấm đỏ trên Shop sau FTUE booster, tap là vào thẳng tab mua booster (10/09)
+
+Yêu cầu tiếp theo: sau khi FTUE booster (level 3, mục 160) trình bày xong, lúc thoát ra home hub phải thấy chấm
+đỏ trên biểu tượng Shop, nhấn vào là tự nhảy thẳng sang phần mua booster — không bắt người chơi tự mò qua đúng
+tab.
+
+**`BOOSTER_SHOP_HINT_KEY` (`SandGame.tsx`):** một cờ bật/tắt đơn giản trong `localStorage`
+(`sand-cannon:v1:booster-shop-hint`), khác với các key "đã xem FTUE theo id" đã có — cờ này nghĩa là "đang có một
+gợi ý chưa được xử lý", không phải "màn N đã xem". Bật ngay lúc `boosterFtueStep` chạm tới `"outro"` (demo vừa
+xong), tắt ngay lúc người chơi thật sự nhấn vào Shop từ gợi ý đó. Giữ thêm một bản sao trong React state
+(`boosterShopHint`) để re-render phản ứng đúng lúc, không đọc thẳng storage mỗi lần render như
+`unseenAffordableSkins` (skin có ví/level để tính lại mỗi lần, còn cờ này chỉ đổi ở đúng hai thời điểm rời rạc
+kể trên nên không cần).
+
+**Tái dùng `.hub-nav-dot` có sẵn:** đúng chấm đỏ đang dùng cho tab Skin (`unseenAffordableSkins`), không tạo
+class mới — cùng một ý nghĩa hình ảnh ("có việc đang chờ ở tab này"), chỉ khác điều kiện bật. Nút tab Shop trong
+`hub-nav` khi bấm, nếu đang có `boosterShopHint`, tự set `shopTab` sang `"coins"` (tab bán booster, vốn cũng là
+mặc định) và tắt cờ luôn trong cùng một lần bấm — không cần màn hình trung gian hỏi "có muốn xem không". Không
+cần sửa gì thêm cho việc "chỉ hiện khi ở home": `.hub-nav` vốn đã ẩn hẳn lúc đang chơi (`is-leaving`), nên set cờ
+ngay trong lúc demo vẫn đang chạy (trước khi người chơi kịp thoát ra) không lộ chấm đỏ sớm.
+
+**`i18n.ts`:** thêm `shopTabHasBoosterHintSuffix` — hậu tố cho `aria-label` của tab Shop khi đang có gợi ý,
+cùng kiểu với `skinTabHasOfferSuffix` đã có cho tab Skin.
+
+**`resetEntireGame`:** xoá thêm `BOOSTER_SHOP_HINT_KEY` cùng lúc với 3 key FTUE khác, để "Reset toàn bộ" trong
+GameDevOption không để sót cờ này lại.
+
+**Test:** `tsc --noEmit` sạch, 150/150 test pass. Verify trực tiếp trên browser: chạy hết FTUE booster ở level 3
+(xoá `booster-ftue-seen`/`booster-shop-hint` trước để ép chạy lại), xác nhận `localStorage` ghi `"1"` ngay khi
+outro xuất hiện; tap outro reset board, thoát Home qua Settings → Home — chấm đỏ hiện đúng trên icon giỏ hàng
+(Shop) ở thanh điều hướng dưới cùng; tap vào icon đó vào thẳng màn Shop, đúng tab Coins (Radius Overcharge +
+Prism Shot hiện sẵn để mua), không phải tab Gems; `localStorage` xác nhận cờ đã bị xoá ngay sau tap đó.

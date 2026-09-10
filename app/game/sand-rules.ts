@@ -224,6 +224,8 @@ export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfi
     // `rows`, so they need the same uniform upscale to still land on the
     // right cells once the board itself is expanded.
     ftueFreezeTargets: level.ftueFreezeTargets?.map((t) => ({ x: t.x * scale, y: t.y * scale })),
+    // Same reasoning as ftueFreezeTargets just above.
+    ftueBoosterTargets: level.ftueBoosterTargets?.map((t) => ({ x: t.x * scale, y: t.y * scale })),
     pixelScale: 1,
   };
 }
@@ -1123,6 +1125,11 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
     freezeTriggers,
     hiddenFreezeTriggers,
     freezeShotsRemaining: 0,
+    // A fresh copy every attempt (restart included) — the level's own
+    // declared allotment, never carried over or shared with the real
+    // wallet. `undefined` when the level doesn't force charges at all, so
+    // the engine's own fallback-to-wallet check stays a plain `?? `.
+    boosterChargesOverride: level.forcedBoosterCharges ? { ...level.forcedBoosterCharges } : undefined,
     result: null,
   };
 }
