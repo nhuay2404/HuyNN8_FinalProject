@@ -12,7 +12,7 @@
 // testing the build, never shown to a player choosing a language — and every
 // code comment in this file, which no player ever sees either.
 
-import type { SandColor } from "./game/sand-types";
+import type { BoosterType, SandColor } from "./game/sand-types";
 
 export type Language = "en" | "vi";
 
@@ -105,9 +105,13 @@ export interface Strings {
   nothing: string;
 
   // ---- Boosters ----------------------------------------------------------------
-  boosterName: (type: "radiusOvercharge" | "prismShot") => string;
-  boosterDesc: (type: "radiusOvercharge" | "prismShot") => string;
+  boosterName: (type: BoosterType) => string;
+  boosterDesc: (type: BoosterType) => string;
   boosterAria: (name: string, left: number) => string;
+  /** The HUD tray button's label once that booster is out of charges
+   * mid-match — it becomes a buy-one-charge button instead of an arm
+   * button (see `SandGame.tsx`'s `booster-hud`), `price` in gold. */
+  boosterBuyAria: (name: string, price: number) => string;
   shotInFlight: string;
   sandSettling: string;
   /** The Freeze Map bar's aria-label — `shots` is how many shots are left
@@ -167,6 +171,15 @@ export interface Strings {
    * back to the player (who gets the level's full `forcedBoosterCharges`
    * again — the level resets on this beat's tap, unlike freeze's). */
   ftueBoosterOutro: string;
+  /** Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`),
+   * same shape as `ftueFreezeIntro` above — see `SandGame.tsx`'s
+   * `chainSortFtueStep`. Shown spotlighting the Chain Sort button, before
+   * its scripted demo shot fires. */
+  ftueChainSortIntro: string;
+  /** Shown once the demo shot has fired, right before control hands back
+   * to the player (who gets the level's full `forcedBoosterCharges`
+   * again — the level resets on this beat's tap, unlike freeze's). */
+  ftueChainSortOutro: string;
   /** The Skin screen's label for a `unlockLevel` skin — replaces the emerald
    * price everywhere one would otherwise show (the grid card's price pill,
    * the main preview panel's own locked button), since the skin is not for
@@ -346,11 +359,16 @@ const EN: Strings = {
   shotsLeftOnly: (remaining) => `${remaining} shots left`,
   nothing: "nothing",
 
-  boosterName: (type) => (type === "radiusOvercharge" ? "Radius Overcharge" : "Prism Shot"),
-  boosterDesc: (type) => (type === "radiusOvercharge"
-    ? "Doubles the sorting disc for one shot."
-    : "One shot takes every colour in reach, not just the one loaded."),
+  boosterName: (type) =>
+    type === "radiusOvercharge" ? "Radius Overcharge" : type === "prismShot" ? "Prism Shot" : "Chain Sort",
+  boosterDesc: (type) =>
+    type === "radiusOvercharge"
+      ? "Doubles the sorting disc for one shot."
+      : type === "prismShot"
+        ? "One shot takes every colour in reach, not just the one loaded."
+        : "Clears the whole connected mass of that colour, corners included — no radius limit.",
   boosterAria: (name, left) => `${name} — ${left} left`,
+  boosterBuyAria: (name, price) => `Buy 1 ${name} — ${price} gold`,
   shotInFlight: "Shot in flight",
   sandSettling: "Sand settling",
   freezeCooldown: (shots) => `Frozen — ${shots} shot${shots === 1 ? "" : "s"} left`,
@@ -369,9 +387,16 @@ const EN: Strings = {
   dragToAim: "Drag to aim, release to fire",
   dragToAimCaption: "Drag to aim · release to fire",
 
-  costumeName: (id) => (id === "rune-cannon" ? "Rune Cannon" : id === "hero-cannon" ? "Hero Cannon" : "Field Cannon"),
+  costumeName: (id) =>
+    id === "rune-cannon" ? "Rune Cannon" : id === "hero-cannon" ? "Hero Cannon" : id === "frost-cannon" ? "Frost Cannon" : "Field Cannon",
   costumeTagline: (id) =>
-    id === "rune-cannon" ? "Charge. Sparkle. Repeat." : id === "hero-cannon" ? "Quest. Aim. Onward." : "Load. Aim. Boom.",
+    id === "rune-cannon"
+      ? "Charge. Sparkle. Repeat."
+      : id === "hero-cannon"
+        ? "Quest. Aim. Onward."
+        : id === "frost-cannon"
+          ? "Chill. Aim. Shatter."
+          : "Load. Aim. Boom.",
   buyLabel: "Buy",
   selectLabel: "Select",
   selectedLabel: "Selected",
@@ -386,6 +411,8 @@ const EN: Strings = {
   ftueBoosterRadiusIntro: "This is Radius Overcharge — it doubles your blast radius for one shot. Watch!",
   ftueBoosterPrismIntro: "This is Prism Shot — it clears every colour in reach, not just the one you're holding. Watch!",
   ftueBoosterOutro: "That's it — you've got 3 Radius Overcharge and 2 Prism Shot to try yourself!",
+  ftueChainSortIntro: "This is Chain Sort — it clears the whole connected patch of that colour, corners included, no radius limit. Watch!",
+  ftueChainSortOutro: "That's it — you've got a Chain Sort charge to try yourself!",
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
 
@@ -496,11 +523,16 @@ const VI: Strings = {
   shotsLeftOnly: (remaining) => `Còn ${remaining} phát`,
   nothing: "không có gì",
 
-  boosterName: (type) => (type === "radiusOvercharge" ? "Tăng Bán Kính" : "Bắn Đa Sắc"),
-  boosterDesc: (type) => (type === "radiusOvercharge"
-    ? "Nhân đôi vòng tròn phân loại cho một phát bắn."
-    : "Một phát lấy mọi màu trong tầm bắn, không chỉ màu đang nạp."),
+  boosterName: (type) =>
+    type === "radiusOvercharge" ? "Tăng Bán Kính" : type === "prismShot" ? "Bắn Đa Sắc" : "Dọn Liên Hoàn",
+  boosterDesc: (type) =>
+    type === "radiusOvercharge"
+      ? "Nhân đôi vòng tròn phân loại cho một phát bắn."
+      : type === "prismShot"
+        ? "Một phát lấy mọi màu trong tầm bắn, không chỉ màu đang nạp."
+        : "Dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo — không giới hạn bán kính.",
   boosterAria: (name, left) => `${name} — còn ${left}`,
+  boosterBuyAria: (name, price) => `Mua 1 ${name} — ${price} vàng`,
   shotInFlight: "Đạn đang bay",
   sandSettling: "Cát đang lắng",
   freezeCooldown: (shots) => `Đóng băng — còn ${shots} lượt`,
@@ -519,9 +551,16 @@ const VI: Strings = {
   dragToAim: "Kéo để ngắm, thả để bắn",
   dragToAimCaption: "Kéo để ngắm · thả để bắn",
 
-  costumeName: (id) => (id === "rune-cannon" ? "Pháo Rune" : id === "hero-cannon" ? "Pháo Anh Hùng" : "Pháo Chiến Trường"),
+  costumeName: (id) =>
+    id === "rune-cannon" ? "Pháo Rune" : id === "hero-cannon" ? "Pháo Anh Hùng" : id === "frost-cannon" ? "Pháo Băng Giá" : "Pháo Chiến Trường",
   costumeTagline: (id) =>
-    id === "rune-cannon" ? "Nạp phép. Lấp lánh. Lặp lại." : id === "hero-cannon" ? "Phiêu lưu. Ngắm. Tiến bước." : "Nạp đạn. Ngắm. Bùm.",
+    id === "rune-cannon"
+      ? "Nạp phép. Lấp lánh. Lặp lại."
+      : id === "hero-cannon"
+        ? "Phiêu lưu. Ngắm. Tiến bước."
+        : id === "frost-cannon"
+          ? "Đóng băng. Ngắm. Vỡ tan."
+          : "Nạp đạn. Ngắm. Bùm.",
   buyLabel: "Mua",
   selectLabel: "Chọn",
   selectedLabel: "Đã chọn",
@@ -536,6 +575,8 @@ const VI: Strings = {
   ftueBoosterRadiusIntro: "Đây là Radius Overcharge — tăng gấp đôi bán kính bắn cho 1 phát! Xem nhé!",
   ftueBoosterPrismIntro: "Đây là Prism Shot — dọn sạch mọi màu trong tầm bắn, không chỉ màu đang cầm! Xem nhé!",
   ftueBoosterOutro: "Vậy đó — bạn có sẵn 3 Radius Overcharge và 2 Prism Shot để tự thử!",
+  ftueChainSortIntro: "Đây là Chain Sort — dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo, không giới hạn bán kính! Xem nhé!",
+  ftueChainSortOutro: "Vậy đó — bạn có sẵn 1 lượt Chain Sort để tự thử!",
   // Kept in English on purpose — "Progression" per the design ask, the same
   // way "Blue Emerald" above stays untranslated.
   progressionLabel: "Progression",

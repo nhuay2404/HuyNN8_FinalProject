@@ -307,23 +307,30 @@ function HubIcon({ tab, active }: { tab: HubTab; active: boolean }) {
  * glyph automatically.
  */
 function BoosterIcon({ type }: { type: BoosterType }) {
+  // Chain Sort has no art of its own yet (on request: "dùng tạm hình booster
+  // prism") — it just falls into the same "not Radius Overcharge" branch
+  // Prism Shot already occupies, icon and tint both, so swapping in real art
+  // later is a one-line change right here rather than a hunt through every
+  // spot that reads `type === "prismShot"` for styling.
   const src = type === "radiusOvercharge" ? "/icons/RadiusIncreaseIcon.png" : "/icons/PrismChargeIcon.png";
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img className={`booster-icon${type === "prismShot" ? " is-prism" : ""}`} src={src} alt="" aria-hidden="true" />
+    <img className={`booster-icon${type !== "radiusOvercharge" ? " is-prism" : ""}`} src={src} alt="" aria-hidden="true" />
   );
 }
 
 /** A card icon per cannon costume, drawn in currentColor like the other
  * line-art here — a plain barrel for the classic cannon, the same barrel
- * ringed with rune ticks for the rune cannon, and topped with a small
- * three-point pennant for the hero cannon, so a card reads as "what this
- * skin does" at a glance even without the live 3D model behind it. */
+ * ringed with rune ticks for the rune cannon, topped with a small three-point
+ * pennant for the hero cannon, and hung with a couple of small icicles for
+ * the frost cannon, so a card reads as "what this skin does" at a glance even
+ * without the live 3D model behind it. */
 function CostumeIcon({ id }: { id: CostumeId }) {
   const isRune = id === "rune-cannon";
   const isHero = id === "hero-cannon";
+  const isFrost = id === "frost-cannon";
   return (
-    <svg className={`costume-icon${isRune ? " is-rune" : ""}${isHero ? " is-hero" : ""}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <svg className={`costume-icon${isRune ? " is-rune" : ""}${isHero ? " is-hero" : ""}${isFrost ? " is-frost" : ""}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <rect x="5.6" y="10.2" width="10.8" height="4.6" rx="1.6" />
       <circle cx="17.2" cy="12.5" r="3.4" />
       <rect x="7" y="15.6" width="10" height="2.4" rx="1.2" />
@@ -334,6 +341,7 @@ function CostumeIcon({ id }: { id: CostumeId }) {
         </>
       )}
       {isHero && <path d="M6.6 10.2V5.6l3.2 2.3-3.2 2.3Z" strokeLinejoin="round" />}
+      {isFrost && <path d="M8.4 18v2.2l.9-1.5.9 1.5V18M12 18v2.6l.9-1.7.9 1.7V18" strokeLinejoin="round" fill="none" />}
     </svg>
   );
 }
@@ -889,6 +897,35 @@ export default function SandGame() {
     });
   }, [boosterFtueTapReady]);
 
+  /**
+   * Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`) — same
+   * beat-by-beat shape as `boosterFtueStep` just above, but for one booster
+   * instead of a pair:
+   *
+   *   intro   — spotlight + caption on the Chain Sort button
+   *   demo    — (no caption) the one scripted shot, fired with it armed
+   *   outro   — plain caption, waiting for the final tap (resets the level
+   *             via `restart()`, same reasoning as `boosterFtueStep`'s own
+   *             outro — the demo shot is not meant to cost the player
+   *             anything)
+   */
+  const [chainSortFtueStep, setChainSortFtueStep] = useState<"intro" | "demo" | "outro" | null>(null);
+  const [chainSortFtueTapReady, setChainSortFtueTapReady] = useState(false);
+  useEffect(() => {
+    const captionStep = chainSortFtueStep === "intro" || chainSortFtueStep === "outro";
+    if (!captionStep) return;
+    setChainSortFtueTapReady(false);
+    const timer = window.setTimeout(() => setChainSortFtueTapReady(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [chainSortFtueStep]);
+  // Only "intro" goes through here — "outro"'s tap is wired to `restart`
+  // directly at the call site, same reasoning as `advanceBoosterFtue`'s own
+  // comment.
+  const advanceChainSortFtue = useCallback(() => {
+    if (!chainSortFtueTapReady) return;
+    setChainSortFtueStep((step) => (step === "intro" ? "demo" : step));
+  }, [chainSortFtueTapReady]);
+
   // The engine simulates and reports state at pixel resolution — every number
   // this component reads off `state` (remainingCells above all) is in those
   // terms, so the level it reasons about here has to be expanded the same way,
@@ -948,6 +985,21 @@ export default function SandGame() {
     }
   }, [boosterFtueStep, engine, level]);
 
+  // Drives Chain Sort's own single "demo" step — same shape as the booster
+  // pair's effect just above, one scripted shot instead of two.
+  useEffect(() => {
+    if (!engine) return;
+    const target = level.ftueChainSortTarget;
+    if (!target) return;
+    if (chainSortFtueStep === "demo") {
+      let cancelled = false;
+      engine.runScriptedBoosterShot("chainSort", target.x, target.y).finally(() => {
+        if (!cancelled) setChainSortFtueStep("outro");
+      });
+      return () => { cancelled = true; };
+    }
+  }, [chainSortFtueStep, engine, level]);
+
   // The Shop tab's "go buy the boosters you just tried" red dot
   // (`BOOSTER_SHOP_HINT_KEY`) — lit the instant the demo finishes, so it's
   // waiting on the hub-nav the moment the player backs out to Home (the nav
@@ -960,10 +1012,10 @@ export default function SandGame() {
     setBoosterShopHintState(loadBoosterShopHint());
   }, []);
   useEffect(() => {
-    if (boosterFtueStep !== "outro") return;
+    if (boosterFtueStep !== "outro" && chainSortFtueStep !== "outro") return;
     setBoosterShopHint(true);
     setBoosterShopHintState(true);
-  }, [boosterFtueStep]);
+  }, [boosterFtueStep, chainSortFtueStep]);
 
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
@@ -1764,6 +1816,10 @@ export default function SandGame() {
       markBoosterFtueSeen(jumped.id);
       setBoosterFtueStep("intro-radius");
     }
+    if (jumped.ftueChainSortDemo && jumped.ftueChainSortTarget && !loadSeenBoosterFtue().has(jumped.id)) {
+      markBoosterFtueSeen(jumped.id);
+      setChainSortFtueStep("intro");
+    }
   }, [devLevelInput, playables, openLevel]);
 
   /**
@@ -1898,6 +1954,15 @@ export default function SandGame() {
       && !loadSeenBoosterFtue().has(level.id)) {
       markBoosterFtueSeen(level.id);
       setBoosterFtueStep("intro-radius");
+    }
+    // Level 5's Chain Sort tutorial: same "marked seen the instant it
+    // starts" reasoning, sharing the same seen-set/key as the pair above —
+    // it is keyed per level id, so level 3's and level 5's own FTUE never
+    // collide. `forcedBoosterCharges` (1 Chain Sort) stays in force on every
+    // future attempt regardless, same as `forcedOpeningQueue` does for ammo.
+    if (level.ftueChainSortDemo && level.ftueChainSortTarget && !loadSeenBoosterFtue().has(level.id)) {
+      markBoosterFtueSeen(level.id);
+      setChainSortFtueStep("intro");
     }
   }, [level]);
 
@@ -2475,32 +2540,58 @@ export default function SandGame() {
               Also gated on `!level.ftueGesture`: a level whose one lesson is
               "aim and shoot" should not show a second control nobody has
               explained yet — see `ftueGesture`'s doc comment. */}
-          {playing && !level.ftueGesture && !winReveal && (
+          {playing && !level.ftueGesture && !level.hideBoosterHud && !winReveal && (
             <div className="booster-hud">
-              {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+              {(["radiusOvercharge", "prismShot", "chainSort"] as const).map((type) => {
                 // A level with `forcedBoosterCharges` (level 3's booster
                 // tutorial) reads its own level-scoped count instead of the
                 // real wallet — see `SandGameState.boosterChargesOverride`'s
                 // own doc comment. Absent for every other level, which falls
                 // straight back to the wallet exactly as before.
-                const charges = state.boosterChargesOverride?.[type] ?? wallet.boosters[type];
+                const overrideCharges = state.boosterChargesOverride?.[type];
+                const charges = overrideCharges ?? wallet.boosters[type];
+                // Out of charges mid-match, on a level that isn't forcing its
+                // own scripted count (a forced-charges level, e.g. an FTUE
+                // demo, has nothing to buy — the whole point is a guaranteed
+                // free try): the button becomes a one-tap "buy 1 now" instead
+                // of disabling outright, so running dry never has to send the
+                // player all the way out to the Shop mid-run.
+                const canBuyHere = overrideCharges === undefined && charges <= 0;
+                const price = boosterPrice(type);
                 return (
                   <button
                     key={type}
                     type="button"
-                    className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}`}
-                    onClick={() => engine?.armBooster(type)}
-                    disabled={busy || charges <= 0 || (armedBooster !== null && armedBooster !== type)}
-                    aria-label={s.boosterAria(s.boosterName(type), charges)}
+                    data-booster={type}
+                    className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}${canBuyHere ? " is-buy" : ""}`}
+                    onClick={() => {
+                      if (canBuyHere) {
+                        const owned = wallet.boosters[type];
+                        if (buyBoosterCharges(type, 1)) {
+                          pushToast(s.toastBoughtBooster(s.boosterName(type), 1, owned + 1), "good");
+                        } else {
+                          pushToast(s.toastNotEnoughCoins, "warn");
+                        }
+                        return;
+                      }
+                      engine?.armBooster(type);
+                    }}
+                    disabled={canBuyHere ? busy : (busy || charges <= 0 || (armedBooster !== null && armedBooster !== type))}
+                    aria-label={canBuyHere ? s.boosterBuyAria(s.boosterName(type), price) : s.boosterAria(s.boosterName(type), charges)}
                     aria-pressed={armedBooster === type}
-                    title={s.boosterAria(s.boosterName(type), charges)}
+                    title={canBuyHere ? s.boosterBuyAria(s.boosterName(type), price) : s.boosterAria(s.boosterName(type), charges)}
                   >
                     <BoosterIcon type={type} />
                     {/* Spec §4's reserved charge-count badge, now shown for real
                         (see `economy.ts`) — the actual owned count, not capped
                         to a single digit: the Shop has no cap on how many a
-                        player can hold. */}
-                    <span className="booster-badge" aria-hidden="true">{charges}</span>
+                        player can hold. Out of charges mid-match, this becomes
+                        the gold price instead — see `canBuyHere` above. */}
+                    {canBuyHere ? (
+                      <span className="booster-badge is-price" aria-hidden="true">{price}</span>
+                    ) : (
+                      <span className="booster-badge" aria-hidden="true">{charges}</span>
+                    )}
                   </button>
                 );
               })}
@@ -2630,7 +2721,7 @@ export default function SandGame() {
             >
               {boosterFtueStep !== "outro" && (() => {
                 const button = document.querySelector<HTMLElement>(
-                  boosterFtueStep === "intro-radius" ? ".booster-btn.is-radius" : ".booster-btn.is-prism",
+                  `.booster-btn[data-booster="${boosterFtueStep === "intro-radius" ? "radiusOvercharge" : "prismShot"}"]`,
                 );
                 const container = document.querySelector<HTMLElement>(".scene-wrap");
                 if (!button || !container) return null;
@@ -2655,6 +2746,56 @@ export default function SandGame() {
                     : s.ftueBoosterOutro}
                 </p>
                 {boosterFtueTapReady && (
+                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Level 5's Chain Sort tutorial — same shape as level 3's booster
+              pair just above (reuses the same `.ftue-freeze-*` classes), but
+              one spotlight/demo-shot/outro instead of two. */}
+          {playing && (chainSortFtueStep === "intro" || chainSortFtueStep === "outro") && (
+            <div
+              className="ftue-freeze-overlay"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                // "outro"'s tap resets the level, same reasoning as the
+                // booster-pair tutorial's own outro — the demo shot is not
+                // meant to cost the player anything against their own
+                // attempt.
+                if (chainSortFtueStep === "outro") {
+                  if (chainSortFtueTapReady) restart();
+                  return;
+                }
+                advanceChainSortFtue();
+              }}
+              aria-label={`${chainSortFtueStep === "intro" ? s.ftueChainSortIntro : s.ftueChainSortOutro}${chainSortFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
+            >
+              {chainSortFtueStep === "intro" && (() => {
+                const button = document.querySelector<HTMLElement>('.booster-btn[data-booster="chainSort"]');
+                const container = document.querySelector<HTMLElement>(".scene-wrap");
+                if (!button || !container) return null;
+                const buttonRect = button.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                const spot = {
+                  x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
+                  y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
+                };
+                return (
+                  <div
+                    className="ftue-freeze-spotlight"
+                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
+                    aria-hidden="true"
+                  />
+                );
+              })()}
+              <div className="ftue-freeze-caption">
+                <p className="ftue-freeze-caption-text" aria-hidden="true">
+                  {chainSortFtueStep === "intro" ? s.ftueChainSortIntro : s.ftueChainSortOutro}
+                </p>
+                {chainSortFtueTapReady && (
                   <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
                 )}
               </div>
@@ -2901,7 +3042,7 @@ export default function SandGame() {
                         ? <img src={thumbnail} alt="" />
                         : (
                           <span
-                            className={`skin-card-icon${def.flavor === "magic" ? " is-magic" : ""}${id === "hero-cannon" ? " is-hero" : ""}`}
+                            className={`skin-card-icon${def.flavor === "magic" ? " is-magic" : ""}${id === "hero-cannon" ? " is-hero" : ""}${id === "frost-cannon" ? " is-frost" : ""}`}
                           >
                             <CostumeIcon id={id} />
                           </span>
@@ -3168,7 +3309,7 @@ export default function SandGame() {
             {shopTab === "coins" && (
               <div className="shop-panel">
                 <div className="shop-grid">
-                  {(["radiusOvercharge", "prismShot"] as const).map((type) => {
+                  {(["radiusOvercharge", "prismShot", "chainSort"] as const).map((type) => {
                     const price = boosterPrice(type);
                     const owned = wallet.boosters[type];
                     const canAfford = wallet.gold >= price;
@@ -3618,6 +3759,45 @@ export default function SandGame() {
                   </button>
                   <button type="button" className="settings-devlink" onClick={() => resetRewardTrack()}>
                     <EmeraldIcon /> Reset reward track
+                  </button>
+                  {/* Clears every level in `playables`, front to back, so the
+                      gallery's own sequential-unlock check
+                      (`hasClearedLevel(playables[index-1].level.id)` above)
+                      reads every card as open at once — for eyeballing the
+                      whole gallery grid without playing up to it level by
+                      level. Marks first-clear (and its gold payout) for each
+                      one, same as actually winning it would; that is the
+                      simplest way to make `hasClearedLevel` true. Reloads
+                      immediately after, same as `resetEntireGame`/
+                      `applyDevDateOffset` above: `hasClearedLevel` is read
+                      straight from localStorage in the gallery's render, not
+                      from React state, so nothing here would otherwise
+                      trigger a re-render that shows it. */}
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => {
+                      for (const entry of playables) markLevelCleared(entry.level.id);
+                      window.location.reload();
+                    }}
+                  >
+                    <Glyph name="target" className="icon-glyph" /> Unlock all maps
+                  </button>
+                  {/* Mirror of "Relock skins" below: owns every skin in
+                      `COSTUME_ORDER` instead of putting them back behind
+                      their price, for previewing the skin picker fully
+                      unlocked without clearing the levels that normally
+                      hand them out. Reloads for the same reason the row
+                      above does. */}
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => {
+                      for (const id of COSTUME_ORDER) unlockCostume(id);
+                      window.location.reload();
+                    }}
+                  >
+                    <EmeraldIcon /> Acquire all skins
                   </button>
                   {/* Puts every priced skin back behind its price. Does not
                       refund anything — it exists to get back to the locked

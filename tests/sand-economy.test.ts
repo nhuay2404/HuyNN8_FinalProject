@@ -56,6 +56,7 @@ test("a fresh wallet starts at STARTER_GOLD with one charge of each booster", ()
   assert.equal(getGold(), STARTER_GOLD);
   assert.equal(getBoosterCount("radiusOvercharge"), STARTER_BOOSTER_CHARGES.radiusOvercharge);
   assert.equal(getBoosterCount("prismShot"), STARTER_BOOSTER_CHARGES.prismShot);
+  assert.equal(getBoosterCount("chainSort"), STARTER_BOOSTER_CHARGES.chainSort);
 });
 
 test("addGold adds, spendGold refuses a short wallet and changes nothing", () => {
@@ -80,7 +81,7 @@ test("addGold ignores a non-positive amount", () => {
 // ---- wallet: boosters --------------------------------------------------------
 
 test("spendBoosterCharge decrements and floors at 0, never negative", () => {
-  __resetWalletForTests({ boosters: { radiusOvercharge: 1, prismShot: 0 } });
+  __resetWalletForTests({ boosters: { radiusOvercharge: 1, prismShot: 0, chainSort: 0 } });
   spendBoosterCharge("radiusOvercharge");
   assert.equal(getBoosterCount("radiusOvercharge"), 0);
   spendBoosterCharge("radiusOvercharge");
@@ -91,7 +92,7 @@ test("spendBoosterCharge decrements and floors at 0, never negative", () => {
 });
 
 test("addBoosterCharges tops up the named booster only", () => {
-  __resetWalletForTests({ boosters: { radiusOvercharge: 0, prismShot: 0 } });
+  __resetWalletForTests({ boosters: { radiusOvercharge: 0, prismShot: 0, chainSort: 0 } });
   addBoosterCharges("radiusOvercharge", 3);
   assert.equal(getBoosterCount("radiusOvercharge"), 3);
   assert.equal(getBoosterCount("prismShot"), 0);
@@ -100,14 +101,14 @@ test("addBoosterCharges tops up the named booster only", () => {
 // ---- buyBoosterCharge ---------------------------------------------------------
 
 test("buyBoosterCharge spends gold and adds one charge when affordable", () => {
-  __resetWalletForTests({ gold: BOOSTER_PRICE.radiusOvercharge, boosters: { radiusOvercharge: 0, prismShot: 0 } });
+  __resetWalletForTests({ gold: BOOSTER_PRICE.radiusOvercharge, boosters: { radiusOvercharge: 0, prismShot: 0, chainSort: 0 } });
   assert.equal(buyBoosterCharge("radiusOvercharge"), true);
   assert.equal(getGold(), 0);
   assert.equal(getBoosterCount("radiusOvercharge"), 1);
 });
 
 test("buyBoosterCharge fails without touching gold or inventory when the wallet is short", () => {
-  __resetWalletForTests({ gold: BOOSTER_PRICE.prismShot - 1, boosters: { radiusOvercharge: 0, prismShot: 0 } });
+  __resetWalletForTests({ gold: BOOSTER_PRICE.prismShot - 1, boosters: { radiusOvercharge: 0, prismShot: 0, chainSort: 0 } });
   assert.equal(buyBoosterCharge("prismShot"), false);
   assert.equal(getGold(), BOOSTER_PRICE.prismShot - 1, "a failed purchase must not deduct gold");
   assert.equal(getBoosterCount("prismShot"), 0, "a failed purchase must not grant a charge");
@@ -115,6 +116,11 @@ test("buyBoosterCharge fails without touching gold or inventory when the wallet 
 
 test("Prism Shot never costs less than Radius Overcharge — it is at least as strong a buff (colour-agnostic vs. a bigger circle)", () => {
   assert.ok(BOOSTER_PRICE.prismShot >= BOOSTER_PRICE.radiusOvercharge);
+});
+
+test("Chain Sort costs strictly more than either other booster — no cap on how much one charge can take", () => {
+  assert.ok(BOOSTER_PRICE.chainSort > BOOSTER_PRICE.radiusOvercharge);
+  assert.ok(BOOSTER_PRICE.chainSort > BOOSTER_PRICE.prismShot);
 });
 
 // ---- daily login: computeDailyLoginState -------------------------------------

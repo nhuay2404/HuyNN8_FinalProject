@@ -121,6 +121,14 @@ export type LevelDraft = {
    * request: "freeze bị che sau lớp cát"). Absent for every draft that has
    * never used the Freeze tool's hidden mode — see `SandLevelConfig.hiddenFreezeRows`. */
   hiddenFreezeRows?: string[];
+  /** A second grid over the same frame, same shape as `rows` — `K` marks a
+   * key hidden behind whatever `rows` draws at that cell (on request: "chìa
+   * khoá giấu dưới cát"). Absent for every draft that has never authored one
+   * — see `SandLevelConfig.hiddenKeyRows`. No editor paint tool targets this
+   * yet (unlike `hiddenFreezeRows`'s own hidden mode); round-tripped here so
+   * a level that already has one hand-authored does not get silently wiped
+   * the next time it is shipped from the editor. */
+  hiddenKeyRows?: string[];
   ammoQueue: SandColor[];
   sortRadius: number;
   shotLimit: number;
@@ -154,6 +162,15 @@ export type LevelDraft = {
   /** See `SandLevelConfig.ftueBoosterTargets` — same "carried through, not
    * editable here" reasoning as `forcedOpeningQueue` above. */
   ftueBoosterTargets?: { x: number; y: number }[];
+  /** See `SandLevelConfig.ftueChainSortDemo` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueChainSortDemo?: boolean;
+  /** See `SandLevelConfig.ftueChainSortTarget` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  ftueChainSortTarget?: { x: number; y: number };
+  /** See `SandLevelConfig.hideBoosterHud` — same "carried through, not
+   * editable here" reasoning as `forcedOpeningQueue` above. */
+  hideBoosterHud?: boolean;
   /**
    * Set by `levelToDraft` when this draft came from "Import built-in" — the
    * numeric id of the `SandLevelConfig` it was copied from. What lets the
@@ -227,7 +244,11 @@ export function fixtureCounts(draft: LevelDraft) {
   for (const letter of (draft.hiddenFreezeRows ?? []).join("")) {
     if (letter === FREEZE_LETTER) hiddenFreeze += 1;
   }
-  return { locked, keys, freeze, hiddenFreeze };
+  let hiddenKey = 0;
+  for (const letter of (draft.hiddenKeyRows ?? []).join("")) {
+    if (letter === KEY_LETTER) hiddenKey += 1;
+  }
+  return { locked, keys, freeze, hiddenFreeze, hiddenKey };
 }
 
 export function countPaintedCells(draft: LevelDraft) {
@@ -279,7 +300,9 @@ export function resizeDraft(draft: LevelDraft, width: number, height: number): L
   // Same top-anchored resize as `rows` above, so a hidden trigger never
   // drifts out from under whatever it was authored beneath.
   const hiddenFreezeRows = draft.hiddenFreezeRows ? resize(draft.hiddenFreezeRows) : draft.hiddenFreezeRows;
-  return { ...draft, width: clampedWidth, height: clampedHeight, rows, hiddenFreezeRows };
+  // Same top-anchored resize as hiddenFreezeRows just above.
+  const hiddenKeyRows = draft.hiddenKeyRows ? resize(draft.hiddenKeyRows) : draft.hiddenKeyRows;
+  return { ...draft, width: clampedWidth, height: clampedHeight, rows, hiddenFreezeRows, hiddenKeyRows };
 }
 
 /**
@@ -296,6 +319,7 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     frame: { width: draft.width, height: draft.height },
     rows: draft.rows,
     hiddenFreezeRows: draft.hiddenFreezeRows,
+    hiddenKeyRows: draft.hiddenKeyRows,
     ammoQueue: [...draft.ammoQueue],
     sortRadius: draft.sortRadius,
     shotLimit: draft.shotLimit,
@@ -308,6 +332,9 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     forcedBoosterCharges: draft.forcedBoosterCharges,
     ftueBoosterDemo: draft.ftueBoosterDemo,
     ftueBoosterTargets: draft.ftueBoosterTargets,
+    ftueChainSortDemo: draft.ftueChainSortDemo,
+    ftueChainSortTarget: draft.ftueChainSortTarget,
+    hideBoosterHud: draft.hideBoosterHud,
   };
 }
 
@@ -334,6 +361,7 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     height: level.frame.height,
     rows: [...level.rows],
     hiddenFreezeRows: level.hiddenFreezeRows ? [...level.hiddenFreezeRows] : undefined,
+    hiddenKeyRows: level.hiddenKeyRows ? [...level.hiddenKeyRows] : undefined,
     ammoQueue: [...level.ammoQueue],
     sortRadius: level.sortRadius,
     shotLimit: level.shotLimit,
@@ -346,6 +374,9 @@ export function levelToDraft(level: SandLevelConfig): LevelDraft {
     forcedBoosterCharges: level.forcedBoosterCharges ? { ...level.forcedBoosterCharges } : undefined,
     ftueBoosterDemo: level.ftueBoosterDemo,
     ftueBoosterTargets: level.ftueBoosterTargets ? level.ftueBoosterTargets.map((t) => ({ ...t })) : undefined,
+    ftueChainSortDemo: level.ftueChainSortDemo,
+    ftueChainSortTarget: level.ftueChainSortTarget ? { ...level.ftueChainSortTarget } : undefined,
+    hideBoosterHud: level.hideBoosterHud,
     importedFromId: level.id,
     updatedAt: Date.now(),
   };
@@ -558,9 +589,11 @@ export function expandDraftToPixels(draft: LevelDraft): LevelDraft {
     height: expanded.frame.height,
     rows: expanded.rows,
     hiddenFreezeRows: expanded.hiddenFreezeRows ? [...expanded.hiddenFreezeRows] : expanded.hiddenFreezeRows,
+    hiddenKeyRows: expanded.hiddenKeyRows ? [...expanded.hiddenKeyRows] : expanded.hiddenKeyRows,
     sortRadius: expanded.sortRadius,
     ftueFreezeTargets: expanded.ftueFreezeTargets ? expanded.ftueFreezeTargets.map((t) => ({ ...t })) : expanded.ftueFreezeTargets,
     ftueBoosterTargets: expanded.ftueBoosterTargets ? expanded.ftueBoosterTargets.map((t) => ({ ...t })) : expanded.ftueBoosterTargets,
+    ftueChainSortTarget: expanded.ftueChainSortTarget ? { ...expanded.ftueChainSortTarget } : expanded.ftueChainSortTarget,
     pixelScale: 1,
   };
 }

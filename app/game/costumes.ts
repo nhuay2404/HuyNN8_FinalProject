@@ -16,13 +16,17 @@ const OWNED_KEY = "cannon-sort:v1:owned-costumes";
 // Same guarded-storage contract as the two keys above.
 const BADGE_SEEN_KEY = "cannon-sort:v1:skin-badge-seen";
 
-export type CostumeId = "classic-cannon" | "rune-cannon" | "hero-cannon";
+export type CostumeId = "classic-cannon" | "rune-cannon" | "hero-cannon" | "frost-cannon";
 
 /** Which family of extra effects a costume plays. `classic` gets nothing on
  * top of the always-on smoke/sand-spray; `magic` adds the sparkle bling and
- * the rune radius overlay. Nothing else in the engine branches on a specific
- * `CostumeId` — everything asks this one question instead. */
-export type CostumeFlavor = "classic" | "magic";
+ * the rune radius overlay; `frost` adds its own icy-white/cyan sparkle bling
+ * (`FROST_SPARKLE_COLORS`, `SandCannonEngine.ts`) — same shard system as
+ * `magic`, just a different palette, the same way `hero-cannon` draws its own
+ * palette from that system without needing to be `magic` itself. Nothing else
+ * in the engine branches on a specific `CostumeId` — everything asks this one
+ * question instead. */
+export type CostumeFlavor = "classic" | "magic" | "frost";
 
 // The groups the aim math owns. A rig only decorates them — it never moves
 // them, and above all never touches `muzzleAnchor`, which is where every shot
@@ -339,6 +343,95 @@ function buildHeroCannon(groups: CostumeRigGroups) {
   return added;
 }
 
+/**
+ * A frost-rimed cannon: the same three masses the classic cannon is built
+ * from, at the same sizes, wearing pale ice-blue and frost-white instead of
+ * steel and paint. `frost` flavor — its own sparkle bling palette
+ * (`FROST_SPARKLE_COLORS`, `SandCannonEngine.ts`) rather than the rune
+ * costume's violet/gold, so a shot reads as flung ice glinting in the air.
+ *
+ * What carries the "frozen over" read: icicles hanging off the pedestal rim
+ * (the one shape none of the other three costumes use), a barrel banded in
+ * ice rather than smooth steel, and a muzzle crystal cluster standing in for
+ * the classic cannon's plain ring.
+ */
+function buildFrostCannon(groups: CostumeRigGroups) {
+  const { added, attach } = collector();
+  // Toon-shaded ice, same reasoning as every other rig's shell: it has to
+  // catch the scene's lights, not read as a flat cutout.
+  const ramp = getCannonToonRamp();
+  const ice = new THREE.MeshToonMaterial({ color: 0xd8eefc, gradientMap: ramp });
+  const frost = new THREE.MeshToonMaterial({ color: 0x7fb8d8, gradientMap: ramp });
+  // Unlit, like every other costume's glow bits — these read as the cold
+  // itself glinting, not as painted plastic a scene light would flatten.
+  const glow = new THREE.MeshBasicMaterial({ color: 0xbdf3ff });
+  const crystal = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+  // Pedestal: the classic cannon's own base dimensions, same footprint as
+  // every other costume.
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40), frost);
+  attach(groups.cannonRoot, pedestal);
+
+  // Icicles hanging off the pedestal rim — the one shape unique to this
+  // costume. Deliberately outside the engine's own ammo-tinted ring (radius
+  // 0.86, see `AMMO_RING_RADIUS`), same clearance the rune costume's glyph
+  // ring keeps.
+  const icicleRadius = AMMO_RING_RADIUS + 0.24;
+  const icicleCount = 10;
+  for (let index = 0; index < icicleCount; index += 1) {
+    const angle = (index / icicleCount) * Math.PI * 2;
+    const icicle = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.22, 8), ice);
+    icicle.position.set(Math.cos(angle) * icicleRadius, 0.12, Math.sin(angle) * icicleRadius);
+    icicle.rotation.x = Math.PI; // point tip down, base against the pedestal rim
+    attach(groups.cannonRoot, icicle);
+  }
+
+  // Housing, where the classic cannon has its cradle, with a frost crystal on
+  // each side in place of the rune costume's ember ones. Same squash as every
+  // other rig's cradle, so it keeps covering the barrel's back rim through
+  // the whole recoil travel.
+  const housing = new THREE.Mesh(new THREE.SphereGeometry(0.62, 28, 18), ice);
+  housing.scale.set(1, 0.86, 1);
+  attach(groups.turret, housing);
+  for (const side of [-1, 1]) {
+    const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.17), crystal);
+    shard.position.set(side * 0.5, 0.08, 0.06);
+    attach(groups.turret, shard);
+  }
+
+  // Barrel: the classic cannon's own length, footprint and flare (unlike the
+  // rune costume's wand-taper) — this is still a cannon, just an iced-over
+  // one, not a staff.
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.38, 2.35, 28), frost);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.z = -0.98;
+  attach(groups.barrelVisual, barrel);
+
+  // Two frozen bands along the barrel, glowing rather than painted — reads
+  // as ice that formed there rather than a trim ring bolted on.
+  for (const ringZ of [-0.55, -1.55] as const) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.055, 14, 32), glow);
+    band.position.z = ringZ;
+    attach(groups.barrelVisual, band);
+  }
+
+  // Muzzle: a small cluster of crystal shards standing in for the classic
+  // cannon's plain ring — sits exactly on the anchor, so a shot still leaves
+  // the barrel and not the air in front of it.
+  const muzzleShards = 6;
+  for (let index = 0; index < muzzleShards; index += 1) {
+    const angle = (index / muzzleShards) * Math.PI * 2;
+    const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.09), crystal);
+    shard.position.set(Math.cos(angle) * 0.24, Math.sin(angle) * 0.24, MUZZLE_Z + 0.04);
+    attach(groups.barrelVisual, shard);
+  }
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.05, 14, 36), glow);
+  halo.position.z = MUZZLE_Z + 0.06;
+  attach(groups.barrelVisual, halo);
+
+  return added;
+}
+
 export const COSTUMES: Record<CostumeId, CostumeDef> = {
   "classic-cannon": {
     id: "classic-cannon",
@@ -375,9 +468,23 @@ export const COSTUMES: Record<CostumeId, CostumeDef> = {
     unlockLevel: 20,
     build: buildHeroCannon,
   },
+  "frost-cannon": {
+    id: "frost-cannon",
+    name: "Frost Cannon",
+    tagline: "Chill. Aim. Shatter.",
+    flavor: "frost",
+    // Not for sale at any price, same reasoning as `hero-cannon` above —
+    // `unlockLevel` is what actually gates it.
+    price: 0,
+    // Level 40 (`sand-levels.ts`'s `fortiethLevel`, `id: 40`) — the capstone
+    // of the Freeze Map arc (31-40), so a frost-themed reward for clearing it
+    // first is the level's own payoff, not an arbitrary pairing.
+    unlockLevel: 40,
+    build: buildFrostCannon,
+  },
 };
 
-export const COSTUME_ORDER: CostumeId[] = ["classic-cannon", "rune-cannon", "hero-cannon"];
+export const COSTUME_ORDER: CostumeId[] = ["classic-cannon", "rune-cannon", "hero-cannon", "frost-cannon"];
 export const DEFAULT_COSTUME: CostumeId = "classic-cannon";
 
 export function getCostume(id: CostumeId) {

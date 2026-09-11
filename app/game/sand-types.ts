@@ -114,12 +114,20 @@ export type SandFrame = {
 // `resolveShot` takes — everything else about a boosted shot is normal.
 
 /**
- * The two booster kinds. Mutually exclusive by design (spec §3): a session
- * only ever has at most one of these armed at a time, never both.
+ * The three booster kinds. Mutually exclusive by design (spec §3): a session
+ * only ever has at most one of these armed at a time, never more.
+ *
+ * `chainSort` is the newest: unlike the other two (which still sort a plain
+ * disc of matching colour, just a bigger one or a colour-blind one), it
+ * ignores the sort radius entirely and clears the WHOLE connected mass of
+ * matching colour the shot lands on — including cells only touching
+ * diagonally, which `ORTHOGONAL_4` (every other adjacency rule in this file)
+ * does not count as connected at all. See `cellsByFloodFill`
+ * (sand-rules.ts) for the actual reach this unlocks.
  */
-export type BoosterType = "radiusOvercharge" | "prismShot";
+export type BoosterType = "radiusOvercharge" | "prismShot" | "chainSort";
 
-export const BOOSTER_TYPES: readonly BoosterType[] = ["radiusOvercharge", "prismShot"];
+export const BOOSTER_TYPES: readonly BoosterType[] = ["radiusOvercharge", "prismShot", "chainSort"];
 
 /**
  * A key, as the rigid pixel sprite it is drawn as.
@@ -239,6 +247,24 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * omitted by almost every level, the same way `freezeDuration` is.
    */
   hiddenFreezeRows?: readonly string[];
+  /**
+   * A second, independent grid over the same frame — same dimensions as
+   * `rows`, top-first, `K` (`KEY_LETTER`) marking a key hidden *behind*
+   * whatever `rows` draws at that cell, `.` everywhere else. Same "buried
+   * until dug out" idea as `hiddenFreezeRows` just above, with one
+   * difference on request ("chìa khoá giấu dưới cát luôn nhú cái đầu ra mỗi
+   * khi có grain pixel được quét, chứ không phải tất cả grain pixel được
+   * quét thì nó mới nhú ra" — the key should peek out cell by cell as its
+   * own footprint clears, not stay fully invisible until the very last
+   * grain does): the renderer draws a bit of the key's own gold wherever one
+   * of its cells has no sand left covering it, even while the rest is still
+   * buried (see `SandCannonEngine`'s hidden-key peek pass). It only actually
+   * starts falling/rolling — becomes a real, physics-participating key,
+   * same as any other — once every one of its cells is clear, the same
+   * all-or-nothing moment `hiddenFreezeRows` reveals on (see
+   * `SandGameState.hiddenKeys`). Optional and omitted by almost every level.
+   */
+  hiddenKeyRows?: readonly string[];
   /**
    * Declares the level's wheel of colours — not a fixed opening order. The
    * queue a player actually sees is drawn at random (`fillQueue`/`drawAmmo`
@@ -370,6 +396,32 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * Required alongside `ftueBoosterDemo: true`; unused otherwise.
    */
   ftueBoosterTargets?: readonly { x: number; y: number }[];
+  /**
+   * Same shape as `ftueBoosterDemo`, but for Chain Sort on its own (level 5)
+   * rather than Radius Overcharge + Prism Shot as a pair — one booster, so
+   * one spotlight/demo-shot/outro instead of two back to back. Requires
+   * `forcedBoosterCharges` (at least `{ chainSort: 1 }`) and
+   * `ftueChainSortTarget`; meaningless (and never read) without both. Same
+   * "outro resets the level" reasoning as `ftueBoosterDemo` — the demo shot
+   * is not meant to cost the player anything against their own attempt.
+   */
+  ftueChainSortDemo?: boolean;
+  /**
+   * The one scripted shot `ftueChainSortDemo` fires — a frame-grid cell
+   * (same top-first space as `rows`) sitting inside a large connected mass
+   * of one colour, so Chain Sort's "whole matching mass, no radius limit"
+   * clears dramatically more than an ordinary shot would from the same
+   * spot. Required alongside `ftueChainSortDemo: true`; unused otherwise.
+   */
+  ftueChainSortTarget?: { x: number; y: number };
+  /**
+   * Hides the booster tray entirely on this level (level 2) — boosters
+   * haven't been taught yet at that point (level 3 is their own FTUE), so
+   * showing the tray there is a control nobody has been told about yet,
+   * same reasoning as `ftueGesture` hiding it on level 1. A level without
+   * this shows the tray as normal (subject to `ftueGesture`, unaffected).
+   */
+  hideBoosterHud?: boolean;
   /**
    * Boosters this level cannot be cleared without — spec §5. A hard level
    * (chương 4–5) may need a shot with `radiusOvercharge` or `prismShot` armed
@@ -506,12 +558,26 @@ export type SandGameState = {
    */
   hiddenFreezeTriggers: SandFreezeTrigger[];
   /**
+   * Keys authored on `SandLevelConfig.hiddenKeyRows` — buried under sand,
+   * inert, invisible as a real key (though the renderer still peeks a bit of
+   * gold through wherever one of its own cells is already clear — see
+   * `hiddenKeyRows`'s own comment) until every cell of a given key's own
+   * footprint is empty in `bodies`. `resolveShot` checks this after every
+   * settle and moves a key over into `keys` (an ordinary,
+   * falls-and-opens-locks one from that point on) the instant it is fully
+   * uncovered. Fixed in count for the level's whole life the same way
+   * `walls` is; only which of them have moved into `keys` changes.
+   */
+  hiddenKeys: SandKey[];
+  /**
    * Shots left with the whole board's gravity paused — sand that lost its
-   * footing hangs exactly where it is, and a key already falling or sliding
-   * stops mid-move, until this reaches 0. Sand is still removed normally
-   * while this is positive: only the re-settle afterward is skipped. Shown
-   * to the player as a bar of `SandLevelConfig.freezeDuration` segments,
-   * this many of them still lit.
+   * footing hangs exactly where it is, until this reaches 0. A key's own
+   * physics is not part of what this pauses: one already falling or rolling
+   * keeps doing so, and one that reaches a lock still opens it (see
+   * `SandCannonEngine`/`sand-rules.ts`'s `settleWorldKeysOnly`). Sand is
+   * still removed normally while this is positive: only its own re-settle
+   * afterward is skipped. Shown to the player as a bar of
+   * `SandLevelConfig.freezeDuration` segments, this many of them still lit.
    */
   freezeShotsRemaining: number;
   /**

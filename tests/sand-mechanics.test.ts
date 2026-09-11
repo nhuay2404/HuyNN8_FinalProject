@@ -247,6 +247,56 @@ test("friction paces a slide but does not change where it ends up at rest", () =
   assert.deepEqual(keyBottomLeft(eager.keys), keyBottomLeft(patient.keys));
 });
 
+// ---- keys on a slope (findSlopeDrop) --------------------------------------
+// A Wall Obstacle staircase at real pixel resolution is several cells wide
+// per step, not a single-cell-per-row 45° line — a key resting mid-tread has
+// no *immediate* diagonal opening even though the terrain is clearly still
+// descending. On request ("trên slope như này nó phải trượt xuống"): a key
+// keeps hunting sideways for the nearest actual drop instead of reading a
+// wide flat tread as a permanent rest.
+
+test("a key on a wide staircase keeps rolling down it, not just the single-cell-per-step case", () => {
+  // Wide enough (60) and tall enough (20, clear of `KEY_SPRITE`'s own 7-cell
+  // height at scale 1) that neither dimension is what stops the key.
+  const frame = { width: 60, height: 20 };
+  // Each step is 10 cells wide — wider than the key sprite itself (7) — and
+  // one cell lower than the last, so the key can come to rest entirely
+  // within one tread's own width, same as it would on any ordinary flat
+  // floor. The *immediate* diagonal-roll check alone (all `keyPass` had
+  // before this) would read that as a permanent rest; it is not one.
+  const walls: CellCoord[] = [];
+  const stepWidth = 10;
+  for (let step = 0; step < 5; step += 1) {
+    const topY = 10 - step;
+    for (let x = step * stepWidth; x < step * stepWidth + stepWidth; x += 1) {
+      for (let y = 0; y <= topY; y += 1) walls.push({ x, y });
+    }
+  }
+  // Resting flat on the first tread, well clear of its edges either side.
+  const settled = runGrainSettle([], frame, { walls, keys: [keyAt(1, 11)] });
+  // It has to actually reach the floor at the bottom of the last step, not
+  // stall partway down the staircase.
+  assert.equal(keyBottomLeft(settled.keys)!.y, 0, "the key should have rolled all the way down the staircase");
+  assert.ok(
+    settled.steps.filter((step) => step.kind === "KEY_MOVE").some((step) => step.dx !== 0 && step.dy === 0),
+    "getting down a wide tread needs at least one plain sideways move, not only diagonals",
+  );
+});
+
+test("a key balanced dead centre on a support narrower than its own footprint still just rests there — a slope needs a genuine downhill, not merely open air on both sides", () => {
+  const frame = { width: 14, height: 12 };
+  const originX = 3;
+  const bottomRow = spriteCells(KEY_SPRITE, 1).filter((cell) => cell.y === 0).map((cell) => cell.x);
+  const centreLocalX = (Math.min(...bottomRow) + Math.max(...bottomRow)) / 2;
+  const pillar: SandBody = {
+    id: "green-pillar",
+    color: "green",
+    cells: [1, 2, 3, 4].map((y) => ({ x: originX + centreLocalX, y })),
+  };
+  const settled = runGrainSettle([floorRow(14), pillar], frame, { keys: [keyAt(originX, 6)] });
+  assert.equal(keyBottomLeft(settled.keys)!.y, 3, "still settles onto the pillar and stays — symmetric open air on both sides is not a slope");
+});
+
 test("a bigger key is the same object, exactly scaled, and it still lands safely", () => {
   const frame = { width: 30, height: 24 };
   // Both start clear of the ceiling: a key with cells outside the frame cannot

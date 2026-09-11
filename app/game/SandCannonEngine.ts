@@ -28,9 +28,12 @@ import {
 import { PADLOCK_SPRITE, spriteCells, spriteHeight, spriteWidth } from "./sand-sprites";
 import {
   cellKey,
+  cellsByFloodFill,
   createSandGameState,
   currentAmmo,
   effectiveSortRadius,
+  addBoosterCharges,
+  frozenSet,
   getBoosterCharges,
   groupCells,
   expandLevelForPixelBoard,
@@ -471,6 +474,10 @@ const SPARKLE_COLORS = [0xffffff, 0xffd54a, 0xff8ad8, 0x9fe8ff];
  * as leaf-light and gold dust off the cannon's own gear rather than a second
  * coat of the rune costume's white/pink/blue magic. */
 const HERO_SPARKLE_COLORS = [0x3fae5a, 0xf4c430, 0x2fd0c4];
+/** The Frost Cannon's own bling palette (`costumes.ts`'s `buildFrostCannon`)
+ * — icy white/blue/cyan, so the shards read as flung ice glinting rather than
+ * the rune costume's warmer magic. */
+const FROST_SPARKLE_COLORS = [0xffffff, 0xbdf3ff, 0x7fb8d8, 0xd8eefc];
 
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
@@ -960,6 +967,23 @@ export class SandCannonEngine {
 
   /** Which booster, if any, is armed for the next shot — spec §3: at most one. */
   private armedBooster: BoosterType | null = null;
+  /**
+   * Real-wallet booster charges `fire()` has spent so far this attempt (one
+   * entry per shot, oldest first) — never touched for a level that forces
+   * its own scripted charge count (`boosterChargesOverride`), since those
+   * reset to that level's own configured amount on every attempt anyway and
+   * never need refunding this way.
+   *
+   * Two refund rules read this list:
+   *  - A shot that turns out to be a miss (`handleMiss`) or a `NO_MATCH`
+   *    (armed but landed on the wrong colour) refunds its OWN charge right
+   *    away and removes it from here — "bắn trượt không tính là đã dùng".
+   *  - A shot that ends the attempt in `FAIL` refunds every charge still
+   *    left in this list and clears it — "thua thì vẫn được hoàn trả lại
+   *    booster". A `WIN` never touches this list; it simply stops mattering
+   *    once the engine is torn down for the next attempt.
+   */
+  private boostersSpentThisAttempt: BoosterType[] = [];
   /** Outer ring around the chambered round / muzzle band for each booster —
    * only one pair is ever visible at once, matching `armedBooster`. */
   private boosterChamberRadiusRing: THREE.Mesh | null = null;
@@ -1161,6 +1185,12 @@ export class SandCannonEngine {
    * set once per `updateAimPreview` call, read every fixed step by the lift
    * loop in `step()` rather than recomputed there. */
   private liftTarget: { x: number; y: number; radius: number; color: SandColor; matchColor: boolean } | null = null;
+  /** Chain Sort's own lift preview — it has no radius, so `liftTarget` above
+   * cannot describe its reach at all. Set instead to the exact cells
+   * `cellsByFloodFill` would take from here, recomputed in `updateAimPreview`
+   * the same way `liftTarget` is; the two are mutually exclusive (only one
+   * is ever non-null at a time, matching which booster is armed). */
+  private liftCells: Set<string> | null = null;
   private aimDragSensitivity = 1;
   /** Non-null while the pointer is currently outside `host` mid-drag — see
    * `AIM_OUTSIDE_ZONE_CANCEL_MS`. Cleared the instant the pointer comes back
@@ -1935,6 +1965,31 @@ export class SandCannonEngine {
     // gives Wall Obstacle), plus a glint cell placed by `keyRotation` so a
     // shape with no notch of its own still reads as turning while it moves —
     // that is the whole drawing.
+    // A hidden key (`SandLevelConfig.hiddenKeyRows`) peeks a bit of its own
+    // gold through wherever one of its cells is already clear of sand — on
+    // request, cell by cell as the picture above it clears, not only once
+    // every last one is (see `hiddenKeyRows`'s own comment). Drawn before the
+    // real keys below, same "buried key never actually invisible" spirit as
+    // that loop's own comment, but reading `this.cells` (not
+    // `state.bodies`) for what still covers it: that only drops a cell once
+    // its own clear-flash animation actually finishes, so a peeking pixel
+    // never pops in a beat ahead of the sand it was under visibly leaving.
+    // No glint and no rotation — unlike a real key this one is not moving
+    // yet, so nothing here needs recomputing once a frame decides nothing
+    // changed underneath it.
+    for (const hidden of this.state.hiddenKeys) {
+      const hiddenCellSet = new Set(hidden.cells.map((cell) => cellKey(cell.x, cell.y)));
+      for (const cell of hidden.cells) {
+        if (this.cells.has(cellKey(cell.x, cell.y))) continue;
+        const hasUp = hiddenCellSet.has(cellKey(cell.x, cell.y + 1));
+        const hasDown = hiddenCellSet.has(cellKey(cell.x, cell.y - 1));
+        const hasLeft = hiddenCellSet.has(cellKey(cell.x - 1, cell.y));
+        const hasRight = hiddenCellSet.has(cellKey(cell.x + 1, cell.y));
+        const rgb = keyBevelRgb(hasUp, hasDown, hasLeft, hasRight);
+        writePixel(cell.x, height - 1 - cell.y, ...rgb, 255);
+      }
+    }
+
     for (const [id, cells] of this.keys) {
       const xs = cells.map((cell) => cell.x);
       const ys = cells.map((cell) => cell.y);
@@ -2093,6 +2148,7 @@ export class SandCannonEngine {
   private sparkleBlingColors(): number[] | null {
     if (this.costume.flavor === "magic") return SPARKLE_COLORS;
     if (this.costume.id === "hero-cannon") return HERO_SPARKLE_COLORS;
+    if (this.costume.id === "frost-cannon") return FROST_SPARKLE_COLORS;
     return null;
   }
 
@@ -2263,6 +2319,7 @@ export class SandCannonEngine {
       this.showcaseMaterials = {
         classic: this.track(new THREE.MeshBasicMaterial({ color: 0xffffff })) as THREE.MeshBasicMaterial,
         magic: this.track(new THREE.MeshBasicMaterial({ color: 0xd9b6ff })) as THREE.MeshBasicMaterial,
+        frost: this.track(new THREE.MeshBasicMaterial({ color: 0xbdf3ff })) as THREE.MeshBasicMaterial,
       };
     }
     this.applyCannonTransform();
@@ -2524,10 +2581,13 @@ export class SandCannonEngine {
     this.barrelVisual.add(this.boosterMuzzlePrismRing);
   }
 
-  /** Shows whichever overlay ring pair matches `armedBooster`, hides the rest. */
+  /** Shows whichever overlay ring pair matches `armedBooster`, hides the rest.
+   * Chain Sort has no ring art of its own yet (on request: reuse Prism
+   * Shot's for now — same placeholder reasoning as `BoosterIcon`,
+   * SandGame.tsx), so it lights the same pair Prism Shot does. */
   private syncBoosterOverlay() {
     const isRadius = this.armedBooster === "radiusOvercharge";
-    const isPrism = this.armedBooster === "prismShot";
+    const isPrism = this.armedBooster === "prismShot" || this.armedBooster === "chainSort";
     if (this.boosterChamberRadiusRing) this.boosterChamberRadiusRing.visible = isRadius;
     if (this.boosterMuzzleRadiusRing) this.boosterMuzzleRadiusRing.visible = isRadius;
     if (this.boosterChamberPrismRing) this.boosterChamberPrismRing.visible = isPrism;
@@ -2562,6 +2622,42 @@ export class SandCannonEngine {
    */
   private effectiveBoosterCharges(type: BoosterType): number {
     return this.state.boosterChargesOverride?.[type] ?? getBoosterCharges(type);
+  }
+
+  /**
+   * Hands one charge of `type` back — a shot armed with it that missed
+   * (`handleMiss`) or landed on the wrong colour (`NO_MATCH`) never really
+   * "used" it. Mirrors `fire()`'s own spend: a forced-charges level gets its
+   * local override bumped back up, everyone else gets the real wallet
+   * credited and their entry removed from `boostersSpentThisAttempt` (the
+   * most recent one for this type, since that is always the shot this
+   * refund is for).
+   */
+  private refundBoosterCharge(booster: BoosterType) {
+    const overrideCharges = this.state.boosterChargesOverride?.[booster];
+    if (overrideCharges !== undefined) {
+      this.state = {
+        ...this.state,
+        boosterChargesOverride: { ...this.state.boosterChargesOverride, [booster]: overrideCharges + 1 },
+      };
+      return;
+    }
+    addBoosterCharges(booster, 1);
+    const idx = this.boostersSpentThisAttempt.lastIndexOf(booster);
+    if (idx !== -1) this.boostersSpentThisAttempt.splice(idx, 1);
+  }
+
+  /**
+   * Hands every real-wallet booster charge spent so far this attempt back —
+   * called once a shot's resolution ends the attempt in `FAIL` (out of
+   * shots, board not cleared): "dùng booster nhưng thua màn đó thì vẫn được
+   * hoàn trả lại booster". Whatever `refundBoosterCharge` already pulled out
+   * for this exact shot's own miss/`NO_MATCH` is already gone from the list,
+   * so there is no double-refund for it.
+   */
+  private refundBoostersOnFail() {
+    for (const booster of this.boostersSpentThisAttempt) addBoosterCharges(booster, 1);
+    this.boostersSpentThisAttempt = [];
   }
 
   /**
@@ -2650,7 +2746,8 @@ export class SandCannonEngine {
       if (chamberMat) chamberMat.opacity = pulse;
       const muzzleMat = this.boosterMuzzleRadiusRing?.material as THREE.MeshBasicMaterial | undefined;
       if (muzzleMat) muzzleMat.opacity = pulse;
-    } else if (this.armedBooster === "prismShot") {
+    } else if (this.armedBooster === "prismShot" || this.armedBooster === "chainSort") {
+      // Chain Sort reuses Prism Shot's spin too — same placeholder ring.
       this.boosterChamberPrismRing?.rotation.set(0, 0, (this.boosterChamberPrismRing.rotation.z + FIXED_STEP * 0.7) % (Math.PI * 2));
       this.boosterMuzzlePrismRing?.rotation.set(0, 0, (this.boosterMuzzlePrismRing.rotation.z + FIXED_STEP * 0.7) % (Math.PI * 2));
     }
@@ -3646,9 +3743,10 @@ export class SandCannonEngine {
     this.crosshair.classList.toggle("is-visible", this.canInteract());
     if (this.aimRing) this.aimRing.visible = false;
     if (this.aimRingGlow) this.aimRingGlow.visible = false;
-    // No crosshair, no radius to preview — every lifted grain eases back down
-    // via the loop in `step()`.
+    // No crosshair, no radius (or Chain Sort mass) to preview — every lifted
+    // grain eases back down via the loop in `step()`.
     this.liftTarget = null;
+    this.liftCells = null;
   }
 
   private updateAimPreview() {
@@ -3690,16 +3788,20 @@ export class SandCannonEngine {
     // the player already reads the un-boosted disc from just scales up,
     // rather than a second ring competing for attention (spec §6's reuse of
     // the aim-ring language for Radius's icon, carried into the ring itself).
+    // Chain Sort has no disc to show at all — a ring at the base radius would
+    // just be wrong, not merely uninformative — so it is hidden outright
+    // rather than scaled, the same way it is while no booster is armed.
+    const isChainSort = this.armedBooster === "chainSort";
     const armedScale = this.boosterRadiusScale(this.armedBooster);
     if (this.aimRing) {
-      this.aimRing.visible = Boolean(solved?.grid);
+      this.aimRing.visible = Boolean(solved?.grid) && !isChainSort;
       if (solved?.grid) {
         this.moveRingToCell(this.aimRing, solved.grid.x, solved.grid.y);
         this.aimRing.scale.setScalar(armedScale);
       }
     }
     if (this.aimRingGlow) {
-      this.aimRingGlow.visible = Boolean(solved?.grid);
+      this.aimRingGlow.visible = Boolean(solved?.grid) && !isChainSort;
       if (solved?.grid) {
         this.moveRingToCell(this.aimRingGlow, solved.grid.x, solved.grid.y);
         this.aimRingGlow.scale.setScalar(armedScale);
@@ -3711,7 +3813,17 @@ export class SandCannonEngine {
     // Gated on `aimArmed` like `is-target-valid` above: a bare touch-down
     // with no drag yet shows no ring, so it should light up no sand either.
     const ammo = currentAmmo(this.level, this.state);
-    this.liftTarget = solved?.grid && this.aimArmed && ammo
+    // Chain Sort previews the exact cells it would take (no fixed radius to
+    // approximate it with) — the real oracle, `cellsByFloodFill`, run here
+    // read-only the same way `liftTarget`'s own disc is a read of what
+    // `resolveShot` would do, never spent by looking.
+    this.liftCells = solved?.grid && this.aimArmed && ammo && isChainSort
+      ? new Set(
+          cellsByFloodFill(this.state.bodies, { x: solved.grid.x, y: solved.grid.y }, ammo, frozenSet(this.state))
+            .map((cell) => cellKey(cell.x, cell.y)),
+        )
+      : null;
+    this.liftTarget = solved?.grid && this.aimArmed && ammo && !isChainSort
       ? {
           x: solved.grid.x,
           y: solved.grid.y,
@@ -3762,6 +3874,11 @@ export class SandCannonEngine {
         };
       } else {
         spendBoosterCharge(booster);
+        // Provisional: refunded right back if this exact shot turns out to
+        // be a miss or a NO_MATCH, or if this attempt ends in FAIL before the
+        // charge was ever "worth it" — see `boostersSpentThisAttempt`'s own
+        // doc comment.
+        this.boostersSpentThisAttempt.push(booster);
       }
     }
 
@@ -3904,7 +4021,12 @@ export class SandCannonEngine {
   }
 
   private handleMiss(hitFrame: boolean) {
+    // A boosted shot that never even landed on the board didn't do anything
+    // its charge was for — hand it straight back (spec: "bắn trượt không
+    // tính là đã dùng").
+    const booster = this.projectile?.booster ?? null;
     this.clearProjectile();
+    if (booster) this.refundBoosterCharge(booster);
     this.callbacks.onEvent?.({ type: "MISS", hitFrame });
     this.setPhase("READY");
     this.callbacks.onState(this.cloneState());
@@ -3950,9 +4072,13 @@ export class SandCannonEngine {
       booster,
     );
     // Sized to what this specific shot actually reached — the flash for a
-    // Radius Overcharge hit has to be the bigger disc, not the level's base one.
+    // Radius Overcharge hit has to be the bigger disc, not the level's base
+    // one. Chain Sort has no disc at all (see `updateAimPreview`'s own
+    // comment), so it skips the ring flash entirely rather than draw one at
+    // a size that means nothing — the clear-flash on every grain it actually
+    // took is its own tell.
     const radiusUsed = effectiveSortRadius(this.level, booster);
-    this.spawnSortRing(center.x, center.y, this.boosterRadiusScale(booster));
+    if (booster !== "chainSort") this.spawnSortRing(center.x, center.y, this.boosterRadiusScale(booster));
     // How much this shot actually kicked loose, not just whether the crosshair
     // itself sat on a grain — aiming at the gap above the pile still sorts
     // whatever sand the disc reaches, so the spray has to fire off of that,
@@ -3978,6 +4104,10 @@ export class SandCannonEngine {
     // shot is still spent and the board is untouched, so the only thing left to
     // say is which reach came up empty — hence the whole disc rattling.
     if (resolution.outcome === "NO_MATCH") {
+      // Same "didn't do anything its charge was for" reasoning as a total
+      // miss in `handleMiss` — a boosted shot that landed on the wrong
+      // colour is refunded, not spent.
+      if (booster) this.refundBoosterCharge(booster);
       haptic("wrongColor");
       sound("wrongColor");
       this.callbacks.onEvent?.({ type: "NO_MATCH", ammo });
@@ -4009,6 +4139,11 @@ export class SandCannonEngine {
       } else {
         this.state = resolution.state;
       }
+      // "Dùng booster nhưng thua màn đó thì vẫn được hoàn trả lại booster" —
+      // this NO_MATCH shot's own charge (if any) was just refunded above;
+      // this hands back everything ELSE spent earlier this attempt too, now
+      // that the attempt itself is over having never cleared the board.
+      if (resolution.state.result?.kind === "FAIL") this.refundBoostersOnFail();
       this.syncFreezeTriggers();
       this.syncFreezeVisuals();
       this.callbacks.onState(this.cloneState());
@@ -4068,7 +4203,11 @@ export class SandCannonEngine {
     this.syncFreezeVisuals();
     this.callbacks.onState(this.cloneState());
     if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
-    if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); }
+    // "Dùng booster nhưng thua màn đó thì vẫn được hoàn trả lại booster" —
+    // this shot itself matched (it's in the SORTED path), so its own charge
+    // stands; this is only for whatever else was spent earlier and never
+    // paid off, now that the attempt is over.
+    if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); this.refundBoostersOnFail(); }
     if (!resolution.state.result) this.showIdleCrosshair();
   }
 
@@ -4320,16 +4459,20 @@ export class SandCannonEngine {
     this.advanceBeats(deltaMs);
 
     const liftTarget = this.liftTarget;
+    const liftCells = this.liftCells;
     for (const cell of this.cells.values()) {
       if (cell.thaw > 0) cell.thaw = Math.max(0, cell.thaw - FIXED_STEP / THAW_SECONDS);
       // Same radius/colour rule `resolveShot` sweeps by (see `liftTarget`'s
       // own comment) — a locked grain never lifts, since a locked grain can
-      // never actually be swept either.
+      // never actually be swept either. `liftCells` is Chain Sort's own exact
+      // match instead (see its own comment) — the two are mutually exclusive.
       let target = 0;
       if (liftTarget && !cell.locked && (liftTarget.matchColor ? cell.color === liftTarget.color : true)) {
         const dx = cell.x - liftTarget.x;
         const dy = cell.y - liftTarget.y;
         if (dx * dx + dy * dy <= liftTarget.radius * liftTarget.radius) target = 1;
+      } else if (liftCells && !cell.locked && liftCells.has(cellKey(cell.x, cell.y))) {
+        target = 1;
       }
       if (cell.lift < target) cell.lift = Math.min(target, cell.lift + FIXED_STEP / LIFT_RISE_SECONDS);
       else if (cell.lift > target) cell.lift = Math.max(target, cell.lift - FIXED_STEP / LIFT_FALL_SECONDS);

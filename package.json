@@ -10,7 +10,7 @@
     "level-writer": "node scripts/level-writer.mjs",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --test tests/sand-radius.test.ts tests/sand-pixel-board.test.ts tests/level-editor.test.ts tests/sand-mechanics.test.ts tests/sand-walls.test.ts tests/sand-boosters.test.ts tests/sand-economy.test.ts tests/level-rewards.test.ts tests/economy-config.test.ts tests/level-advisor.test.ts tests/sand-win-leniency.test.ts",
+    "test": "node --test tests/sand-radius.test.ts tests/sand-pixel-board.test.ts tests/level-editor.test.ts tests/sand-mechanics.test.ts tests/sand-walls.test.ts tests/sand-boosters.test.ts tests/sand-economy.test.ts tests/level-rewards.test.ts tests/economy-config.test.ts tests/level-advisor.test.ts tests/sand-win-leniency.test.ts tests/sand-freeze-key.test.ts tests/sand-hidden-key.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

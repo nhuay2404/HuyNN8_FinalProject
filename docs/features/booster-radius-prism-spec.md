@@ -1,9 +1,9 @@
-# Booster: Radius Overcharge & Prism Shot
+# Booster: Radius Overcharge, Prism Shot & Chain Sort
 
 Nguồn: `app/game/sand-types.ts` (`BoosterType`), `app/game/sand-rules.ts` (`effectiveSortRadius`,
-`getBoosterCharges`, `spendBoosterCharge`, `cellsInRadius`), `app/game/SandCannonEngine.ts`
-(`armBooster`, overlay ring), `app/game/economy.ts` (giá và số viên khởi đầu), `app/SandGame.tsx`
-(HUD, Shop).
+`getBoosterCharges`, `spendBoosterCharge`, `cellsInRadius`, `cellsByFloodFill`),
+`app/game/SandCannonEngine.ts` (`armBooster`, overlay ring), `app/game/economy.ts` (giá và số viên
+khởi đầu), `app/SandGame.tsx` (HUD, Shop).
 
 Nhiều chỗ trong code trỏ tới file này bằng đúng tên (`booster-radius-prism-spec.md §N`) — số mục
 dưới đây khớp với những chỗ trỏ đó.
@@ -19,6 +19,24 @@ Nhân đôi `sortRadius` cho một phát bắn (`effectiveSortRadius` trong `san
 Bỏ điều kiện đúng màu: `cellsInRadius(..., { matchColor: false })`. Một phát Prism Shot lấy **mọi**
 màu trong đĩa, không chỉ màu đang cầm — có thể xoá nhiều body khác màu cùng lúc nếu chúng nằm trong
 tầm.
+
+## §2.1. Chain Sort
+
+Bỏ hẳn đĩa bán kính: không dùng `cellsInRadius`, mà `cellsByFloodFill` — lan từ đúng ô va chạm ra
+mọi ô CÙNG MÀU liền kề, kể cả chỉ chạm nhau ở góc (8 hướng, không phải `ORTHOGONAL_4` như luật ghép
+"body" thường dùng ở mọi chỗ khác trong file). Không giới hạn số ô lấy được — một mảng liền kề dù to
+cỡ nào cũng bị dọn sạch trong một phát, miễn đúng màu (có `matchColor`, không xuyên màu như Prism
+Shot). Không có bán kính để hiển thị — vòng ring aim ẩn hẳn khi armed loại này (khác Radius
+Overcharge/Prism Shot, cả hai đều có ring riêng), và preview "lift" trước khi bắn cũng không áp dụng
+được kiểu bán kính cố định.
+
+Giá cao hơn hai loại kia (`BOOSTER_PRICE.chainSort`, xem [economy-and-wallet.md](economy-and-wallet.md))
+đúng vì không có trần: một cú Chain Sort trúng một mảng khổng lồ có thể dọn nhiều hơn hẳn bất kỳ đĩa
+bán kính nào, dù đã Overcharge.
+
+Icon/art dùng tạm icon Prism Shot (`/icons/PrismChargeIcon.png`) cho tới khi có art riêng — `BoosterIcon`
+(`SandGame.tsx`) coi mọi loại không phải Radius Overcharge là "dùng art Prism", nên Chain Sort tự
+động rơi vào nhánh đó mà không cần thêm asset mới.
 
 ## §3. Mutually exclusive — không đổi, huỷ được bằng cách bấm lại
 

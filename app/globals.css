@@ -316,7 +316,8 @@ button {
    `background-color` stays on `.is-hub`'s own transition above so a flavour
    swap still crossfades under the tiled icons. */
 .game-frame.is-skin-classic,
-.game-frame.is-skin-magic {
+.game-frame.is-skin-magic,
+.game-frame.is-skin-frost {
   background-color: #fff5fb;
   background-image: url("/icons/MocIconTile.svg");
   background-repeat: repeat;
@@ -1031,6 +1032,15 @@ button {
 /* Spec §3: locked, not hidden — the other booster is armed and this one
    cannot respond until it is fired. `disabled` already blocks the tap. */
 .booster-btn:disabled { opacity: .4; cursor: default; }
+/* Out of charges mid-match: the tray button becomes a one-tap "buy 1 now"
+   instead of just going dim like an ordinary disabled state — a gold ring
+   says it is still tappable, just for gold instead of an armed shot. Applies
+   even while `busy` (input locked) disables the button, same as any other
+   state here. */
+.booster-btn.is-buy {
+  background: var(--panel);
+  box-shadow: inset 0 0 0 2px var(--gold);
+}
 .booster-icon { display: block; width: 24px; height: 24px; object-fit: contain; }
 
 /* Radius Overcharge armed: the same blue as the chamber/muzzle overlay ring
@@ -2453,6 +2463,7 @@ button {
 .skin-card-icon .costume-icon { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .skin-card-icon.is-magic { color: #8a5fd6; }
 .skin-card-icon.is-hero { color: #2f8f4e; }
+.skin-card-icon.is-frost { color: #4fa8d8; }
 .skin-card-tick {
   position: absolute; right: 6px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
   background: #ffffff; color: #3e7871;
@@ -2843,12 +2854,30 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   width: 46px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px;
   background: rgba(10,6,20,.5); color: var(--ink); font-size: 12px; font-weight: 700;
 }
+/* Wraps the real canvas and the brush-preview overlay so the overlay can sit
+   pixel-for-pixel on top of it (`position: absolute`) without affecting the
+   panel's own layout — sized to its content (the real canvas), not stretched
+   to the grid cell, since `.editor-canvas-panel` centres its children. */
+.editor-canvas-wrap { position: relative; margin-top: 14px; max-width: 100%; }
 .editor-canvas {
-  margin-top: 14px; max-width: 100%; border-radius: 12px;
+  display: block; max-width: 100%; border-radius: 12px;
   border: 1px solid var(--line);
   /* The picture is pixel art; smoothing it would lie about what is drawn. */
   image-rendering: pixelated;
   cursor: crosshair; touch-action: none;
+}
+/* The brush-preview outline itself — see the overlay draw effect in
+   LevelEditor.tsx. Never intercepts input (`pointer-events: none`): every
+   drag/click still has to land on the real canvas underneath it. */
+.editor-canvas-overlay {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  /* Transparent, but the same 1px as `.editor-canvas`'s real border — so this
+     layer's content box lines up with the real canvas's cell grid exactly,
+     instead of drifting a pixel off at every edge. */
+  border: 1px solid transparent;
+  border-radius: 12px;
+  image-rendering: pixelated;
+  pointer-events: none;
 }
 
 /* ---- settings ---- */

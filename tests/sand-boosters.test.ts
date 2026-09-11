@@ -10,6 +10,7 @@ import { __resetWalletForTests } from "../app/game/economy.ts";
 import { lockAndKey, sandBloom } from "./level-fixtures.ts";
 import {
   cellKey,
+  cellsByFloodFill,
   cellsInRadius,
   createSandGameState,
   currentAmmo,
@@ -133,7 +134,7 @@ test("effectiveSortRadius: Radius Overcharge doubles the reach, capped at the fr
 // into `sand-rules.ts` for `SandCannonEngine.ts` to call.
 
 test("getBoosterCharges reads the real wallet, and spendBoosterCharge decrements it", () => {
-  __resetWalletForTests({ boosters: { radiusOvercharge: 2, prismShot: 0 } });
+  __resetWalletForTests({ boosters: { radiusOvercharge: 2, prismShot: 0, chainSort: 0 } });
   assert.equal(getBoosterCharges("radiusOvercharge"), 2);
   assert.equal(getBoosterCharges("prismShot"), 0);
 
@@ -235,4 +236,83 @@ test("Prism Shot still leaves locked sand behind — it is invisible to the disc
   for (const cell of resolution.removed) {
     assert.ok(!lockedBefore.has(cellKey(cell.x, cell.y)), "a locked cell was removed by a Prism Shot");
   }
+});
+
+// ---- Chain Sort (booster-radius-prism-spec.md §2.1) -----------------------
+// No disc at all — it floods every cell of matching colour connected to the
+// impact cell through any of the eight neighbours around it, `ORTHOGONAL_4`
+// plus the four corners `cellsInRadius`/every body-splitting rule ignores.
+
+test("Chain Sort: a shot takes exactly what cellsByFloodFill reaches from the impact cell", () => {
+  const state = createSandGameState(LEVEL);
+  const color = currentAmmo(LEVEL, state)!;
+  const target = bestShot(state.bodies, LEVEL.sortRadius, color)!;
+  const owner = ownerOf(state.bodies, target.x, target.y)!;
+  const hit = { bodyId: owner.id, x: target.x, y: target.y };
+
+  const chained = resolveShot(LEVEL, state, hit, "chainSort");
+  const oracle = cellsByFloodFill(state.bodies, { x: target.x, y: target.y }, color, frozenSet(state));
+  assert.deepEqual(chained.removed, oracle);
+  // Sand Bloom's blue mass is the whole reason it is a good fixture here —
+  // its centre reaches far more of the same colour than any bounded disc
+  // could in one shot.
+  const plain = resolveShot(LEVEL, state, hit);
+  assert.ok(chained.removed.length >= plain.removed.length, "a whole connected mass can never be less than one disc's worth of it");
+});
+
+test("Chain Sort reaches across a corner-only touch — two ORTHOGONAL_4 bodies, one flood", () => {
+  // Two red cells touching only diagonally: (0,1) and (1,0). Every other
+  // rule in the game (body-splitting, settling, unlocking) treats these as
+  // two separate bodies — `ORTHOGONAL_4` never counts a corner as contact.
+  const level: SandLevelConfig = {
+    ...RADIUS_GAMEPLAY,
+    id: 0,
+    name: "chain-sort-diagonal-fixture",
+    frame: { width: 2, height: 2 },
+    rows: ["R.", ".R"],
+    ammoQueue: ["red"],
+    sortRadius: 0.5,
+    shotLimit: 5,
+    pixelScale: 1,
+  };
+  const { bodies } = parseSandLevel(level);
+  assert.equal(bodies.length, 2, "fixture assumes the two red cells start as two separate bodies");
+
+  const state = createSandGameState(level);
+  const hit = { bodyId: bodies[0].id, x: 0, y: 1 };
+  const plain = resolveShot(level, state, hit);
+  assert.equal(plain.removed.length, 1, "an ordinary shot only ever takes the one body it landed on");
+
+  const chained = resolveShot(level, state, hit, "chainSort");
+  assert.equal(chained.removed.length, 2, "Chain Sort follows the corner touch into the second body too");
+});
+
+test("Chain Sort still leaves locked sand behind — it is invisible to the flood, not a special case", () => {
+  const level = lockAndKey;
+  const state = createSandGameState(level);
+  const [firstLocked] = state.locked;
+  const lockedBefore = new Set(state.locked.map((cell) => cellKey(cell.x, cell.y)));
+  const owner = ownerOf(state.bodies, firstLocked.x, firstLocked.y)!;
+
+  const resolution = resolveShot(
+    level,
+    state,
+    { bodyId: owner.id, x: firstLocked.x, y: firstLocked.y },
+    "chainSort",
+  );
+  for (const cell of resolution.removed) {
+    assert.ok(!lockedBefore.has(cellKey(cell.x, cell.y)), "a locked cell was removed by a Chain Sort");
+  }
+});
+
+test("Chain Sort centred on empty air (nothing of that colour under it) takes nothing — no radius to reach past it", () => {
+  const state = createSandGameState(LEVEL);
+  const color = currentAmmo(LEVEL, state)!;
+  // Sand Bloom fills its whole frame (see its own doc comment), so there is
+  // no truly empty cell inside it — aim at a body of a DIFFERENT colour
+  // instead, which is exactly as unreachable for a flood keyed to `color`.
+  const otherColorCell = state.bodies.find((body) => body.color !== color)!.cells[0];
+  const chained = resolveShot(LEVEL, state, { bodyId: null, x: otherColorCell.x, y: otherColorCell.y }, "chainSort");
+  assert.equal(chained.outcome, "NO_MATCH");
+  assert.equal(chained.removed.length, 0);
 });

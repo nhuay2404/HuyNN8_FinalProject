@@ -7,8 +7,10 @@
 # starterGold                      | vang nguoi choi moi bat dau co
 # starterBoosterRadiusOvercharge   | so vien Radius Overcharge tang luc dau
 # starterBoosterPrismShot          | so vien Prism Shot tang luc dau
+# starterBoosterChainSort          | so vien Chain Sort tang luc dau
 # boosterPriceRadiusOvercharge     | gia 1 vien Radius Overcharge o Shop
 # boosterPricePrismShot            | gia 1 vien Prism Shot o Shop
+# boosterPriceChainSort            | gia 1 vien Chain Sort o Shop
 # dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo ngay trong chu ky 7 ngay
 # rewardTrackCycle1..5             | Blue Emerald cua tung ruong tren thanh Reward Track o man Home
 #                                  | (moi 1 level thang = day 1 moc; day du 5 moc = 5 level thi mo duoc
@@ -18,8 +20,10 @@ key,value
 starterGold,100
 starterBoosterRadiusOvercharge,1
 starterBoosterPrismShot,1
+starterBoosterChainSort,1
 boosterPriceRadiusOvercharge,100
 boosterPricePrismShot,100
+boosterPriceChainSort,150
 dailyLoginDay1,10
 dailyLoginDay2,15
 dailyLoginDay3,20

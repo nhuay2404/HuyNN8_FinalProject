@@ -283,6 +283,15 @@ function clamp(value: number, low: number, high: number) {
 }
 
 /**
+ * How many screen pixels one board pixel draws at, given the panel's fixed
+ * budget (560x620) — shared by the main canvas draw effect and the brush
+ * preview overlay, which has to line up with it exactly cell for cell.
+ */
+function boardCellPx(draft: LevelDraft) {
+  return Math.max(4, Math.floor(Math.min(560 / draft.width, 620 / draft.height)));
+}
+
+/**
  * The cells one dab of the brush covers.
  *
  * A square nib, centred on the cursor and biased up-left on even sizes so the
@@ -301,6 +310,35 @@ function brushCells(draft: LevelDraft, x: number, y: number, size: number) {
     }
   }
   return cells;
+}
+
+/**
+ * The cells the cursor would stamp down right now, one tool at a time — what
+ * the brush-preview overlay outlines under the cursor before the player
+ * commits to a click. Mirrors `paintAt`'s own per-tool shape exactly (brush's
+ * square nib, the key/Freeze sprites at their current scale) so the preview
+ * never promises a footprint the actual stroke does not deliver. `bucket` has
+ * no cheap preview of its own — the region it would fill is not known until
+ * the flood actually runs — so it just marks the one cell the fill starts
+ * from.
+ */
+function previewCellsAt(
+  draft: LevelDraft,
+  tool: Tool,
+  x: number,
+  y: number,
+  options: { brushSize: number; keyScale: number; freezeScale: number },
+): Array<{ x: number; y: number }> {
+  if (tool === "key") {
+    return keyCellsAt(draft, x, y, Math.min(options.keyScale, maxKeyScale(draft)));
+  }
+  if (tool === "freeze") {
+    return freezeCellsAt(draft, x, y, Math.min(options.freezeScale, maxFreezeScale(draft)));
+  }
+  if (tool === "bucket") {
+    return [{ x, y }];
+  }
+  return brushCells(draft, x, y, options.brushSize);
 }
 
 /** The whole connected group of same-letter cells under (x, y) in `rows`, or
@@ -641,6 +679,7 @@ export default function LevelEditor() {
   const [importLevelId, setImportLevelId] = useState<number | null>(BUILT_IN_LEVELS[3]?.id ?? null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const painting = useRef(false);
   const history = useRef<{ past: LevelDraft[]; future: LevelDraft[] }>({ past: [], future: [] });
@@ -650,6 +689,14 @@ export default function LevelEditor() {
    * (switching levels, undo/redo), so a stray Shift-click never draws a line
    * back to a point that picture no longer has any relation to. */
   const lastBrushPoint = useRef<{ x: number; y: number } | null>(null);
+  /** The cell the cursor is over right now — drives the brush-preview
+   * overlay (see `previewCellsAt`/the overlay draw effect below). State, not
+   * a ref: the overlay is a separate small canvas that only this needs to
+   * repaint, so re-rendering the whole panel on every mouse move costs
+   * nothing extra it wasn't already going to cost. `null` whenever the
+   * cursor is off the canvas entirely (or there is no board yet), which
+   * hides the preview outright rather than freezing it at its last spot. */
+  const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
   // The loading screen is painted by the root layout for every route, and only
   // the game knows when its first frame is up. The editor has no such moment,
@@ -966,13 +1013,22 @@ export default function LevelEditor() {
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!painting.current || tool === "bucket") return;
     const cell = cellFromEvent(event);
+    // Tracked independently of the paint stroke below — the preview has to
+    // follow the cursor whether or not a stroke is in progress, so a player
+    // can see the brush's footprint before ever clicking.
+    setHoverCell(cell);
+    if (!painting.current || tool === "bucket") return;
     if (!cell) return;
     // record: false — the whole drag is one undo step.
     paintAt(cell.x, cell.y, false);
     lastBrushPoint.current = cell;
   };
+
+  /** Hides the preview the instant the cursor leaves the canvas — otherwise
+   * it would sit frozen over the last cell visited, implying a brush that is
+   * no longer actually there. */
+  const onPointerLeaveCanvas = () => setHoverCell(null);
 
   const endStroke = () => {
     painting.current = false;
@@ -986,7 +1042,7 @@ export default function LevelEditor() {
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    const cellPx = Math.max(4, Math.floor(Math.min(560 / draft.width, 620 / draft.height)));
+    const cellPx = boardCellPx(draft);
     canvas.width = draft.width * cellPx;
     canvas.height = draft.height * cellPx;
 
@@ -1152,13 +1208,49 @@ export default function LevelEditor() {
     rule(GUIDE_GRID_STEP, "rgba(255,255,255,.16)");
   }, [draft, highlightColor]);
 
+  // The brush-preview overlay: a second, much cheaper canvas kept the exact
+  // same size as the real one (see `.editor-canvas-wrap`), redrawn on every
+  // mouse move instead of the whole board — see `hoverCell`'s own comment for
+  // why this is a separate layer rather than folded into the effect above.
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas || !draft) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const cellPx = boardCellPx(draft);
+    canvas.width = draft.width * cellPx;
+    canvas.height = draft.height * cellPx;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!hoverCell) return;
+
+    const cells = previewCellsAt(draft, tool, hoverCell.x, hoverCell.y, { brushSize, keyScale, freezeScale });
+    // Erasing gets its own warning tint (on request, effectively — a preview
+    // that looked identical to painting would make a stray Erase stroke as
+    // easy to miss as it was before this existed at all) rather than the
+    // ordinary "here is where the brush lands" tint every other mode shares.
+    const tint = tool === "brush" && erasing ? "rgba(240,90,90,.38)" : "rgba(255,255,255,.32)";
+    const outline = tool === "brush" && erasing ? "rgba(255,214,214,.9)" : "rgba(255,255,255,.9)";
+    context.fillStyle = tint;
+    context.strokeStyle = outline;
+    context.lineWidth = Math.max(1, cellPx * 0.1);
+    for (const cell of cells) {
+      // Same top-down/bottom-up flip every other draw call here makes —
+      // `cell.y` is game-space (bottom-up), the canvas row is top-down.
+      const left = cell.x * cellPx;
+      const top = (draft.height - 1 - cell.y) * cellPx;
+      context.fillRect(left, top, cellPx, cellPx);
+      context.strokeRect(left + 0.5, top + 0.5, cellPx - 1, cellPx - 1);
+    }
+  }, [draft, tool, hoverCell, brushSize, keyScale, freezeScale, erasing]);
+
   // ---- derived -----------------------------------------------------------
 
   const issues = useMemo(() => (draft ? validateDraft(draft) : []), [draft]);
   const errors = issues.filter((issue) => issue.severity === "error");
   const used = draft ? coloursUsed(draft) : [];
   const painted = draft ? countPaintedCells(draft) : 0;
-  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0, freeze: 0, hiddenFreeze: 0 };
+  const fixtures = draft ? fixtureCounts(draft) : { locked: 0, keys: 0, freeze: 0, hiddenFreeze: 0, hiddenKey: 0 };
   // Resizing the board can leave the chosen key size too big for it, so the
   // limit is applied on the way out rather than only when the button is pressed.
   const keyScaleLimit = draft ? maxKeyScale(draft) : 1;
@@ -1705,15 +1797,23 @@ export default function LevelEditor() {
             </div>
           </div>
 
-          <canvas
-            ref={canvasRef}
-            className="editor-canvas"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={endStroke}
-            onPointerLeave={endStroke}
-            onPointerCancel={endStroke}
-          />
+          <div className="editor-canvas-wrap">
+            <canvas
+              ref={canvasRef}
+              className="editor-canvas"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={endStroke}
+              onPointerLeave={() => { endStroke(); onPointerLeaveCanvas(); }}
+              onPointerCancel={() => { endStroke(); onPointerLeaveCanvas(); }}
+            />
+            {/* The brush-preview outline — a separate canvas laid exactly over
+                the real one (see `.editor-canvas-overlay`), so a mouse move
+                only ever has to repaint this small, cheap layer instead of the
+                whole board underneath it. `pointer-events: none` so it never
+                steals the drag/click events the real canvas needs. */}
+            <canvas ref={overlayCanvasRef} className="editor-canvas-overlay" />
+          </div>
 
           <p className="editor-hint">
             {painted.toLocaleString()} grains painted · {draft.width}×{draft.height} pixels
@@ -1810,6 +1910,8 @@ export default function LevelEditor() {
             {fixtures.freeze > 0 && ` This picture has ${fixtures.freeze} Freeze trigger cells.`}
             {fixtures.hiddenFreeze > 0
               && ` This picture also has ${fixtures.hiddenFreeze} Freeze trigger cells hidden under sand — invisible in-game until every one of them is uncovered.`}
+            {fixtures.hiddenKey > 0
+              && ` This picture also has ${fixtures.hiddenKey} key cells hidden under sand — no editor tool paints these yet (hand-author \`hiddenKeyRows\` on the level), but they peek through cell by cell as the sand above them clears, then fall and open locks normally once every one of them is uncovered.`}
           </p>
           <ol className="editor-queue">
             {draft.ammoQueue.map((entry, position) => (

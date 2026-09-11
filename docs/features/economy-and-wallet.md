@@ -27,12 +27,15 @@ Mỗi hằng số dưới đây là **fallback**: số thật luôn đi qua `pub
 | `STARTER_GOLD` | 100 | `starterGold` |
 | `STARTER_BOOSTER_CHARGES.radiusOvercharge` | 1 | `starterBoosterRadiusOvercharge` |
 | `STARTER_BOOSTER_CHARGES.prismShot` | 1 | `starterBoosterPrismShot` |
+| `STARTER_BOOSTER_CHARGES.chainSort` | 1 | `starterBoosterChainSort` |
 | `BOOSTER_PRICE.radiusOvercharge` | 100 | `boosterPriceRadiusOvercharge` |
 | `BOOSTER_PRICE.prismShot` | 100 | `boosterPricePrismShot` |
+| `BOOSTER_PRICE.chainSort` | 150 | `boosterPriceChainSort` |
 | `DAILY_LOGIN_REWARDS[0..6]` | 10, 15, 20, 25, 30, 40, 80 | `dailyLoginDay1`..`dailyLoginDay7` |
 
-Radius Overcharge và Prism Shot cùng giá 100 vàng — xem
-[booster-radius-prism-spec.md](booster-radius-prism-spec.md) cho khác biệt công năng giữa hai loại.
+Radius Overcharge và Prism Shot cùng giá 100 vàng; Chain Sort đắt hơn (150) — nó không chỉ to/rộng
+hơn một cú bắn thường mà có thể dọn sạch cả một mảng liền kề bất kể kích thước. Xem
+[booster-radius-prism-spec.md](booster-radius-prism-spec.md) cho khác biệt công năng giữa các loại.
 
 `economy-config.ts` fetch CSV lúc runtime và poll lại mỗi 4 giây trong khi tab đang mở/visible, nên
 sửa CSV rồi lưu là số mới lên mà không cần build lại (F5 hoặc chờ 4s là thấy). Không có server để

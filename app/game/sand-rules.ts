@@ -21,7 +21,11 @@ import type {
 // A value import, not a type one, so it needs the extension the test runner
 // resolves with — this file is executed by node directly, not only bundled.
 import { SAND_COLORS } from "./sand-types.ts";
-import { getBoosterCount, spendBoosterCharge as spendWalletBoosterCharge } from "./economy.ts";
+import {
+  addBoosterCharges as addWalletBoosterCharges,
+  getBoosterCount,
+  spendBoosterCharge as spendWalletBoosterCharge,
+} from "./economy.ts";
 import { seededUnit } from "./sand-color.ts";
 
 /** The picture's alphabet. One letter per colour keeps an authored row readable. */
@@ -181,6 +185,9 @@ export type ParsedLevel = {
   /** One buried Freeze Map trigger per connected group of `@` cells on
    * `SandLevelConfig.hiddenFreezeRows` — see that field's own comment. */
   hiddenFreezeTriggers: SandFreezeTrigger[];
+  /** One buried key per connected group of `K` cells on
+   * `SandLevelConfig.hiddenKeyRows` — see that field's own comment. */
+  hiddenKeys: SandKey[];
   issues: LevelIssue[];
 };
 
@@ -219,6 +226,8 @@ export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfi
     // the exact same expanded cells its covering sand does, or the two
     // grids drift apart the moment the board is drawn at real resolution.
     hiddenFreezeRows: level.hiddenFreezeRows ? expandRows(level.hiddenFreezeRows) : level.hiddenFreezeRows,
+    // Same reasoning as hiddenFreezeRows just above.
+    hiddenKeyRows: level.hiddenKeyRows ? expandRows(level.hiddenKeyRows) : level.hiddenKeyRows,
     sortRadius: level.sortRadius * scale,
     // Scripted FTUE targets are authored in the same blueprint grid as
     // `rows`, so they need the same uniform upscale to still land on the
@@ -226,6 +235,10 @@ export function expandLevelForPixelBoard(level: SandLevelConfig): SandLevelConfi
     ftueFreezeTargets: level.ftueFreezeTargets?.map((t) => ({ x: t.x * scale, y: t.y * scale })),
     // Same reasoning as ftueFreezeTargets just above.
     ftueBoosterTargets: level.ftueBoosterTargets?.map((t) => ({ x: t.x * scale, y: t.y * scale })),
+    // Same reasoning as ftueFreezeTargets just above.
+    ftueChainSortTarget: level.ftueChainSortTarget
+      ? { x: level.ftueChainSortTarget.x * scale, y: level.ftueChainSortTarget.y * scale }
+      : level.ftueChainSortTarget,
     pixelScale: 1,
   };
 }
@@ -357,7 +370,23 @@ export function parseSandLevel(level: SandLevelConfig): ParsedLevel {
     cells,
   }));
 
-  return { bodies, locked, keys, walls: sortCells(walls), freezeTriggers, hiddenFreezeTriggers, issues };
+  // `hiddenKeyRows` is a second, independent grid over the same frame, read
+  // exactly the same way as `hiddenFreezeRows` just above — only `K` means
+  // anything on it, everything else is ignored rather than raising an issue.
+  const hiddenKeyCells = new Set<string>();
+  (level.hiddenKeyRows ?? []).forEach((row, index) => {
+    const y = height - 1 - index;
+    [...row].forEach((letter, x) => {
+      if (letter !== KEY_LETTER) return;
+      if (y >= 0 && y < height && x < width) hiddenKeyCells.add(cellKey(x, y));
+    });
+  });
+  const hiddenKeys = groupCells([...hiddenKeyCells].map(parseCellKey)).map((cells) => ({
+    id: `hidden-key-${cells[0].x}-${cells[0].y}`,
+    cells,
+  }));
+
+  return { bodies, locked, keys, walls: sortCells(walls), freezeTriggers, hiddenFreezeTriggers, hiddenKeys, issues };
 }
 
 function parseCellKey(key: string): CellCoord {
@@ -421,11 +450,13 @@ export function runGrainSettle(
    * gets to assume the cascade stays near the hole. */
   hint?: { x: number; y: number; radius: number },
   /**
-   * Freeze Map is active for this settle: skip every movement pass entirely
-   * (no `GRAIN_PASS`, no `KEY_MOVE`, no `UNLOCK`) and just re-derive bodies
-   * from the board exactly as it sits. Sand that just lost its footing hangs
-   * there, and a key already falling or sliding stops dead — see
-   * `freeze-map-mechanic.md` §3.
+   * Freeze Map is active for this settle: skip every SAND movement pass (no
+   * `GRAIN_PASS`) and just leave the grid exactly as it sits — sand that just
+   * lost its footing hangs there, including whatever a key's own unlock just
+   * freed. A key's own physics is not part of what freeze holds — on
+   * request, one already falling or rolling keeps doing so, and one that
+   * reaches a lock still opens it (`KEY_MOVE`/`UNLOCK` both still run); see
+   * `settleWorldKeysOnly`.
    */
   frozen?: boolean,
 ): SettleOutcome {
@@ -442,6 +473,8 @@ export function runGrainSettle(
     } else {
       settleWorld(world, frame, steps);
     }
+  } else if (fixtures.keys?.length) {
+    settleWorldKeysOnly(world, frame, steps);
   }
   return finishWorld(world, frame, steps, fixtures.freezeTriggers ?? []);
 }
@@ -763,15 +796,63 @@ function rollKey(
 }
 
 /**
+ * Which side, if either, a key resting on a dead-flat stretch should roll
+ * toward — on request ("trên slope như này nó phải trượt xuống"): a key
+ * reads as a rigid rolling object, not a grain that only ever reacts to its
+ * own immediate footprint, so a multi-cell-wide tread (a staircase-shaped
+ * Wall Obstacle at real pixel resolution is exactly this — each "step" of
+ * the visual slope is several cells wide, not the single-cell-per-row
+ * diagonal `keyPass`'s own immediate-diagonal check alone can follow) should
+ * not read as solid ground just because the very next cell over happens to
+ * be level.
+ *
+ * Walks outward cell by cell in each direction (`SLIDE_ORDER`'s own
+ * left-first tie-break) only as long as the row at the key's own height
+ * stays clear the whole way — the same "no teleporting past an obstacle"
+ * rule every other key move already keeps, just checked one cell at a time
+ * instead of in a single jump — and returns the first direction where doing
+ * so reaches a cell it could actually drop from. `null` means neither side
+ * ever opens up: the key is on genuinely flat, enclosed ground (the common
+ * case — resting embedded in ordinary sand, where the very next cell over is
+ * already solid sand and this returns immediately), not stuck mid-slope.
+ */
+function findSlopeDrop(world: World, frame: SandFrame, id: string): -1 | 1 | null {
+  // Checked on both sides before deciding anything — see below for why a
+  // side that finds one is not automatically taken.
+  const openSides: Array<-1 | 1> = [];
+  for (const dir of SLIDE_ORDER) {
+    for (let distance = 1; distance <= frame.width; distance += 1) {
+      const dx = dir * distance;
+      if (!keyCanMove(world, frame, id, dx, 0)) break;
+      if (keyCanMove(world, frame, id, dx, -1)) {
+        openSides.push(dir);
+        break;
+      }
+    }
+  }
+  // Exactly one open side is a slope: there is a real downhill, and the
+  // other direction is genuinely blocked (more high ground, not just the
+  // opposite face of the same narrow perch). Both sides open is the
+  // opposite case — a key balanced dead centre on a support narrower than
+  // its own footprint (a single pillar, a lock's own narrow ledge) reads as
+  // symmetric on this exact check, with no side more "downhill" than the
+  // other, and — on request, `tests/sand-mechanics.test.ts`'s own "a key is
+  // rigid" case — that is a rest to keep, not a coin flip to break by
+  // picking `SLIDE_ORDER`'s tie-break as if it meant something physical here.
+  return openSides.length === 1 ? openSides[0] : null;
+}
+
+/**
  * One pass of falling keys — same rule as a grain, applied to the whole
- * shape, plus one thing a grain does not do: coast a little once a slope
- * runs out, rather than snapping still on the very pass the ground turns
- * flat. Each actual diagonal roll banks one cell of momentum
- * (`world.keyMomentum`, capped at `KEY_COAST_MAX_CELLS`); the moment neither
- * straight down nor either diagonal is available any more, a key still
- * holding some spends it one cell at a time in whichever direction it was
- * last rolling (`world.keyCoastDir`), tapering off over a few passes instead
- * of stopping dead.
+ * shape, plus two things a grain does not do. First, it coasts a little once
+ * a slope runs out, rather than snapping still on the very pass the ground
+ * turns flat: each actual diagonal (or slope) roll banks one cell of
+ * momentum (`world.keyMomentum`, capped at `KEY_COAST_MAX_CELLS`), spent one
+ * cell per pass once neither gravity nor a fresh diagonal has anywhere left
+ * to take it, tapering off instead of stopping dead. Second — the newer of
+ * the two — a key stuck on a stretch with no *immediate* diagonal still
+ * keeps looking for one further along the same row before it actually rests
+ * (`findSlopeDrop`, on request); a grain never does either.
  */
 function keyPass(world: World, frame: SandFrame, steps: SettleStep[]) {
   let moved = false;
@@ -801,6 +882,26 @@ function keyPass(world: World, frame: SandFrame, steps: SettleStep[]) {
     if (rolled) {
       moved = true;
       continue;
+    }
+
+    // Neither straight down nor an immediate diagonal is open, but the
+    // ground is not necessarily flat — see `findSlopeDrop`'s own comment.
+    // Throttled by the same friction wait every other roll respects
+    // (`rollKey`), and banks momentum the same way a diagonal roll does, so
+    // reaching the slope's actual edge (where the ordinary diagonal case
+    // above takes back over) never stutters.
+    const slopeDir = findSlopeDrop(world, frame, id);
+    if (slopeDir !== null) {
+      const result = rollKey(world, frame, id, slopeDir, 0, steps);
+      if (result !== "blocked") {
+        moved = true;
+        if (result === "moved") {
+          const banked = Math.min(KEY_COAST_MAX_CELLS, (world.keyMomentum.get(id) ?? 0) + 1);
+          world.keyMomentum.set(id, banked);
+          world.keyCoastDir.set(id, slopeDir);
+        }
+        continue;
+      }
     }
 
     // The slope (or whatever it was rolling on) has run out — neither
@@ -879,6 +980,24 @@ function settleWorld(world: World, frame: SandFrame, steps: SettleStep[]) {
     const keys = keyPass(world, frame, steps);
     const unlocked = unlockPass(world, steps);
     if (!sand && !keys && !unlocked) break;
+  }
+}
+
+/**
+ * `settleWorld`, but for a frozen board: on request, Freeze Map holds the
+ * sand itself in place (no `sandPass`) while a key's own physics keeps
+ * running exactly as it would unfrozen — one already rolling or falling does
+ * not stop dead, and one that reaches a lock still opens it. Sand a key's own
+ * unlock just freed is sand like any other, so it still hangs exactly where
+ * it lands rather than falling — only `sandPass` itself is what freeze holds
+ * back, not the grid it operates on.
+ */
+function settleWorldKeysOnly(world: World, frame: SandFrame, steps: SettleStep[]) {
+  const limit = frame.width * frame.height;
+  for (let pass = 0; pass < limit; pass += 1) {
+    const keys = keyPass(world, frame, steps);
+    const unlocked = unlockPass(world, steps);
+    if (!keys && !unlocked) break;
   }
 }
 
@@ -1011,6 +1130,73 @@ export function cellsInRadius(
   return sortCells(found);
 }
 
+/** Corner neighbours added to `ORTHOGONAL_4` — Chain Sort's own adjacency
+ * rule, used nowhere else in this file (every body/settle/unlock rule stays
+ * `ORTHOGONAL_4`-only). */
+const DIAGONAL_4 = [
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+] as const;
+
+/**
+ * Chain Sort's own reach (booster-radius-prism-spec.md §2.1): every cell of
+ * `color` connected to the impact cell through any of the eight neighbours
+ * around it — `ORTHOGONAL_4` plus `DIAGONAL_4` — not just the four
+ * `ORTHOGONAL_4` every other rule in this file (body-splitting, settling,
+ * unlocking) uses. Two same-colour grains that only touch corner-to-corner
+ * are two separate bodies under every other rule in the game; this is the
+ * one exception, on request ("grain pixel nằm xéo cũng sort được").
+ *
+ * `frozen` is left out of the flood the same way `cellsInRadius` leaves it
+ * out of the disc: locked sand is invisible to a sweep rather than a wall
+ * the flood stops at, so it simply never joins (and never interrupts) the
+ * chain — a loose cell just past a lock is reached exactly as if the lock
+ * were not there.
+ *
+ * Returns nothing at all when the impact cell itself is not a live, matching
+ * grain — the same "nothing to take" a radius shot gets centred on empty air
+ * with nothing in reach; there is no radius here to reach past bare ground
+ * with, so a whiffed cell just returns empty rather than searching around it.
+ */
+export function cellsByFloodFill(
+  bodies: SandBody[],
+  center: CellCoord,
+  color: SandColor,
+  frozen?: ReadonlySet<string>,
+): CellCoord[] {
+  const grid = new Map<string, CellCoord>();
+  for (const body of bodies) {
+    if (body.color !== color) continue;
+    for (const cell of body.cells) {
+      const key = cellKey(cell.x, cell.y);
+      if (frozen?.has(key)) continue;
+      grid.set(key, cell);
+    }
+  }
+  const startKey = cellKey(center.x, center.y);
+  if (!grid.has(startKey)) return [];
+  const visited = new Set<string>([startKey]);
+  // A fresh `{x,y}`, not `center` itself — same "always hand back a plain
+  // coordinate, never whatever extra fields the caller's own object happened
+  // to carry" contract `cellsInRadius` keeps for every cell it returns.
+  const queue: CellCoord[] = [{ x: center.x, y: center.y }];
+  const found: CellCoord[] = [];
+  while (queue.length) {
+    const cell = queue.pop()!;
+    found.push(cell);
+    for (const [dx, dy] of [...ORTHOGONAL_4, ...DIAGONAL_4]) {
+      const next = { x: cell.x + dx, y: cell.y + dy };
+      const key = cellKey(next.x, next.y);
+      if (visited.has(key) || !grid.has(key)) continue;
+      visited.add(key);
+      queue.push(next);
+    }
+  }
+  return sortCells(found);
+}
+
 /**
  * The Freeze Map trigger the crosshair is directly over, or null.
  *
@@ -1100,10 +1286,21 @@ export function spendBoosterCharge(type: BoosterType): void {
   spendWalletBoosterCharge(type);
 }
 
+/**
+ * Hands one charge of `type` back to the real wallet — called from
+ * `SandCannonEngine` when a boosted shot missed, came up `NO_MATCH`, or the
+ * attempt it was spent on ended in `FAIL` (see `refundBoosterCharge`/
+ * `refundBoostersOnFail` there for the exact rules). Same delegate-to-economy
+ * shape as `spendBoosterCharge` just above.
+ */
+export function addBoosterCharges(type: BoosterType, amount: number): void {
+  addWalletBoosterCharges(type, amount);
+}
+
 // ---- Game state ---------------------------------------------------------
 
 export function createSandGameState(level: SandLevelConfig): SandGameState {
-  const { bodies, locked, keys, walls, freezeTriggers, hiddenFreezeTriggers } = parseSandLevel(level);
+  const { bodies, locked, keys, walls, freezeTriggers, hiddenFreezeTriggers, hiddenKeys } = parseSandLevel(level);
   const frozen = new Set(locked.map((cell) => cellKey(cell.x, cell.y)));
   // A colour that starts entirely locked is authored into the wheel — it has to
   // be, or it could never be shot once freed — but it must not be *handed out*
@@ -1124,6 +1321,7 @@ export function createSandGameState(level: SandLevelConfig): SandGameState {
     walls,
     freezeTriggers,
     hiddenFreezeTriggers,
+    hiddenKeys,
     freezeShotsRemaining: 0,
     // A fresh copy every attempt (restart included) — the level's own
     // declared allotment, never carried over or shared with the real
@@ -1538,6 +1736,33 @@ function revealHiddenFreezeTriggers(
 }
 
 /**
+ * `revealHiddenFreezeTriggers`, but for `SandGameState.hiddenKeys` — same
+ * all-or-nothing "every cell now empty" check, so a hidden key only actually
+ * starts falling/rolling once every last covering grain is gone. The
+ * cell-by-cell peek the picture shows well before that (on request — see
+ * `hiddenKeyRows`'s own comment) is purely `SandCannonEngine`'s own render
+ * pass reading the same `bodies`/`hiddenKeys` this checks; it never needed
+ * its own reveal step here.
+ */
+function revealHiddenKeys(
+  bodies: SandBody[],
+  hiddenKeys: SandKey[],
+): { revealed: SandKey[]; stillHidden: SandKey[] } {
+  if (!hiddenKeys.length) return { revealed: [], stillHidden: hiddenKeys };
+  const occupied = new Set<string>();
+  for (const body of bodies) {
+    for (const cell of body.cells) occupied.add(cellKey(cell.x, cell.y));
+  }
+  const revealed: SandKey[] = [];
+  const stillHidden: SandKey[] = [];
+  for (const key of hiddenKeys) {
+    const uncovered = key.cells.every((cell) => !occupied.has(cellKey(cell.x, cell.y)));
+    (uncovered ? revealed : stillHidden).push(key);
+  }
+  return { revealed, stillHidden };
+}
+
+/**
  * One shot, start to finish.
  *
  * `hit` is null when the projectile left the frame or struck the frame itself.
@@ -1589,10 +1814,20 @@ export function resolveShot(
   // `SORT_RADIUS_FORGIVENESS`'s own comment — while the ring drawn for this
   // same shot (the renderer's own call to `effectiveSortRadius`) stays
   // exactly what it always was, so only what a shot actually sweeps grew.
-  const radius = effectiveSortRadius(level, booster) + SORT_RADIUS_FORGIVENESS;
-  const removed = cellsInRadius(state.bodies, { x: hit.x, y: hit.y }, radius, ammo, frozenLocked, {
-    matchColor: booster !== "prismShot",
-  });
+  // Chain Sort ignores the disc entirely — it has its own reach
+  // (`cellsByFloodFill`, booster-radius-prism-spec.md §2.1), not a bigger or
+  // colour-blind version of the same one every other shot (boosted or not)
+  // still uses.
+  const removed = booster === "chainSort"
+    ? cellsByFloodFill(state.bodies, { x: hit.x, y: hit.y }, ammo, frozenLocked)
+    : cellsInRadius(
+      state.bodies,
+      { x: hit.x, y: hit.y },
+      effectiveSortRadius(level, booster) + SORT_RADIUS_FORGIVENESS,
+      ammo,
+      frozenLocked,
+      { matchColor: booster !== "prismShot" },
+    );
 
   // Freeze Map: an exact hit on the trigger's own cell, entirely independent
   // of `removed`/the sand disc above — see `triggerAtCell`'s own comment for
@@ -1666,12 +1901,20 @@ export function resolveShot(
     const { revealed, stillHidden } = settle
       ? revealHiddenFreezeTriggers(settle.bodies, state.hiddenFreezeTriggers)
       : { revealed: [] as SandFreezeTrigger[], stillHidden: state.hiddenFreezeTriggers };
+    // Same reasoning as the hidden-trigger reveal just above, for
+    // `hiddenKeys` — only the full-board settle above (`justUnfroze`) can
+    // have changed what covers one.
+    const { revealed: revealedKeys, stillHidden: stillHiddenKeys } = settle
+      ? revealHiddenKeys(settle.bodies, state.hiddenKeys)
+      : { revealed: [] as SandKey[], stillHidden: state.hiddenKeys };
     const missed = {
       ...state,
       ...(settle ? { bodies: settle.bodies, locked: settle.locked, keys: settle.keys, walls: settle.walls } : {}),
       ...spend(settle?.bodies ?? state.bodies, stillFrozen),
+      keys: [...(settle?.keys ?? state.keys), ...revealedKeys],
       freezeTriggers: [...(settle?.freezeTriggers ?? nextFreezeTriggers), ...revealed],
       hiddenFreezeTriggers: stillHidden,
+      hiddenKeys: stillHiddenKeys,
     };
     return { ...idle, state: withResult(level, missed), outcome: "NO_MATCH", hitBody, settle, steps };
   }
@@ -1687,16 +1930,19 @@ export function resolveShot(
   // this shot just removed sand and possibly cascaded more of it, so any
   // hidden trigger could have just lost its last covering grain.
   const { revealed, stillHidden } = revealHiddenFreezeTriggers(settle.bodies, state.hiddenFreezeTriggers);
+  // Same reasoning as the hidden-trigger reveal just above, for `hiddenKeys`.
+  const { revealed: revealedKeys, stillHidden: stillHiddenKeys } = revealHiddenKeys(settle.bodies, state.hiddenKeys);
   let sorted: SandGameState = {
     ...state,
     bodies: settle.bodies,
     ...spend(settle.bodies, stillFrozen),
     remainingCells: countCells(settle.bodies),
     locked: settle.locked,
-    keys: settle.keys,
+    keys: [...settle.keys, ...revealedKeys],
     walls: settle.walls,
     freezeTriggers: [...settle.freezeTriggers, ...revealed],
     hiddenFreezeTriggers: stillHidden,
+    hiddenKeys: stillHiddenKeys,
   };
 
   // A landed shot that spends the last bullet is allowed to sweep away a tiny

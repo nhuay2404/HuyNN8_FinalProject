@@ -40,9 +40,17 @@ const PROGRESS_KEY = "sand-cannon:v1:reward-track";
 const CONFIG_KEY = {
   starterGold: "starterGold",
   starterBooster: (type: BoosterType) =>
-    type === "radiusOvercharge" ? "starterBoosterRadiusOvercharge" : "starterBoosterPrismShot",
+    type === "radiusOvercharge"
+      ? "starterBoosterRadiusOvercharge"
+      : type === "prismShot"
+        ? "starterBoosterPrismShot"
+        : "starterBoosterChainSort",
   boosterPrice: (type: BoosterType) =>
-    type === "radiusOvercharge" ? "boosterPriceRadiusOvercharge" : "boosterPricePrismShot",
+    type === "radiusOvercharge"
+      ? "boosterPriceRadiusOvercharge"
+      : type === "prismShot"
+        ? "boosterPricePrismShot"
+        : "boosterPriceChainSort",
   dailyLoginDay: (dayIndex: number) => `dailyLoginDay${dayIndex + 1}`,
   cycleEmeralds: (cycleIndex: number) => `rewardTrackCycle${cycleIndex + 1}`,
 } as const;
@@ -88,22 +96,24 @@ export const STARTER_EMERALDS = 0;
 export const STARTER_BOOSTER_CHARGES: Record<BoosterType, number> = {
   radiusOvercharge: 1,
   prismShot: 1,
+  chainSort: 1,
 };
 function starterBoosterCharges(type: BoosterType): number {
   return getEconomyConfigOverride(CONFIG_KEY.starterBooster(type)) ?? STARTER_BOOSTER_CHARGES[type];
 }
 
 /**
- * Gold per charge. Prism Shot costs more than Radius Overcharge because it is
- * strictly the stronger buff: Radius Overcharge doubles the sorting disc
- * (`effectiveSortRadius`), while Prism Shot drops colour-matching entirely
- * (`cellsInRadius`'s `matchColor: false`) and can clear several colours'
- * worth of sand in one shot regardless of what is loaded. A wildcard shot is
- * worth noticeably more than a bigger circle of the same wildcard-less shot.
+ * Gold per charge. Radius Overcharge and Prism Shot cost the same (see
+ * changelog #162 — they used to differ, deliberately levelled). Chain Sort
+ * costs more than either: it does not just widen or colour-blind one shot's
+ * own disc, it can clear an entire connected mass regardless of size —
+ * `cellsByFloodFill` (sand-rules.ts) has no upper bound on how much one
+ * charge takes the way a disc, however large, always does.
  */
 export const BOOSTER_PRICE: Record<BoosterType, number> = {
   radiusOvercharge: 100,
   prismShot: 100,
+  chainSort: 150,
 };
 /** The Shop's actual price for `type` — `BOOSTER_PRICE[type]` unless
  * `economy.csv` overrides it. Exported: `SandGame.tsx`'s Shop panel reads
@@ -176,6 +186,7 @@ function defaultWallet(): Wallet {
     boosters: {
       radiusOvercharge: starterBoosterCharges("radiusOvercharge"),
       prismShot: starterBoosterCharges("prismShot"),
+      chainSort: starterBoosterCharges("chainSort"),
     },
   };
 }
@@ -226,6 +237,7 @@ function readWallet(): Wallet {
       boosters: {
         radiusOvercharge: sanitiseCount(boosters.radiusOvercharge, starterBoosterCharges("radiusOvercharge")),
         prismShot: sanitiseCount(boosters.prismShot, starterBoosterCharges("prismShot")),
+        chainSort: sanitiseCount(boosters.chainSort, starterBoosterCharges("chainSort")),
       },
     };
   } catch {

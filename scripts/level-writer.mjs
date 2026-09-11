@@ -173,7 +173,9 @@ function uniqueExportNames(drafts) {
 function preserveUneditableFtueFields(existingBlockText, draft) {
   const allPresent = draft.forcedOpeningQueue !== undefined && draft.ftueFreezeDemo !== undefined
     && draft.ftueFreezeTargets !== undefined && draft.forcedBoosterCharges !== undefined
-    && draft.ftueBoosterDemo !== undefined && draft.ftueBoosterTargets !== undefined;
+    && draft.ftueBoosterDemo !== undefined && draft.ftueBoosterTargets !== undefined
+    && draft.ftueChainSortDemo !== undefined && draft.ftueChainSortTarget !== undefined
+    && draft.hideBoosterHud !== undefined;
   if (allPresent) return draft;
   const forced = draft.forcedOpeningQueue ?? (() => {
     const m = existingBlockText.match(/forcedOpeningQueue:\s*\[([^\]]*)\]/);
@@ -190,7 +192,7 @@ function preserveUneditableFtueFields(existingBlockText, draft) {
     const m = existingBlockText.match(/forcedBoosterCharges:\s*\{([^}]*)\}/);
     if (!m) return undefined;
     const charges = {};
-    for (const cm of m[1].matchAll(/(radiusOvercharge|prismShot):\s*(-?\d+)/g)) charges[cm[1]] = Number(cm[2]);
+    for (const cm of m[1].matchAll(/(radiusOvercharge|prismShot|chainSort):\s*(-?\d+)/g)) charges[cm[1]] = Number(cm[2]);
     return charges;
   })();
   const boosterDemo = draft.ftueBoosterDemo ?? (/ftueBoosterDemo:\s*true/.test(existingBlockText) || undefined);
@@ -200,6 +202,12 @@ function preserveUneditableFtueFields(existingBlockText, draft) {
     return [...m[1].matchAll(/\{\s*x:\s*(-?\d+),\s*y:\s*(-?\d+)\s*\}/g)]
       .map((mm) => ({ x: Number(mm[1]), y: Number(mm[2]) }));
   })();
+  const chainSortDemo = draft.ftueChainSortDemo ?? (/ftueChainSortDemo:\s*true/.test(existingBlockText) || undefined);
+  const chainSortTarget = draft.ftueChainSortTarget ?? (() => {
+    const m = existingBlockText.match(/ftueChainSortTarget:\s*\{\s*x:\s*(-?\d+),\s*y:\s*(-?\d+)\s*\}/);
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : undefined;
+  })();
+  const hideBoosterHud = draft.hideBoosterHud ?? (/hideBoosterHud:\s*true/.test(existingBlockText) || undefined);
   return {
     ...draft,
     forcedOpeningQueue: forced,
@@ -208,6 +216,9 @@ function preserveUneditableFtueFields(existingBlockText, draft) {
     forcedBoosterCharges: boosterCharges,
     ftueBoosterDemo: boosterDemo,
     ftueBoosterTargets: boosterTargets,
+    ftueChainSortDemo: chainSortDemo,
+    ftueChainSortTarget: chainSortTarget,
+    hideBoosterHud,
   };
 }
 
@@ -225,6 +236,14 @@ function draftToTypeScript(draft, id, constName) {
   const hasHiddenFreeze = Array.isArray(draft.hiddenFreezeRows) && draft.hiddenFreezeRows.some((row) => row.includes("@"));
   const hiddenFreezeRows = hasHiddenFreeze
     ? `\n  hiddenFreezeRows: [\n${draft.hiddenFreezeRows.map((row) => `    ${quoted(row)},`).join("\n")}\n  ],\n`
+    : "";
+  // Keys buried under sand (on request: "chìa khoá giấu dưới cát") — same
+  // shape as hiddenFreezeRows just above, but no editor tool paints into it
+  // yet, so this only ever survives an import from a hand-authored level
+  // that already had one.
+  const hasHiddenKey = Array.isArray(draft.hiddenKeyRows) && draft.hiddenKeyRows.some((row) => row.includes("K"));
+  const hiddenKeyRows = hasHiddenKey
+    ? `\n  hiddenKeyRows: [\n${draft.hiddenKeyRows.map((row) => `    ${quoted(row)},`).join("\n")}\n  ],\n`
     : "";
   // None of these three have an editor control of their own (see their
   // `LevelDraft` doc comments) — they only ever get here by having survived
@@ -248,6 +267,11 @@ function draftToTypeScript(draft, id, constName) {
   const ftueBoosterTargets = Array.isArray(draft.ftueBoosterTargets) && draft.ftueBoosterTargets.length
     ? `\n  ftueBoosterTargets: [${draft.ftueBoosterTargets.map((t) => `{ x: ${t.x}, y: ${t.y} }`).join(", ")}],\n`
     : "";
+  const ftueChainSortDemo = draft.ftueChainSortDemo ? `\n  ftueChainSortDemo: true,\n` : "";
+  const ftueChainSortTarget = draft.ftueChainSortTarget
+    ? `\n  ftueChainSortTarget: { x: ${draft.ftueChainSortTarget.x}, y: ${draft.ftueChainSortTarget.y} },\n`
+    : "";
+  const hideBoosterHud = draft.hideBoosterHud ? `\n  hideBoosterHud: true,\n` : "";
 
   return `export const ${constName}: SandLevelConfig = {
   ...RADIUS_GAMEPLAY,
@@ -259,11 +283,11 @@ function draftToTypeScript(draft, id, constName) {
   rows: [
 ${rows}
   ],
-${hiddenFreezeRows}
+${hiddenFreezeRows}${hiddenKeyRows}
   // The starting rotation only — under the cycling rule this is a wheel, not a
   // budget: colours come round again until they are gone.
   ammoQueue: [${queue}],
-${forcedOpeningQueue}${ftueFreezeDemo}${ftueFreezeTargets}${forcedBoosterCharges}${ftueBoosterDemo}${ftueBoosterTargets}
+${forcedOpeningQueue}${ftueFreezeDemo}${ftueFreezeTargets}${forcedBoosterCharges}${ftueBoosterDemo}${ftueBoosterTargets}${ftueChainSortDemo}${ftueChainSortTarget}${hideBoosterHud}
   sortRadius: ${draft.sortRadius},
   shotLimit: ${draft.shotLimit},
 

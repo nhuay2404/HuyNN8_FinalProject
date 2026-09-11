@@ -6770,3 +6770,244 @@ lỗi `parseSandLevel` nào. Verify trực tiếp trên browser: "Level (1-50)" 
 thị đúng "Missed the frame" khi hụt và bắn trúng khi ngắm lại; nhảy tới level 49 (nặng nhất) — cả 4 khoá, 3 cụm
 tường, 1 nút Freeze đều hiện đúng, không lỗi console mới (chỉ còn 1 warning React có từ trước, tái hiện y hệt ở
 level 1, không liên quan). Rebuild `outputs/3d-cannon-sort.html`.
+
+## 164. Thêm skin súng mới "Frost Cannon" — theme băng tuyết, VFX bắn ra riêng, thưởng progression cho level 40 (10/09)
+
+Yêu cầu: một ụ súng mới theme băng tuyết, có VFX riêng lúc bắn, đặt làm phần thưởng progression cho level 40
+(giống cách Hero Cannon đã làm cho level 20).
+
+**Khảo sát trước khi code:** hệ thống costume/VFX đã có sẵn đúng hạ tầng cần dùng, không cần xây gì mới —
+`unlockLevel` trên `CostumeDef` (`costumes.ts`) là cơ chế "thắng level N lần đầu thì được free" đã chạy thật
+(Hero Cannon dùng ở level 20), và `sparkleBlingColors()` (`SandCannonEngine.ts`) là đúng một điểm hook quyết
+định costume nào có VFX bắn riêng và bảng màu gì — cả hai chỉ cần thêm entry mới, không phải sửa logic.
+
+**`app/game/costumes.ts`:**
+- `CostumeId` thêm `"frost-cannon"`; `CostumeFlavor` thêm `"frost"` (cạnh `"classic"`/`"magic"`) — chỉ dùng để
+  chọn màu quả đạn ở màn trình diễn Skin (`showcaseMaterials`) và class CSS nền `.is-skin-frost`, không rẽ nhánh
+  gì khác trong engine.
+- `buildFrostCannon(groups)`: cùng 3 khối (pedestal/turret/barrel) với 3 costume có sẵn, phủ vật liệu toon
+  xanh băng nhạt (`0xd8eefc`)/xanh sương (`0x7fb8d8`) + vật liệu phát sáng không đổ bóng (`MeshBasicMaterial`,
+  xanh cyan băng `0xbdf3ff` và trắng pha lê) cho phần "lạnh tự phát sáng". Điểm nhận diện riêng: một vòng
+  **măng đá (icicle)** rủ quanh mép bệ pháo — hình khối duy nhất chưa costume nào dùng — cộng 2 dải "băng đóng"
+  phát sáng quanh nòng và một cụm pha lê nhỏ thay cho vòng miệng nòng trơn của súng cổ điển.
+- `COSTUMES["frost-cannon"]`: `flavor: "frost"`, `price: 0`, `unlockLevel: 40` — copy đúng khuôn Hero Cannon
+  (`unlockLevel: 20`), không có plumbing mới nào phải nối thêm ở `SandGame.tsx` (handler thắng level đã tổng
+  quát hoá sẵn, đọc `costumeUnlockedByLevel` chứ không hardcode theo id).
+- `COSTUME_ORDER` thêm `"frost-cannon"` vào cuối.
+
+**`app/game/SandCannonEngine.ts` — VFX bắn riêng:** thêm hằng `FROST_SPARKLE_COLORS` (trắng/xanh cyan/xanh
+sương băng) và một dòng trong `sparkleBlingColors()`: `if (this.costume.id === "frost-cannon") return
+FROST_SPARKLE_COLORS;` — tái dùng nguyên hệ thống "sparkle shard" đã có (pool mảnh vỡ bát diện dùng chung cho
+Rune Cannon/Hero Cannon lẫn Prism Shot), chỉ đổi bảng màu, không cần dựng pool VFX riêng. Mảnh vỡ trắng/xanh
+băng bay ra ở đúng 3 nhịp có sẵn (lúc bắn, dọc đường bay, lúc chạm đích) đọc đúng thành "đá/tuyết vỡ văng ra" mà
+không cần code mới cho từng nhịp. `showcaseMaterials` (màu quả đạn demo ở màn Skin) thêm `frost: 0xbdf3ff`.
+
+**`app/SandGame.tsx`:** `CostumeIcon` (icon fallback trước khi thumbnail 3D render xong) thêm nhánh `isFrost`
+vẽ 2 măng đá nhỏ dưới nòng; class `skin-card-icon` thêm `is-frost` cùng cách `is-hero` đã làm cho Hero Cannon.
+
+**`app/i18n.ts`:** thêm "Frost Cannon" / "Chill. Aim. Shatter." (EN) và "Pháo Băng Giá" / "Đóng băng. Ngắm. Vỡ
+tan." (VI) vào `costumeName`/`costumeTagline`.
+
+**`app/globals.css`:** `.skin-card-icon.is-frost` (xanh băng `#4fa8d8`) cạnh `.is-magic`/`.is-hero`; thêm
+`.game-frame.is-skin-frost` vào selector nền màn Skin đã dùng chung cho `classic`/`magic` (hoạ tiết mắc áo trôi
+— comment sẵn trong file ghi rõ "cùng một nền cho mọi flavour", không phải nền riêng theo màu).
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 150/150 test pass — không có exhaustive switch nào vỡ
+vì thêm `CostumeId`/`CostumeFlavor` mới (đã rà `grep` toàn bộ 5 file có nhắc `CostumeId`/`CostumeFlavor`/
+`"rune-cannon"`/`"hero-cannon"`). Verify trực tiếp trên browser: tab Skin hiện đúng thẻ "Frost Cannon" thứ 4,
+khoá với badge "Progression", thumbnail 3D render đúng (bệ băng + măng đá + nòng phủ sương); set tạm
+`localStorage` để giả lập đã sở hữu (thay vì chơi thật hết 40 màn) — thẻ chuyển "Selected", trang bị rồi vào màn
+1 chơi thật: mô hình súng hiện đúng trong gameplay, bắn một phát ra đúng mảnh vỡ trắng/xanh băng ở đầu nòng,
+không lỗi console mới. Xoá `localStorage` giả lập sau khi verify xong. Rebuild `outputs/3d-cannon-sort.html`.
+
+## 165. Freeze Map: chìa khoá không còn bị đóng băng theo cát — vẫn rơi/lăn/mở khoá bình thường (11/09)
+
+Yêu cầu: trong lúc Freeze Map đang chạy, vật lý của chìa khoá vẫn phải hoạt động — chìa không bị đóng băng theo
+cát.
+
+**Trước đây (từ lúc Freeze Map ra mắt, mục 158):** `runGrainSettle` (`sand-rules.ts`) coi "đóng băng" là dừng
+TOÀN BỘ chuyển động khi đang frozen — không `GRAIN_PASS` (cát rơi), không `KEY_MOVE` (chìa rơi/lăn), không
+`UNLOCK` (mở khoá) — comment cũ ghi rõ "a key already falling or sliding stops dead". Đây là chủ đích ban đầu
+(dùng làm cơ chế "mua thời gian" cho các màn Freeze+Lock&Key như level 36), nhưng giờ đổi ý: chỉ CÁT mới đóng
+băng, chìa khoá vẫn phải hoạt động bình thường trong lúc đó.
+
+**`app/game/sand-rules.ts`:** thêm `settleWorldKeysOnly(world, frame, steps)` — giống hệt `settleWorld` (vòng
+lặp chạy tới khi ổn định) nhưng bỏ hẳn `sandPass`, chỉ còn `keyPass`/`unlockPass`. `runGrainSettle`: khi
+`frozen` và có chìa trên bàn (`fixtures.keys?.length`), gọi hàm mới này thay vì bỏ qua hoàn toàn như trước; khi
+`frozen` và không có chìa, vẫn không làm gì (như cũ, không tốn công cho trường hợp không liên quan). Cát mà một
+lượt mở khoá vừa giải phóng vẫn là cát như mọi cát khác lúc đang đóng băng — nó nằm nguyên đúng chỗ ổ khoá vừa
+mở ra, không tự rơi tiếp, vì chỉ `sandPass` mới bị Freeze giữ lại, không phải toàn bộ lưới.
+
+**Test mới — `tests/sand-freeze-key.test.ts`** (chưa hề có test nào cho cơ chế Freeze hay Lock&Key riêng trước
+đây, dù cả hai đã có từ lâu): dùng lại fixture `lockAndKey` có sẵn (`tests/level-fixtures.ts`), bỏ mảng vàng
+chìa đang tựa lên (mô phỏng một phát bắn dọn nó), rồi chạy `runGrainSettle(..., frozen: true)` trực tiếp — xác
+nhận chìa rơi trúng phiến khoá và tự tiêu hao để mở nó (`keys.length` 1→0, `locked.length` >0→0) ngay trong một
+lượt settle ĐANG đóng băng; đối chứng: cát tím vừa được giải phóng nằm y nguyên vị trí cũ (không rơi) trong lượt
+frozen đó, nhưng CÙNG bức tranh chạy lại không đóng băng thì cát tím rơi xuống thật. Thêm file này vào
+`package.json`'s `test` script.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 151/151 test pass (150 cũ + 1 test mới). Verify trực
+tiếp trên browser: vào level 36 (Freeze × Lock&Key), bắn vài phát gần nút Freeze/dải cát quanh 2 ổ khoá — không
+crash, không lỗi console, chìa (2 viên) và dải khoá vẫn hiển thị đúng. Không sửa nội dung/mô tả level nào (design
+level 36 vẫn giữ nguyên vị trí wall/lock/freeze, không cần đổi vì thay đổi này chỉ ảnh hưởng đến hành vi vật lý
+lúc chạy, không ảnh hưởng bố cục màn). Rebuild `outputs/3d-cannon-sort.html`.
+
+## 166. Cơ chế mới: chìa khoá giấu dưới cát, nhú dần theo từng ô được dọn (`hiddenKeyRows`) (11/09)
+
+Yêu cầu ban đầu ("chìa khoá hide behind the sand luôn nhú cái đầu ra mỗi khi có grain pixel được quét chứ không
+phải tất cả grain pixel được quét thì nó mới nhú ra") tưởng là sửa lỗi, hoá ra là **cơ chế hoàn toàn chưa tồn
+tại** — game mới chỉ có "Freeze trigger giấu dưới cát" (`hiddenFreezeRows`, tất-cả-hoặc-không-gì, chỉ lộ khi dọn
+sạch 100%), chưa hề có bản tương đương cho chìa khoá. Hỏi lại để chốt phạm vi: xây cơ chế mới, với yêu cầu riêng
+là **lộ dần từng ô** thay vì tất-cả-hoặc-không-gì như Freeze.
+
+**`SandLevelConfig.hiddenKeyRows`** (`sand-types.ts`) — một lưới thứ hai, cùng kích thước `rows`, chỉ `K`
+(`KEY_LETTER`) có ý nghĩa, giống hệt khuôn `hiddenFreezeRows`. Chìa giấu ở đây nằm bên dưới bất kỳ cát `rows`
+vẽ ở đúng ô đó, không có mặt gì cho tới khi được đào ra.
+
+**Gameplay: vẫn tất-cả-hoặc-không-gì, y hệt Freeze trigger** (`sand-rules.ts`): `parseSandLevel` đọc
+`hiddenKeyRows` y hệt `hiddenFreezeRows` (chỉ khác ký tự `K`), gom thành `hiddenKeys: SandKey[]`.
+`revealHiddenKeys` (mirror `revealHiddenFreezeTriggers`) kiểm tra sau mỗi settle: chìa chỉ thật sự trở thành vật
+thể có vật lý (rơi/lăn/mở khoá) khi **toàn bộ** ô của nó trống cát — dọn nửa chừng không đủ. `resolveShot` gọi
+hàm này ở cả 2 nhánh (NO_MATCH và SORTED), thêm chìa vừa lộ vào `state.keys`.
+
+**Rendering: nhú dần theo TỪNG Ô, đây là điểm khác Freeze** (`SandCannonEngine.ts`): thêm một lượt vẽ mới ngay
+trước lượt vẽ chìa thật — với MỖI ô của một chìa còn giấu, nếu `this.cells` (bản đồ pixel cát hiện tại) không
+còn giữ ô đó nữa (tức cát che đã dọn xong, kể cả hiệu ứng clear-flash), vẽ luôn màu vàng embossed của chìa
+(`keyBevelRgb`, y hệt công thức chìa thật dùng) tại đúng ô đó — không chờ đủ 100%. Không glint, không xoay (chìa
+giấu chưa di chuyển, không cần tính lại mỗi khi không có gì đổi).
+
+**`level-drafts.ts`/`LevelEditor.tsx`/`level-writer.mjs`:** thêm `hiddenKeyRows` vào `LevelDraft` (round-trip đầy
+đủ qua `draftToLevel`/`levelToDraft`/`expandDraftToPixels`/resize) và vào `draftToTypeScript` — để một level lỡ
+có field này (gõ tay) không bị "Ship"/"Update built-in level" từ Level Editor âm thầm xoá mất, đúng bài học đã
+rút ra từ vụ 3 field FTUE trước đây (mục 159). Chưa có tool vẽ riêng trong Editor UI cho chế độ "giấu chìa" (khác
+với Freeze đã có nút "Hidden" riêng) — nằm ngoài phạm vi yêu cầu lần này, chỉ thêm dòng ghi chú trong panel Ammo
+wheel báo có bao nhiêu ô chìa giấu nếu field được gõ tay.
+
+**Test mới:**
+- `tests/sand-hidden-key.test.ts`: dựng level tối giản — 2 ô cát nâu che đúng 2 ô chìa giấu, dưới đó là dải khoá
+  tím full-width. Dọn 1 trong 2 ô che → vẫn ẩn (`hiddenKeys.length === 1`, `keys.length === 0`); dọn nốt ô còn
+  lại → lộ hẳn (`hiddenKeys.length === 0`, `keys.length === 1`); bắn thêm 1 phát bất kỳ để settle chạy tiếp →
+  chìa (giờ là vật thể thật) chạm khoá và mở luôn, y hệt một chìa được vẽ hiện ngay từ đầu.
+- Thêm cả 2 file test freeze/key (mục 165) và hidden-key (mục này) vào `package.json`'s `test` script.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 152/152 test pass (150 cũ + 2 test mới). Verify trực
+tiếp trên browser bằng debug hook tạm (`window.__debugEngine`, xoá ngay sau khi xong): tiêm `state.hiddenKeys`
+giả vào engine đang chạy thật ở level 1, gọi thẳng `redrawSand()`, đọc pixel thật từ canvas — ô đã dọn sạch hiện
+đúng màu vàng embossed của chìa (khớp `keyBevelRgb`), ô còn cát che vẫn hiện đúng màu cát bình thường, không lộ
+sớm. Chụp màn hình xác nhận thấy rõ hình chìa nhú ra ở góc khung tranh. Rebuild `outputs/3d-cannon-sort.html`.
+
+## 167. Thêm booster mới "Chain Sort" — dọn toàn bộ mảng liền kề cùng màu, kể cả nằm xéo, dùng tạm icon Prism (11/09)
+
+Yêu cầu: một booster mới — bắn để sort thì dọn sạch TOÀN BỘ mảng cát cùng màu liền kề nhau (không giới hạn bán
+kính như 2 booster cũ), kể cả những ô chỉ chạm nhau ở góc (xéo) chứ không chỉ 4 hướng thẳng. Dùng tạm icon
+Prism Shot cho tới khi có art riêng.
+
+**Khảo sát trước khi code:** dùng 1 agent map lại toàn bộ chỗ 2 booster cũ (`radiusOvercharge`/`prismShot`) chạm
+vào trong code — economy (giá, số viên khởi đầu, CSV key), gameplay (`cellsInRadius`/`effectiveSortRadius` trong
+`resolveShot`), rendering (ring overlay, aim preview, lift preview, projectile VFX), UI (HUD tray, Shop grid,
+icon component), và test coverage — để thêm booster thứ 3 không sót chỗ nào kiểu exhaustive Record vỡ ngầm.
+
+**`app/game/sand-types.ts`:** `BoosterType` thêm `"chainSort"`, `BOOSTER_TYPES` thêm theo.
+
+**`app/game/sand-rules.ts` — cơ chế cốt lõi:**
+- `cellsByFloodFill(bodies, center, color, frozen)`: BFS từ đúng ô va chạm, lan theo 8 hướng (`ORTHOGONAL_4` +
+  `DIAGONAL_4`, hằng số mới) qua mọi ô cùng màu — khác hẳn `ORTHOGONAL_4`-only mà MỌI luật khác trong file này
+  dùng (tách body, settle, mở khoá). Không giới hạn số ô lấy được. `frozen` bị loại khỏi flood giống hệt cách
+  `cellsInRadius` loại cát bị khoá khỏi đĩa — cát khoá vô hình với luồng lan, không phải vật cản chặn nó lại.
+  Trả rỗng nếu ô va chạm không phải đúng màu đang cầm (không có bán kính để "vói" ra ngoài như đĩa).
+- `resolveShot`: thêm nhánh `booster === "chainSort"` gọi `cellsByFloodFill` thay vì `cellsInRadius` — mọi thứ
+  phía sau (mở Freeze trigger, `spend`, refill bánh xe đạn...) vẫn dùng chung logic, không cần đổi gì.
+
+**`app/game/economy.ts`/`public/design/economy.csv`/`docs/features/economy-and-wallet.md`:** thêm
+`STARTER_BOOSTER_CHARGES.chainSort` (1, như 2 loại kia) và `BOOSTER_PRICE.chainSort` (150 — đắt hơn cả hai, vì
+không có trần: một phát trúng mảng khổng lồ dọn được nhiều hơn hẳn bất kỳ đĩa bán kính nào). `CONFIG_KEY.starterBooster`/`.boosterPrice`
+đổi từ ternary 2 nhánh sang 3 nhánh. `defaultWallet()`/`readWallet()`'s object literal thêm field
+`chainSort` (TypeScript tự bắt buộc vì `Record<BoosterType, number>` giờ có 3 key).
+
+**`app/game/SandCannonEngine.ts` — rendering:**
+- `syncBoosterOverlay`/idle-pulse trong `updateAmmoModel`: gộp `chainSort` vào đúng nhánh `isPrism` — dùng
+  chung ring cầu vồng quay của Prism Shot làm placeholder, đúng yêu cầu "dùng tạm hình Prism".
+- Aim ring (`updateAimPreview`) ẩn hẳn khi armed Chain Sort — không có bán kính để vẽ vòng tròn cho đúng nghĩa,
+  vẽ ở scale cũ (1x) sẽ là một vòng tròn SAI, gây hiểu nhầm.
+- Preview "nhấc" cát trước khi bắn (`liftTarget`) không áp dụng được kiểu bán kính cố định cho Chain Sort — thêm
+  field song song `liftCells: Set<string>`, tính bằng đúng `cellsByFloodFill` (oracle thật, không phải bán kính
+  giả lập), để preview hiện chính xác từng ô sẽ bị dọn, không chỉ ước lượng.
+- Ring flash lúc chạm đích (`spawnSortRing`) bỏ qua cho Chain Sort — không có bán kính để vẽ, hiệu ứng
+  clear-flash trên từng hạt đã dọn là đủ làm "tell" riêng của nó.
+
+**`app/SandGame.tsx`:** `BoosterIcon` dùng chung nhánh "không phải Radius Overcharge thì dùng art Prism"
+(`/icons/PrismChargeIcon.png`) — Chain Sort tự động rơi vào đó, không cần thêm asset. HUD tray và Shop grid mở
+rộng tuple `["radiusOvercharge", "prismShot"]` thành 3 phần tử để nút/thẻ mới thật sự hiện ra.
+
+**`app/i18n.ts`:** `boosterName`/`boosterDesc` đổi từ binary ternary sang 3 nhánh — "Chain Sort" / "Clears the
+whole connected mass of that colour, corners included — no radius limit." (EN), "Dọn Liên Hoàn" / "Dọn sạch cả
+mảng cát cùng màu liền kề, kể cả nằm xéo — không giới hạn bán kính." (VI). Chữ ký hàm đổi từ literal union hẹp
+sang `BoosterType` chung (vốn đã là bug tiềm ẩn — sẽ vỡ ngay khi thêm booster thứ 3 nếu không sửa).
+
+**`scripts/level-writer.mjs`:** regex round-trip `forcedBoosterCharges` thêm `chainSort` vào alternation, để một
+level lỡ ép sẵn charge Chain Sort không bị "Ship" từ Level Editor âm thầm xoá mất.
+
+**`docs/features/booster-radius-prism-spec.md`:** đổi tên file mô tả thành 3 booster, thêm mục `§2.1 Chain Sort`
+mô tả đầy đủ cơ chế, giá, và quyết định dùng art Prism tạm thời.
+
+**Test mới (`tests/sand-boosters.test.ts`, `tests/sand-economy.test.ts`):**
+- Chain Sort lấy đúng y hệt oracle `cellsByFloodFill` tính riêng.
+- Chain Sort lan qua được 2 "body" chỉ chạm nhau ở góc (fixture 2×2 dựng tay, xác nhận trước đó đúng là 2 body
+  riêng theo `ORTHOGONAL_4`, sau đó Chain Sort gộp thành 1 lượt dọn 2 ô) — đúng trọng tâm yêu cầu "nằm xéo cũng
+  sort được".
+- Chain Sort vẫn bỏ qua cát bị khoá (vô hình với flood, không phải vật cản).
+- Chain Sort nhắm trúng màu khác/không có gì → NO_MATCH, không có bán kính để "vói" ra ngoài.
+- Số viên khởi đầu và giá Chain Sort đúng theo cấu hình mới, giá cao hơn cả hai loại kia.
+- Bắt được 1 bug thật lúc viết test: `cellsByFloodFill` trả về ô bắt đầu là chính tham chiếu `center` truyền
+  vào thay vì bản sao `{x,y}` sạch — nếu caller đưa vào một object có field thừa (test ban đầu lỡ tái dùng
+  object `target` có thêm field `take`), field đó rò rỉ ra kết quả trả về. Sửa để luôn trả object `{x,y}` mới,
+  giống đúng quy ước `cellsInRadius` đã có.
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 157/157 test pass (152 cũ + 5 mới). Verify trực tiếp
+trên browser: Shop hiện đúng 3 thẻ booster (Chain Sort giá 150, icon/tint giống Prism, badge "1" viên khởi đầu);
+HUD tray hiện đúng 3 nút; arm Chain Sort hiện toast + ring cầu vồng trên súng, không hiện aim-ring (đúng ý, vì
+không có bán kính); bắn trúng lớp mây (nền trắng liền kề, có cả đoạn chạm chéo) — dọn sạch một mảng lớn hơn hẳn
+một phát thường trong đúng 1 lượt, viên Chain Sort bị trừ về 0, không lỗi console. Rebuild
+`outputs/3d-cannon-sort.html`.
+
+## 168. Vật lý chìa khoá: tự trượt xuống hết một slope rộng (staircase nhiều ô/bậc), không chỉ dừng giữa chừng (11/09)
+
+Yêu cầu, kèm ảnh chụp: một chìa khoá đang nằm yên giữa chừng trên một mặt dốc (Wall Obstacle vẽ hình bậc
+thang) — bạn muốn nó phải tiếp tục trượt xuống do trọng lực/độ dốc, giống vật lý thật hơn.
+
+**Root cause:** `keyPass` (`sand-rules.ts`) trước giờ chỉ thử đúng 3 hướng mỗi lượt: thẳng xuống, hoặc CHÉO
+xuống-trái/xuống-phải MỘT Ô duy nhất. Ở độ phân giải pixel thật, một "mặt dốc" vẽ bằng Wall Obstacle thường là
+bậc thang NHIỀU Ô rộng mỗi bậc (không phải đường chéo 1-ô-mỗi-hàng hoàn hảo) — chìa nằm giữa một bậc rộng thì ô
+chéo NGAY BÊN CẠNH vẫn cùng độ cao (bậc thang chưa hết), nên thuật toán cũ đọc đó là "đã nằm yên vĩnh viễn",
+dừng lại giữa chừng dù bậc thang vẫn còn tiếp tục đi xuống xa hơn. Cát thường cũng có giới hạn tương tự, nhưng
+đó là hành vi ĐÚNG cho cát (không thể tự "biết" có dốc xa hơn); chìa khoá thì được xem là một vật rắn đang lăn,
+nên cần "thông minh" hơn một hạt cát.
+
+**`app/game/sand-rules.ts` — `findSlopeDrop` (hàm mới):** khi cả thẳng xuống lẫn cả 2 hướng chéo đều bị chặn,
+quét dọc theo HÀNG NGANG hiện tại của chìa ra xa dần về mỗi phía (không giới hạn, nhưng dừng ngay khi hàng đó bị
+chặn — không "nhảy cóc" qua vật cản), tìm điểm gần nhất mà trượt tới đó rồi có thể rơi tiếp. `keyPass` dùng kết
+quả này để trượt NGANG (một ô mỗi lượt, vẫn theo đúng nhịp friction như trượt chéo) hướng về phía đó, cho tới
+khi chạm mép bậc thang thì cơ chế trượt chéo cũ tiếp quản bình thường.
+
+**Không phá luật "cân bằng trên trụ hẹp thì đứng yên" đã có sẵn (test cũ):** một test cũ
+(`tests/sand-mechanics.test.ts`) khẳng định chìa cân bằng chính giữa một trụ hẹp hơn hẳn bề ngang của nó (2 bên
+đều hở, đối xứng) phải NẰM YÊN, không tự trượt khỏi trụ — đây là quyết định thiết kế có chủ đích, để người làm
+level có thể đặt chìa "chờ" trên một điểm tựa hẹp mà không lo nó tự rơi. Bản đầu tiên của `findSlopeDrop` (chỉ
+cần MỘT hướng có lối thoát) làm hỏng test này — sửa bằng cách yêu cầu: chỉ coi là "trên dốc" (và trượt) khi
+ĐÚNG MỘT hướng có lối thoát; nếu CẢ HAI hướng đều có lối thoát (đối xứng, không hướng nào rõ ràng là "xuống dốc"
+hơn hướng kia), coi như cân bằng ổn định, không trượt — khớp đúng test cũ, không cần đổi kỳ vọng của nó.
+
+**Đã rà soát không phá vỡ level nào:** chạy `playStrong` (uncapped shotLimit) trên toàn bộ 50 level trước và sau
+thay đổi — không có level nào chuyển từ "giải được" sang "không giải được" vì thay đổi này (một vài level
+21-29 vốn đã sát/vượt ngân sách từ trước, không liên quan tới thay đổi hôm nay — nghi ngờ liên quan tới việc
+`design/levels/sand-levels.ts` đang được chỉnh sửa song song ở nơi khác, đã báo cho người dùng, không đụng vào).
+
+**Test mới (`tests/sand-mechanics.test.ts`):**
+- Chìa trên bậc thang RỘNG (mỗi bậc rộng hơn cả bề ngang chìa) phải trượt hết xuống sàn, dùng cả bước trượt
+  ngang lẫn bước trượt chéo xen kẽ — không chỉ dừng ở bậc đầu tiên.
+- Test cũ "cân bằng trên trụ hẹp" giữ nguyên hành vi (đổi tên nhấn mạnh lý do: đối xứng hai bên không phải là
+  dốc).
+
+**Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 159/159 test pass (157 cũ + 2 test mới). Verify trực
+tiếp trên browser: level 21 (Lock & Key) tải đúng, bắn dọn cát quanh chìa không crash, không lỗi console. Rebuild
+`outputs/3d-cannon-sort.html`.
