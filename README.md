@@ -7,6 +7,10 @@ lực (không có cohesion — mỗi hạt rơi độc lập). Thắng khi khung
 bắn; đạn được nạp từ một **bánh xe màu** xoay vòng cho tới khi màu đó sạch hẳn trong tranh, nên toàn
 bộ độ khó của một màn nằm ở ngân sách lượt bắn (`shotLimit`), không phải may rủi màu đạn.
 
+**Muốn hiểu thiết kế đầy đủ (vì sao, luật, thông số, beat chart 50 level, đường cong độ khó) chia
+theo từng vai trò (designer/artist/coder/UI-UX/level designer)** — đọc [GDD.md](GDD.md) thay vì
+README này; README chỉ là tổng quan kiến trúc.
+
 ## Có gì trong bản này
 
 - **50 level** ship sẵn (`BUILT_IN_LEVELS` trong `design/levels/sand-levels.ts`), chia thành 5 "arc"
@@ -18,10 +22,8 @@ bộ độ khó của một màn nằm ở ngân sách lượt bắn (`shotLimit
   - **Level 31-40**: giới thiệu **Freeze Map** (trigger đóng băng khung N lượt).
   - **Level 41-50**: arc tổng hợp — nhiều màn trộn chung Wall + Lock & Key + Freeze Map trong cùng
     một bức tranh.
-- **4 map mechanic**: Wall Obstacle, Lock & Key, Freeze Map (cả ba đều xuất hiện trong 50 level
-  ship sẵn), và **Wind** (đã cài đặt đầy đủ trong engine nhưng chưa dùng ở level nào hiện ship —
-  sẵn sàng cho level mới). Chi tiết từng cái ở mục [Map mechanic đang thử](#map-mechanic-đang-thử)
-  bên dưới.
+- **3 map mechanic**: Wall Obstacle, Lock & Key, Freeze Map — cả ba đều xuất hiện trong 50 level
+  ship sẵn. Chi tiết từng cái ở mục [Map mechanic đang thử](#map-mechanic-đang-thử) bên dưới.
 - **3 booster** mua bằng vàng trong Shop: **Radius Overcharge** (nhân đôi bán kính một phát bắn),
   **Prism Shot** (một phát lấy mọi màu trong đĩa, không cần đúng màu đang cầm), **Chain Sort** (lan
   theo đúng một màu ra toàn bộ vùng liền kề, không giới hạn số ô, không có trần bán kính). Xem
@@ -45,7 +47,6 @@ file trong `docs/features/` — không cần đọc lại toàn bộ README:
 | Level editor (`/editor`) | [docs/features/level-editor.md](docs/features/level-editor.md) |
 | Đo độ khó (Measure difficulty) | [docs/features/difficulty-measurement.md](docs/features/difficulty-measurement.md) |
 | Lock & Key | [docs/features/lock-and-key.md](docs/features/lock-and-key.md) |
-| Wind | [docs/features/wind.md](docs/features/wind.md) |
 | Booster (Radius Overcharge / Prism Shot / Chain Sort) | [docs/features/booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md) |
 | Board pixel 2D trong khung 3D | [docs/features/rendering-pixel-board.md](docs/features/rendering-pixel-board.md) |
 | Economy (vàng, Shop, Daily Login) | [docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md) |
@@ -226,12 +227,6 @@ trigger) — trong lúc đó cát không rơi/settle, hiện một thanh Freeze 
 31-40 giới thiệu cơ chế này; `freezeDuration` mặc định 0 (không đóng băng) cho level không có
 trigger. Nguồn: `SandFreezeTrigger`, `freezeDuration` trong `app/game/sand-types.ts`, logic đóng
 băng trong `app/game/sand-rules.ts` — chưa có file doc riêng.
-
-**Wind** — một vòng lặp các pha gió thổi cát theo `direction`/`durationMs`/`cooldownMs`/`power`/
-`zone`. Chi tiết đầy đủ (tương tác với settle solver, đơn vị scale, cách vẽ zone trong editor) ở
-[docs/features/wind.md](docs/features/wind.md). Cơ chế đã cài đặt đầy đủ trong engine nhưng
-**chưa có level nào trong `BUILT_IN_LEVELS` dùng tới** — vẫn chỉ sống trong fixture test
-(`crosswind`) và sẵn sàng cho level mới.
 
 **Level 41-50** là arc tổng hợp — nhiều màn trộn chung Wall Obstacle, Lock & Key và Freeze Map
 trong cùng một bức tranh thay vì mỗi arc một cơ chế riêng, để kiểm tra các cơ chế phối hợp với nhau
