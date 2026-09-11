@@ -77,13 +77,14 @@ export interface Strings {
   tabSkin: string;
   tabHome: string;
   tabGallery: string;
-  tabCustomize: string;
+  tabModes: string;
   sectionsNav: string;
   closeTab: (tabName: string) => string;
   skinTabHasOfferSuffix: string;
   shopTabHasBoosterHintSuffix: string;
   notBuiltYet: string;
-  customizeBlurb: string;
+  modesTitle: string;
+  modesBlurb: string;
   homeScreenAria: string;
 
   // ---- Home / level ----------------------------------------------------------
@@ -335,13 +336,14 @@ const EN: Strings = {
   tabSkin: "Skin",
   tabHome: "Home",
   tabGallery: "Gallery",
-  tabCustomize: "Customize",
+  tabModes: "Modes",
   sectionsNav: "Sections",
   closeTab: (tabName) => `Close ${tabName}`,
   skinTabHasOfferSuffix: " — a skin you can afford is waiting",
   shopTabHasBoosterHintSuffix: " — go stock up on the boosters you just tried",
   notBuiltYet: "Not built yet.",
-  customizeBlurb: "Where the frame, the sand texture and the board's colours would be set.",
+  modesTitle: "Modes",
+  modesBlurb: "Where the different ways to play would be picked from.",
   homeScreenAria: "Home screen",
 
   levelButtonLabel: (id) => `Level ${id}`,
@@ -499,13 +501,14 @@ const VI: Strings = {
   tabSkin: "Skin",
   tabHome: "Trang chủ",
   tabGallery: "Bộ sưu tập",
-  tabCustomize: "Tuỳ chỉnh",
+  tabModes: "Chế độ",
   sectionsNav: "Điều hướng",
   closeTab: (tabName) => `Đóng ${tabName}`,
   skinTabHasOfferSuffix: " — có skin bạn đủ tiền mua",
   shopTabHasBoosterHintSuffix: " — mua thêm booster bạn vừa dùng thử",
   notBuiltYet: "Chưa xây dựng xong.",
-  customizeBlurb: "Nơi bạn sẽ chỉnh khung tranh, chất liệu cát và màu sắc của bảng.",
+  modesTitle: "Chế độ",
+  modesBlurb: "Nơi bạn sẽ chọn các chế độ chơi khác nhau.",
   homeScreenAria: "Màn hình chính",
 
   levelButtonLabel: (id) => `Màn ${id}`,

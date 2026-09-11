@@ -209,26 +209,25 @@ const HOME_EXIT_MS = 480;
  * `home`, `gallery`, `shop` and `skin` are real: one is the screen itself,
  * one picks the level the screen is showing, one buys booster charges with
  * the gold levels pay out (`economy.ts`), and one equips the cannon's visual
- * costume (`costumes.ts`). `customize` is named here because the bar it
- * belongs to is being built now, but nothing behind it exists yet — it says
- * so when opened rather than pretending.
+ * costume (`costumes.ts`). `modes` is named here because the bar it belongs
+ * to is being built now, but nothing behind it exists yet — it says so when
+ * opened rather than pretending (a full-screen takeover now, same footing as
+ * Gallery/Shop/Skin, not the small `.hub-panel` bottom sheet it used to be —
+ * see `.modes-screen`'s own comment in globals.css).
  */
-const HUB_TABS = ["shop", "skin", "home", "gallery", "customize"] as const;
+const HUB_TABS = ["shop", "skin", "home", "gallery", "modes"] as const;
 type HubTab = (typeof HUB_TABS)[number];
 
-/** `HUB_TAB_NAME`/`HUB_TAB_BLURB`'s replacement, built inside the component
- * from `s` (see `i18n.ts`) rather than kept as module-level constants — the
- * name and blurb have to follow whichever language is current. `shop` and
- * `skin` have no blurb read at runtime any more (they have real panels now)
- * but keep an entry so this stays a total `Record<HubTab, string>`. */
+/** `HUB_TAB_NAME`'s replacement, built inside the component from `s` (see
+ * `i18n.ts`) rather than kept as a module-level constant — the name has to
+ * follow whichever language is current. Used for every tab's nav label; the
+ * one tab with its own blurb (Modes) reads `s.modesBlurb` directly at its
+ * own full-screen takeover instead of going through a matching Record here. */
 function hubTabNames(s: Strings): Record<HubTab, string> {
-  return { shop: s.tabShop, skin: s.tabSkin, home: s.tabHome, gallery: s.tabGallery, customize: s.tabCustomize };
-}
-function hubTabBlurbs(s: Strings): Record<HubTab, string> {
-  return { shop: "", skin: "", home: "", gallery: "", customize: s.customizeBlurb };
+  return { shop: s.tabShop, skin: s.tabSkin, home: s.tabHome, gallery: s.tabGallery, modes: s.tabModes };
 }
 
-/** One small shape set per tab (Gallery and Customize — the other three now
+/** One small shape set per tab (Gallery and Modes — the other three now
  * use a real photographic asset instead, see `TAB_PHOTO_ICON` below), line
  * art at rest and filled solid the instant its tab is active — a single
  * toggle in globals.css
@@ -244,7 +243,7 @@ function hubTabBlurbs(s: Strings): Record<HubTab, string> {
  * mirrored primitive. */
 /** Tabs whose icon is a real photographic asset (`/public/icons/*.png`)
  * rather than the hand-drawn line art `HubIcon` draws for the rest —
- * Customize is the only one still on that shared path below. Home got the
+ * Modes is the only one still on that shared path below. Home got the
  * reference house artwork first; Shop, Skin and Gallery followed with their
  * own matching pieces (a shopping cart, a cannon on a coat hanger, a framed
  * picture). */
@@ -285,8 +284,11 @@ function HubIcon({ tab, active }: { tab: HubTab; active: boolean }) {
   if (photoSrc) return <PhotoTabIcon src={photoSrc} active={active} />;
   return (
     <svg className="hub-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {tab === "customize" && (
+      {tab === "modes" && (
         <>
+          {/* Unchanged from the "Customize" paint-palette mark this tab used
+              to carry — no dedicated Modes glyph exists yet, and this still
+              reads fine as a generic placeholder shape until one does. */}
           <path d="M12 4.2c4.6 0 7.8 3.2 7.8 7 0 2.6-1.8 3.6-3.4 3.6h-2c-.9 0-1.5.7-1.2 1.5.2.5.6.9.6 1.6 0 1.1-1 1.9-2.2 1.9C7 19.8 4 16.2 4 11.6c0-4.2 3.4-7.4 8-7.4Z" />
           <circle cx="8.4" cy="9.8" r="1.4" />
           <circle cx="12.9" cy="6.9" r="1.6" />
@@ -370,7 +372,7 @@ function CancelIcon() {
  * in the game is one family. `name` rather than one component per glyph
  * keeps them in a single place to keep consistent.
  */
-type ChromeGlyph = "menu" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target" | "trash" | "calendar";
+type ChromeGlyph = "menu" | "sound-on" | "sound-off" | "vibrate" | "globe" | "pencil" | "target" | "trash" | "calendar" | "chevron-down";
 
 function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; className?: string }) {
   return (
@@ -437,6 +439,13 @@ function Glyph({ name, className = "icon-glyph" }: { name: ChromeGlyph; classNam
           <rect x="3.8" y="5.4" width="16.4" height="15" rx="2" />
           <path d="M3.8 9.8h16.4" />
           <path d="M8 3.4v3.6M16 3.4v3.6" />
+        </>
+      )}
+      {name === "chevron-down" && (
+        <>
+          {/* A single downward caret, rotated by `.is-open` in CSS — used to
+              show a collapsed section can be expanded (GameDevOption). */}
+          <path d="M5.6 9.2 12 15.6l6.4-6.4" />
         </>
       )}
     </svg>
@@ -1370,12 +1379,15 @@ export default function SandGame() {
   const language = useSyncExternalStore(subscribeLanguage, getLanguage, () => "en" as const);
   const s = t(language);
   const HUB_TAB_NAME = hubTabNames(s);
-  const HUB_TAB_BLURB = hubTabBlurbs(s);
   // The one unified Settings card (see globals.css's own comment on
   // `.settings-screen`) — opened from the same gear button either way,
   // `!playing` (the hub) or mid-play (`.settings-wrap`'s in-play button),
   // so there is exactly one place Sound/Vibration/the level editor live.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether the GameDevOption section is expanded — it starts collapsed
+  // behind its own toggle button so the whole dev-tools grid doesn't crowd
+  // the Settings card for players who never open it.
+  const [devOptionsOpen, setDevOptionsOpen] = useState(false);
   // The GameDevOption "jump to level" field's raw text, kept separate from
   // `chosenIndex` so a half-typed number never triggers a jump.
   const [devLevelInput, setDevLevelInput] = useState("");
@@ -1867,24 +1879,39 @@ export default function SandGame() {
   }, [devDateOffsetInput]);
 
   /**
+   * Captured as soon as the engine exists, not gated on the Skin screen ever
+   * having been opened — cheap (an off-screen render target the engine's own
+   * renderer draws into and restores from, cached forever by
+   * `getCostumeThumbnails` in costumes.ts, so a second call anywhere just
+   * hands back the same object) and needed by more than the skin picker's
+   * tray now: the Gallery's level-20/40 cards show a costume's real
+   * thumbnail on their unlock badge (`unlocksCostume` below) and must never
+   * fall back to the plain `CostumeIcon` line art just because the player
+   * has not looked at Skin yet.
+   */
+  useEffect(() => {
+    if (!engine) return;
+    setCostumeThumbnails(engine.captureCostumeThumbnails());
+  }, [engine]);
+
+  /**
    * The skin screen's whole life: entered the moment `tab` becomes "skin",
    * left the moment it becomes anything else (the close button, Home, or the
    * back-swipe every other hub tab already goes through `setTab` for).
    *
    * Opens on whatever is actually equipped (never a stale preview from a
-   * previous visit), asks the engine to turn its full-screen showroom on —
-   * rig front and centre, turning, firing demo shots — and grabs the tray's
-   * thumbnails once. Closing reverts the live rig to whatever is actually
-   * equipped (`equippedCostumeRef`, not the possibly-stale `costume` this
-   * effect closed over) and turns the showroom back off, so a preview that
-   * was never confirmed with Select never leaks into real play.
+   * previous visit) and asks the engine to turn its full-screen showroom on
+   * — rig front and centre, turning, firing demo shots. Closing reverts the
+   * live rig to whatever is actually equipped (`equippedCostumeRef`, not the
+   * possibly-stale `costume` this effect closed over) and turns the showroom
+   * back off, so a preview that was never confirmed with Select never leaks
+   * into real play.
    */
   useEffect(() => {
     if (tab !== "skin" || !engine) return;
     setPreviewCostume(equippedCostumeRef.current);
     engine.setCostume(equippedCostumeRef.current);
     engine.setShowcase(true);
-    setCostumeThumbnails(engine.captureCostumeThumbnails());
     return () => {
       engine.setCostume(equippedCostumeRef.current);
       engine.setShowcase(false);
@@ -2327,7 +2354,7 @@ export default function SandGame() {
             Home only now, not every hub tab: Shop and Gallery are full-bleed
             takeovers of the same right-edge real estate this button floats
             over (`.shop-screen`/`.gallery-screen`), so it covered their own
-            grid; Skin and Customize dropped it on request, to keep those two
+            grid; Skin and Modes dropped it on request, to keep those two
             screens free of anything that is not about the thing they are
             showing. Also hidden the instant the daily-login card itself is
             open (`dailyLogin` below) — a button that opens a card it is
@@ -2814,8 +2841,9 @@ export default function SandGame() {
             screen frames.
             Excludes Shop too now, same reasoning as Skin below it: `.shop-screen`
             is its own full-bleed takeover (see its own comment), not another
-            `.hub-panel` bottom sheet floating over the picture. */}
-        {homeVisible && !chest && tab !== "skin" && tab !== "shop" && tab !== "gallery" && (
+            `.hub-panel` bottom sheet floating over the picture. Modes is the
+            same story (`.modes-screen`, own comment below). */}
+        {homeVisible && !chest && tab !== "skin" && tab !== "shop" && tab !== "gallery" && tab !== "modes" && (
           <div
             className={`hub-screen${playing ? " is-leaving" : ""}`}
             role="group"
@@ -2823,80 +2851,61 @@ export default function SandGame() {
             aria-hidden={playing || undefined}
           >
 
-            {tab === "home" ? (
-              <div className="hub-actions">
-                <button
-                  type="button"
-                  className="hub-play-btn"
-                  onClick={startPlaying}
-                  aria-label={s.playLevelAria(s.levelName(level.name))}
-                >
-                  {s.levelButtonLabel(level.id)}
-                </button>
-                {/* The reward track, in the slot the dead "Modes" chip used
-                    to hold and sized to match Play beside it (see
-                    `.hub-actions`, which gives both the same box). A real
-                    button only once the bar is full: an incomplete track is a
-                    progress readout with nothing to tap, and `disabled` says
-                    so to a screen reader rather than a tap that silently does
-                    nothing. The bar under the chest is one continuous track
-                    filling a fifth per level won — the count itself lives in
-                    the label above, since a bar this size has no room to print
-                    it without crowding the chest. */}
-                <button
-                  type="button"
-                  className={`hub-track-btn${track.canClaim ? " is-ready" : ""}${trackDenied ? " is-denied" : ""}`}
-                  onClick={handleTrackTap}
-                  onAnimationEnd={(e) => {
-                    if (e.animationName === "hub-track-denied") setTrackDenied(false);
-                  }}
-                  aria-label={
-                    track.canClaim
-                      ? s.openRewardChestAria(track.chestReward)
-                      : s.rewardTrackAria(track.filled, NODES_PER_CHEST)
-                  }
-                >
-                  <span className="hub-track-label" aria-hidden="true">{s.progressionChest}</span>
-                  <span className="hub-track-row">
-                    <span className="hub-track-bar" aria-hidden="true">
-                      <span
-                        className="hub-track-fill"
-                        style={{ width: `${Math.round(track.progress * 100)}%` }}
-                      />
-                      <span className="hub-track-ticks" aria-hidden="true">
-                        <span /><span /><span /><span /><span />
-                      </span>
-                    </span>
-                    <span className="hub-track-chest" aria-hidden="true">
-                      <ChestIcon />
+            {/* This screen only ever mounts for `tab === "home"` now — Shop,
+                Skin, Gallery and Modes all left for their own full-screen
+                takeovers above/below, so the `.hub-scrim`/`.hub-panel`
+                fallback that used to handle every other tab here (most
+                recently Modes, ex-"customize") has nothing left to serve and
+                is gone rather than kept as dead code nothing can reach. */}
+            <div className="hub-actions">
+              <button
+                type="button"
+                className="hub-play-btn"
+                onClick={startPlaying}
+                aria-label={s.playLevelAria(s.levelName(level.name))}
+              >
+                {s.levelButtonLabel(level.id)}
+              </button>
+              {/* The reward track, in the slot the dead "Modes" chip used
+                  to hold and sized to match Play beside it (see
+                  `.hub-actions`, which gives both the same box). A real
+                  button only once the bar is full: an incomplete track is a
+                  progress readout with nothing to tap, and `disabled` says
+                  so to a screen reader rather than a tap that silently does
+                  nothing. The bar under the chest is one continuous track
+                  filling a fifth per level won — the count itself lives in
+                  the label above, since a bar this size has no room to print
+                  it without crowding the chest. */}
+              <button
+                type="button"
+                className={`hub-track-btn${track.canClaim ? " is-ready" : ""}${trackDenied ? " is-denied" : ""}`}
+                onClick={handleTrackTap}
+                onAnimationEnd={(e) => {
+                  if (e.animationName === "hub-track-denied") setTrackDenied(false);
+                }}
+                aria-label={
+                  track.canClaim
+                    ? s.openRewardChestAria(track.chestReward)
+                    : s.rewardTrackAria(track.filled, NODES_PER_CHEST)
+                }
+              >
+                <span className="hub-track-label" aria-hidden="true">{s.progressionChest}</span>
+                <span className="hub-track-row">
+                  <span className="hub-track-bar" aria-hidden="true">
+                    <span
+                      className="hub-track-fill"
+                      style={{ width: `${Math.round(track.progress * 100)}%` }}
+                    />
+                    <span className="hub-track-ticks" aria-hidden="true">
+                      <span /><span /><span /><span /><span />
                     </span>
                   </span>
-                </button>
-              </div>
-            ) : (
-              // Not a click-through backdrop: while a section is open, tapping
-              // anywhere off it goes back to the picture rather than starting a
-              // level the player never chose.
-              <button
-                className="hub-scrim"
-                type="button"
-                onClick={() => setTab("home")}
-                aria-label={s.closeTab(HUB_TAB_NAME[tab])}
-              />
-            )}
-
-            {/* Kept off the home tab itself — the cannon and the level name
-                would otherwise sit on top of the picture the moment it starts
-                turning, which is the one thing this screen is meant to show off. */}
-            {tab !== "home" && <h2 className="hub-level-name">{s.levelName(level.name)}</h2>}
-
-            {tab !== "home" && (
-              <div className="hub-panel is-empty" role="group" aria-label={HUB_TAB_NAME[tab]}>
-                <h3>{HUB_TAB_NAME[tab]}</h3>
-                <p>{HUB_TAB_BLURB[tab]}</p>
-                <p className="hub-panel-note">{s.notBuiltYet}</p>
-              </div>
-            )}
+                  <span className="hub-track-chest" aria-hidden="true">
+                    <ChestIcon />
+                  </span>
+                </span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -3154,6 +3163,29 @@ export default function SandGame() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Modes: a full-screen takeover, same footing as Gallery/Shop/Skin
+            around it (the hub screen behind it is unmounted entirely while
+            this is up — see the `tab !== "modes"` guard on it) rather than
+            the small `.hub-panel` bottom sheet this used to be under its old
+            name, "Customize" (see `HUB_TABS`'s own comment). Nothing behind
+            it exists yet either way — this is still the exact same
+            not-built-yet placeholder, just given the same full-bleed frame
+            every other tab already has instead of a narrow floating card. No
+            close button of its own, same reasoning as Gallery/Shop/Skin:
+            `.hub-nav` stays mounted over this screen too, so tapping any
+            other tab is how you leave. */}
+        {tab === "modes" && (
+          <div className="modes-screen" role="dialog" aria-label={s.modesTitle}>
+            <div className="modes-heading">
+              <h2>{s.modesTitle}</h2>
+            </div>
+            <div className="modes-empty">
+              <p>{s.modesBlurb}</p>
+              <p className="hub-panel-note">{s.notBuiltYet}</p>
             </div>
           </div>
         )}
@@ -3733,7 +3765,24 @@ export default function SandGame() {
                   />
                 </div>
 
-                <h3 className="settings-section-title">GameDevOption</h3>
+                {/* Collapsed behind one button by default — the dev-tools
+                    grid below is only for testing, so it stays out of the
+                    way of the Sound/Vibration/Language rows above until a
+                    tester actually asks for it. */}
+                <button
+                  type="button"
+                  className="settings-section-title settings-devtoggle"
+                  aria-expanded={devOptionsOpen}
+                  onClick={() => setDevOptionsOpen((open) => !open)}
+                >
+                  GameDevOption
+                  <Glyph
+                    name="chevron-down"
+                    className={`icon-glyph settings-devtoggle-chevron${devOptionsOpen ? " is-open" : ""}`}
+                  />
+                </button>
+                {devOptionsOpen && (
+                <>
                 {/* Two per row, smaller — these six are all "one tap, no
                     typing" rows, so pairing them up reads fine at half width.
                     The two rows below that take a typed value (Jump to
@@ -3873,6 +3922,8 @@ export default function SandGame() {
                 <button type="button" className="settings-devlink is-danger" onClick={resetEntireGame}>
                   <Glyph name="trash" className="icon-glyph" /> Reset entire game
                 </button>
+                </>
+                )}
               </div>
             </div>
           </div>

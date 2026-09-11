@@ -86,7 +86,7 @@
   --gem-deep: #4fb9c9;
   --gem-ink: #164048;
 
-  /* Warm wood — the Customize tab's active fill, the one hub-nav colour with
+  /* Warm wood — the Modes tab's active fill, the one hub-nav colour with
      no other job in the file (every other tab reuses a hue that already
      means something elsewhere: green is the primary action, coral is
      danger/exit, gold is currency, sky is the language pill). */
@@ -662,6 +662,20 @@ button {
   margin: 18px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em;
   text-transform: uppercase; color: var(--muted);
 }
+/* GameDevOption's own heading doubles as its expand/collapse button — reset
+   the plain-`<h3>` look above back to a full-width tappable row (border/
+   background none, so it still reads as the same quiet label at rest), with
+   the caret on the right flipping via `.is-open` to show current state. */
+button.settings-devtoggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+}
+.settings-devtoggle-chevron {
+  width: 14px; height: 14px; color: var(--muted); flex: none;
+  transition: transform .18s;
+}
+.settings-devtoggle-chevron.is-open { transform: rotate(180deg); }
 /* Where the level editor and any future build-only tooling live, kept
    visually apart (its own heading, a quieter card each) from the player
    rows above rather than folded into the same list. */
@@ -1785,18 +1799,11 @@ button {
 .hub-screen.is-leaving .hub-track-btn { animation: hub-play-btn-exit .4s cubic-bezier(.5,0,1,1) forwards; }
 .hub-nav.is-leaving { animation: hub-nav-exit .44s cubic-bezier(.4,0,1,.7) forwards; }
 
-/* A section's contents sit above the bar that opened them, never behind it. */
-.hub-panel {
-  position: absolute; z-index: 2; left: 14px; right: 14px;
-  bottom: calc(var(--hub-nav-height) + 16px);
-  max-height: 54%; overflow: auto; padding: 18px 18px 20px;
-  border-radius: var(--r-lg);
-  background: var(--panel);
-  animation: hub-panel-in .26s cubic-bezier(.2,.9,.24,1) both;
-}
-.hub-panel h3 { margin: 0 0 14px; font-size: 15px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
-.hub-panel.is-empty { text-align: center; }
-.hub-panel.is-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+/* `.hub-panel-note` is the one survivor of the small floating card every hub
+   tab without a real screen used to share (`.hub-panel`/`.hub-panel.is-empty`,
+   removed) — Modes, the last tab still on that path, moved to its own
+   full-screen `.modes-screen` and kept just this one line's look
+   (`.modes-empty`'s own comment) for its "not built yet" note. */
 .hub-panel-note {
   margin-top: 10px !important; color: var(--accent-line) !important;
   font-size: 11px !important; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
@@ -1902,6 +1909,40 @@ button {
   display: inline-block; margin: 0;
   font-size: 20px; font-weight: 800; color: #597cd4;
 }
+
+/* ---- Modes screen ---------------------------------------------------------- */
+/* A full-screen takeover, same footing as `.gallery-screen`/`.shop-screen`/
+   `.skin-screen` around it in the nav (see the JSX comment on `.modes-screen`
+   itself for why this stopped being a `.hub-panel` bottom sheet under this
+   tab's old name, "Customize"). Nothing behind this tab exists yet, so it
+   keeps the hub's own plain ivory wall (`--hub-navy`) rather than borrowing
+   any other tab's colour — there is no content here to key a wash to. */
+.modes-screen {
+  position: absolute; z-index: 30; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
+  overflow: auto;
+  background: var(--hub-navy);
+  animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
+}
+/* Same chip `.gallery-heading h2`/`.shop-heading h2`/`.skin-heading h2` use —
+   one consistent "screen title" language across every full-screen takeover,
+   even this still-empty one. Positioned absolute at the screen's own top
+   rather than inline above the centred placeholder below, since the
+   placeholder is the only content and centres on the whole screen, not on
+   the space left under a title. */
+.modes-heading {
+  position: absolute; top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px);
+  left: 24px; right: 24px; margin: 0; text-align: center;
+}
+.modes-heading h2 {
+  display: inline-block; margin: 0;
+  font-size: 20px; font-weight: 800; color: var(--hub-navy-deep);
+}
+/* The exact `.hub-panel.is-empty` placeholder text this tab always showed,
+   just centred on a full screen instead of sitting inside a small card. */
+.modes-empty { max-width: 320px; text-align: center; }
+.modes-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 
 /* ---- Shop ---------------------------------------------------------------- */
 /* A full-screen takeover, same footing as the skin picker (`.skin-screen`
@@ -2604,7 +2645,7 @@ button {
 }
 /* Each tab fills its own tile with its own colour when active, rather than
    one shared accent for all five — Home green, Skin coral, Shop gold,
-   Gallery sky, Customize wood — and fills its own icon with that colour's
+   Gallery sky, Modes wood — and fills its own icon with that colour's
    "-ink" partner, the dark tone the rest of the file already pairs with
    each bright one for exactly this reason (readable sitting on top of it).
    Selected with `[data-tab]` (already on the button for other reasons)
@@ -2612,18 +2653,18 @@ button {
    order ever changes. */
 /* Home's active chip used to reuse the shared `--accent` green (the same one
    buttons/toggles use elsewhere) — now its own scoped colour instead, same
-   footing as Skin/Shop/Gallery/Customize below, so it can be tuned on its
+   footing as Skin/Shop/Gallery/Modes below, so it can be tuned on its
    own without dragging every other green control along with it.
    Home, Skin, Shop and Gallery no longer pair their bubble with an icon
-   `fill` line the way Customize below still does — their icon is a
+   `fill` line the way Modes below still does — their icon is a
    full-colour photo the instant it is active (`PhotoTabIcon` in
    SandGame.tsx), not a silhouette this bubble colour would show through. */
 .hub-nav button[data-tab="home"].is-active .hub-nav-bubble { background: #8ac688; }
 .hub-nav button[data-tab="skin"].is-active .hub-nav-bubble { background: var(--danger); }
 .hub-nav button[data-tab="shop"].is-active .hub-nav-bubble { background: var(--gold); }
 .hub-nav button[data-tab="gallery"].is-active .hub-nav-bubble { background: #8a9bf3; }
-.hub-nav button[data-tab="customize"].is-active .hub-nav-bubble { background: var(--wood); }
-.hub-nav button[data-tab="customize"].is-active .hub-nav-icon { fill: var(--wood-ink); }
+.hub-nav button[data-tab="modes"].is-active .hub-nav-bubble { background: var(--wood); }
+.hub-nav button[data-tab="modes"].is-active .hub-nav-icon { fill: var(--wood-ink); }
 
 /* ---- Keyframes --------------------------------------------------------- */
 /* A squash-and-stretch swap for the shots-badge dot: it shrinks and twists

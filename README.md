@@ -1,7 +1,36 @@
 # 3D Sand Cannon Sort — playable prototype
 
-Prototype puzzle WebGL 3D theo brief `sand_cannon_concept.md`. Người chơi bắn đạn màu vào một bức
-tranh cát 3D nằm trong khung tĩnh; cát bị lấy đi thì phần còn lại rơi xuống.
+Prototype puzzle WebGL 3D theo brief `sand_cannon_concept.md`. Mỗi màn là một **bức tranh cát** vẽ
+sẵn (biểu tượng, phong cảnh, hoa văn...) nằm trong một khung tĩnh; người chơi bắn đạn màu từ một
+khẩu súng cát vào tranh, đạn lấy đi cát cùng màu quanh điểm chạm, cát còn lại rơi xuống theo trọng
+lực (không có cohesion — mỗi hạt rơi độc lập). Thắng khi khung sạch hoàn toàn trước khi hết lượt
+bắn; đạn được nạp từ một **bánh xe màu** xoay vòng cho tới khi màu đó sạch hẳn trong tranh, nên toàn
+bộ độ khó của một màn nằm ở ngân sách lượt bắn (`shotLimit`), không phải may rủi màu đạn.
+
+## Có gì trong bản này
+
+- **50 level** ship sẵn (`BUILT_IN_LEVELS` trong `design/levels/sand-levels.ts`), chia thành 5 "arc"
+  theo beatchart thiết kế:
+  - **Level 1-3**: nhập môn — ngắm-bắn, hàng đợi đạn, ngân sách lượt bắn.
+  - **Level 4-10**: 30-level beatchart gốc — tranh nhiều màu, không mechanic phụ.
+  - **Level 11-20**: giới thiệu **Wall Obstacle** (ô chắn cứng).
+  - **Level 21-30**: giới thiệu **Lock & Key** (cát khoá + chìa khoá rơi mở khoá).
+  - **Level 31-40**: giới thiệu **Freeze Map** (trigger đóng băng khung N lượt).
+  - **Level 41-50**: arc tổng hợp — nhiều màn trộn chung Wall + Lock & Key + Freeze Map trong cùng
+    một bức tranh.
+- **4 map mechanic**: Wall Obstacle, Lock & Key, Freeze Map (cả ba đều xuất hiện trong 50 level
+  ship sẵn), và **Wind** (đã cài đặt đầy đủ trong engine nhưng chưa dùng ở level nào hiện ship —
+  sẵn sàng cho level mới). Chi tiết từng cái ở mục [Map mechanic đang thử](#map-mechanic-đang-thử)
+  bên dưới.
+- **3 booster** mua bằng vàng trong Shop: **Radius Overcharge** (nhân đôi bán kính một phát bắn),
+  **Prism Shot** (một phát lấy mọi màu trong đĩa, không cần đúng màu đang cầm), **Chain Sort** (lan
+  theo đúng một màu ra toàn bộ vùng liền kề, không giới hạn số ô, không có trần bán kính). Xem
+  [docs/features/booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md).
+- **Economy**: ví vàng, Shop mua thêm lượt booster, Daily Login thưởng vàng mỗi ngày — toàn bộ
+  client-only (`localStorage`, không có tài khoản/server). Xem
+  [docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md).
+- **Level editor** (`/editor`) để tự vẽ tranh, dựng bánh xe đạn, đo độ khó thật, và ship thẳng level
+  mới vào `design/levels/sand-levels.ts`.
 
 ## Tài liệu theo từng chức năng
 
@@ -17,7 +46,7 @@ file trong `docs/features/` — không cần đọc lại toàn bộ README:
 | Đo độ khó (Measure difficulty) | [docs/features/difficulty-measurement.md](docs/features/difficulty-measurement.md) |
 | Lock & Key | [docs/features/lock-and-key.md](docs/features/lock-and-key.md) |
 | Wind | [docs/features/wind.md](docs/features/wind.md) |
-| Booster (Radius Overcharge / Prism Shot) | [docs/features/booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md) |
+| Booster (Radius Overcharge / Prism Shot / Chain Sort) | [docs/features/booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md) |
 | Board pixel 2D trong khung 3D | [docs/features/rendering-pixel-board.md](docs/features/rendering-pixel-board.md) |
 | Economy (vàng, Shop, Daily Login) | [docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md) |
 | Thưởng vàng theo từng level | [docs/features/level-rewards.md](docs/features/level-rewards.md) |
@@ -94,10 +123,11 @@ phải engine) nằm ở [`design/levels/`](design/levels/), tách khỏi `app/g
 tay một level (bức tranh `rows`, bảng mã 10 màu, `ammoQueue`, `wind`, lock&key, `pixelScale`) ở
 [docs/features/level-format.md](docs/features/level-format.md).
 
-Level duy nhất ship sẵn trong `BUILT_IN_LEVELS` hiện là `defaultLevel` ("Level 1") — mọi level khác
-sống trong editor (`localStorage`) rồi ship qua khi cần. `sandBloom`, `lockAndKey`, `crosswind`
-trong `design/levels/sand-levels.ts` **không** phải level người chơi thấy được — đó là fixture cho
-test suite, xem [design/levels/README.md](design/levels/README.md).
+`BUILT_IN_LEVELS` hiện ship 50 level ("Level 1" tới "Level 50", xem cấu trúc arc ở mục
+[Có gì trong bản này](#có-gì-trong-bản-này) phía trên) — level mới vẽ trong editor được ship thêm
+vào cuối danh sách này. `sandBloom`, `lockAndKey`, `crosswind` trong `design/levels/sand-levels.ts`
+**không** phải level người chơi thấy được — đó là fixture cho test suite, xem
+[design/levels/README.md](design/levels/README.md).
 
 ## Rule đã chốt
 
@@ -116,7 +146,6 @@ khi nó tồn tại.
 cứng rơi tới chạm nó. Chi tiết đầy đủ (silhouette sprite, `keyFriction`, cách vẽ trong editor) ở
 [docs/features/lock-and-key.md](docs/features/lock-and-key.md).
 
-<<<<<<< HEAD
 **Chìa khoá là một silhouette lởm chởm vẽ tay (`KEY_SPRITE`, `sand-sprites.ts`), không phải hình tròn —
 nó trượt trên cát, không lăn.** Vật lý của chìa khoá là vật lý của cát, áp cho cả khối: rơi thẳng khi
 dưới trống, trượt chéo khi không. Khác biệt duy nhất là tính cứng — một nước đi chỉ
@@ -184,11 +213,29 @@ Level thử `Lock & Key` trong `sand-levels.ts`:
 Preview của editor tính cỡ ổ khoá ở **độ phân giải board thật** rồi thu lại để vẽ, chứ không tính ở cỡ
 blueprint: game dán icon lên board đã mở rộng, nên tính ở cỡ blueprint sẽ cho editor và game bất đồng về
 chỗ nào đủ to để có ổ khoá.
-=======
+
+**Wall Obstacle** — chữ `W` trong tranh là một ô chắn cứng: không phải cát, không tính vào điều
+kiện thắng, không bao giờ bị bắn trúng hay rơi. Nó chỉ đứng yên làm giá đỡ/chướng ngại cho cát xung
+quanh rơi và settle theo hình dạng nó tạo ra — level 11-20 dùng nó để ép người chơi tính đường bắn
+quanh một khung cứng thay vì một bức tranh phẳng. Nguồn: `WALL_LETTER`/`SandColor` trong
+`app/game/sand-types.ts`, xử lý settle trong `app/game/sand-rules.ts` — chưa có file doc riêng.
+
+**Freeze Map** — chữ `@` trong tranh đánh dấu một trigger: viên đạn nào chạm tới nó (bất kể màu gì)
+sẽ tiêu nó và đóng băng cả khung trong `freezeDuration` lượt kế tiếp (tính cả lượt vừa bắn trúng
+trigger) — trong lúc đó cát không rơi/settle, hiện một thanh Freeze đếm ngược trong HUD. Level
+31-40 giới thiệu cơ chế này; `freezeDuration` mặc định 0 (không đóng băng) cho level không có
+trigger. Nguồn: `SandFreezeTrigger`, `freezeDuration` trong `app/game/sand-types.ts`, logic đóng
+băng trong `app/game/sand-rules.ts` — chưa có file doc riêng.
+
 **Wind** — một vòng lặp các pha gió thổi cát theo `direction`/`durationMs`/`cooldownMs`/`power`/
 `zone`. Chi tiết đầy đủ (tương tác với settle solver, đơn vị scale, cách vẽ zone trong editor) ở
-[docs/features/wind.md](docs/features/wind.md).
->>>>>>> ef36fad84d1203866dd06a7203f56ade6ba001cd
+[docs/features/wind.md](docs/features/wind.md). Cơ chế đã cài đặt đầy đủ trong engine nhưng
+**chưa có level nào trong `BUILT_IN_LEVELS` dùng tới** — vẫn chỉ sống trong fixture test
+(`crosswind`) và sẵn sàng cho level mới.
+
+**Level 41-50** là arc tổng hợp — nhiều màn trộn chung Wall Obstacle, Lock & Key và Freeze Map
+trong cùng một bức tranh thay vì mỗi arc một cơ chế riêng, để kiểm tra các cơ chế phối hợp với nhau
+chứ không chỉ đứng một mình.
 
 ## Policy tạm — Open Decision chưa chốt
 
@@ -203,10 +250,9 @@ màu xoá toàn bộ connected body và cấm rõ việc chỉ xoá một bán k
 
 ## Chưa có trong bản này
 
-Meta progression (ngoài ví vàng cơ bản), special sand ngoài lock&key, đổi/skip đạn, random queue,
-Z-layer gameplay, full granular rigidbody simulation, âm thanh. Đây đúng phạm vi MVP mà brief đặt
-ra (§34).
+Meta progression (ngoài ví vàng cơ bản), đổi/skip đạn, random queue, Z-layer gameplay, full
+granular rigidbody simulation, âm thanh. Đây đúng phạm vi MVP mà brief đặt ra (§34).
 
-Economy (vàng, Shop, Daily Login) và booster (Radius Overcharge, Prism Shot) đã có — xem
-[docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md) và
+Economy (vàng, Shop, Daily Login) và cả 3 booster (Radius Overcharge, Prism Shot, Chain Sort) đã
+có — xem [docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md) và
 [docs/features/booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md).
