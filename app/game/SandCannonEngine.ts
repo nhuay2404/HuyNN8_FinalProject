@@ -125,6 +125,14 @@ export const SAND_COLOR_HEX: Record<SandColor, number> = {
   mint: 0xb8f2dd,
 };
 
+/** `SAND_COLOR_HEX[color]`, unless `level.customPalette` overrides that one
+ * slot for this specific level — see that field's own comment. Every render
+ * site below reads through this instead of `SAND_COLOR_HEX` directly so a
+ * Zen level's image-derived palette actually shows up on screen. */
+function sandColorHex(level: SandLevelConfig, color: SandColor): number {
+  return level.customPalette?.[color] ?? SAND_COLOR_HEX[color];
+}
+
 // ---- inherited cannon parameters ----------------------------------------
 // §20 is explicit that this pivot does not get to invent cannon numbers. Every
 // constant in this block is carried over unchanged from the pre-pivot
@@ -154,6 +162,23 @@ const JOYSTICK_RADIUS = 64;
  * knob itself just pins at the pad's edge (`JOYSTICK_RADIUS`) well before the
  * player has to stop pulling for the response to keep climbing. */
 const JOYSTICK_RESPONSE_RADIUS = 256;
+/**
+ * `JOYSTICK_RESPONSE_RADIUS` is a fixed screen-pixel distance, but a
+ * screen-filling picture (a large or near-square grid like an 80×90 level,
+ * whose frame is fitted to use nearly all of both `FIT_WIDTH` and
+ * `FIT_HEIGHT` at once — see `cursorForCurrentStick`) needs a drag close to
+ * that full 256px to reach its own corners. On a narrow phone viewport that
+ * distance can exceed the room a straight drag actually has before the
+ * finger runs off the edge of the glass, so the aim reads as permanently
+ * capped short of the picture's edge no matter how far the player drags —
+ * worse the bigger the picture, since bigger pictures are exactly the ones
+ * that need the full distance. Scaling the response radius down to a
+ * fraction of the host's own (smaller) dimension keeps full response
+ * reachable by a normal drag whatever the device or the level's size, while
+ * leaving the original, more generous distance in place on anything roomy
+ * enough to actually have it.
+ */
+const JOYSTICK_RESPONSE_RADIUS_SCREEN_FRACTION = 0.42;
 const JOYSTICK_ARM_RADIUS = 18;
 /**
  * Grace period for a drag that has wandered outside `host` (the rendered
@@ -190,17 +215,6 @@ const SCRIPTED_AIM_POINTER_ID = -777;
  * what makes the icon's own outer edge exactly the limit: full aim reaches
  * until the icon touches the screen, never past it and never stopping short. */
 const AIM_CURSOR_EDGE_MARGIN = 14;
-/** At 0.5, `cursorForCurrentStick`'s own `Math.min(ratio * dimension, centre -
- * AIM_CURSOR_EDGE_MARGIN)` always resolves to the margin term (half the
- * dimension is always a hair more than half the dimension minus the margin) —
- * so full aim reaches to within `AIM_CURSOR_EDGE_MARGIN` of the screen's own
- * edge, the most it could ever sensibly reach, rather than stopping short of
- * it. Raised from 0.39 — full drag was landing well inside the frame instead
- * of near its edge. */
-const AIM_CURSOR_HORIZONTAL_RATIO = 0.5;
-/** Same reasoning as `AIM_CURSOR_HORIZONTAL_RATIO`, raised from 0.4. */
-const AIM_CURSOR_UP_RATIO = 0.5;
-const AIM_CURSOR_DOWN_RATIO = 0.15;
 const RECOIL_TRAVEL = 0.23;
 /**
  * The picture frame's own flinch on impact — a light, quick kick, not the
@@ -1551,7 +1565,8 @@ export class SandCannonEngine {
           `float freezeDist = length( vFreezeXY );
            float freezeRadius = uProgress * uMaxRadius;
            float freezeEdge = smoothstep( freezeRadius - uFringe, freezeRadius + uFringe, freezeDist );
-           vec4 diffuseColor = vec4( mix( uColorTo, uColorFrom, freezeEdge ), opacity );`,
+           vec3 freezeColor = mix( uColorTo, uColorFrom, freezeEdge );
+           vec4 diffuseColor = vec4( freezeColor, opacity );`,
         );
     };
     this.frameFreezeMaterials.push({ uniforms, isRail });
@@ -1652,7 +1667,7 @@ export class SandCannonEngine {
     for (const body of bodies) {
       for (const cell of body.cells) {
         const seed = cell.x * 733 + cell.y * 197;
-        const rgb = jitterColor(SAND_COLOR_HEX[body.color], seed, SAND_SATURATION_JITTER, SAND_LIGHTNESS_JITTER);
+        const rgb = jitterColor(sandColorHex(this.level, body.color), seed, SAND_SATURATION_JITTER, SAND_LIGHTNESS_JITTER);
         this.cells.set(cellKey(cell.x, cell.y), {
           x: cell.x,
           y: cell.y,
@@ -2713,7 +2728,7 @@ export class SandCannonEngine {
     // fully-saturated colour from reading as a solid disc instead of a soft
     // radius indicator.
     if (current) {
-      const hex = SAND_COLOR_HEX[current];
+      const hex = sandColorHex(this.level, current);
       if (this.aimRing) (this.aimRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.aimRingGlow) (this.aimRingGlow.material as THREE.MeshBasicMaterial).color.setHex(hex);
       if (this.sortRing) (this.sortRing.material as THREE.MeshBasicMaterial).color.setHex(hex);
@@ -3290,16 +3305,39 @@ export class SandCannonEngine {
     // snapping to dead-centre the moment it crosses into that band — rather
     // than the crosshair just running out of room to move. Scaling from raw
     // distance keeps the response continuous all the way to the centre.
-    const baseResponse = THREE.MathUtils.clamp(this.aimDistance / JOYSTICK_RESPONSE_RADIUS, 0, 1);
-    const response = (baseResponse * this.aimDragSensitivity)
-      / (1 + (this.aimDragSensitivity - 1) * baseResponse);
-    if (this.aimDistance > 1e-5 && response > 0) {
-      this.aimStick.set(dx / this.aimDistance, dy / this.aimDistance).multiplyScalar(response);
-    } else {
-      this.aimStick.set(0, 0);
-    }
+    //
+    // Each axis gets its OWN response, computed from its own signed offset —
+    // not a single magnitude shared across a direction vector. A shared
+    // magnitude can only ever reach 1 in total (dx/dist and dy/dist are a
+    // unit vector), so `aimStick` traced out a disc; fed through
+    // `cursorForCurrentStick`'s independent horizontal/vertical scale, that
+    // disc becomes an ellipse *inscribed* in the frame's rectangle — the
+    // frame's actual corners sit outside it and were never reachable by any
+    // drag, however far or in whatever direction. Letting x and y saturate
+    // independently means a drag far enough along both axes at once — e.g.
+    // straight for a corner — lands both at their own full response
+    // together, so the crosshair can reach the corner itself.
+    const responseRadius = Math.min(
+      JOYSTICK_RESPONSE_RADIUS,
+      Math.max(this.host.clientWidth, 1) * JOYSTICK_RESPONSE_RADIUS_SCREEN_FRACTION,
+      Math.max(this.host.clientHeight, 1) * JOYSTICK_RESPONSE_RADIUS_SCREEN_FRACTION,
+    );
+    this.aimStick.set(
+      this.axisResponse(dx, responseRadius),
+      this.axisResponse(dy, responseRadius),
+    );
     this.aimPreviewDirty = true;
     this.updateAimOutsideZone(clientX, clientY);
+  }
+
+  /** One axis' share of `updateAimGesture`'s response curve — same shape as
+   * the old shared-magnitude version (clamp 0-1, then `aimDragSensitivity`'s
+   * easing), just evaluated on this axis' own signed offset so the two axes
+   * can each reach ±1 without competing for a shared unit-vector budget. */
+  private axisResponse(delta: number, radius: number): number {
+    const magnitude = THREE.MathUtils.clamp(Math.abs(delta) / radius, 0, 1);
+    const eased = (magnitude * this.aimDragSensitivity) / (1 + (this.aimDragSensitivity - 1) * magnitude);
+    return Math.sign(delta) * eased;
   }
 
   /** Whether a screen point sits over `host` — the rendered scene the drag
@@ -3414,9 +3452,30 @@ export class SandCannonEngine {
     const height = Math.max(this.host.clientHeight, 1);
     const centerX = width * 0.5;
     const centerY = height * 0.5;
-    const horizontalRange = Math.max(0, Math.min(width * AIM_CURSOR_HORIZONTAL_RATIO, centerX - AIM_CURSOR_EDGE_MARGIN));
-    const upwardRange = Math.max(0, Math.min(height * AIM_CURSOR_UP_RATIO, centerY - AIM_CURSOR_EDGE_MARGIN));
-    const downwardRange = Math.max(0, Math.min(height * AIM_CURSOR_DOWN_RATIO, centerY - AIM_CURSOR_EDGE_MARGIN));
+
+    // The old ratios (fixed fractions of the viewport) were tuned against
+    // small boards and always clamped to the margin term below on width/up —
+    // but on a board large enough to fill FIT_WIDTH/FIT_HEIGHT on both axes
+    // at once (e.g. an 80×90 picture), the frame's own bottom edge projects
+    // well past AIM_CURSOR_DOWN_RATIO's reach, so the joystick could never
+    // drag the crosshair down to the picture's lower rows no matter how far
+    // the drag went. Projecting the frame's actual screen-space edges here
+    // instead means the reach always matches the picture in front of it,
+    // whatever the level's grid size or aspect.
+    const border = this.cell * FRAME_BORDER_CELLS;
+    const halfWidth = (this.level.frame.width * this.cell) / 2 + border;
+    const halfHeight = (this.level.frame.height * this.cell) / 2 + border;
+    const planeZ = this.frameRoot.position.z;
+    const left = this.screenPointForWorld(new THREE.Vector3(this.frameRoot.position.x - halfWidth, FRAME_CENTER_Y, planeZ));
+    const right = this.screenPointForWorld(new THREE.Vector3(this.frameRoot.position.x + halfWidth, FRAME_CENTER_Y, planeZ));
+    const top = this.screenPointForWorld(new THREE.Vector3(this.frameRoot.position.x, FRAME_CENTER_Y + halfHeight, planeZ));
+    const bottom = this.screenPointForWorld(new THREE.Vector3(this.frameRoot.position.x, FRAME_CENTER_Y - halfHeight, planeZ));
+
+    const edgeLimit = centerX - AIM_CURSOR_EDGE_MARGIN;
+    const verticalEdgeLimit = centerY - AIM_CURSOR_EDGE_MARGIN;
+    const horizontalRange = Math.max(0, Math.min(Math.max(centerX - left.x, right.x - centerX), edgeLimit));
+    const upwardRange = Math.max(0, Math.min(centerY - top.y, verticalEdgeLimit));
+    const downwardRange = Math.max(0, Math.min(bottom.y - centerY, verticalEdgeLimit));
     return new THREE.Vector2(
       centerX + this.aimStick.x * horizontalRange,
       centerY + this.aimStick.y * (this.aimStick.y < 0 ? upwardRange : downwardRange),
@@ -3686,32 +3745,6 @@ export class SandCannonEngine {
     }
   }
 
-  /**
-   * Level 3's booster FTUE (`SandLevelConfig.ftueBoosterDemo`): arms
-   * `booster` exactly like a real tap on its own tray button (same
-   * `armBooster`, same charge check via `effectiveBoosterCharges` — the
-   * level's own `forcedBoosterCharges` is what actually guarantees this
-   * succeeds regardless of the player's real wallet), then runs one
-   * scripted drag-and-fire shot at `(gx, gy)` with it armed — a real,
-   * state-mutating boosted shot through `fire()`/`resolveShot`, the same as
-   * `runScriptedShot` is for a plain one. Resolves `false` without firing
-   * anything if `armBooster` couldn't actually arm (phase not READY, the
-   * other booster already armed, or — should never happen once
-   * `forcedBoosterCharges` is set correctly — no charges); the caller
-   * should treat that the same as a scripted shot that failed to aim.
-   */
-  async runScriptedBoosterShot(booster: BoosterType, gx: number, gy: number): Promise<boolean> {
-    this.scriptedShotActive = true;
-    try {
-      await this.waitUntilReadyToAim();
-      this.armBooster(booster);
-      if (this.armedBooster !== booster) return false;
-      return await this.runScriptedShot(gx, gy);
-    } finally {
-      this.scriptedShotActive = false;
-    }
-  }
-
   /** The frame square a world point falls in, or null if it falls outside. */
   private gridAtPoint(point: THREE.Vector3) {
     const local = point.clone().sub(this.frameRoot.position);
@@ -3780,7 +3813,7 @@ export class SandCannonEngine {
     // the crosshair, never whether that is the right answer — the player still
     // has to read the ammo colour against it.
     if (solved?.cell) {
-      this.crosshair.style.setProperty("--aim-color", `#${SAND_COLOR_HEX[solved.cell.color].toString(16).padStart(6, "0")}`);
+      this.crosshair.style.setProperty("--aim-color", `#${sandColorHex(this.level, solved.cell.color).toString(16).padStart(6, "0")}`);
     } else {
       this.crosshair.style.removeProperty("--aim-color");
     }
@@ -3890,7 +3923,7 @@ export class SandCannonEngine {
       this.scene.add(this.projectileMesh);
     }
     const material = this.projectileMesh.material as THREE.MeshBasicMaterial;
-    material.color.setHex(SAND_COLOR_HEX[color]);
+    material.color.setHex(sandColorHex(this.level, color));
     this.projectileMesh.visible = true;
     this.projectileMesh.position.copy(launch.start);
     // Spec §6: the bullet itself has to look different, not just the chamber
@@ -4196,8 +4229,9 @@ export class SandCannonEngine {
     // State applies immediately so the board, ammo count, etc. are correct
     // the instant the outcome is known — but the phase it carries is
     // overridden to SETTLING (unless the shot already ended the level) so
-    // `canInteract()` stays closed and the "still moving" dots (see
-    // `.settle-badge`) show until `advanceBeats` clears the queue below.
+    // `canInteract()` stays closed and the "still moving" indicator
+    // (`SandGame.tsx`'s `.settle-badge`, keyed off `busy`) shows until
+    // `advanceBeats` clears the queue below.
     this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
     this.syncFreezeTriggers();
     this.syncFreezeVisuals();

@@ -79,12 +79,15 @@
   --sky-ink: #1f4c5c;
   --sky-line: #5fafc9;
 
-  /* Teal gem — the Shop's hard currency. Its own hue rather than a reuse of
-     `--sky` (close in family, but the two sit side by side on the Shop's
-     Gems tab and need to read as two different things, not one pill twice). */
-  --gem: #84dbe6;
-  --gem-deep: #4fb9c9;
-  --gem-ink: #164048;
+  /* Teal accent — the Shop's own "featured offer" hue (2026-09d: this used
+     to be the Gems currency's own colour, back when Gems was a real thing
+     sold here; gems are gone from the game now, but the teal itself is
+     still worth keeping as one of the Shop's two offer-card identities —
+     `.offer-card.is-teal`/`.bundle-icon` — rather than gems and this hue
+     leaving together for no reason beyond the coincidence of timing). */
+  --iap-accent: #84dbe6;
+  --iap-accent-deep: #4fb9c9;
+  --iap-accent-ink: #164048;
 
   /* Warm wood — the Modes tab's active fill, the one hub-nav colour with
      no other job in the file (every other tab reuses a hue that already
@@ -171,7 +174,7 @@ body {
    label, and every number that changes. Anything that is prose or a micro
    label stays on the body face. */
 h1, h2, h3, strong, b, .settings-row-label, .settings-select,
-.daily-login-label, .shop-card-owned, .hub-gallery-milestone, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
+.daily-login-month-title, .shop-card-owned, .hub-gallery-milestone, .hub-panel-note, .ftue-gesture-caption, .sand-toast {
   font-family: var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
 }
 /* Self-hosted locally (not through vinext's Google-fonts pipeline, since it
@@ -393,9 +396,20 @@ button {
    comment), so a player's eye reads one consistent "how round is a button"
    across the hub rather than a mix of pills, squares and one photo's own
    baked-in curve. */
-.gift-button { border-radius: var(--r-chrome); background: #c9f2e1; }
+.gift-button { border-radius: var(--r-chrome); background: #c9f2e1; position: relative; }
 .gift-button:hover { background: #b3ecd4; }
 .gift-button-icon { width: 30px; height: 30px; object-fit: contain; }
+/* "The daily-login modal got force-closed by a hub-nav tap while today's
+   reward was still unclaimed" (`dailyLoginMissedClaim` in SandGame.tsx) —
+   same red dot as `.hub-nav-dot`'s own (the Home tab's copy of this exact
+   signal), just against this button's own light mint fill instead of
+   `.hub-nav`'s dark background, hence the lighter `--panel` ring instead of
+   `--hub-navy`. */
+.gift-button-dot {
+  position: absolute; top: 4px; right: 4px; z-index: 1;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 0 2px var(--panel);
+}
 /* Every hand-drawn chrome icon in SandGame.tsx shares these stroke settings —
    round caps and joins are most of what makes a line icon read as soft. */
 .icon-glyph {
@@ -1026,14 +1040,41 @@ button.settings-devtoggle {
    (a 3D object drawn on the same canvas, no DOM box of its own) sits behind
    this in paint order but pokes up above its top edge — the dock is only as
    tall as the buttons need, not tall enough to cover the barrel/turret.
-   z-index sits above `.aim-zone` (4) and `.settle-badge` (7) so a tap always
-   reaches the tray, never the drag surface behind it. */
+   z-index sits above `.aim-zone` (4) so a tap always reaches the tray,
+   never the drag surface behind it.
+   `min-height` matches `.booster-btn`'s own 38px plus this block's own
+   16px top/bottom padding — on request ("size và vị trí của tray booster
+   không đồng nhất"): level 1/2 mount this same dock with zero buttons
+   inside it (SandGame.tsx), and with nothing to size against, an empty flex
+   box collapses to just its padding instead of the ~70px a level with
+   buttons gets. Pinning that floor here means every level's dock reads as
+   the exact same size/shape/position, whether or not it currently has any
+   buttons to show. */
 .booster-hud {
   position: absolute; z-index: 9; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; justify-content: center; gap: 20px;
+  min-height: 70px;
   padding: 16px 24px calc(16px + env(safe-area-inset-bottom));
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--panel);
+}
+/* The tray's own gold balance, pinned to its top-left corner (on request:
+   "Góc trái bên cùng của tray sẽ hiện coin currency hud") — `.booster-hud`
+   is already `position: absolute`, so it is the containing block this pins
+   against without needing a wrapper. A small flat pill rather than
+   `.hub-gold-wrap`'s big overlapping-coin treatment: that shape is sized for
+   its own 44px hub row, and would swamp this 70px tray. Read-only (a `div`,
+   not a button) — this is "can I afford it", not another way to buy gold. */
+.booster-hud-gold {
+  position: absolute; left: 12px; top: 10px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 6px; border-radius: var(--r-pill);
+  background: #fde59c;
+}
+.booster-hud-gold .coin-icon { width: 15px; height: 15px; }
+.booster-hud-gold strong {
+  font-size: 12px; font-weight: 800; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; color: var(--ink);
 }
 .booster-btn {
   width: 38px; height: 38px; border-radius: 50%; flex: none;
@@ -1085,31 +1126,56 @@ button.settings-devtoggle {
   font-size: 11px; font-weight: 800; line-height: 14px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
+/* Out of charges (`canBuyHere`, see SandGame.tsx): the badge turns into a
+   price, and moves BELOW the icon instead of sitting above it (on request:
+   "giá tiền sẽ để phía dưới biểu tượng booster thay vì ở trên"), with its own
+   coin icon next to the number so it reads as a price rather than a
+   leftover charge count. Wider than the plain count badge (`min-width`
+   alone would clip the coin), and centred under the button rather than
+   pinned to a corner — a price reads naturally centred, a charge count
+   reads naturally as a corner tally. */
+.booster-badge.is-price {
+  top: auto; right: auto; bottom: -8px; left: 50%; transform: translateX(-50%);
+  min-width: 0; height: 16px; padding: 0 6px 0 4px;
+  display: flex; align-items: center; gap: 2px;
+}
+.booster-badge.is-price .coin-icon { width: 11px; height: 11px; }
 
 /* ---- Locked-input and feedback ---------------------------------------- */
 /* §24 asks for a visible sign that firing is locked while sand is moving.
    No box, no label — just the three dots saying something is still in
-   motion, not naming what. */
+   motion, not naming what. Went through a detour trying the frame's own
+   colour/opacity instead (several art-direction passes, all reverted on
+   request — the frame now always keeps its authored colour, full stop) —
+   this is back to being that sign again. Repositioned from its own earlier
+   spot (pinned above the frame, in the open sky) to sit in the band between
+   the picture and the cannon instead (on request: "vị trí xuất hiện sẽ luôn
+   ở dưới khung tranh, trên ụ súng") — the same open band `.scene-wrap`'s own
+   comment describes and `.ftue-gesture` already anchors to, so this shares
+   that exact `top: 56%` rather than inventing a second pixel value for the
+   same gap. */
 .settle-badge {
-  /* Tracks the frame's own move up (FRAME_CENTER_Y in SandCannonEngine.ts) so
-     the two shift together instead of the dots staying pinned to the old
-     gap — see the reserved band note on .scene-wrap above. Sat right at the
-     frame's own top edge at 118px; per feedback that read as sitting on top
-     of the picture rather than above it, pulled back up into the open sky
-     band (closer to `.sand-toast`'s 46px, still a clear gap below it so the
-     two never collide if both show at once). */
-  position: absolute; z-index: 7; top: 70px; left: 50%; transform: translateX(-50%);
+  position: absolute; z-index: 6; left: 50%; top: 56%; transform: translate(-50%, -50%);
   display: flex; align-items: center; gap: 8px; pointer-events: none;
 }
 .settle-badge i {
-  /* Warm brown, not --accent: these sit right over the open sky above the
-     frame with no panel behind them, and that sky is light — a pale dot on
-     it would be invisible instead of just quiet. */
   width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
   animation: settle-dot-grow 1s ease-in-out infinite both;
 }
 .settle-badge i:nth-child(2) { animation-delay: .15s; }
 .settle-badge i:nth-child(3) { animation-delay: .3s; }
+
+/* Generic "visually hidden but still announced" utility — clipped to
+   nothing, not `display: none`/`visibility: hidden`, which would pull a
+   node out of the accessibility tree entirely instead of just off-screen.
+   Not currently used (the status `.settle-badge` announces above is a plain
+   `aria-label` on that visible node instead), kept around as the standard
+   recipe for the next thing that needs an announcement with no visible
+   text of its own. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* Freeze Map's only required feedback (freeze-map-mechanic.md §5.4): sand
    that stops falling reads as a bug unless something on screen explains it.
@@ -1293,6 +1359,36 @@ button.settings-devtoggle {
    solid-colour language every other state chip in this file uses. */
 .sand-toast.is-warn { background: var(--danger); color: var(--danger-ink); }
 .sand-toast.is-good { background: var(--accent); color: var(--accent-ink); }
+
+/* A shot that did nothing — no colour in range, hit the frame, missed
+   outright — used to explain itself with a text `.sand-toast`; on request
+   ("không hiện UI pop up thông báo miss lên, mà thay vì đó cho background
+   có 1 lớp đỏ nhẹ và viền tranh cũng có filter đỏ nhẹ") it is a quick
+   vignette instead. A radial gradient rather than a flat tint is what gets
+   both halves of that ask from ONE layer: fully transparent at the centre
+   (the sand itself reads exactly as it always did) reddening outward, so
+   the wash lands on the open sky/background AND right where the frame's
+   own border sits, without tinting the picture in between. `--danger`'s own
+   hex, not the CSS variable — a `radial-gradient` stop needs a colour value
+   it can interpolate alpha on, and `rgba(var(--danger), ...)` only works
+   for channels already stored as bare numbers, which this custom property
+   isn't.
+   Lives at `.game-frame`'s own top level now (SandGame.tsx moved the node
+   out of `.scene-wrap` on request: "tràn toàn rìa màn hình luôn chứ không
+   phải dừng lại trước UI số đạn hay setting") — z-index above BOTH
+   `.hud-top-left` (31) and `.settings-wrap` (32), the two corners the old
+   in-`.scene-wrap` version could never physically reach, so `inset: 0` here
+   genuinely floods the whole visible frame edge to edge. */
+.miss-flash {
+  position: absolute; inset: 0; z-index: 33; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(255, 154, 139, 0) 55%, rgba(255, 154, 139, .45) 100%);
+  animation: miss-flash-pulse .5s ease-out both;
+}
+@keyframes miss-flash-pulse {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 /* ---- Result ------------------------------------------------------------ */
 .result-screen {
@@ -1635,82 +1731,99 @@ button.settings-devtoggle {
 .daily-login-header h2 { margin: 0; color: #3a2b20; }
 .daily-login-header-strip { height: 7px; background: #e2483f; }
 .daily-login-body { padding: 20px; }
-/* Days 1-6 only now — day 7 breaks out into its own `.daily-login-hero`
-   below (see that block's own comment) — so this is a 6-, not 7-, column
-   strip. */
-.daily-login-strip {
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px;
-  margin: 0 0 10px;
+/* A real month calendar now, not a 7-chip streak strip — every cell is an
+   actual date (`getDailyLoginCalendar`, economy.ts), so "tomorrow" in the
+   grid is really tomorrow. Dressed as its own "calendar panel": a dark
+   scroller (`.daily-login-calendar-scroll`) whose `gap` reads as black grid
+   lines, with each square cell filled cream (`var(--locked)`) — the card's
+   own pastel tone — rather than dark, so the grid pops as a light punch-card
+   sheet laid over a dark tray, not a wholesale dark-mode panel. 5 cells a
+   row, not 7 — no weekday header any more, each cell's own day-of-month
+   number is the only date label — and the grid only shows part of the month
+   at once (`max-height` + `overflow-y: auto` on the scroller below), so the
+   player SWIPES DOWN to see later days rather than everything being
+   squeezed flat to fit unscrolled. */
+.daily-login-month-title {
+  text-align: center; margin: 0 0 8px;
+  font-size: 12px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--muted);
 }
-.daily-login-day {
-  position: relative;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 8px 2px; border-radius: var(--r-md); background: var(--locked);
+/* The scroller: capped height regardless of how many days the month has, so
+   it always shows a partial next row as a "there's more below" hint.
+   Dark background is what makes the `gap` between cells below read as black
+   grid lines rather than empty space. */
+.daily-login-calendar-scroll {
+  max-height: 190px; overflow-y: auto; overflow-x: hidden;
+  margin: 0 0 8px; padding: 8px;
+  border-radius: var(--r-md);
+  background: #100c08;
+  scrollbar-width: thin;
+  scrollbar-color: #55493a #100c08;
 }
-.daily-login-day .coin-icon { width: 15px; height: 15px; color: var(--gold-line); }
-.daily-login-day strong { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); }
-.daily-login-label { font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
-/* Already claimed this cycle — flattened and quieted rather than removed, so
-   the strip still reads as one continuous week. */
-.daily-login-day.is-past { opacity: .55; }
-/* The day the modal opened for — the one chip that can still be claimed. */
-.daily-login-day.is-today {
+.daily-login-calendar-scroll::-webkit-scrollbar { width: 6px; }
+.daily-login-calendar-scroll::-webkit-scrollbar-track { background: transparent; }
+.daily-login-calendar-scroll::-webkit-scrollbar-thumb { background: #55493a; border-radius: 3px; }
+/* The grid itself: square cells (`aspect-ratio: 1`), 5 to a row (was 7 —
+   dropping two columns in the same card width is most of "phóng to ô") on a
+   4px `gap`, which against the scroller's dark background is what draws the
+   black grid lines between them — no per-cell border needed. */
+.daily-login-calendar {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+}
+.daily-login-cell {
+  position: relative; aspect-ratio: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border-radius: 6px; background: var(--locked);
+}
+.daily-login-cell-day {
+  position: absolute; top: 4px; left: 5px;
+  font-size: 10px; font-weight: 700; color: var(--muted);
+}
+.daily-login-cell-coin .coin-icon { width: 16px; height: 16px; color: var(--gold-line); }
+.daily-login-cell strong { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink); }
+/* A real past date — dimmed whether or not it was actually claimed (see
+   `.is-claimed` below for the ones that were). */
+.daily-login-cell.is-past { opacity: .5; }
+/* An exact date this browser really claimed (`claimedDates`, economy.ts) —
+   a checkmark instead of the amount, so the grid never claims credit for a
+   day that was actually missed. */
+.daily-login-cell.is-claimed { opacity: .7; }
+.daily-login-cell-check { font-size: 19px; font-weight: 800; color: var(--accent-line); }
+/* Saturday/Sunday: the one special tier — richest gold of the week, plus
+   (see the perk icon below) a free Prism Shot charge. The gold wash alone
+   marks the tier — no "WEEKEND" text label on top of it any more (per the
+   ask: don't spell it out every cell, the colour already says it).
+   Monday-Friday are plain cream cells, no wash, no perk. Declared BEFORE
+   `.is-today` below, so a weekend day that is also today still shows the
+   accent "today" background, not the gold wash — same specificity either
+   way, source order decides. */
+.daily-login-cell.is-weekend { background: var(--gold); }
+.daily-login-cell.is-weekend strong { color: var(--gold-ink); }
+/* Today — the one cell that can still be claimed. */
+.daily-login-cell.is-today {
   background: var(--accent);
   animation: booster-armed-pulse 1.6s ease-in-out infinite;
 }
-.daily-login-day.is-today strong { color: var(--accent-ink); }
-.daily-login-day.is-today .daily-login-label { color: var(--accent-ink); opacity: .8; }
-.daily-login-day.is-today.is-past { animation: none; }
-/* Days 1-3: dressed as the early "great deal" tier — a warm gold wash and a
-   small floating tag, both quieter than day 7's hero treatment below so the
-   hierarchy still reads value (1-3) < plain (4-6) < hero (7). `.is-today`
-   can still land on one of these (day 1-3 opened fresh) and its own
-   background wins by cascade order (declared after `.is-value` below). */
-.daily-login-day.is-value {
-  background: var(--gold);
+.daily-login-cell.is-today strong,
+.daily-login-cell.is-today .daily-login-cell-day { color: var(--accent-ink); }
+.daily-login-cell.is-today.is-claimed { animation: none; }
+/* The weekend's booster perk — the booster's own icon (`BoosterIcon`, the
+   same glyph the Shop/HUD already use for it) in a small round badge rather
+   than its name spelled out in text, per the ask ("để biểu tượng với icon
+   booster" instead of a text pill). Pinned to the cell's own bottom edge so
+   it never overflows into the row below; the badge's own light backing
+   keeps the icon legible sitting on the gold cell fill. */
+.daily-login-perk-icon {
+  position: absolute; bottom: 3px; right: 3px;
+  display: flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: rgba(255, 255, 255, .65);
 }
-.daily-login-day.is-value strong { color: #6b4b12; }
-.daily-login-value-tag {
-  position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
-  max-width: calc(100% + 6px);
-  padding: 1px 5px; border-radius: var(--r-pill);
-  background: var(--danger); color: var(--danger-ink);
-  font-size: 6.5px; font-weight: 800; letter-spacing: .01em; text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.daily-login-perk-icon .booster-icon { width: 10px; height: 10px; }
+.daily-login-streak {
+  text-align: center; margin: -2px 0 10px;
+  font-size: 11px; font-weight: 700; color: var(--muted);
 }
-/* Day 7's own card, full width and visibly bigger than any day-1-6 chip —
-   the reward the whole week is building toward, not just the last item in
-   a row. Same gold family `.is-value` above uses, one flat shade richer,
-   plus its own "best reward" tag so it stands out even days before it is
-   actually claimable. */
-.daily-login-hero {
-  position: relative;
-  display: flex; flex-direction: column; align-items: center;
-  margin: 6px 0 14px; padding: 16px 14px 13px;
-  border-radius: var(--r-lg);
-  background: var(--gold-line);
-}
-.daily-login-hero-tag {
-  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
-  padding: 3px 13px; border-radius: var(--r-pill);
-  background: var(--danger); color: var(--danger-ink);
-  font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
-  white-space: nowrap;
-}
-.daily-login-hero-body { display: flex; align-items: center; gap: 12px; margin-top: 3px; }
-.daily-login-hero-icon .coin-icon {
-  width: 36px; height: 36px; color: var(--gold-line);
-  filter: drop-shadow(0 2px 2px rgba(0,0,0,.18));
-}
-.daily-login-hero-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-.daily-login-hero-text .daily-login-label { color: #6b4b12; opacity: .85; }
-.daily-login-hero-text strong {
-  font-size: 23px; font-weight: 800; color: #4a2f0a;
-  font-variant-numeric: tabular-nums;
-}
-.daily-login-hero.is-past { opacity: .6; }
-.daily-login-hero.is-today { animation: booster-armed-pulse 1.6s ease-in-out infinite; }
-.daily-login-hero.is-today.is-past { animation: none; }
 
 /* ---- Home screen ------------------------------------------------------- */
 /* Carried over in shape from the pre-pivot menu hub, with one thing changed:
@@ -1914,35 +2027,134 @@ button.settings-devtoggle {
 /* A full-screen takeover, same footing as `.gallery-screen`/`.shop-screen`/
    `.skin-screen` around it in the nav (see the JSX comment on `.modes-screen`
    itself for why this stopped being a `.hub-panel` bottom sheet under this
-   tab's old name, "Customize"). Nothing behind this tab exists yet, so it
-   keeps the hub's own plain ivory wall (`--hub-navy`) rather than borrowing
-   any other tab's colour — there is no content here to key a wash to. */
+   tab's old name, "Customize"). Keeps the hub's own plain ivory wall
+   (`--hub-navy`) — this tab still reads as "pick something" the way Gallery
+   does, not a monetised surface like Shop. Content flows from the top now
+   (`align-items: center` only, matching `.gallery-screen`) rather than
+   vertical-centering the way the old single-placeholder version did — the
+   Zen level list can run to more rows than fit one screen. */
 .modes-screen {
   position: absolute; z-index: 30; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
   padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
   overflow: auto;
   background: var(--hub-navy);
   animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
 /* Same chip `.gallery-heading h2`/`.shop-heading h2`/`.skin-heading h2` use —
-   one consistent "screen title" language across every full-screen takeover,
-   even this still-empty one. Positioned absolute at the screen's own top
-   rather than inline above the centred placeholder below, since the
-   placeholder is the only content and centres on the whole screen, not on
-   the space left under a title. */
-.modes-heading {
-  position: absolute; top: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px);
-  left: 24px; right: 24px; margin: 0; text-align: center;
-}
+   one consistent "screen title" language across every full-screen takeover.
+   Normal flow now (not `position: absolute`), same as `.gallery-heading` —
+   the old absolute positioning only made sense while the one thing below it
+   was vertical-centered on the whole screen. */
+/* `align-self: stretch` (not the flex column's default shrink-to-fit) is
+   load-bearing here: the back button below is `position: absolute; left: 0`
+   INSIDE this box, so it needs the box to actually span the screen's own
+   width — shrink-to-fit would hug it right against the title text instead
+   of the real left edge, overlapping the two. */
+.modes-heading { position: relative; align-self: stretch; margin: 0 0 24px; text-align: center; }
 .modes-heading h2 {
   display: inline-block; margin: 0;
   font-size: 20px; font-weight: 800; color: var(--hub-navy-deep);
 }
-/* The exact `.hub-panel.is-empty` placeholder text this tab always showed,
-   just centred on a full screen instead of sitting inside a small card. */
-.modes-empty { max-width: 320px; text-align: center; }
+/* The Modes screen's own back button — real artwork (`BackIcon`,
+   `/public/icons/backIcon.png`), which already carries its own dark
+   rounded-square backing, so this only sizes and positions it, no button
+   chrome of its own behind it. One button, always shown (not just while the
+   Zen picker is open) — its own click handler decides how far back to step
+   (picker → two cards → Home), see the JSX comment at the call site. */
+.modes-back-btn {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer;
+  display: grid; place-items: center;
+}
+.modes-back-btn:active { transform: translateY(-50%) translateY(2px); }
+.modes-back-btn .back-icon { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* The Modes screen's own "?" button — always in the top-right corner of
+   `.modes-heading`, in both states (two cards, and the Zen level list),
+   unlike `.modes-back-btn` which only shows up for the list. Plain circle
+   chip rather than more real artwork: a bare "?" reads instantly and this
+   is the one glyph in the whole redesign that never got dedicated art. */
+.modes-help-btn {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; padding: 0; border: 2px solid var(--hub-navy-deep);
+  border-radius: 50%; background: var(--panel); color: var(--hub-navy-deep);
+  font-size: 17px; font-weight: 800; line-height: 1; cursor: pointer;
+  display: grid; place-items: center;
+}
+.modes-help-btn:active { transform: translateY(-50%) translateY(2px); }
+/* Same overlay family as `.settings-screen` (dim scrim, centered pop-in
+   card) — this one is read-only, no actions inside beyond the close button,
+   so it stays a plain header + two lines rather than reusing the taller
+   `.settings-card` shell built for scrollable rows of settings. */
+.modes-help-screen {
+  position: absolute; z-index: 34; inset: 0; display: grid; place-items: center;
+  padding: 24px; background: var(--scrim); animation: overlay-in .22s ease-out both;
+}
+.modes-help-card {
+  width: 100%; max-width: 320px;
+  border-radius: var(--r-xl); background: var(--panel);
+  animation: result-pop .3s cubic-bezier(.2,.9,.24,1.3) both;
+  overflow: hidden;
+}
+.modes-help-card-header {
+  position: relative; padding: 16px 52px; text-align: center; background: #474747;
+}
+.modes-help-card-header h2 {
+  margin: 0; font-size: 17px; font-weight: 800; letter-spacing: .04em; color: #ffffff;
+}
+.modes-help-close {
+  position: absolute; top: 50%; right: 14px; transform: translateY(-50%);
+  width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer;
+}
+.modes-help-card-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.modes-help-card-body p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink); }
+.modes-help-card-body b { color: var(--hub-navy-deep); }
+/* Theme Mode's still-empty placeholder note, shown on its own card — same
+   text treatment `.hub-panel-note` already uses everywhere else for "not
+   built yet", and what a Zen list with nothing in it (every draft either
+   invalid or none saved yet) falls back to as well. */
+.modes-empty { max-width: 320px; text-align: center; margin-top: 40px; }
 .modes-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+/* The two mode buttons — Zen Mode (real, its own artwork) and Theme Mode
+   (locked placeholder) — stacked full-width rounded-rectangle image buttons
+   now (on request: "1 nút bấm hình chữ nhật bo góc"), not the small
+   side-by-side icon cards this used to be. */
+.modes-stack {
+  display: flex; flex-direction: column; gap: 16px;
+  width: 100%; max-width: 420px;
+}
+.modes-image-btn {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  border-radius: var(--r-lg); border: 5px solid var(--gold-line);
+  overflow: hidden; background: var(--locked);
+  padding: 0;
+}
+.modes-image-btn:hover:not(:disabled) { transform: translateY(-2px); }
+.modes-image-btn-art {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+/* A name pill anchored to the button's own bottom-left corner rather than
+   text sitting below the artwork — the image fills the whole rounded-rect
+   shape edge to edge, per the ask, so the label has to live ON it. Dark
+   translucent backing keeps it legible over any part of the picture it
+   happens to sit on. */
+.modes-image-btn-label {
+  position: absolute; left: 10px; bottom: 10px; z-index: 1;
+  padding: 6px 14px; border-radius: var(--r-pill);
+  background: rgba(20, 20, 20, .6); color: #fff;
+  font-size: 15px; font-weight: 800;
+  display: flex; align-items: center; gap: 6px;
+}
+/* Theme Mode — not built yet, same rounded-rectangle shape/border as Zen
+   Mode's real button (so the two still read as one matched pair) but a
+   flat locked fill instead of artwork, same "not clickable, reads as
+   locked" language Gallery's own `.is-locked` cards already use. */
+.modes-image-btn.is-locked { border-color: var(--muted); opacity: .6; cursor: default; }
+.modes-image-btn-placeholder {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 48px;
+}
 
 /* ---- Shop ---------------------------------------------------------------- */
 /* A full-screen takeover, same footing as the skin picker (`.skin-screen`
@@ -1989,41 +2201,11 @@ button.settings-devtoggle {
   background: var(--shop-cream); color: var(--shop-brown);
   font-size: 19px; font-weight: 800; letter-spacing: .01em;
 }
-/* Only mounted on the Gems tab (see the JSX) — gems have no other readout
-   anywhere in the game, unlike gold's persistent top-left `.hub-gold-badge`,
-   so this is the one place their balance is ever shown. Pinned to the
-   heading's right edge rather than centred with the title so the two never
-   collide at narrow widths. */
-.shop-gem-badge {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  display: flex; align-items: center; gap: 6px;
-  padding: 7px 14px 7px 9px; border-radius: var(--r-pill);
-  background: var(--gem); color: var(--gem-ink);
-  font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums;
-}
-.shop-gem-badge .gem-icon { width: 18px; height: 18px; }
-/* The Gems/Coins segmented switch — a flat cream pill housing it, the active
-   segment taking a flat fill in its own currency's colour (teal for Gems,
-   sunny yellow for Coins) so the tab previews what's inside before it's
-   even open. No outline/shadow on either the housing or the active pill. */
-.shop-tabs {
-  width: 100%; max-width: 420px; margin: 0 0 20px;
-  padding: 5px; border-radius: var(--r-pill);
-  background: var(--shop-cream);
-  display: flex; gap: 4px;
-}
-.shop-tab-btn {
-  flex: 1; border: 0; padding: 11px 0; border-radius: var(--r-pill);
-  font-size: 15px; font-weight: 800; cursor: pointer;
-  background: transparent; color: var(--shop-brown-soft);
-  transition: background .16s, color .16s;
-}
-.shop-tab-btn.is-active.is-gems { background: var(--gem); color: var(--gem-ink); }
-.shop-tab-btn.is-active.is-coins { background: var(--shop-sun); color: var(--shop-brown); }
-
-/* Everything below the heading/tabs scrolls in here instead of on
-   `.shop-screen` itself — see that class's own comment for why (short
-   version: `.shop-iap-toast` needs a non-scrolling box to pin itself to). */
+/* Everything below the heading scrolls in here instead of on `.shop-screen`
+   itself — see that class's own comment for why (short version:
+   `.shop-iap-toast` needs a non-scrolling box to pin itself to). No more
+   Gems/Coins tabs above this (2026-09d — one unified screen now), so the
+   heading flows straight into the scroll area. */
 .shop-scroll {
   flex: 1; min-height: 0; width: 100%;
   display: flex; flex-direction: column; align-items: center;
@@ -2037,14 +2219,14 @@ button.settings-devtoggle {
 /* ---- Special Offers ---- */
 /* Stacked top to bottom rather than a side-scrolling rail — every offer
    reads without a swipe, same reasoning the Bundles list below follows.
-   Each card is a flat currency-identity fill (teal for the gem-only offer,
-   leafy green for the bundle one) — no outline, no shadow. */
+   Each card is a flat currency-identity fill (teal for the starter offer,
+   leafy green for the weekend one) — no outline, no shadow. */
 .offer-stack { display: flex; flex-direction: column; gap: 14px; }
 .offer-card {
   border-radius: var(--r-lg); padding: 16px;
   display: flex; flex-direction: column; gap: 10px;
 }
-.offer-card.is-teal { background: var(--gem-deep); color: #eafcff; }
+.offer-card.is-teal { background: var(--iap-accent-deep); color: #eafcff; }
 .offer-card.is-green { background: var(--accent); color: var(--accent-ink); }
 .offer-tag {
   align-self: flex-start; padding: 4px 10px; border-radius: var(--r-pill);
@@ -2053,7 +2235,9 @@ button.settings-devtoggle {
 }
 .offer-card h4 { margin: 0; font-size: 17px; font-weight: 800; }
 .offer-contents { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
-.offer-contents .gem-icon, .offer-contents .coin-icon { width: 20px; height: 20px; color: currentColor; }
+.offer-contents .coin-icon, .offer-contents .heart-icon, .offer-contents .emerald-icon {
+  width: 20px; height: 20px; color: currentColor;
+}
 .offer-plus { opacity: .75; font-size: 13px; }
 .buy-btn {
   margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 10px 0;
@@ -2062,21 +2246,23 @@ button.settings-devtoggle {
 }
 .buy-btn:active { opacity: .85; }
 
-/* ---- Bundles: coins + gems together ---- */
+/* ---- Bundles: coins + hearts + a little Blue Emerald together ---- */
 .bundle-list { display: flex; flex-direction: column; gap: 10px; }
 .bundle-row {
   display: flex; align-items: center; gap: 12px;
   background: var(--shop-cream); border-radius: var(--r-md); padding: 10px 12px;
 }
 .bundle-row.is-best { background: var(--shop-cream-deep); }
+/* Coins now, not gems — coins are every bundle's headline number
+   (`.bundle-amount`), so the icon leading the row is its own. */
 .bundle-icon {
   flex: none; width: 44px; height: 44px; border-radius: 50%;
-  background: var(--gem); color: var(--gem-ink); display: grid; place-items: center;
+  background: var(--iap-accent); color: var(--iap-accent-ink); display: grid; place-items: center;
 }
-.bundle-icon .gem-icon { width: 24px; height: 24px; }
+.bundle-icon .coin-icon { width: 24px; height: 24px; color: currentColor; }
 .bundle-mid { flex: 1; min-width: 0; }
 .bundle-flag {
-  font-size: 11px; font-weight: 800; color: var(--gem-deep);
+  font-size: 11px; font-weight: 800; color: var(--iap-accent-deep);
   text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px;
 }
 .bundle-row.is-best .bundle-flag { color: var(--shop-honey); }
@@ -2085,20 +2271,23 @@ button.settings-devtoggle {
   display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: var(--r-pill);
   background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 800;
 }
+/* The hearts + emerald top-up, the smaller "and a bit of these too" line
+   under the headline coin amount. */
 .bundle-sub {
   display: flex; align-items: center; gap: 4px; margin-top: 2px;
   font-size: 12.5px; font-weight: 700; color: var(--shop-brown-soft);
 }
-.bundle-sub .coin-icon { width: 13px; height: 13px; color: var(--shop-honey); }
+.bundle-sub .heart-icon { width: 13px; height: 13px; }
+.bundle-sub .emerald-icon { width: 13px; height: 13px; }
 .bundle-price {
   flex: none; border: 0; border-radius: var(--r-pill); padding: 9px 16px;
   font-weight: 800; font-size: 14px; cursor: pointer;
-  background: var(--gem); color: var(--gem-ink); font-variant-numeric: tabular-nums;
+  background: var(--iap-accent); color: var(--iap-accent-ink); font-variant-numeric: tabular-nums;
 }
 .bundle-row.is-best .bundle-price { background: var(--shop-sun); color: var(--shop-brown); }
 .bundle-price:active { opacity: .85; }
 
-/* ---- Coin packs — unchanged content, just this screen's own card shape ---- */
+/* ---- Coin/Heart packs — same card shape for both direct-buy sections ---- */
 .pack-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .pack-card {
   position: relative;
@@ -2106,6 +2295,7 @@ button.settings-devtoggle {
   display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
 }
 .pack-card .coin-icon { width: 32px; height: 32px; }
+.pack-card .heart-icon { width: 32px; height: 32px; }
 .pack-amount { font-weight: 800; font-size: 15px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
 .pack-bonus {
   margin-left: 4px; font-size: 10.5px; font-weight: 800; color: var(--accent-ink);
@@ -2125,12 +2315,12 @@ button.settings-devtoggle {
   padding: 3px 7px; border-radius: var(--r-pill);
 }
 
-/* A snackbar for every Gems-tab price pill — none of them are wired to a
-   real purchase (see the JSX), so a tap has to say why nothing happened.
-   Pinned to the screen itself, not inside the scrolling `.shop-panel`, so it
-   never scrolls away from the tap that opened it, and it sits above
-   `.hub-nav` (z-index 31) the same way `.sand-toast` sits above the aim
-   zone during play. */
+/* A snackbar for every real-money price pill on this screen — none of them
+   are wired to a real purchase (see the JSX), so a tap has to say why
+   nothing happened. Pinned to the screen itself, not inside the scrolling
+   `.shop-panel`, so it never scrolls away from the tap that opened it, and
+   it sits above `.hub-nav` (z-index 31) the same way `.sand-toast` sits
+   above the aim zone during play. */
 .shop-iap-toast {
   position: absolute; z-index: 32; left: 50%; bottom: calc(var(--hub-nav-height) + 18px);
   transform: translateX(-50%); max-width: 84%;
@@ -2337,11 +2527,29 @@ button.settings-devtoggle {
    `.cannon-unlock-banner`, this one carries no scrim of its own: the board
    underneath has to stay legible through the whole tutorial, so
    `.ftue-freeze-spotlight` below does the dimming by itself, as a ring with
-   a hole in the middle rather than a flat curtain over everything. */
+   a hole in the middle rather than a flat curtain over everything.
+   A direct child of `.game-frame` now (SandGame.tsx moved all three FTUE
+   spotlight overlays out of `.scene-wrap` on request — same fix
+   `.miss-flash` already got: `.scene-wrap`'s own `overflow: hidden` and its
+   inset below the HUD bar meant the dimming below could never actually
+   reach the ammo badge/Settings gear's corner). `z-index` climbs from 30 to
+   33 for the same reason — above both `.hud-top-left` (31) and
+   `.settings-wrap` (32), the same tier `.miss-flash` sits at, so `inset: 0`
+   here genuinely covers the whole visible frame. */
 .ftue-freeze-overlay {
-  position: absolute; inset: 0; z-index: 30;
+  position: absolute; inset: 0; z-index: 33;
   display: block; padding: 0; margin: 0; border: none; background: transparent;
   cursor: pointer; pointer-events: auto;
+}
+/* Level 3's Radius/Prism tutorial (`boosterFtueStep` in SandGame.tsx): the
+   player has to actually tap the REAL tray button this is spotlighting to
+   arm it, not the overlay itself — `pointer-events: none` here drops this
+   div (and everything painted inside it, `.ftue-freeze-spotlight` included)
+   out of hit-testing entirely, so every tap falls straight through to
+   whatever real, interactive element is underneath. Purely a visual
+   highlight now: no `cursor: pointer`, since nothing here is clickable. */
+.ftue-freeze-overlay.is-noninteractive {
+  cursor: default; pointer-events: none;
 }
 /* The dim-everything-except-a-circle trick: an oversized `box-shadow` spread
    from a small, otherwise invisible ring paints the whole frame, leaving only
@@ -2879,6 +3087,18 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 }
 .editor-swatch:hover { transform: translateY(-2px); }
 .editor-swatch.is-active { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.2); }
+/* Zen Mode's free colour picker, replacing the 24-swatch grid — the native
+   `<input type="color">` (native swatch/picker chrome, cannot be styled much
+   beyond size) plus a `.editor-swatch` showing the SNAPPED sand colour that
+   will actually get painted, so the two always read as one control: pick a
+   colour, see what it becomes. */
+.editor-zen-picker { align-items: center; }
+.editor-zen-color-input {
+  width: 34px; height: 34px; padding: 0; border: 2px solid rgba(255,255,255,.24);
+  border-radius: 10px; background: none; cursor: pointer;
+}
+.editor-zen-picker-preview { cursor: default; }
+.editor-zen-picker-preview.is-dim { opacity: .4; }
 
 /* The real <input type="file"> is invisible — its own button triggers it,
    because a file input cannot be restyled into the rest of the toolbar. */
@@ -2929,6 +3149,17 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   background: rgba(10,6,20,.5); color: var(--ink); font-size: 13px;
 }
 .editor-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* The settings sidebar's own Zen Mode toggle — a row checkbox rather than a
+   `.editor-field` (there is no value to type, just a switch), same vertical
+   rhythm (`margin-top`) as the fields either side of it. */
+.editor-zen-check {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: rgba(10,6,20,.35);
+  font-size: 12px; color: var(--ink); line-height: 1.4; cursor: pointer;
+}
+.editor-zen-check input { flex: none; width: 15px; height: 15px; }
 
 .editor-queue { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
 .editor-queue li { display: flex; align-items: center; gap: 7px; font-size: 12px; }
@@ -3065,6 +3296,51 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
 .hub-emerald-badge strong {
   font-size: 16px; font-weight: 800; letter-spacing: -.01em;
   font-variant-numeric: tabular-nums; color: var(--ink);
+}
+
+/* Base size for `HeartIcon` wherever it appears bare (today: the Settings
+   screen's GameDevOption "-1 heart"/"Refill hearts" rows) — same idea as
+   `.coin-icon`/`.emerald-icon`'s own small base rule, overridden bigger only
+   inside the HUD chip below. Without this the raw PNG rendered at its own
+   native pixel size, comically large next to every other `.settings-devlink`
+   icon. */
+.heart-icon { width: 20px; height: 20px; object-fit: contain; display: block; flex: none; }
+
+/* Hearts — third chip in `.hub-currency-row`, only rendered once unlocked
+   (level 10). Same overlap silhouette gold/emerald both use (the icon
+   overlaps a pill's rounded end-cap) — but the COUNT sits ON the icon as
+   its own small badge (on request: "số lượng icon sẽ nằm trên icon
+   HeartIcon luôn"), not inside the pill the way gold/emerald's numbers
+   are. The pill itself is left to hold only the regen countdown, and is
+   simply absent (not an empty pill) once the tank is full — see the JSX
+   comment at the call site. */
+.hub-heart-wrap { height: 44px; display: flex; align-items: center; min-width: 0; }
+.hub-heart-icon-wrap { position: relative; width: 44px; height: 44px; z-index: 1; flex: none; margin-right: -36px; }
+.hub-heart-icon-wrap .heart-icon { width: 100%; height: 100%; object-fit: contain; display: block; }
+.hub-heart-count {
+  position: absolute; right: -3px; bottom: -3px;
+  min-width: 16px; height: 16px; padding: 0 3px; border-radius: var(--r-pill);
+  background: var(--ink); color: #fff;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+  line-height: 1; box-shadow: 0 0 0 2px var(--bg, #f4ecd8);
+}
+/* The regen countdown pill — same overlap technique as
+   `.hub-gold-wrap .coin-icon`/`.hub-emerald-wrap .emerald-icon`
+   (`padding-left` leaves room for the icon's own circle, which sits on top
+   via that negative `margin-right` above), only rendered while the tank is
+   short a heart. The one HUD chip whose text changes every second on its
+   own (`SandGame.tsx`'s 1-second timer). */
+.hub-heart-badge {
+  display: flex; align-items: center; height: 44px;
+  padding: 0 14px 0 42px; border-radius: var(--r-pill);
+  /* Pale pink — hearts' own currency colour, same "cozy paper" lightness
+     gold's yellow/emerald's blue both sit at. */
+  background: #ffd7de;
+}
+.hub-heart-badge small {
+  font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: #7a2634; white-space: nowrap;
 }
 
 /* ---- Home screen: the reward track -------------------------------------- */

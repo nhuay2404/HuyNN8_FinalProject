@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   SandCannonEngine,
   SAND_COLOR_HEX,
@@ -36,14 +36,15 @@ import {
   subscribeRewardTrack,
   buyBoosterCharges,
   claimDailyLogin,
-  dailyLoginReward,
   DAILY_LOGIN_REWARDS,
   devNow,
+  getDailyLoginCalendar,
   getDailyLoginState,
   getDevDateOffsetDays,
   getWallet,
   hasClearedLevel,
   levelGoldReward,
+  levelMilestoneBonus,
   markLevelCleared,
   resetClearedLevels,
   resetDailyLogin,
@@ -53,13 +54,25 @@ import {
   SERVER_REWARD_TRACK,
   SERVER_WALLET,
   subscribeWallet,
+  getHeartsState,
+  spendHeart,
+  resetHearts,
+  isHeartsUnlocked,
+  subscribeHearts,
+  getHeartsVersion,
+  SERVER_HEARTS,
+  MAX_HEARTS,
+  HEARTS_UNLOCK_LEVEL_ID,
   type RewardTrackState,
   type DailyLoginState,
+  type DailyLoginCalendarCell,
+  type HeartsState,
 } from "./game/economy";
 import { ensureEconomyConfigLoading, getEconomyConfigVersion, subscribeEconomyConfig } from "./game/economy-config";
 import { computeLevelDifficulty } from "./game/level-difficulty";
 import { ensureLevelRewardsLoading, getLevelRewardOverride } from "./game/level-rewards";
 import { BUILT_IN_LEVELS } from "../design/levels/sand-levels";
+import { BUILT_IN_ZEN_LEVELS, ZEN_ID_BASE } from "../design/levels/zen-levels";
 import { draftToLevel, loadDrafts, validateDraft } from "./game/level-drafts";
 import {
   ammoRemaining,
@@ -79,8 +92,12 @@ import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./g
 import { advanceLoading, finishLoading } from "./loading-screen";
 import { getLanguage, LANGUAGES, LANGUAGE_NAME, setLanguage, subscribeLanguage, t, type Strings } from "./i18n";
 
-function hex(color: SandColor) {
-  return numHex(SAND_COLOR_HEX[color]);
+/** `palette` is a level's own `customPalette` (see `SandLevelConfig`'s doc
+ * comment) — passed by every call site that has a level in scope, so a Zen
+ * level's image-derived colours actually show up in the HUD/thumbnail
+ * instead of the shared candy palette. */
+function hex(color: SandColor, palette?: Partial<Record<SandColor, number>>) {
+  return numHex(palette?.[color] ?? SAND_COLOR_HEX[color]);
 }
 
 /**
@@ -91,8 +108,8 @@ function hex(color: SandColor) {
  * cyan sand colour it was pulled from, rather than painting the frame in a
  * colour of its own.
  */
-function ammoSky(color: SandColor) {
-  const value = SAND_COLOR_HEX[color];
+function ammoSky(color: SandColor, palette?: Partial<Record<SandColor, number>>) {
+  const value = palette?.[color] ?? SAND_COLOR_HEX[color];
   const lighten = (channel: number) => Math.round(channel + (255 - channel) * 0.62);
   const r = lighten((value >> 16) & 0xff);
   const g = lighten((value >> 8) & 0xff);
@@ -110,28 +127,39 @@ function numHex(value: number) {
 // whichever language is current instead of being fixed English records.
 
 /**
- * The Shop's Gems tab — real-money offers, none of it wired to an actual
- * payment processor yet (see `notifyIapComingSoon` at the call site).
- * `wallet.gems` itself is a display-only starter balance (`STARTER_GEMS` in
- * economy.ts) until something in the game actually spends it, same as gold
- * before boosters made it real.
+ * The Shop's real-money offers/bundles/packs — none of it wired to an actual
+ * payment processor yet (see `notifyIapComingSoon` at the call site). Gems
+ * are gone from the game entirely (2026-09d, on request — the hard currency
+ * nothing ever spent, see economy.ts's own history); every real-money item
+ * now sells some mix of the three currencies that actually DO something:
+ * gold (spendable on boosters today), hearts (the play-attempt currency,
+ * capped at `MAX_HEARTS`), and a SMALL Blue Emerald top-up (skins) — the
+ * reward track stays the only FREE source of emerald, this is just a taste
+ * of it for players who would rather pay than grind toward one.
  */
-type SpecialOffer = { id: string; name: string; tag: string; gems: number; coins?: number; bonus?: string; price: string };
+type SpecialOffer = { id: string; name: string; tag: string; coins?: number; hearts?: number; emeralds?: number; bonus?: string; price: string };
 const SPECIAL_OFFERS: readonly SpecialOffer[] = [
-  { id: "starter", name: "Islander's Starter Pack", tag: "First purchase", gems: 500, coins: 1200, price: "$4.99" },
-  { id: "weekend", name: "Weekend Gem Rush", tag: "Weekend only", gems: 1400, bonus: "+35% extra", price: "$9.99" },
+  { id: "starter", name: "Islander's Starter Pack", tag: "First purchase", coins: 1200, hearts: 3, emeralds: 150, price: "$4.99" },
+  // No coins on the weekend offer, on purpose — it reads as a hearts/emerald
+  // top-up for someone who already has plenty of gold, the one asymmetry
+  // the old "Weekend Gem Rush" (gems only, no coins) also had.
+  { id: "weekend", name: "Weekend Heart Rush", tag: "Weekend only", hearts: MAX_HEARTS, emeralds: 300, bonus: "+35% extra", price: "$9.99" },
 ];
 
-/** Each bundle sells both currencies together — gems, the hard currency the
- * Gems tab otherwise sells alone, plus a coin top-up so a single purchase
- * also covers something spendable today. */
-type Bundle = { id: string; gems: number; coins: number; bonus?: string; flag?: string; price: string };
+/** Each bundle sells all three currencies together, per the ask ("Bundles
+ * giờ sẽ là Coins + heart + 1 ít blue emerald") — coins carried over
+ * unchanged from the old gems+coins bundles (same five price points/coin
+ * amounts), hearts capped at `MAX_HEARTS` (a bundle cannot sell more hearts
+ * than the tank can ever hold at once), emerald a small top-up scaling with
+ * price — never enough alone to buy a skin outright at the cheap end
+ * (Rune Cannon is 500, `costumes.ts`), a real head start at the top. */
+type Bundle = { id: string; coins: number; hearts: number; emeralds: number; bonus?: string; flag?: string; price: string };
 const BUNDLES: readonly Bundle[] = [
-  { id: "b1", gems: 80, coins: 400, price: "$0.99" },
-  { id: "b2", gems: 500, coins: 2500, bonus: "+10%", price: "$4.99" },
-  { id: "b3", gems: 1200, coins: 6000, bonus: "+20%", flag: "Most popular", price: "$9.99" },
-  { id: "b4", gems: 2600, coins: 13000, bonus: "+35%", price: "$19.99" },
-  { id: "b5", gems: 7000, coins: 35000, bonus: "+50%", flag: "Best value", price: "$49.99" },
+  { id: "b1", coins: 400, hearts: 1, emeralds: 50, price: "$0.99" },
+  { id: "b2", coins: 2_500, hearts: 2, emeralds: 120, bonus: "+10%", price: "$4.99" },
+  { id: "b3", coins: 6_000, hearts: 3, emeralds: 250, bonus: "+20%", flag: "Most popular", price: "$9.99" },
+  { id: "b4", coins: 13_000, hearts: MAX_HEARTS, emeralds: 400, bonus: "+35%", price: "$19.99" },
+  { id: "b5", coins: 35_000, hearts: MAX_HEARTS, emeralds: 800, bonus: "+50%", flag: "Best value", price: "$49.99" },
 ];
 
 /** Coin-only packs, priced the way mobile-game coin ladders usually are:
@@ -145,6 +173,17 @@ const COIN_PACKS: readonly CoinPack[] = [
   { id: "c5", coins: 28_000, bonus: "+30%", flag: "Popular", price: "$19.99" },
   { id: "c6", coins: 80_000, bonus: "+45%", price: "$49.99" },
   { id: "c7", coins: 180_000, bonus: "+60%", flag: "Best value", price: "$99.99" },
+];
+
+/** Hearts sold directly, alongside Coins rather than folded into it — on
+ * request: "Ngoài coins ra giờ sẽ có mục mua riêng". Every tier is capped at
+ * `MAX_HEARTS` (a full tank) — there is nowhere to put a heart bought past
+ * that, so a ladder past 5 would just be a number nothing can ever use. */
+type HeartPack = { id: string; hearts: number; flag?: string; price: string };
+const HEART_PACKS: readonly HeartPack[] = [
+  { id: "h1", hearts: 1, price: "$0.99" },
+  { id: "h2", hearts: 3, price: "$1.99" },
+  { id: "h3", hearts: MAX_HEARTS, flag: "Full refill", price: "$2.99" },
 ];
 
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
@@ -503,6 +542,23 @@ function EmeraldIcon() {
   return <img className="emerald-icon" src="/icons/BlueEmeraldIcon.png" alt="" aria-hidden="true" />;
 }
 
+/** Hearts — the play-attempt currency, locked until level 10
+ * (`isHeartsUnlocked`, economy.ts). Real artwork (`/public/icons/HeartIcon.png`),
+ * the same `<img>` treatment `CoinIcon`/`EmeraldIcon` get. */
+function HeartIcon() {
+  return <img className="heart-icon" src="/icons/HeartIcon.png" alt="" aria-hidden="true" />;
+}
+
+/** A generic "go back" glyph (`/public/icons/backIcon.png`) — used wherever a
+ * screen needs an explicit back action rather than relying only on the
+ * bottom nav (today: the Modes screen, both its two-card view and the Zen
+ * picker inside it). Already carries its own dark rounded-square backing in
+ * the art, same as `BoosterIcon`'s PNGs, so no button chrome is drawn behind
+ * it beyond sizing/positioning. */
+function BackIcon() {
+  return <img className="back-icon" src="/icons/backIcon.png" alt="" aria-hidden="true" />;
+}
+
 /** The reward chest on the home screen's own track button — the flat icon
  * (`/public/icons/ChestIcon.png`). The chest that actually OPENS is not this:
  * it is a 3D rig the engine draws (`chest-model.ts`, built to match this same
@@ -510,25 +566,6 @@ function EmeraldIcon() {
  * places rather than two different chests. */
 function ChestIcon() {
   return <img className="chest-icon" src="/icons/ChestIcon.png" alt="" aria-hidden="true" />;
-}
-
-/** The Shop's hard-currency glyph — a faceted gem, drawn the same way
- * `CoinIcon` is (a flat `currentColor` fill plus a darker line for the
- * facets) so the two currencies read as one family at a glance despite the
- * different shape. */
-function GemIcon() {
-  return (
-    <svg className="gem-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M12 3.2 18.4 8 15 20.4H9L5.6 8Z" fill="currentColor" />
-      <path
-        d="M12 3.2 18.4 8H5.6ZM5.6 8 9 20.4M18.4 8 15 20.4M12 3.2 9 8M12 3.2 15 8"
-        fill="none"
-        stroke="#1c4d54"
-        strokeWidth="1"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 /**
@@ -548,7 +585,7 @@ function PixelThumb({ level }: { level: SandLevelConfig }) {
       {level.rows.flatMap((row, y) =>
         [...row].map((letter, x) => {
           const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
-          return <i key={`${x}-${y}`} style={color ? { background: hex(color) } : undefined} />;
+          return <i key={`${x}-${y}`} style={color ? { background: hex(color, level.customPalette) } : undefined} />;
         }),
       )}
     </span>
@@ -581,6 +618,11 @@ type Playable = { level: SandLevelConfig; fromEditor: boolean };
 function collectPlayables(): Playable[] {
   const builtIn: Playable[] = BUILT_IN_LEVELS.map((level) => ({ level, fromEditor: false }));
   const drafts = loadDrafts()
+    // A Zen draft (`mode: "zen"`) belongs on `collectZenPlayables`'s own list
+    // below, never this one — without this filter a level authored in the
+    // editor's Zen toggle would show up twice: once here (wrongly finite,
+    // ignoring its own unlimited shots/boosters), once on the real Zen list.
+    .filter((draft) => draft.mode !== "zen")
     .filter((draft) => draft.importedFromId === undefined)
     .filter((draft) => !validateDraft(draft).some((issue) => issue.severity === "error"))
     .map((draft, index) => ({
@@ -588,6 +630,50 @@ function collectPlayables(): Playable[] {
       fromEditor: true,
     }));
   return [...builtIn, ...drafts];
+}
+
+/**
+ * Zen Mode's own switcher list — the built-in seed levels (`BUILT_IN_ZEN_LEVELS`,
+ * zen-levels.ts) plus whatever the editor's "Zen Mode" toggle has saved,
+ * same shape and same reasoning as `collectPlayables` above (drafts with
+ * errors excluded, an "Import built-in" working copy excluded), just filtered
+ * to `draft.mode === "zen"` instead of the ordinary main-list drafts. A
+ * separate list rather than a `mode` filter over one combined array because
+ * nothing else about Zen Mode (its own id space, `ZEN_ID_BASE`, its own
+ * "always unlocked, no progression" picker) shares `playables`' own rules —
+ * see `SandGame.tsx`'s `playingZen` state for how the two lists are switched
+ * between at play time.
+ */
+function collectZenPlayables(): Playable[] {
+  const builtIn: Playable[] = BUILT_IN_ZEN_LEVELS.map((level) => ({ level, fromEditor: false }));
+  const drafts = loadDrafts()
+    .filter((draft) => draft.mode === "zen")
+    .filter((draft) => draft.importedFromId === undefined)
+    .filter((draft) => !validateDraft(draft).some((issue) => issue.severity === "error"))
+    .map((draft, index) => ({
+      level: draftToLevel(draft, ZEN_ID_BASE + BUILT_IN_ZEN_LEVELS.length + index + 1),
+      fromEditor: true,
+    }));
+  return [...builtIn, ...drafts];
+}
+
+/**
+ * Zen Mode's playables list, read once per page load — same hydration-safety
+ * shape as `readBoot`/`SERVER_BOOT` below (real on the client, a fixed
+ * built-ins-only stand-in on the server, read through `useSyncExternalStore`
+ * so hydration never has to reconcile a list only one side computed) —
+ * except Zen has no URL-driven `initialIndex` to re-derive ("Test in game"
+ * for a Zen draft lands the player on the Zen picker, not straight into the
+ * level — see zen-levels.ts's own header for that trade-off), so this is
+ * just the list, cached once.
+ */
+const SERVER_ZEN_PLAYABLES: Playable[] = BUILT_IN_ZEN_LEVELS.map((level) => ({ level, fromEditor: false }));
+
+let cachedZenPlayables: Playable[] | null = null;
+
+function readZenPlayables(): Playable[] {
+  if (!cachedZenPlayables) cachedZenPlayables = collectZenPlayables();
+  return cachedZenPlayables;
 }
 
 /**
@@ -639,13 +725,62 @@ function readBoot(): Boot {
  * the client and a fixed "nothing claimed yet" stand-in on the server, so
  * hydration never has to reconcile a modal that only one side knows about).
  */
-const SERVER_DAILY_LOGIN: DailyLoginState = { day: 0, reward: DAILY_LOGIN_REWARDS[0], claimedToday: false };
+const SERVER_DAILY_LOGIN: DailyLoginState = {
+  weekday: 0,
+  date: "",
+  reward: DAILY_LOGIN_REWARDS[0],
+  boosterPerk: null,
+  claimedToday: false,
+  streak: 0,
+};
 
 let cachedInitialDailyLogin: DailyLoginState | null = null;
 
 function readInitialDailyLogin(): DailyLoginState {
   if (!cachedInitialDailyLogin) cachedInitialDailyLogin = getDailyLoginState(devNow());
   return cachedInitialDailyLogin;
+}
+
+/**
+ * Same hydration-safety reasoning as `SERVER_DAILY_LOGIN`/`readInitialDailyLogin`
+ * just above, for the calendar grid: `getDailyLoginCalendar` reads real
+ * `localStorage` (which `date` claimed) the instant it is called client-side,
+ * so calling it directly during render — as the modal's JSX used to — reads a
+ * DIFFERENT value during the client's hydration pass than the server ever
+ * saw (SSR always sees an empty `claimedDates`, a real browser usually does
+ * not), which React reports as a hydration mismatch. Cached once per load
+ * and paired with a fixed empty-grid server snapshot, the same shape as the
+ * wallet/streak above, fixes it: hydration renders the empty grid on both
+ * sides, and the real one swaps in right after mount.
+ */
+const SERVER_DAILY_CALENDAR: DailyLoginCalendarCell[] = [];
+
+let cachedInitialDailyCalendar: DailyLoginCalendarCell[] | null = null;
+
+function readInitialDailyCalendar(): DailyLoginCalendarCell[] {
+  if (!cachedInitialDailyCalendar) cachedInitialDailyCalendar = getDailyLoginCalendar(devNow());
+  return cachedInitialDailyCalendar;
+}
+
+/**
+ * Whether the hearts system has ever been unlocked on this browser
+ * (`isHeartsUnlocked`, economy.ts — level `HEARTS_UNLOCK_LEVEL_ID` cleared),
+ * as it stood the moment this page was first checked this load — same
+ * hydration-safety shape as `readInitialDailyLogin` above (`false` is the
+ * one universally correct SSR/first-paint answer, since a server render
+ * never has `localStorage`), read through `useSyncExternalStore` so
+ * hydration never disagrees about whether the HUD chip is on screen.
+ *
+ * This can go stale mid-session in exactly one direction — a player who
+ * clears level 10 for the very first time THIS load — which the WIN
+ * handler's own `heartsUnlockedOverride` state (component-level, not this
+ * module cache) covers; see that state's own comment.
+ */
+let cachedInitialHeartsUnlocked: boolean | null = null;
+
+function readInitialHeartsUnlocked(): boolean {
+  if (cachedInitialHeartsUnlocked === null) cachedInitialHeartsUnlocked = isHeartsUnlocked();
+  return cachedInitialHeartsUnlocked;
 }
 
 /**
@@ -674,6 +809,80 @@ function markTutorialSeen(id: number) {
     // time, which is a mild annoyance, not a broken game.
   }
 }
+
+/**
+ * Whether this browser has EVER opened the game before — checked once, right
+ * after mount, to skip the Home screen's "tap Play" step the very first time
+ * (on request: "Khi người mở game ra lần đầu tiên, lập tức chơi level 1
+ * luôn"). A first-time player lands straight in Level 1's guided opening
+ * (its `tutorial` overlay, same as any other first visit to that level)
+ * instead of having to find and tap Play on an otherwise-empty Home screen
+ * before anything happens at all. Every later open — reload included, since
+ * this is set the instant the first one fires — behaves exactly as before:
+ * Home screen, Play button, nothing auto-started.
+ */
+const FIRST_OPEN_SEEN_KEY = "sand-cannon:v1:first-open-seen";
+
+function hasOpenedBefore(): boolean {
+  try {
+    return window.localStorage.getItem(FIRST_OPEN_SEEN_KEY) === "1";
+  } catch {
+    // Private browsing or a full quota: falls back to "yes, treat as a
+    // returning player" — auto-starting play on every single reload because
+    // storage never sticks would be far more disruptive than the reverse.
+    return true;
+  }
+}
+
+function markOpened() {
+  try {
+    window.localStorage.setItem(FIRST_OPEN_SEEN_KEY, "1");
+  } catch {
+    // Nothing to persist if storage is unavailable — see `hasOpenedBefore`'s
+    // own fallback for why that direction is the safe one.
+  }
+}
+
+/**
+ * The WIN card's own "✕ back to Home" button (`.result-close-btn`) is
+ * withheld through the guided opening — levels 1-3, the same span level 3's
+ * own booster FTUE already treats as "still being taught the game" — so a
+ * brand-new player cannot bail out mid-tutorial back to an empty Home screen
+ * before ever seeing Continue. On request: "hướng dẫn đến level 3 rồi mới
+ * hiện nút (X) ở frame cleared". Every level from 4 on keeps the button
+ * exactly as it always had it; so does every Zen level (its own WIN card
+ * check below reads `playingZen` first) — Zen never ran this onboarding at
+ * all, so there is nothing for it to be withheld from. Levels 1-3 always
+ * have a next level to Continue to, so hiding this one button never leaves
+ * a player stranded on the card with no way off it.
+ */
+const WIN_CLOSE_BUTTON_FROM_LEVEL_ID = 4;
+
+/**
+ * Chain Sort stays out of both the in-play booster tray and the Shop's
+ * Boosters grid until level 5 — its own tutorial level (`ftueChainSortDemo`)
+ * — not just level 3 (on request: "Chainsort chưa nên hiện cho tới level
+ * 5", tightening an earlier version of this same gate that only hid it
+ * during level 3's Radius/Prism tutorial). `>=` this id is what actually
+ * shows it again, level 5's own tutorial included — the button has to be
+ * visible for that tutorial to spotlight it at all.
+ */
+const CHAIN_SORT_UNLOCK_LEVEL_ID = 5;
+
+/**
+ * Level 3's Radius Overcharge/Prism Shot tutorial — and, on request, Level
+ * 5's Chain Sort one too, now taught the exact same way — no longer watches
+ * a scripted stand-in shot; both teach by having the player actually arm and
+ * fire the real booster themselves (see `boosterFtueStep`'s own doc comment
+ * for the whole redesigned beat-by-beat shape, and `chainSortFtueStep`'s for
+ * how it reuses the same shape for a single booster). This is the one
+ * timing knob both still need: once the player's own shot lands and the
+ * sand finishes settling (`state.phase` back to `"READY"`), the result
+ * stays on screen, uncovered, for this long before the tutorial moves on —
+ * long enough to actually read what their shot just did, short enough that
+ * it never reads as the game stalling.
+ */
+const BOOSTER_TRY_SETTLE_HOLD_MS = 1000;
 
 /**
  * Levels whose scripted freeze demo (`SandLevelConfig.ftueFreezeDemo`) has
@@ -763,6 +972,18 @@ function setBoosterShopHint(active: boolean) {
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
+/** `msUntilNext` (from `HeartsState`) as `m:ss`, for both the HUD chip's own
+ * countdown and the "out of hearts" toast — one format, read the same way in
+ * both places. Floors rather than rounds, so the label counts down to
+ * exactly `0:00` the instant the heart actually lands rather than blinking
+ * from `0:01` to a heart appearing. */
+function formatHeartCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 /** Falling paper pieces covering the whole WIN screen (`.win-confetti` in
  * globals.css) — a fixed hand-picked set rather than `Math.random()` so the
  * layout doesn't reshuffle every re-render while the result screen is up.
@@ -809,6 +1030,81 @@ export default function SandGame() {
   // null means "nothing picked yet, so use whatever the URL asked for".
   const [chosenIndex, setChosenIndex] = useState<number | null>(null);
   const levelIndex = chosenIndex ?? boot.initialIndex;
+
+  // ---- Zen Mode --------------------------------------------------------
+  // Own switcher list (`zenPlayables`, never mixed with the main `playables`
+  // above), own selected index, and a flag saying which of the two lists
+  // `raw`/`level` below should actually read from right now — see
+  // `openZenLevel`/`goHome`/the `hub-nav` tap handler for how the three stay
+  // in sync. `zenPickerOpen` is purely which screen the Modes tab shows
+  // (the two mode buttons, or the Zen level list) — it can stay `true` while
+  // `playingZen` is momentarily `false` (browsing the list before picking a
+  // level) and vice versa is never true (picking a level always implies the
+  // list was open).
+  const zenPlayables = useSyncExternalStore(noopSubscribe, readZenPlayables, () => SERVER_ZEN_PLAYABLES);
+  const [playingZen, setPlayingZen] = useState(false);
+  const [zenLevelIndex, setZenLevelIndex] = useState(0);
+  const [zenPickerOpen, setZenPickerOpen] = useState(false);
+  // The Modes screen's own "?" info popup (on request: "Đặt 1 icon '?' ở góc
+  // trên cùng bên phải để giải thích sơ về các mode") — a plain overlay card,
+  // same family as `.settings-screen`, explaining what each mode card does
+  // before a player commits to tapping one. Shown in both Modes states (the
+  // two cards AND the Zen level list) since "what is this mode" is a
+  // reasonable question from either.
+  const [modesHelpOpen, setModesHelpOpen] = useState(false);
+
+  // ---- Hearts (lives) ---------------------------------------------------
+  // See `economy.ts`'s own "hearts (lives)" section header for the whole
+  // design. Two pieces of state: whether the system is unlocked at all
+  // (`heartsUnlocked`), and the live count + regen countdown (`hearts`,
+  // updated on its own 1-second timer below so the countdown actually
+  // counts down on screen, not just on a spend).
+  const initialHeartsUnlocked = useSyncExternalStore(noopSubscribe, readInitialHeartsUnlocked, () => false);
+  // Sticky true the instant level `HEARTS_UNLOCK_LEVEL_ID` is cleared THIS
+  // load (the WIN handler below sets this) — `initialHeartsUnlocked` alone
+  // would miss that until the next full reload, since it is only ever read
+  // once per page load (see its own comment).
+  const [heartsUnlockedOverride, setHeartsUnlockedOverride] = useState(false);
+  const heartsUnlocked = initialHeartsUnlocked || heartsUnlockedOverride;
+  // Bumps whenever the STORED record changes (a spend, a dev reset) —
+  // `subscribeHearts`/`getHeartsVersion` — which the effect below listens
+  // for to recompute `hearts` immediately rather than waiting up to a
+  // second for its own timer tick.
+  const heartsStoreVersion = useSyncExternalStore(subscribeHearts, getHeartsVersion, () => 0);
+  // `SERVER_HEARTS` (a full tank) is the correct value for both the server
+  // pass and the client's own first paint — real regen state only exists in
+  // `localStorage`, so reading it any earlier than an effect (which never
+  // runs during hydration) would be the same hydration-mismatch mistake
+  // `SERVER_DAILY_CALENDAR`'s own comment already explains for the
+  // daily-login grid.
+  const [hearts, setHearts] = useState<HeartsState>(SERVER_HEARTS);
+  useEffect(() => {
+    if (!heartsUnlocked) return;
+    const update = () => setHearts(getHeartsState(devNow().getTime()));
+    update();
+    const interval = window.setInterval(update, 1000);
+    return () => window.clearInterval(interval);
+  }, [heartsUnlocked, heartsStoreVersion]);
+
+  /**
+   * The Play/Restart entry points' one shared gate — spends a heart and
+   * returns `true` (go ahead and start playing) when there was one to spend,
+   * or shows the "out of hearts" toast and returns `false` (the caller must
+   * NOT start play) when the tank was empty. A no-op that always returns
+   * `true` before hearts unlock or while playing Zen — see `economy.ts`'s
+   * own header for why Zen never touches this at all.
+   */
+  const tryStartAttempt = useCallback((): boolean => {
+    if (!heartsUnlocked || playingZen) return true;
+    if (spendHeart(devNow().getTime())) {
+      setHearts(getHeartsState(devNow().getTime()));
+      return true;
+    }
+    const state = getHeartsState(devNow().getTime());
+    pushToast(s.outOfHearts(formatHeartCountdown(state.msUntilNext ?? 0)), "warn");
+    return false;
+  }, [heartsUnlocked, playingZen]);
+
   const [runId, setRunId] = useState(0);
   // Whether the tutorial overlay is open. Opened by `startPlaying` the first
   // time a level with unread `tutorial` content starts play.
@@ -868,80 +1164,115 @@ export default function SandGame() {
   }, [freezeFtueTapReady]);
 
   /**
-   * Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`) — same
-   * beat-by-beat shape as `freezeFtueStep` just above, teaching two
-   * boosters back to back instead of one mechanic's before/after:
+   * Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`) — teaches
+   * two boosters back to back by having the player actually arm and fire
+   * each one themselves, not by watching a scripted stand-in shot:
    *
-   *   intro-radius   — spotlight + caption on the Radius Overcharge button
-   *   demo-radius    — (no caption) scripted shot #1: fires with it armed
-   *   intro-prism    — spotlight + caption on the Prism Shot button
-   *   demo-prism     — (no caption) scripted shot #2: fires with it armed
-   *   outro          — plain caption, waiting for the final tap (resets
-   *                    the level via `restart()`, same reasoning as
-   *                    `freezeFtueStep`'s own "outro" — the two demo shots
-   *                    are not meant to cost the player anything)
+   *   intro-radius — spotlight (dark everywhere else, a see-through hole
+   *                  over the real Radius Overcharge tray button — see
+   *                  `.ftue-freeze-spotlight` in globals.css) + caption,
+   *                  purely visual (`pointer-events: none` on the whole
+   *                  overlay) so the tap actually needed here reaches the
+   *                  REAL button underneath and arms it for real
+   *   shoot-radius — the overlay is gone outright; the player aims and
+   *                  fires their own shot with it armed, exactly like any
+   *                  other shot. `armedBooster` flipping to
+   *                  "radiusOvercharge" is what moves `intro-radius` here;
+   *                  `state.phase` returning to "READY" with `shotsUsed`
+   *                  past this step's own baseline is "the shot landed and
+   *                  the sand finished settling", which — held for
+   *                  `BOOSTER_TRY_SETTLE_HOLD_MS` — is what moves on
+   *   intro-prism  — same idea as intro-radius, spotlighting Prism Shot
+   *   shoot-prism  — same idea as shoot-radius; landing this one hands
+   *                  control back outright (no outro caption) — on
+   *                  request: "cho người chơi booster như cũ rồi tiếp tục
+   *                  màn hiện tại"
+   *
+   * On request (replacing an earlier scripted-demo version entirely):
+   * "Nó nên là hiện giới thiệu highlight booster -> bắt người chơi nhấn
+   * vào -> tắt opacity, để người chơi tự nhắm và bắn -> bắn xong, sau khi
+   * cát sand settling được 1 giây thì giới thiệu prism shot... Sau khi bắn
+   * xong, sau cát sand settling được 1 giây thì cho người chơi booster như
+   * cũ rồi tiếp tục màn hiện tại."
    */
   const [boosterFtueStep, setBoosterFtueStep] = useState<
-    "intro-radius" | "demo-radius" | "intro-prism" | "demo-prism" | "outro" | null
+    "intro-radius" | "shoot-radius" | "intro-prism" | "shoot-prism" | null
   >(null);
-  const [boosterFtueTapReady, setBoosterFtueTapReady] = useState(false);
-  useEffect(() => {
-    const captionStep = boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism" || boosterFtueStep === "outro";
-    if (!captionStep) return;
-    setBoosterFtueTapReady(false);
-    const timer = window.setTimeout(() => setBoosterFtueTapReady(true), 500);
-    return () => window.clearTimeout(timer);
-  }, [boosterFtueStep]);
-  // Only "intro-radius" and "intro-prism" go through here — "outro"'s tap is
-  // wired to `restart` directly at the call site, same reasoning as
-  // `advanceFreezeFtue`'s own comment.
-  const advanceBoosterFtue = useCallback(() => {
-    if (!boosterFtueTapReady) return;
-    setBoosterFtueStep((step) => {
-      switch (step) {
-        case "intro-radius": return "demo-radius";
-        case "intro-prism": return "demo-prism";
-        default: return step;
-      }
-    });
-  }, [boosterFtueTapReady]);
+  // Which `state.shotsUsed` count a "shoot-*" step started at — the signal
+  // for "the player's own shot has landed" is this count going up, not just
+  // `state.phase` cycling (aiming/idle time before they actually fire looks
+  // identical to settled-and-waiting otherwise). Set by the arm-detection
+  // effect the instant a step becomes "shoot-*"; read by the settle effect
+  // just below it.
+  const shootStepBaselineShotsRef = useRef(0);
+  // The two effects that actually drive `boosterFtueStep` forward live
+  // further down, right after `state` and `armedBooster` are both in scope
+  // — they need to read `state.phase`/`state.shotsUsed` and `armedBooster`,
+  // none of which exist yet at this point in the component body.
 
   /**
-   * Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`) — same
-   * beat-by-beat shape as `boosterFtueStep` just above, but for one booster
-   * instead of a pair:
+   * Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`) —
+   * on request ("Tôi muốn flow tutorial giới thiệu chainsort cũng sẽ giống
+   * như 2 booster trước đó"), reuses the exact same "player actually arms
+   * and fires the real booster themselves" shape `boosterFtueStep` teaches
+   * Radius Overcharge/Prism Shot with, just for one booster instead of a
+   * pair — no more scripted demo shot, no more "outro"/loop-until-tapped:
    *
-   *   intro   — spotlight + caption on the Chain Sort button
-   *   demo    — (no caption) the one scripted shot, fired with it armed
-   *   outro   — plain caption, waiting for the final tap (resets the level
-   *             via `restart()`, same reasoning as `boosterFtueStep`'s own
-   *             outro — the demo shot is not meant to cost the player
-   *             anything)
+   *   intro — spotlight (dark everywhere else, a see-through hole over the
+   *           real Chain Sort tray button) + caption, purely visual
+   *           (`pointer-events: none` on the whole overlay) so the tap
+   *           actually needed here reaches the REAL button underneath and
+   *           arms it for real
+   *   shoot — the overlay is gone outright; the player aims and fires their
+   *           own shot with it armed, exactly like any other shot.
+   *           `armedBooster` flipping to "chainSort" is what moves `intro`
+   *           here; `state.phase` returning to "READY" with `shotsUsed`
+   *           past this step's own baseline is "the shot landed and the
+   *           sand finished settling", which — held for
+   *           `BOOSTER_TRY_SETTLE_HOLD_MS` — hands control back outright
+   *           (no outro caption), same as `boosterFtueStep`'s own
+   *           "shoot-prism" ending
+   *
+   * The two effects that actually drive this forward live further down,
+   * right after `state` and `armedBooster` are both in scope — same reason
+   * `boosterFtueStep`'s own pair of effects live there, and this reuses
+   * their shared `shootStepBaselineShotsRef` (the two tutorials never run
+   * on the same level at once, so sharing it is safe).
    */
-  const [chainSortFtueStep, setChainSortFtueStep] = useState<"intro" | "demo" | "outro" | null>(null);
-  const [chainSortFtueTapReady, setChainSortFtueTapReady] = useState(false);
-  useEffect(() => {
-    const captionStep = chainSortFtueStep === "intro" || chainSortFtueStep === "outro";
-    if (!captionStep) return;
-    setChainSortFtueTapReady(false);
-    const timer = window.setTimeout(() => setChainSortFtueTapReady(true), 500);
-    return () => window.clearTimeout(timer);
-  }, [chainSortFtueStep]);
-  // Only "intro" goes through here — "outro"'s tap is wired to `restart`
-  // directly at the call site, same reasoning as `advanceBoosterFtue`'s own
-  // comment.
-  const advanceChainSortFtue = useCallback(() => {
-    if (!chainSortFtueTapReady) return;
-    setChainSortFtueStep((step) => (step === "intro" ? "demo" : step));
-  }, [chainSortFtueTapReady]);
+  const [chainSortFtueStep, setChainSortFtueStep] = useState<"intro" | "shoot" | null>(null);
 
   // The engine simulates and reports state at pixel resolution — every number
   // this component reads off `state` (remainingCells above all) is in those
   // terms, so the level it reasons about here has to be expanded the same way,
   // not the small authored blueprint. Expansion is idempotent, so handing this
   // already-expanded config to the engine below costs nothing extra.
-  const raw = playables[Math.min(levelIndex, playables.length - 1)]?.level ?? BUILT_IN_LEVELS[0];
+  //
+  // `playingZen` picks which of the two lists this reads from — the main
+  // list and the Zen list never share an index space (see `ZEN_ID_BASE`), so
+  // this has to be an either/or, not a merge.
+  const raw = playingZen
+    ? (zenPlayables[Math.min(zenLevelIndex, zenPlayables.length - 1)]?.level ?? BUILT_IN_ZEN_LEVELS[0])
+    : (playables[Math.min(levelIndex, playables.length - 1)]?.level ?? BUILT_IN_LEVELS[0]);
   const level = useMemo(() => expandLevelForPixelBoard(raw), [raw]);
+
+  /**
+   * Whether the level 1-3 onboarding lock (Settings gear hidden mid-play,
+   * WIN card's own ✕ hidden, booster tray showing empty) still applies. On
+   * request ("Nút setting không xuất hiện ở level 1, 2, 3 khi người chơi
+   * vào game lần đầu, nếu người chơi chơi lại, kích hoạt level từ gallery
+   * HUB thì nó vẫn hiện. Booster cũng vậy") — `raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID`
+   * on its own only covers "has this play session reached level 4 yet",
+   * which re-locks every one of these the moment a player REPLAYS level
+   * 1-3 later (from Gallery, GameDevOption, or Home's Play once level 1 is
+   * cleared again) — the onboarding walkthrough is long over by then, so
+   * there is nothing left to protect the player from. `hasClearedLevel`
+   * reads the same persisted "cleared at least once" record the Gallery
+   * grid's own unlock check and Chain Sort's unlock gate already trust —
+   * once level 3 has been cleared a single time, this is permanently
+   * `true` from then on (never re-locks), same shape as every other
+   * once-and-done unlock in this file. */
+  const onboardingLockLifted =
+    raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID || hasClearedLevel(WIN_CLOSE_BUTTON_FROM_LEVEL_ID - 1);
 
   // Drives the two "demo-*" freeze-tutorial steps: fires the scripted
   // shot(s) for that beat, then moves straight to the next caption once
@@ -969,66 +1300,25 @@ export default function SandGame() {
     }
   }, [freezeFtueStep, engine, level]);
 
-  // Drives the two "demo-*" booster-tutorial steps — same shape as the
-  // freeze one just above, except each demo shot also arms the booster it
-  // is teaching first (`runScriptedBoosterShot`, not the plain
-  // `runScriptedShotSequence`). `level.ftueBoosterTargets` is
-  // `[radiusTarget, prismTarget]` (see its own doc comment).
-  useEffect(() => {
-    if (!engine) return;
-    const targets = level.ftueBoosterTargets;
-    if (!targets || targets.length < 2) return;
-    if (boosterFtueStep === "demo-radius") {
-      let cancelled = false;
-      engine.runScriptedBoosterShot("radiusOvercharge", targets[0].x, targets[0].y).finally(() => {
-        if (!cancelled) setBoosterFtueStep("intro-prism");
-      });
-      return () => { cancelled = true; };
-    }
-    if (boosterFtueStep === "demo-prism") {
-      let cancelled = false;
-      engine.runScriptedBoosterShot("prismShot", targets[1].x, targets[1].y).finally(() => {
-        if (!cancelled) setBoosterFtueStep("outro");
-      });
-      return () => { cancelled = true; };
-    }
-  }, [boosterFtueStep, engine, level]);
-
-  // Drives Chain Sort's own single "demo" step — same shape as the booster
-  // pair's effect just above, one scripted shot instead of two.
-  useEffect(() => {
-    if (!engine) return;
-    const target = level.ftueChainSortTarget;
-    if (!target) return;
-    if (chainSortFtueStep === "demo") {
-      let cancelled = false;
-      engine.runScriptedBoosterShot("chainSort", target.x, target.y).finally(() => {
-        if (!cancelled) setChainSortFtueStep("outro");
-      });
-      return () => { cancelled = true; };
-    }
-  }, [chainSortFtueStep, engine, level]);
-
   // The Shop tab's "go buy the boosters you just tried" red dot
-  // (`BOOSTER_SHOP_HINT_KEY`) — lit the instant the demo finishes, so it's
+  // (`BOOSTER_SHOP_HINT_KEY`) — lit the instant a tutorial finishes, so it's
   // waiting on the hub-nav the moment the player backs out to Home (the nav
   // itself is what's hidden during play, not this flag). Kept as its own
   // piece of state, not read fresh from storage on every render like
   // `unseenAffordableSkins`, because there's no wallet/level input to
-  // recompute it from — it only ever changes on these two explicit edges.
+  // recompute it from — it only ever changes on these explicit edges, both
+  // of them the "shoot-*"/"shoot" ending of a tutorial (further down, once
+  // `state`/`armedBooster` are in scope, alongside `boosterFtueStep`'s and
+  // `chainSortFtueStep`'s own settle-detection effects).
   const [boosterShopHint, setBoosterShopHintState] = useState(false);
   useEffect(() => {
     setBoosterShopHintState(loadBoosterShopHint());
   }, []);
-  useEffect(() => {
-    if (boosterFtueStep !== "outro" && chainSortFtueStep !== "outro") return;
-    setBoosterShopHint(true);
-    setBoosterShopHintState(true);
-  }, [boosterFtueStep, chainSortFtueStep]);
 
   // A placeholder only: the engine publishes the real state from its
   // constructor, so whatever is here is replaced on the first frame.
   const [state, setState] = useState<SandGameState>(() => createSandGameState(level));
+
   // The shots-badge dot's colour and its upcoming strip, both kept one step
   // behind `state.queue`: see the comment on `loadedAmmo` below for why.
   // Bundled into one bump counter because the two only ever change together
@@ -1047,12 +1337,80 @@ export default function SandGame() {
   // booster is armed. The engine is the source of truth (it is what enforces
   // spec §3's no-cancel, no-swap rule); this only echoes it for the HUD.
   const [armedBooster, setArmedBooster] = useState<BoosterType | null>(null);
+
+  // The real tray button arming is what advances past each "intro-*" step
+  // of `boosterFtueStep` — see its own doc comment for why there is nothing
+  // to tap on the overlay itself any more.
+  useEffect(() => {
+    if (boosterFtueStep === "intro-radius" && armedBooster === "radiusOvercharge") {
+      shootStepBaselineShotsRef.current = state.shotsUsed;
+      setBoosterFtueStep("shoot-radius");
+    } else if (boosterFtueStep === "intro-prism" && armedBooster === "prismShot") {
+      shootStepBaselineShotsRef.current = state.shotsUsed;
+      setBoosterFtueStep("shoot-prism");
+    }
+  }, [armedBooster, boosterFtueStep, state.shotsUsed]);
+  // The player's own shot landing (and the sand settling after it) is what
+  // advances past each "shoot-*" step, held `BOOSTER_TRY_SETTLE_HOLD_MS` so
+  // the result actually reads before anything covers it again.
+  useEffect(() => {
+    if (boosterFtueStep !== "shoot-radius" && boosterFtueStep !== "shoot-prism") return;
+    if (state.phase !== "READY" || state.shotsUsed <= shootStepBaselineShotsRef.current) return;
+    const timer = window.setTimeout(() => {
+      if (boosterFtueStep === "shoot-radius") {
+        setBoosterFtueStep("intro-prism");
+      } else {
+        // The pair is done — hand control back outright, no outro caption
+        // (on request), and light the Shop's own "go buy more" hint the
+        // same moment `chainSortFtueStep`'s own "shoot" ending, just below,
+        // does too.
+        setBoosterFtueStep(null);
+        setBoosterShopHint(true);
+        setBoosterShopHintState(true);
+      }
+    }, BOOSTER_TRY_SETTLE_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [boosterFtueStep, state.phase, state.shotsUsed]);
+
+  // Level 5's Chain Sort tutorial — same pair of effects as `boosterFtueStep`
+  // just above, reusing the exact same `shootStepBaselineShotsRef` (the two
+  // tutorials live on different levels and never run at once), just for one
+  // booster instead of two: real tray-button arming advances "intro" to
+  // "shoot", the player's own shot landing (settled `BOOSTER_TRY_SETTLE_HOLD_MS`)
+  // hands control back outright — no scripted demo, no outro caption.
+  useEffect(() => {
+    if (chainSortFtueStep === "intro" && armedBooster === "chainSort") {
+      shootStepBaselineShotsRef.current = state.shotsUsed;
+      setChainSortFtueStep("shoot");
+    }
+  }, [armedBooster, chainSortFtueStep, state.shotsUsed]);
+  useEffect(() => {
+    if (chainSortFtueStep !== "shoot") return;
+    if (state.phase !== "READY" || state.shotsUsed <= shootStepBaselineShotsRef.current) return;
+    const timer = window.setTimeout(() => {
+      setChainSortFtueStep(null);
+      setBoosterShopHint(true);
+      setBoosterShopHintState(true);
+    }, BOOSTER_TRY_SETTLE_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [chainSortFtueStep, state.phase, state.shotsUsed]);
+
   // Bumped once per Radius Overcharge impact (`BOOSTER_IMPACT`) — the actual
   // shake is a CSS animation restarted by the effect below keyed on this
   // number, not a class this state directly renders, since the same class
   // held constant across two bumps would not replay the animation on its
   // own (on request: "rung chuyển toàn HUD").
   const [radiusShakeBump, setRadiusShakeBump] = useState(0);
+  /** Bumped once per `NO_MATCH`/`MISS` engine event — a shot that hit
+   * nothing of its own colour, hit the frame, or missed the frame outright.
+   * Same "bump counter, not a boolean" shape as `radiusShakeBump` just
+   * above and for the same reason: the CSS animation it keys
+   * (`.miss-flash`, remounted on every change via `key={missFlashBump}`)
+   * has to replay even when two misses land back to back before the
+   * previous flash finished fading. Replaces the old text toast entirely —
+   * on request: "không hiện UI pop up thông báo miss lên, mà thay vì đó cho
+   * background có 1 lớp đỏ nhẹ và viền tranh cũng có filter đỏ nhẹ". */
+  const [missFlashBump, setMissFlashBump] = useState(0);
   const hudAmmoClusterRef = useRef<HTMLDivElement | null>(null);
   const hudSettingsRef = useRef<HTMLDivElement | null>(null);
   // Replays `.hud-radius-shake` on both HUD clusters every time
@@ -1092,16 +1450,12 @@ export default function SandGame() {
   // never let a player dial in a quantity they cannot pay for), so this can
   // stay a plain number.
   const [buyQty, setBuyQty] = useState(1);
-  // The Shop's two tabs — Gems (real-money offers/bundles/coin packs, none
-  // of it wired to a payment processor yet) and Coins (the booster store
-  // above, spending the real, earned-by-playing currency). Coins is the
-  // default: it is the one tab that actually does something today.
-  const [shopTab, setShopTab] = useState<"gems" | "coins">("coins");
-  // A small "not live yet" notice for every Gems-tab buy button — there is no
-  // payment processor behind any of them, so tapping one cannot silently do
-  // nothing; it has to say why. Its own state rather than reusing `toast`
-  // above: `toast` renders inside `.scene-wrap`, which sits underneath the
-  // Shop screen's own opaque background and would never be seen from here.
+  // A small "not live yet" notice for every real-money buy button (Special
+  // Offers, Bundles, the Coins/Hearts packs) — there is no payment processor
+  // behind any of them, so tapping one cannot silently do nothing; it has to
+  // say why. Its own state rather than reusing `toast` above: `toast`
+  // renders inside `.scene-wrap`, which sits underneath the Shop screen's
+  // own opaque background and would never be seen from here.
   const [iapNotice, setIapNotice] = useState(false);
   const iapNoticeTimer = useRef<number | null>(null);
   const notifyIapComingSoon = useCallback(() => {
@@ -1217,6 +1571,27 @@ export default function SandGame() {
   // all write a real snapshot (or `null` for "closed") here, which then wins
   // over the initial one for the rest of the session.
   const [dailyLoginOverride, setDailyLoginOverride] = useState<DailyLoginState | null | undefined>(undefined);
+  // Mirrors `dailyLoginOverride`, for the calendar grid's own claimed-state:
+  // `undefined` until a claim happens this session, at which point the grid
+  // needs to redraw today's cell with its checkmark — same "write a real
+  // snapshot on claim" shape, just a whole grid's worth instead of one day's.
+  const [dailyCalendarOverride, setDailyCalendarOverride] = useState<DailyLoginCalendarCell[] | undefined>(undefined);
+  /** Lit the instant the daily-login modal gets FORCE-closed by a hub-nav tap
+   * (see the nav's own `onClick` below) while still unclaimed — on request:
+   * "nếu người nhấn phần thanh tác vụ ở dưới và chuyển sang hub khác, thì
+   * daily login đó buộc phải tắt đi... nếu ... vẫn chưa nhận phần thưởng,
+   * thì sẽ hiện chấm đỏ". Not set for an ordinary dismiss (the corner X or
+   * tapping the scrim) — only the "the player was on their way somewhere
+   * else and never got to decide" case needs a reminder; a player who
+   * closed it on purpose already made their choice. Cleared the moment a
+   * claim actually lands (`claimDailyLoginWithFlight` below), same "one
+   * look is enough to dismiss it" shape as `boosterShopHint`'s own dot —
+   * except this one needs the reward actually collected, not just seen,
+   * since the whole point is "you still haven't claimed this". Session-only
+   * (not persisted): a reload with today still unclaimed re-opens the modal
+   * automatically anyway (`initialDailyLogin` above), which already puts it
+   * back in front of the player without needing this dot too. */
+  const [dailyLoginMissedClaim, setDailyLoginMissedClaim] = useState(false);
   /** Claims today's reward, then flies a handful of coins from the day
    * strip's highlighted cell to the hub's gold badge before the number
    * there ticks up — the visual payoff `claimDailyLogin` itself has no
@@ -1226,6 +1601,8 @@ export default function SandGame() {
     const claimed = claimDailyLogin(devNow());
     if (!claimed) return;
     setDailyLoginOverride(claimed);
+    setDailyCalendarOverride(getDailyLoginCalendar(devNow()));
+    setDailyLoginMissedClaim(false);
     const fromEl = todayCoinRef.current;
     const toEl = goldHudRef.current;
     if (!fromEl || !toEl) {
@@ -1267,25 +1644,39 @@ export default function SandGame() {
   }, [tab]);
 
   // The hub's own currency HUD (`.hub-gold-wrap`) doubles as a shortcut to
-  // buying more — tapping it jumps straight to the Gems tab's own "Coins"
-  // section (real-money packs, `COIN_PACKS`), not just the tab itself, since
-  // that section sits below Special Offers and would otherwise need a manual
+  // buying more — tapping it jumps straight to the "Buy coins directly"
+  // section (real-money packs, `COIN_PACKS`) rather than just opening the
+  // Shop at its top, since that section sits a few screens down (Special
+  // Offers, then Bundles, above it) and would otherwise need a manual
   // scroll to find. `coinPackSectionRef` is what gets scrolled into view;
-  // `scrollToCoinPacks` just remembers the intent across the tab switch
-  // (`shopTab` flipping to "gems" unmounts/remounts the Coins tab's content,
-  // so the scroll can only happen once that new content exists).
+  // `scrollToCoinPacks` just remembers the intent until the Shop screen is
+  // actually mounted (`tab` flipping to `"shop"` is not synchronous with
+  // this click, so the ref is not attached to anything yet the instant this
+  // runs).
   const coinPackSectionRef = useRef<HTMLDivElement | null>(null);
   const [scrollToCoinPacks, setScrollToCoinPacks] = useState(false);
   const openCoinPacks = useCallback(() => {
     setTab("shop");
-    setShopTab("gems");
     setScrollToCoinPacks(true);
   }, []);
   useEffect(() => {
-    if (!scrollToCoinPacks || tab !== "shop" || shopTab !== "gems") return;
+    if (!scrollToCoinPacks || tab !== "shop") return;
     coinPackSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     setScrollToCoinPacks(false);
-  }, [scrollToCoinPacks, tab, shopTab]);
+  }, [scrollToCoinPacks, tab]);
+
+  // Same shortcut shape as `openCoinPacks` above, for the `hub-nav`'s own
+  // Shop-tab hint dot — "go buy the boosters you just tried" now means
+  // scrolling all the way to the Boosters section at the very end of the
+  // unified Shop screen (see that section's own comment for why it moved
+  // there), not switching to a "Coins tab" that no longer exists.
+  const boostersSectionRef = useRef<HTMLDivElement | null>(null);
+  const [scrollToBoosters, setScrollToBoosters] = useState(false);
+  useEffect(() => {
+    if (!scrollToBoosters || tab !== "shop") return;
+    boostersSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScrollToBoosters(false);
+  }, [scrollToBoosters, tab]);
   /**
    * Pays out `pendingHomeReward` (see its own comment) the moment its badge
    * is actually on screen to fly into — `!playing && tab === "home"`, the
@@ -1456,11 +1847,13 @@ export default function SandGame() {
   }, []);
 
   // Re-renders whenever `economy.csv` actually changes (`economy-config.ts`'s
-  // version counter) — the Shop panel's price and the daily-login modal's
-  // 7-day strip both read `boosterPrice`/`dailyLoginReward` directly during
-  // render rather than through `subscribeWallet`, so without this a poll
-  // pickup would sit in the module cache unseen until some unrelated
-  // re-render happened to read it fresh.
+  // version counter) — the Shop panel's price reads `boosterPrice` directly
+  // during render rather than through `subscribeWallet`, so without this a
+  // poll pickup would sit in the module cache unseen until some unrelated
+  // re-render happened to read it fresh. (The daily-login calendar's own
+  // numbers are cached once per page load instead, same trade-off
+  // `cachedInitialDailyLogin` already makes — see `SERVER_DAILY_CALENDAR`'s
+  // comment — so a CSV edit there needs a reload, not just this poll.)
   useSyncExternalStore(subscribeEconomyConfig, getEconomyConfigVersion, () => 0);
 
   /**
@@ -1622,6 +2015,11 @@ export default function SandGame() {
   const dailyLogin = dailyLoginOverride !== undefined
     ? dailyLoginOverride
     : (initialDailyLogin.claimedToday ? null : initialDailyLogin);
+  // The calendar grid's own data, same hydration-safe shape as `dailyLogin`
+  // just above (see `SERVER_DAILY_CALENDAR`'s comment for why this cannot
+  // just call `getDailyLoginCalendar` inline in the JSX below).
+  const initialDailyCalendar = useSyncExternalStore(noopSubscribe, readInitialDailyCalendar, () => SERVER_DAILY_CALENDAR);
+  const dailyCalendar = dailyCalendarOverride ?? initialDailyCalendar;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1644,15 +2042,15 @@ export default function SandGame() {
           setFtueGestureOpen(false);
           break;
         case "NO_MATCH":
-          // A shot can land on sand and still take nothing — the disc simply
-          // found none of its colour in reach. That looks like a bug unless it
-          // is said out loud.
-          pushToast(s.toastNoColorInRange(s.colorName(event.ammo)), "warn");
-          break;
         case "MISS":
-          // A shot that never reached sand costs nothing (MISS_IS_FREE_TEMP),
-          // and the player has to be told, or a missing shot is the only clue.
-          pushToast(event.hitFrame ? s.toastHitFrame : s.toastMissedFrame, "warn");
+          // Both used to push a text toast explaining exactly what went
+          // wrong (no colour in range / hit the frame / missed outright) —
+          // on request: "Khi hit miss, không hiện UI pop up thông báo miss
+          // lên, mà thay vì đó cho background có 1 lớp đỏ nhẹ và viền tranh
+          // cũng có filter đỏ nhẹ". One flash covers every flavour of
+          // "that shot didn't do anything" now; see `missFlashBump`'s own
+          // comment for what it actually renders.
+          setMissFlashBump((n) => n + 1);
           break;
         case "UNLOCKED":
           pushToast(s.toastLockOpened, "good");
@@ -1741,6 +2139,7 @@ export default function SandGame() {
     setRunId((id) => id + 1);
     setFreezeFtueStep(null);
     setBoosterFtueStep(null);
+    setChainSortFtueStep(null);
   }, [level]);
 
   const goHome = useCallback(() => {
@@ -1751,7 +2150,12 @@ export default function SandGame() {
     setArmedBooster(null);
     setRunId((id) => id + 1);
     setPlaying(false);
-    setTab("home");
+    // A Zen level's own "home" is the Zen picker, not the main hub — leaving
+    // `playingZen`/`zenPickerOpen` alone (both already true at this point)
+    // so the Modes tab reopens right back on the level list, not the
+    // two-button screen. Only Modes tab's own nav tap (see `HUB_TABS.map`
+    // below) resets `playingZen` — the actual "leave Zen Mode" action.
+    setTab(playingZen ? "modes" : "home");
     // Both overlays are already gated on `playing` at the call site, so
     // leaving either `true` here could not leak onto the hub screen — this
     // is just so a level left mid-tutorial/mid-FTUE doesn't quietly resume
@@ -1761,22 +2165,116 @@ export default function SandGame() {
     setFtueGestureOpen(false);
     setFreezeFtueStep(null);
     setBoosterFtueStep(null);
-  }, [level]);
+    setChainSortFtueStep(null);
+  }, [level, playingZen]);
 
   const openLevel = useCallback((index: number) => {
     setChosenIndex(index);
+    // Belt and braces alongside the `hub-nav` tap handler's own reset: any
+    // path that opens a MAIN-list level must leave Zen Mode, or `raw`
+    // (branched on `playingZen`) would keep reading the Zen list against a
+    // main-list index.
+    setPlayingZen(false);
     setState(createSandGameState(expandLevelForPixelBoard(playables[index].level)));
     setToast(null);
     setArmedBooster(null);
     setRunId((id) => id + 1);
   }, [playables]);
 
+  /**
+   * Zen Mode's own `openLevel` — picks from `zenPlayables` instead of the
+   * main list, and starts play immediately rather than just previewing on
+   * the home screen (`pickFromGallery`'s own two-step "pick, then tap Play"
+   * does not exist here: the Zen picker IS the level list, so tapping a
+   * level in it is the one and only action). Zen levels have no
+   * tutorial/FTUE fields left on them (`toZenLevel` in zen-levels.ts strips
+   * them) and no lock/unlock progression, so this skips every check
+   * `startPlaying` runs for the main list — there is nothing here for any of
+   * them to find.
+   */
+  const openZenLevel = useCallback((index: number) => {
+    setZenLevelIndex(index);
+    setPlayingZen(true);
+    setState(createSandGameState(expandLevelForPixelBoard(zenPlayables[index].level)));
+    setToast(null);
+    setArmedBooster(null);
+    setRunId((id) => id + 1);
+    setPlaying(true);
+  }, [zenPlayables]);
+
+  /**
+   * Every "a level is about to start being played" FTUE check, run against
+   * whichever `SandLevelConfig` is ABOUT to load — never the render's own
+   * `level`, which still describes whatever was on screen a moment ago.
+   * This is what actually decides whether a first-time overlay shows; every
+   * call site below just has to remember to call it with the right level.
+   *
+   * Extracted out of `startPlaying` (still one of its callers, a few
+   * hundred lines down) after a report that reaching level 3 by tapping
+   * Continue off level 2 never showed the booster tutorial — Continue calls
+   * `openLevel` directly, which only ever touched board state, never any of
+   * this. Home's Play tap is not the only door into a level: Continue (just
+   * below) and the cannon-unlock reveal's own "advance after this" path
+   * (right here) walk straight into the next one without ever passing back
+   * through Home, so they need this exact same check, just handed the level
+   * they are ABOUT to open instead of relying on a closure over whatever
+   * render happened to be current.
+   *
+   * Reads and writes localStorage directly rather than through state: this
+   * only ever runs from a click, never during render or an effect, so there
+   * is no server-pass mismatch to guard against and nothing worth keeping in
+   * React state for it.
+   */
+  const triggerLevelFtue = useCallback((lvl: SandLevelConfig) => {
+    if (lvl.tutorial && !loadSeenTutorials().has(lvl.id)) {
+      setTutorialOpen(true);
+      markTutorialSeen(lvl.id);
+    }
+    if (lvl.ftueGesture) {
+      setFtueGestureOpen(true);
+    }
+    // Level 31's freeze tutorial: marked seen the instant it starts, same as
+    // `tutorial` above — the point is "never plays again on this browser",
+    // not "played to completion", so backgrounding the tab mid-tutorial still
+    // counts. `forcedOpeningQueue` (mint, mint, mint, grass) stays in force
+    // on every future attempt regardless — that part is plain level config,
+    // read fresh every time, nothing to do with this flag. Kicks off at
+    // `"intro"`; the effect above and `advanceFreezeFtue` carry it the rest
+    // of the way from there.
+    if (lvl.ftueFreezeDemo && lvl.ftueFreezeTargets?.length
+      && !loadSeenFreezeFtue().has(lvl.id)) {
+      markFreezeFtueSeen(lvl.id);
+      setFreezeFtueStep("intro");
+    }
+    // Level 3's booster tutorial: same "marked seen the instant it starts"
+    // reasoning as the freeze one just above. `forcedBoosterCharges` (3
+    // Radius Overcharge, 2 Prism Shot) stays in force on every future
+    // attempt regardless, same as `forcedOpeningQueue` does for ammo.
+    if (lvl.ftueBoosterDemo && lvl.ftueBoosterTargets && lvl.ftueBoosterTargets.length >= 2
+      && !loadSeenBoosterFtue().has(lvl.id)) {
+      markBoosterFtueSeen(lvl.id);
+      setBoosterFtueStep("intro-radius");
+    }
+    // Level 5's Chain Sort tutorial: same "marked seen the instant it
+    // starts" reasoning, sharing the same seen-set/key as the pair above —
+    // it is keyed per level id, so level 3's and level 5's own FTUE never
+    // collide. `forcedBoosterCharges` (1 Chain Sort) stays in force on every
+    // future attempt regardless, same as `forcedOpeningQueue` does for ammo.
+    if (lvl.ftueChainSortDemo && lvl.ftueChainSortTarget && !loadSeenBoosterFtue().has(lvl.id)) {
+      markBoosterFtueSeen(lvl.id);
+      setChainSortFtueStep("intro");
+    }
+  }, []);
+
   /** The reveal's own close — only reachable once `cannonUnlockTapReady`, so
    * a tap cannot skip past the name before the prompt inviting one exists.
    * Advances to the next level afterward when this reveal came from a
    * level-clear unlock (`cannonUnlockAdvanceTo` set, by the "Frame cleared"
    * card's own Continue button below) — the skin-screen purchase case
-   * (`buySkin`) leaves it `null` and this just closes as it always has. */
+   * (`buySkin`) leaves it `null` and this just closes as it always has.
+   * `triggerLevelFtue` runs for that next level here too — see its own
+   * comment for why: this is one of the doors into a level that skips
+   * Home's Play tap entirely. */
   const dismissCannonUnlock = useCallback(() => {
     engine?.stopUnlockCelebration();
     setCannonUnlock(null);
@@ -1784,8 +2282,9 @@ export default function SandGame() {
       const next = cannonUnlockAdvanceTo;
       setCannonUnlockAdvanceTo(null);
       openLevel(next);
+      triggerLevelFtue(expandLevelForPixelBoard(playables[next].level));
     }
-  }, [engine, cannonUnlockAdvanceTo, openLevel]);
+  }, [engine, cannonUnlockAdvanceTo, openLevel, playables, triggerLevelFtue]);
 
   /** Picking from the gallery shows that picture on the home screen, unplayed. */
   const pickFromGallery = useCallback((index: number) => {
@@ -1841,9 +2340,9 @@ export default function SandGame() {
    * the dev date-offset tool below so a full reset does not leave "today"
    * quietly nudged. Reloads immediately after rather than trying to patch
    * every already-rendered piece of state by hand — several of these
-   * (`cachedInitialDailyLogin`, the reward track's cached snapshot, the
-   * wallet cache) are only ever read fresh once per page load, the same
-   * reasoning `applyDevDateOffset` below relies on.
+   * (`cachedInitialDailyLogin`, `cachedInitialDailyCalendar`, the reward
+   * track's cached snapshot, the wallet cache) are only ever read fresh once
+   * per page load, the same reasoning `applyDevDateOffset` below relies on.
    */
   const resetEntireGame = useCallback(() => {
     resetWallet();
@@ -1851,12 +2350,17 @@ export default function SandGame() {
     resetDailyLogin();
     resetRewardTrack();
     resetOwnedCostumes();
+    resetHearts();
     setDevDateOffsetDays(0);
     try {
       window.localStorage.removeItem(TUTORIALS_SEEN_KEY);
       window.localStorage.removeItem(FREEZE_FTUE_SEEN_KEY);
       window.localStorage.removeItem(BOOSTER_FTUE_SEEN_KEY);
       window.localStorage.removeItem(BOOSTER_SHOP_HINT_KEY);
+      // So "reset entire game" really does put a tester back at a brand-new
+      // install, auto-play-into-Level-1 included, rather than every other
+      // first-time flag clearing except this one.
+      window.localStorage.removeItem(FIRST_OPEN_SEEN_KEY);
     } catch {
       // Nothing to clean up if storage is unavailable.
     }
@@ -1945,53 +2449,38 @@ export default function SandGame() {
    * The home screen's Play tap. Enters play, and — the first time this level
    * is opened, ever, on this browser — opens its FTUE overlay on top of the
    * fresh board rather than letting the player's first shot be a guess.
-   *
-   * Reads and writes localStorage directly rather than through state: this
-   * only ever runs from a click, never during render or an effect, so there
-   * is no server-pass mismatch to guard against and nothing worth keeping in
-   * React state for it.
    */
   const startPlaying = useCallback(() => {
     setPlaying(true);
-    if (level.tutorial && !loadSeenTutorials().has(level.id)) {
-      setTutorialOpen(true);
-      markTutorialSeen(level.id);
-    }
-    if (level.ftueGesture) {
-      setFtueGestureOpen(true);
-    }
-    // Level 31's freeze tutorial: marked seen the instant it starts, same as
-    // `tutorial` above — the point is "never plays again on this browser",
-    // not "played to completion", so backgrounding the tab mid-tutorial still
-    // counts. `forcedOpeningQueue` (mint, mint, mint, grass) stays in force
-    // on every future attempt regardless — that part is plain level config,
-    // read fresh every time, nothing to do with this flag. Kicks off at
-    // `"intro"`; the effect above and `advanceFreezeFtue` carry it the rest
-    // of the way from there.
-    if (level.ftueFreezeDemo && level.ftueFreezeTargets?.length
-      && !loadSeenFreezeFtue().has(level.id)) {
-      markFreezeFtueSeen(level.id);
-      setFreezeFtueStep("intro");
-    }
-    // Level 3's booster tutorial: same "marked seen the instant it starts"
-    // reasoning as the freeze one just above. `forcedBoosterCharges` (3
-    // Radius Overcharge, 2 Prism Shot) stays in force on every future
-    // attempt regardless, same as `forcedOpeningQueue` does for ammo.
-    if (level.ftueBoosterDemo && level.ftueBoosterTargets && level.ftueBoosterTargets.length >= 2
-      && !loadSeenBoosterFtue().has(level.id)) {
-      markBoosterFtueSeen(level.id);
-      setBoosterFtueStep("intro-radius");
-    }
-    // Level 5's Chain Sort tutorial: same "marked seen the instant it
-    // starts" reasoning, sharing the same seen-set/key as the pair above —
-    // it is keyed per level id, so level 3's and level 5's own FTUE never
-    // collide. `forcedBoosterCharges` (1 Chain Sort) stays in force on every
-    // future attempt regardless, same as `forcedOpeningQueue` does for ammo.
-    if (level.ftueChainSortDemo && level.ftueChainSortTarget && !loadSeenBoosterFtue().has(level.id)) {
-      markBoosterFtueSeen(level.id);
-      setChainSortFtueStep("intro");
-    }
-  }, [level]);
+    triggerLevelFtue(level);
+  }, [level, triggerLevelFtue]);
+
+  /**
+   * The very first open of the game on this browser: skips the Home
+   * screen's "tap Play" step and starts Level 1 immediately, exactly as if
+   * Play had just been tapped (`startPlaying` — its own `tutorial` overlay
+   * check fires right along with it, since level 1 is unseen too) — on
+   * request: "Khi người mở game ra lần đầu tiên, lập tức chơi level 1 luôn".
+   *
+   * `useLayoutEffect`, not `useEffect`: fires before the browser paints the
+   * very first frame, so a first-time player never actually sees the Home
+   * screen flash up before play starts — `playing` flips before anything
+   * hits the screen. Guarded on `hasOpenedBefore()` alone (not also
+   * `chosenIndex`/`levelIndex`): this only ever needs to run once, the very
+   * first time this effect body executes on a browser that has never set
+   * the flag, and `markOpened()` makes every subsequent run everywhere
+   * (including this same mount under Strict Mode's double-invoke) a no-op.
+   * Left out of the dependency array on purpose — it must run exactly once
+   * at mount, against whatever `level`/`startPlaying` happen to close over
+   * right then (level 1, on a fresh load with no `?level=` override), not
+   * re-fire every time either identity changes afterward.
+   */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (hasOpenedBefore()) return;
+    markOpened();
+    startPlaying();
+  }, []);
 
   /**
    * The gold economy's one entry point: pays out a level's reward the moment
@@ -2041,24 +2530,47 @@ export default function SandGame() {
   // purely "there is a reveal owed".
   const [pendingLevelUnlock, setPendingLevelUnlock] = useState<CostumeId | null>(null);
   if (state.result !== lastHandledResult) {
-    // The reward track counts every win, replays included — unlike the gold
-    // above, which pays first-clears only. See the reward-track section header
-    // in `economy.ts` for why the two differ.
-    if (state.result?.kind === "WIN") recordLevelPlayed();
-    if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
-      const granted = getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score);
-      addGold(granted);
-      suppressGoldSyncRef.current = true;
-      setPendingHomeReward((sum) => sum + granted);
-      setWonGold(granted);
-      // A progression skin tied to this level (`hero-cannon`/level 20 today)
-      // is granted right here, on the very win that clears it — same beat as
-      // the gold above. The player just does not see it until they tap
-      // Continue on the card that is about to show — see `cannonUnlock`.
-      const unlockedCostume = costumeUnlockedByLevel(raw.id);
-      if (unlockedCostume && !isCostumeOwned(unlockedCostume)) {
-        unlockCostume(unlockedCostume);
-        setPendingLevelUnlock(unlockedCostume);
+    // Zen Mode pays nothing at all — no gold, no reward-track credit
+    // (`recordLevelPlayed`), no first-clear bookkeeping (`markLevelCleared`),
+    // no skin unlock. It is a replay-forever space with no fail state, not a
+    // second way to earn the same currencies the main list is carefully
+    // tuned around (§10, GDD.md) — see zen-levels.ts's own header. `wonGold`
+    // stays 0 so the WIN card's gold line (gated on `!playingZen` there)
+    // simply never renders for a Zen clear.
+    if (!playingZen) {
+      // The reward track counts every win, replays included — unlike the gold
+      // above, which pays first-clears only. See the reward-track section header
+      // in `economy.ts` for why the two differ.
+      if (state.result?.kind === "WIN") recordLevelPlayed();
+      if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
+        // The level's own reward (CSV override or the difficulty formula) plus
+        // a decade-milestone bonus (`levelMilestoneBonus`, 0 for every level
+        // that is not 10/20/30/40/50) — both first-clear-only, both paid the
+        // same beat.
+        const granted =
+          (getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score)) +
+          levelMilestoneBonus(raw.id);
+        addGold(granted);
+        suppressGoldSyncRef.current = true;
+        setPendingHomeReward((sum) => sum + granted);
+        setWonGold(granted);
+        // A progression skin tied to this level (`hero-cannon`/level 20 today)
+        // is granted right here, on the very win that clears it — same beat as
+        // the gold above. The player just does not see it until they tap
+        // Continue on the card that is about to show — see `cannonUnlock`.
+        const unlockedCostume = costumeUnlockedByLevel(raw.id);
+        if (unlockedCostume && !isCostumeOwned(unlockedCostume)) {
+          unlockCostume(unlockedCostume);
+          setPendingLevelUnlock(unlockedCostume);
+        }
+        // Hearts unlock right here, on the very win that clears level
+        // `HEARTS_UNLOCK_LEVEL_ID` for the first time — `heartsUnlockedOverride`
+        // is what lets the HUD chip appear THIS load instead of only after a
+        // reload (`initialHeartsUnlocked`, the module-cached read, is only
+        // ever checked once per page load — see its own comment).
+        if (raw.id === HEARTS_UNLOCK_LEVEL_ID) setHeartsUnlockedOverride(true);
+      } else if (state.result?.kind === "WIN") {
+        setWonGold(0);
       }
     } else if (state.result?.kind === "WIN") {
       setWonGold(0);
@@ -2182,8 +2694,17 @@ export default function SandGame() {
 
   // The WIN screen's own "Continue" button needs to know whether there is
   // anywhere to continue TO — the last playable gets no Continue, only the
-  // close button (see the result screen below).
-  const hasNextLevel = levelIndex + 1 < playables.length;
+  // close button (see the result screen below). Zen Mode never chains into
+  // "the next one" automatically (there is no ordering to a Zen list the way
+  // there is a difficulty curve to the main one) — a Zen win always shows
+  // just the close button, back to the Zen picker.
+  const hasNextLevel = !playingZen && levelIndex + 1 < playables.length;
+
+  /** Shop's Special Offers, minus any offer that sells hearts while hearts
+   * are still locked (level 10 not cleared yet) — see the Shop JSX's own
+   * comment on request: "nếu chưa có heart currency thì không hiện những
+   * bundle, hay shop heart trong shop". */
+  const visibleOffers = heartsUnlocked ? SPECIAL_OFFERS : SPECIAL_OFFERS.filter((offer) => offer.hearts == null);
 
   /**
    * How much of each colour the player has already taken out of the frame.
@@ -2209,8 +2730,29 @@ export default function SandGame() {
           instead of showing through behind it. */}
       <div
         className={`game-frame${homeVisible ? " is-hub" : ""}${tab === "skin" ? ` is-skin-${COSTUMES[previewCostume].flavor}` : ""}${chest ? " is-chest" : ""}`}
-        style={playing && loadedAmmo ? ({ "--ammo-bg": ammoSky(loadedAmmo) } as React.CSSProperties) : undefined}
+        style={playing && loadedAmmo ? ({ "--ammo-bg": ammoSky(loadedAmmo, raw?.customPalette) } as React.CSSProperties) : undefined}
       >
+        {/* A shot that did nothing (no colour in range, hit the frame,
+            missed outright) used to explain itself with a text toast — now
+            it's a quick light-red vignette instead: transparent over the
+            picture itself, reddening toward the background and the frame's
+            own border, on request (see `missFlashBump`'s own comment).
+            Direct child of `.game-frame` itself, NOT nested inside
+            `.scene-wrap` (moved out on request: "tràn toàn rìa màn hình
+            luôn chứ không phải dừng lại trước UI số đạn hay setting") —
+            `.scene-wrap` is inset below the top HUD bar and clips its own
+            overflow, so a vignette living inside it could never physically
+            reach the ammo badge/Settings gear's corner no matter its own
+            `inset`/z-index. Living at this level instead, with a z-index
+            above both `.hud-top-left` (31) and `.settings-wrap` (32), the
+            same `inset: 0` genuinely covers the whole visible frame edge to
+            edge, HUD included. Keyed on the bump so back-to-back misses
+            each replay the fade from scratch rather than the second one
+            being a no-op class change mid-animation. */}
+        {missFlashBump > 0 && !winReveal && (
+          <div key={missFlashBump} className="miss-flash" aria-hidden="true" />
+        )}
+
         {/* Top-left HUD stack: §22/§23: ammo, the 3D frame, then the cannon
             and its aim zone. The ammo row is hidden on the home screen — none
             of it is true until a level has actually been started. A
@@ -2254,7 +2796,7 @@ export default function SandGame() {
                 key={ammoAnim.bump}
                 className="shots-icon"
                 aria-hidden="true"
-                style={loadedAmmo ? { background: hex(loadedAmmo) } : undefined}
+                style={loadedAmmo ? { background: hex(loadedAmmo, raw?.customPalette) } : undefined}
               />
               {upcomingAmmo.length > 0 && (
                 <span className="shots-upcoming" aria-hidden="true">
@@ -2268,7 +2810,7 @@ export default function SandGame() {
                     <span
                       key={`${ammoAnim.bump}-${index}`}
                       className="shots-upcoming-dot"
-                      style={{ background: hex(color) }}
+                      style={{ background: hex(color, raw?.customPalette) }}
                     />
                   ))}
                 </span>
@@ -2321,8 +2863,22 @@ export default function SandGame() {
             one is open. The reward chest is the one exception: it is a short
             animation that ends in a Collect button, not a screen a player
             can get stuck on, and a gear floating over it would be the only
-            thing on that frame besides the chest. */}
-        {!chest && !cannonUnlock && !winReveal && (
+            thing on that frame besides the chest.
+
+            Also withheld for the entire duration of playing levels 1-3, the
+            FIRST time through only (on request: the flip side of
+            `onboardingLockLifted`'s own onboarding lock, see its own doc
+            comment for why this isn't just `raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID`
+            any more) — `!playing` keeps it showing on every hub tab as
+            before (Home, Shop, Gallery, Skin, Modes never lose it, only
+            actual gameplay on one of the three onboarding levels does), and
+            it is back the instant level 4 starts OR the walkthrough has
+            already been completed once before (a Gallery replay of level
+            1-3 shows it same as any other level). Same reasoning as the WIN
+            card's own close button: nothing to escape TO mid-onboarding that
+            the gear's own Home/Restart rows would offer beyond the level's
+            own Continue/Play-again flow. */}
+        {!chest && !cannonUnlock && !winReveal && (!playing || onboardingLockLifted) && (
           <div className="settings-wrap" ref={hudSettingsRef}>
             <button
               type="button"
@@ -2366,10 +2922,14 @@ export default function SandGame() {
               type="button"
               className="icon-button gift-button"
               onClick={() => setDailyLoginOverride(getDailyLoginState(devNow()))}
-              aria-label={s.dailyLoginAria}
+              aria-label={`${s.dailyLoginAria}${dailyLoginMissedClaim ? s.homeTabHasDailyLoginHintSuffix : ""}`}
               title={s.dailyLoginAria}
             >
               <img className="gift-button-icon" src="/icons/LoginIcon.png" alt="" aria-hidden="true" />
+              {/* Same trigger as the hub-nav's own dot on the Home tab (see
+                  `dailyLoginMissedClaim`'s doc comment) — this is the button
+                  that dot is actually pointing at, so it gets one too. */}
+              {dailyLoginMissedClaim && <span className="gift-button-dot" aria-hidden="true" />}
             </button>
           </div>
         )}
@@ -2415,6 +2975,33 @@ export default function SandGame() {
                 <strong>{wallet.emeralds}</strong>
               </span>
             </div>
+
+            {/* Hearts — same overlap silhouette gold/emerald both use (the
+                icon overlaps a pill's rounded end-cap, per the ask: "phải
+                đồng nhất... icon đè lên cái tray"), but the COUNT itself
+                sits ON the icon as its own small badge (on request: "số
+                lượng icon sẽ nằm trên icon HeartIcon luôn"), not inside the
+                pill the way gold/emerald's numbers are — the pill is left
+                to hold only the regen countdown, shown while the tank is
+                not full (and simply absent, no empty pill, once it is —
+                the icon and its count badge alone are enough then). Bare
+                `m:ss` in that pill, no "+1 in"/"+1 sau" wording (on
+                request: "bỏ chữ in đi, countdown thôi") — `formatHeartCountdown`
+                straight, not wrapped in an i18n sentence any more. Only
+                rendered once unlocked (level 10 cleared — `heartsUnlocked`). */}
+            {heartsUnlocked && (
+              <div className="hub-heart-wrap" role="status" aria-label={s.heartsAria(hearts.hearts, MAX_HEARTS)}>
+                <span className="hub-heart-icon-wrap">
+                  <HeartIcon />
+                  <strong className="hub-heart-count">{hearts.hearts}</strong>
+                </span>
+                {hearts.msUntilNext !== null && (
+                  <span className="hub-heart-badge">
+                    <small>{formatHeartCountdown(hearts.msUntilNext)}</small>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -2564,12 +3151,46 @@ export default function SandGame() {
               `.scene-wrap` around it stays mounted either way (§ its own
               comment — the 3D scene is the hub's own artwork too, never
               torn down), only this tray comes and goes with `playing`.
-              Also gated on `!level.ftueGesture`: a level whose one lesson is
-              "aim and shoot" should not show a second control nobody has
-              explained yet — see `ftueGesture`'s doc comment. */}
-          {playing && !level.ftueGesture && !level.hideBoosterHud && !winReveal && (
+              The tray itself always mounts on `playing` now (on request) —
+              levels 1-2 (`ftueGesture`/`hideBoosterHud`) used to hide the
+              whole bar; they now show the same empty dock instead (no
+              buttons inside, via `showBoosterButtons` below), so the
+              HUD's overall layout stays identical from level 1 onward
+              rather than the scene reflowing the moment boosters unlock. */}
+          {playing && !winReveal && (
             <div className="booster-hud">
-              {(["radiusOvercharge", "prismShot", "chainSort"] as const).map((type) => {
+              {/* The tray's own gold balance — read-only (no "buy more" tap
+                  target the way `.hub-gold-wrap` is), pinned to the tray's
+                  own top-left corner on request ("Góc trái bên cùng của tray
+                  sẽ hiện coin currency hud") so a player who runs a booster
+                  out mid-match can see whether they can afford the "buy 1
+                  now" price right next to it, without leaving the level. */}
+              <div className="booster-hud-gold" role="status" aria-label={s.boosterTrayGoldAria(wallet.gold)}>
+                <CoinIcon />
+                <strong>{wallet.gold}</strong>
+              </div>
+              {/* Nothing to show yet on a level whose one lesson is "aim and
+                  shoot" (`ftueGesture`) or that explicitly asks to hide the
+                  tray's buttons (`hideBoosterHud`, e.g. level 2, boosters
+                  aren't taught until level 3) — the dock itself still
+                  renders (see the comment above), just with no buttons in
+                  it. Only for the FIRST time through, though (on request,
+                  same as `onboardingLockLifted`'s own doc comment): once
+                  level 3 has been cleared once, a Gallery replay of level
+                  1/2 shows the real buttons same as any other level. */}
+              {(() => {
+                const showBoosterButtons = (!level.ftueGesture && !level.hideBoosterHud) || onboardingLockLifted;
+                if (!showBoosterButtons) return null;
+                // Chain Sort withheld until level 5 — its own tutorial level
+                // (`CHAIN_SORT_UNLOCK_LEVEL_ID`'s own comment) — not just
+                // during level 3's Radius/Prism tutorial. A third,
+                // unexplained control sitting in the tray for two levels
+                // after the pair it arrived alongside were taught would just
+                // be a distraction; level 5 itself still shows it (`>=`),
+                // since its own tutorial has to spotlight a real button.
+                return (["radiusOvercharge", "prismShot", "chainSort"] as const)
+                  .filter((type) => type !== "chainSort" || level.id >= CHAIN_SORT_UNLOCK_LEVEL_ID)
+                  .map((type) => {
                 // A level with `forcedBoosterCharges` (level 3's booster
                 // tutorial) reads its own level-scoped count instead of the
                 // real wallet — see `SandGameState.boosterChargesOverride`'s
@@ -2613,18 +3234,36 @@ export default function SandGame() {
                         (see `economy.ts`) — the actual owned count, not capped
                         to a single digit: the Shop has no cap on how many a
                         player can hold. Out of charges mid-match, this becomes
-                        the gold price instead — see `canBuyHere` above. */}
+                        the gold price instead — see `canBuyHere` above. Sits
+                        BELOW the icon rather than above it once it turns into
+                        a price (on request: "giá tiền sẽ để phía dưới biểu
+                        tượng booster thay vì ở trên"), with its own coin icon
+                        so the number reads as a price and not a leftover
+                        charge count — the plain charge-count badge above the
+                        icon is untouched. */}
                     {canBuyHere ? (
-                      <span className="booster-badge is-price" aria-hidden="true">{price}</span>
+                      <span className="booster-badge is-price" aria-hidden="true">
+                        <CoinIcon />
+                        {price}
+                      </span>
                     ) : (
                       <span className="booster-badge" aria-hidden="true">{charges}</span>
                     )}
                   </button>
                 );
-              })}
+                  });
+              })()}
             </div>
           )}
 
+          {/* §24's "a visible sign that firing is locked while sand is
+              moving" — brought back on request after a stretch of trying the
+              frame's own colour/opacity instead (that whole detour has been
+              reverted; the frame now always keeps its authored colour). Sits
+              in the open band between the picture and the cannon (see the
+              comment on `.scene-wrap`), same spot `.ftue-gesture` already
+              anchors to, rather than the old page-level position above the
+              frame. */}
           {busy && !winReveal && (
             <div
               className="settle-badge"
@@ -2643,192 +3282,180 @@ export default function SandGame() {
             </div>
           )}
 
-          {/* Level 31's freeze-orb tutorial — the three callout beats
-              (`freezeFtueStep` "intro"/"explain-thaw"/"outro"). Unlike the
-              unlock banner elsewhere in this file, dismissing this never calls
-              `openLevel` or touches `runId`: the whole point is a live board
-              that keeps playing on through and past the tutorial, not one
-              that resets. No background scrim of its own —
-              `.ftue-freeze-spotlight` dims everything except a ring around
-              the orb by itself (an oversized box-shadow with a hole cut where
-              the ring sits), so the board stays legible underneath instead of
-              vanishing behind a flat curtain. The "outro" beat (freeze
-              already thawed, nothing left to point at) renders no spotlight,
-              just the caption.
-              Rendered here, inside `.scene-wrap`, rather than as a sibling of
-              `.result-screen` further down — `engine.screenPointForGrid`
-              returns coordinates in `.scene-host`'s own space (the same one
-              `.aim-crosshair` is positioned in, both children of this same
-              `.scene-wrap`), which sits inset from `.game-frame`'s top edge
-              by the HUD bar's height. A sibling of `.result-screen` spans the
-              *whole* frame instead, HUD included, so the exact same `left`/
-              `top` pixel values would land too high by that inset — this is
-              the one spot in the tree where they land in the right place. */}
-          {playing && (freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro") && (
-            <div
-              className="ftue-freeze-overlay"
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                // "outro"'s tap is a real restart, not just a state-machine
-                // step: on request, the player re-plays level 31 from its
-                // authored start (orb and mint patch both back, 30 shots
-                // again) rather than picking up from the live board the
-                // three demo shots already spent. `restart` itself clears
-                // `freezeFtueStep` back to null (see its own body) — same as
-                // `advanceFreezeFtue` would, just alongside the reset.
-                if (freezeFtueStep === "outro") {
-                  if (freezeFtueTapReady) restart();
-                  return;
-                }
-                advanceFreezeFtue();
-              }}
-              aria-label={`${
-                freezeFtueStep === "intro" ? s.ftueFreezeIntro
-                  : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
-                  : s.ftueFreezeOutro
-              }${freezeFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
-            >
-              {freezeFtueStep !== "outro" && level.ftueFreezeTargets?.[0] && engine && (() => {
-                const spot = engine.screenPointForGrid(level.ftueFreezeTargets[0].x, level.ftueFreezeTargets[0].y);
-                return (
-                  <div
-                    className="ftue-freeze-spotlight"
-                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
-                    aria-hidden="true"
-                  />
-                );
-              })()}
-              <div className="ftue-freeze-caption">
-                <p className="ftue-freeze-caption-text" aria-hidden="true">
-                  {freezeFtueStep === "intro" ? s.ftueFreezeIntro
-                    : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
-                    : s.ftueFreezeOutro}
-                </p>
-                {freezeFtueTapReady && (
-                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Level 3's booster tutorial — same shape as the freeze-orb one
-              just above (reuses its `.ftue-freeze-*` classes: the spotlight/
-              caption/dim-the-rest styling is entirely generic, nothing about
-              it is freeze-specific), teaching Radius Overcharge then Prism
-              Shot back to back instead of one mechanic's before/after.
-              The spotlight here points at a real DOM element (the armed
-              booster's own tray button) rather than a 3D grid cell, so it
-              reads straight off `getBoundingClientRect()` instead of
-              `engine.screenPointForGrid` — both land in the same
-              `.scene-wrap`-relative pixel space `.ftue-freeze-spotlight`
-              expects, since `.booster-hud` is a child of this same
-              `.scene-wrap` too. */}
-          {playing && (boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism" || boosterFtueStep === "outro") && (
-            <div
-              className="ftue-freeze-overlay"
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                // "outro"'s tap resets the level, same reasoning as the
-                // freeze tutorial's own outro — the two demo shots (one
-                // Radius Overcharge, one Prism Shot) are not meant to cost
-                // the player anything against their own attempt.
-                if (boosterFtueStep === "outro") {
-                  if (boosterFtueTapReady) restart();
-                  return;
-                }
-                advanceBoosterFtue();
-              }}
-              aria-label={`${
-                boosterFtueStep === "intro-radius" ? s.ftueBoosterRadiusIntro
-                  : boosterFtueStep === "intro-prism" ? s.ftueBoosterPrismIntro
-                  : s.ftueBoosterOutro
-              }${boosterFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
-            >
-              {boosterFtueStep !== "outro" && (() => {
-                const button = document.querySelector<HTMLElement>(
-                  `.booster-btn[data-booster="${boosterFtueStep === "intro-radius" ? "radiusOvercharge" : "prismShot"}"]`,
-                );
-                const container = document.querySelector<HTMLElement>(".scene-wrap");
-                if (!button || !container) return null;
-                const buttonRect = button.getBoundingClientRect();
-                const containerRect = container.getBoundingClientRect();
-                const spot = {
-                  x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
-                  y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
-                };
-                return (
-                  <div
-                    className="ftue-freeze-spotlight"
-                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
-                    aria-hidden="true"
-                  />
-                );
-              })()}
-              <div className="ftue-freeze-caption">
-                <p className="ftue-freeze-caption-text" aria-hidden="true">
-                  {boosterFtueStep === "intro-radius" ? s.ftueBoosterRadiusIntro
-                    : boosterFtueStep === "intro-prism" ? s.ftueBoosterPrismIntro
-                    : s.ftueBoosterOutro}
-                </p>
-                {boosterFtueTapReady && (
-                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Level 5's Chain Sort tutorial — same shape as level 3's booster
-              pair just above (reuses the same `.ftue-freeze-*` classes), but
-              one spotlight/demo-shot/outro instead of two. */}
-          {playing && (chainSortFtueStep === "intro" || chainSortFtueStep === "outro") && (
-            <div
-              className="ftue-freeze-overlay"
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                // "outro"'s tap resets the level, same reasoning as the
-                // booster-pair tutorial's own outro — the demo shot is not
-                // meant to cost the player anything against their own
-                // attempt.
-                if (chainSortFtueStep === "outro") {
-                  if (chainSortFtueTapReady) restart();
-                  return;
-                }
-                advanceChainSortFtue();
-              }}
-              aria-label={`${chainSortFtueStep === "intro" ? s.ftueChainSortIntro : s.ftueChainSortOutro}${chainSortFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
-            >
-              {chainSortFtueStep === "intro" && (() => {
-                const button = document.querySelector<HTMLElement>('.booster-btn[data-booster="chainSort"]');
-                const container = document.querySelector<HTMLElement>(".scene-wrap");
-                if (!button || !container) return null;
-                const buttonRect = button.getBoundingClientRect();
-                const containerRect = container.getBoundingClientRect();
-                const spot = {
-                  x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
-                  y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
-                };
-                return (
-                  <div
-                    className="ftue-freeze-spotlight"
-                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
-                    aria-hidden="true"
-                  />
-                );
-              })()}
-              <div className="ftue-freeze-caption">
-                <p className="ftue-freeze-caption-text" aria-hidden="true">
-                  {chainSortFtueStep === "intro" ? s.ftueChainSortIntro : s.ftueChainSortOutro}
-                </p>
-                {chainSortFtueTapReady && (
-                  <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
-                )}
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* The three FTUE spotlight overlays below (Level 31's freeze-orb
+            demo, Level 3's booster pair, Level 5's Chain Sort) used to live
+            INSIDE `.scene-wrap` — on request ("làm vậy với lớp opacity đen
+            khi tutorial luôn", the same fix `.miss-flash` just got): a
+            direct child of `.game-frame` now instead, same reasoning as
+            `.miss-flash`'s own move. `.scene-wrap` is inset below the top
+            HUD bar and clips its own overflow, so `.ftue-freeze-spotlight`'s
+            oversized dimming box-shadow — no matter how large its own
+            spread — could never actually darken the ammo badge/Settings
+            gear's corner from in there. Every `spot`/`screenPointForGrid`
+            coordinate below is computed relative to `.game-frame` now
+            instead of `.scene-wrap` (its left/right/bottom edges already sit
+            flush with `.game-frame`'s own, only the top differs by the HUD's
+            own height — see each spot's own comment for how that's
+            handled), and `.ftue-freeze-overlay`'s own z-index climbs from 30
+            to 33 (above `.hud-top-left`'s 31 and `.settings-wrap`'s 32, the
+            same tier `.miss-flash` sits at) so the whole thing — dimming,
+            caption and (where interactive) its own tap target — genuinely
+            covers the whole visible frame while a beat is active. */}
+        {/* Level 31's freeze-orb tutorial — the three callout beats
+            (`freezeFtueStep` "intro"/"explain-thaw"/"outro"). Unlike the
+            unlock banner elsewhere in this file, dismissing this never calls
+            `openLevel` or touches `runId`: the whole point is a live board
+            that keeps playing on through and past the tutorial, not one
+            that resets. No background scrim of its own —
+            `.ftue-freeze-spotlight` dims everything except a ring around
+            the orb by itself (an oversized box-shadow with a hole cut where
+            the ring sits), so the board stays legible underneath instead of
+            vanishing behind a flat curtain. The "outro" beat (freeze
+            already thawed, nothing left to point at) renders no spotlight,
+            just the caption.
+            `engine.screenPointForGrid` returns coordinates in `.scene-host`'s
+            own space (the same `.scene-wrap`-relative space `.aim-crosshair`
+            is positioned in) — now that this overlay itself lives at
+            `.game-frame` level, that raw point needs `hudOffsetY` (measured
+            live off `.scene-wrap`'s own position, the gap this overlay used
+            to sit flush against) added to its `y` before it lines up with
+            the real cell on screen. */}
+        {playing && (freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro") && (
+          <div
+            className="ftue-freeze-overlay"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              // "outro"'s tap is a real restart, not just a state-machine
+              // step: on request, the player re-plays level 31 from its
+              // authored start (orb and mint patch both back, 30 shots
+              // again) rather than picking up from the live board the
+              // three demo shots already spent. `restart` itself clears
+              // `freezeFtueStep` back to null (see its own body) — same as
+              // `advanceFreezeFtue` would, just alongside the reset.
+              if (freezeFtueStep === "outro") {
+                if (freezeFtueTapReady) restart();
+                return;
+              }
+              advanceFreezeFtue();
+            }}
+            aria-label={`${
+              freezeFtueStep === "intro" ? s.ftueFreezeIntro
+                : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
+                : s.ftueFreezeOutro
+            }${freezeFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
+          >
+            {freezeFtueStep !== "outro" && level.ftueFreezeTargets?.[0] && engine && (() => {
+              const spot = engine.screenPointForGrid(level.ftueFreezeTargets[0].x, level.ftueFreezeTargets[0].y);
+              const sceneWrapEl = document.querySelector<HTMLElement>(".scene-wrap");
+              const gameFrameEl = document.querySelector<HTMLElement>(".game-frame");
+              const hudOffsetY = sceneWrapEl && gameFrameEl
+                ? sceneWrapEl.getBoundingClientRect().top - gameFrameEl.getBoundingClientRect().top
+                : 0;
+              return (
+                <div
+                  className="ftue-freeze-spotlight"
+                  style={{ left: `${spot.x}px`, top: `${spot.y + hudOffsetY}px` }}
+                  aria-hidden="true"
+                />
+              );
+            })()}
+            <div className="ftue-freeze-caption">
+              <p className="ftue-freeze-caption-text" aria-hidden="true">
+                {freezeFtueStep === "intro" ? s.ftueFreezeIntro
+                  : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
+                  : s.ftueFreezeOutro}
+              </p>
+              {freezeFtueTapReady && (
+                <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Level 3's booster tutorial — reuses the freeze-orb one's
+            `.ftue-freeze-*` classes (the spotlight/caption/dim-the-rest
+            styling is entirely generic), but only for the two "intro-*"
+            steps now — `boosterFtueStep`'s own doc comment covers the
+            whole "have them actually press and fire it themselves"
+            redesign. `.is-noninteractive` drops `pointer-events` on the
+            whole overlay: nothing here is tappable any more (no "tap to
+            continue" — see that doc comment), so every click has to fall
+            straight through to the REAL tray button this is spotlighting,
+            or the player could never actually arm it. The spotlight itself
+            points at that real DOM element via `getBoundingClientRect()`,
+            measured straight against `.game-frame` now (this overlay's own
+            container) rather than `.scene-wrap` — no separate offset add
+            needed the way the freeze demo's engine-space point above does,
+            since this measurement was already live DOM geometry, not a
+            pre-computed scene-relative point. Nothing renders at all during
+            "shoot-*" — on request: "tắt opacity, để người chơi tự nhắm và
+            bắn". */}
+        {playing && (boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism") && (() => {
+          const isRadiusStep = boosterFtueStep === "intro-radius";
+          const captionText = isRadiusStep ? s.ftueBoosterRadiusIntro : s.ftueBoosterPrismIntro;
+          return (
+            <div className="ftue-freeze-overlay is-noninteractive" aria-hidden="true">
+              {(() => {
+                const button = document.querySelector<HTMLElement>(
+                  `.booster-btn[data-booster="${isRadiusStep ? "radiusOvercharge" : "prismShot"}"]`,
+                );
+                const container = document.querySelector<HTMLElement>(".game-frame");
+                if (!button || !container) return null;
+                const buttonRect = button.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                const spot = {
+                  x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
+                  y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
+                };
+                return (
+                  <div
+                    className="ftue-freeze-spotlight"
+                    style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
+                    aria-hidden="true"
+                  />
+                );
+              })()}
+              <div className="ftue-freeze-caption">
+                <p className="ftue-freeze-caption-text" aria-hidden="true">{captionText}</p>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Level 5's Chain Sort tutorial — on request, now taught exactly
+            the same way as level 3's Radius/Prism pair just above (see
+            `chainSortFtueStep`'s own doc comment for the redesign): one
+            spotlight step instead of a scripted demo, tapping straight
+            through to arm the real button, nothing rendered at all once
+            the player is aiming their own "shoot" shot. */}
+        {playing && chainSortFtueStep === "intro" && (
+          <div className="ftue-freeze-overlay is-noninteractive" aria-hidden="true">
+            {(() => {
+              const button = document.querySelector<HTMLElement>('.booster-btn[data-booster="chainSort"]');
+              const container = document.querySelector<HTMLElement>(".game-frame");
+              if (!button || !container) return null;
+              const buttonRect = button.getBoundingClientRect();
+              const containerRect = container.getBoundingClientRect();
+              const spot = {
+                x: buttonRect.left + buttonRect.width / 2 - containerRect.left,
+                y: buttonRect.top + buttonRect.height / 2 - containerRect.top,
+              };
+              return (
+                <div
+                  className="ftue-freeze-spotlight"
+                  style={{ left: `${spot.x}px`, top: `${spot.y}px` }}
+                  aria-hidden="true"
+                />
+              );
+            })()}
+            <div className="ftue-freeze-caption">
+              <p className="ftue-freeze-caption-text" aria-hidden="true">{s.ftueChainSortIntro}</p>
+            </div>
+          </div>
+        )}
 
         {/* The home screen. It does not cover the picture, it frames it: the
             scene underneath is still the level's own pixel painting, sitting
@@ -2861,7 +3488,7 @@ export default function SandGame() {
               <button
                 type="button"
                 className="hub-play-btn"
-                onClick={startPlaying}
+                onClick={() => { if (tryStartAttempt()) startPlaying(); }}
                 aria-label={s.playLevelAria(s.levelName(level.name))}
               >
                 {s.levelButtonLabel(level.id)}
@@ -3105,11 +3732,13 @@ export default function SandGame() {
                 // shown with its own reward pill so it reads as a goal
                 // worth playing toward, using the exact number a win would
                 // actually pay out (same lookup `raw`'s own reward uses
-                // above: a designer's CSV override, or the difficulty
-                // formula). Shown even before it unlocks, as a teaser.
+                // above: a designer's CSV override or the difficulty
+                // formula, PLUS the decade bonus `levelMilestoneBonus` adds
+                // on top). Shown even before it unlocks, as a teaser.
                 const isMilestone = entry.level.id % 10 === 0;
                 const milestoneReward = isMilestone
-                  ? getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)
+                  ? (getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)) +
+                    levelMilestoneBonus(entry.level.id)
                   : null;
                 // The skin this level hands over on its first clear, if any
                 // (`hero-cannon` at level 20 today) — shown as its own badge
@@ -3171,177 +3800,360 @@ export default function SandGame() {
             around it (the hub screen behind it is unmounted entirely while
             this is up — see the `tab !== "modes"` guard on it) rather than
             the small `.hub-panel` bottom sheet this used to be under its old
-            name, "Customize" (see `HUB_TABS`'s own comment). Nothing behind
-            it exists yet either way — this is still the exact same
-            not-built-yet placeholder, just given the same full-bleed frame
-            every other tab already has instead of a narrow floating card. No
-            close button of its own, same reasoning as Gallery/Shop/Skin:
-            `.hub-nav` stays mounted over this screen too, so tapping any
-            other tab is how you leave. */}
-        {tab === "modes" && (
-          <div className="modes-screen" role="dialog" aria-label={s.modesTitle}>
+            name, "Customize" (see `HUB_TABS`'s own comment). Two states now
+            instead of one placeholder:
+              - `!zenPickerOpen`: the two mode cards — Zen Mode (real) and
+                Theme Mode (still the exact "not built yet" placeholder this
+                whole screen used to be, on request: theme content — sorting
+                by a picked country's motifs — is real production work, not
+                a code change, so it stays a locked card for now).
+              - `zenPickerOpen`: the Zen level list (`zenPlayables`), laid out
+                exactly like the Gallery (`.hub-gallery`) but with every card
+                always unlocked — Zen has no progression to gate on.
+            A back button only while the Zen level list is open — it steps
+            back exactly one level, to the two mode cards (on request: "sẽ có
+            thể quay lại từ zen/theme mode"). The two-cards screen itself
+            dropped its own back button (on request: "Ở sảnh chính chọn
+            modes, không cần để icon back") — `.hub-nav`'s other tabs are
+            already right there for leaving Modes entirely, so a second way
+            to do the exact same thing on the very first screen was
+            redundant; the Zen list still needs one of its own since it is a
+            level *inside* Modes that none of the other hub tabs know how to
+            step back out of. Its own click handler resets `zenPickerOpen`
+            the same way `hub-nav`'s tap handler does, for the same reason.
+            `&& !playing` on top of the `tab` check (unlike Gallery/Shop/
+            Skin, which never need one): every OTHER hub tab's own Play
+            button only exists on the Home tab, so `playing` and `tab
+            !== "home"` never coincide there — `openZenLevel` breaks that
+            invariant on purpose (tapping a level in THIS screen starts play
+            directly, with `tab` still `"modes"`), so this is the one screen
+            that has to guard against it explicitly or it would stay
+            rendered, full-bleed, on top of the level being played. */}
+        {tab === "modes" && !playing && (
+          <div className="modes-screen" role="dialog" aria-label={zenPickerOpen ? s.zenModeTitle : s.modesTitle}>
             <div className="modes-heading">
-              <h2>{s.modesTitle}</h2>
+              {zenPickerOpen && (
+                <button
+                  type="button"
+                  className="modes-back-btn"
+                  onClick={() => setZenPickerOpen(false)}
+                  aria-label={s.back}
+                  title={s.back}
+                >
+                  <BackIcon />
+                </button>
+              )}
+              <h2>{zenPickerOpen ? s.zenModeTitle : s.modesTitle}</h2>
+              {/* Always present regardless of which Modes state is showing —
+                  a quick explainer of what each card/mode actually does,
+                  read before committing to tapping one. */}
+              <button
+                type="button"
+                className="modes-help-btn"
+                onClick={() => setModesHelpOpen(true)}
+                aria-label={s.modesHelpAria}
+                title={s.modesHelpAria}
+              >
+                ?
+              </button>
             </div>
-            <div className="modes-empty">
-              <p>{s.modesBlurb}</p>
-              <p className="hub-panel-note">{s.notBuiltYet}</p>
+            {/* Two big rounded-rectangle image buttons, stacked, rather than
+                the small side-by-side icon cards this used to be — on
+                request: "Tôi muốn nó là 1 nút bấm hình chữ nhật bo góc".
+                Zen Mode gets its own artwork (`ZenModeThumbnail.png`, real
+                pixel-art scene) as the button's own background, filling the
+                whole shape edge to edge; Theme Mode has no art yet, so it
+                keeps the same rounded-rectangle silhouette (same size,
+                same border) with a flat locked fill instead of a photo, so
+                the two still read as one matched pair of buttons rather
+                than two different kinds of thing. */}
+            {!zenPickerOpen && (
+              <div className="modes-stack">
+                <button type="button" className="modes-image-btn" onClick={() => setZenPickerOpen(true)}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/icons/ZenModeThumbnail.png" alt="" className="modes-image-btn-art" />
+                  <span className="modes-image-btn-label">
+                    <span aria-hidden="true">🧘</span> {s.zenModeButton}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="modes-image-btn is-locked"
+                  disabled
+                  title={s.notBuiltYet}
+                >
+                  <span className="modes-image-btn-placeholder" aria-hidden="true">🗺️</span>
+                  <span className="modes-image-btn-label">
+                    <span aria-hidden="true">🔒</span> {s.themeModeButton}
+                  </span>
+                </button>
+              </div>
+            )}
+            {zenPickerOpen && (
+              zenPlayables.length === 0 ? (
+                <div className="modes-empty">
+                  <p>{s.zenEmptyBlurb}</p>
+                </div>
+              ) : (
+                <div className="hub-gallery">
+                  {zenPlayables.map((entry, index) => (
+                    <button
+                      key={entry.level.id}
+                      type="button"
+                      onClick={() => openZenLevel(index)}
+                      title={`${s.levelName(entry.level.name)}${entry.fromEditor ? s.fromEditorSuffix : ""}`}
+                    >
+                      <span className="hub-gallery-thumb">
+                        <PixelThumb level={entry.level} />
+                      </span>
+                      <b>{s.levelName(entry.level.name)}</b>
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* The Modes screen's own "?" popup — a plain info card, same overlay
+            family as `.settings-screen` (dim scrim, centered card), just for
+            reading rather than acting on. Gated on `modesHelpOpen` alone
+            (not also `tab === "modes"`) the same way `.settings-screen`
+            below is gated on `settingsOpen` alone — it can only ever be
+            opened from inside the Modes screen, so there is nothing to
+            protect against by adding a redundant tab check here too. */}
+        {modesHelpOpen && (
+          <div
+            className="modes-help-screen"
+            role="dialog"
+            aria-modal="true"
+            aria-label={s.modesHelpTitle}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setModesHelpOpen(false);
+            }}
+          >
+            <div className="modes-help-card">
+              <div className="modes-help-card-header">
+                <h2>{s.modesHelpTitle}</h2>
+                <button
+                  type="button"
+                  className="modes-help-close"
+                  onClick={() => setModesHelpOpen(false)}
+                  aria-label={s.back}
+                  title={s.back}
+                >
+                  <CancelIcon />
+                </button>
+              </div>
+              <div className="modes-help-card-body">
+                <p>
+                  <span aria-hidden="true">🧘</span> <b>{s.zenModeButton}</b> — {s.zenModeBlurb}
+                </p>
+                <p>
+                  <span aria-hidden="true">🔒</span> <b>{s.themeModeButton}</b> — {s.notBuiltYet}
+                </p>
+              </div>
             </div>
           </div>
         )}
 
-        {/* The Shop: a full-screen takeover now, same footing as the skin
+        {/* The Shop: a full-screen takeover, same footing as the skin
             picker above rather than a small `.hub-panel` card floating over
             the picture — the hub screen behind it is unmounted entirely
-            while this is up (see the `tab !== "shop"` guard on it). One card
-            per booster: the name, a rounded-square frame holding a circle
-            with that booster's own icon (`BoosterIcon`, the exact glyph the
-            in-play HUD tray and the aim ring already use — no separate shop
-            art), and a price pill below the frame (denomination + coin icon,
-            not a floating row) — the design as sketched, not the old
-            icon/name/price row. No close button of its own, same reasoning
-            as the skin picker: `.hub-nav` stays mounted over this screen
-            too, so tapping any other tab is how you leave. */}
+            while this is up (see the `tab !== "shop"` guard on it). ONE
+            unified screen now (2026-09d), no more Gems/Coins tabs — on
+            request: "Không chia ra 2 tab mà để vô thành 1 UI hết". Section
+            order top to bottom is the whole redesign's other half of the
+            ask ("có điều để những thứ mua ở coins ở cuối cùng"): every
+            real-money item (Special Offers, Bundles, buy-Coins, buy-Hearts)
+            first, the Boosters grid — the one purchase flow that spends a
+            currency the player actually earned by playing, not real money —
+            LAST, where it used to be its own separate "Coins tab". No close
+            button of its own, same reasoning as the skin picker: `.hub-nav`
+            stays mounted over this screen too, so tapping any other tab is
+            how you leave. */}
         {tab === "shop" && (
           <div className="shop-screen" role="dialog" aria-label={s.shopTitle}>
             <div className="shop-heading">
               <h2>{s.shopTitle}</h2>
-              {/* Only shown on the Gems tab — gems have no other readout
-                  anywhere else in the game yet (unlike gold's persistent
-                  `.hub-gold-badge`, top-left on every hub screen including
-                  this one), so there is no "always on" corner for it to
-                  live in instead. */}
-              {shopTab === "gems" && (
-                <div className="shop-gem-badge" aria-label={s.gemsAria(wallet.gems)}>
-                  <GemIcon />
-                  <strong>{wallet.gems}</strong>
-                </div>
-              )}
-            </div>
-
-            <div className="shop-tabs" role="tablist" aria-label={s.shopCurrencyTabsAria}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={shopTab === "gems"}
-                className={`shop-tab-btn is-gems${shopTab === "gems" ? " is-active" : ""}`}
-                onClick={() => setShopTab("gems")}
-              >
-                {s.gemsTab}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={shopTab === "coins"}
-                className={`shop-tab-btn is-coins${shopTab === "coins" ? " is-active" : ""}`}
-                onClick={() => setShopTab("coins")}
-              >
-                {s.coinsTab}
-              </button>
             </div>
 
             {/* Its own scroll container, separate from `.shop-screen` itself
                 (which no longer scrolls — see that class's own comment) — so
-                the heading/tabs above stay put while a tab's content scrolls
+                the heading above stays put while everything below scrolls
                 underneath, and `.shop-iap-toast` below can pin to the screen
-                without scrolling away with whatever panel is open. */}
+                without scrolling away with whatever section is in view. */}
             <div className="shop-scroll">
-            {/* The Gems tab: real-money offers, bundles and coin packs. None
-                of it is wired to an actual payment processor — there is no
-                account or server in this prototype (see economy.ts's own
-                top-of-file note) — so every price pill here just surfaces
-                `notifyIapComingSoon`'s toast instead of charging anything or
-                moving a balance. Gems themselves are the one currency nothing
-                in the game spends yet, per the brief: sold, not spendable. */}
-            {shopTab === "gems" && (
-              <div className="shop-panel">
-                <div className="shop-section">
-                  <div className="shop-section-head">
-                    <h3>{s.specialOffers}</h3>
-                    <p>{s.limitedTimeBundles}</p>
-                  </div>
-                  {/* Stacked top to bottom, not a side-scrolling rail — every
-                      offer is visible without a swipe, the same "no hidden
-                      shelf" reasoning the Bundles list below already follows. */}
-                  <div className="offer-stack">
-                    {SPECIAL_OFFERS.map((offer) => (
-                      <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
-                        <span className="offer-tag">{s.offerTag(offer.id)}</span>
-                        <h4>{s.offerName(offer.id)}</h4>
-                        <div className="offer-contents">
-                          <GemIcon /> {offer.gems.toLocaleString("en-US")}
-                          {offer.coins != null && (
-                            <>
-                              <span className="offer-plus">+</span>
-                              <CoinIcon /> {offer.coins.toLocaleString("en-US")}
-                            </>
-                          )}
-                          {offer.bonus && <span className="offer-plus">{s.offerFlag(offer.bonus)}</span>}
-                        </div>
-                        <button type="button" className="buy-btn" onClick={notifyIapComingSoon}>
-                          {offer.price}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+            <div className="shop-panel">
+              {/* Real-money offers/bundles/packs. None of it is wired to an
+                  actual payment processor — there is no account or server in
+                  this prototype (see economy.ts's own top-of-file note) — so
+                  every price pill here just surfaces `notifyIapComingSoon`'s
+                  toast instead of charging anything or moving a balance.
+                  Gems are gone entirely (2026-09d) — every offer/bundle now
+                  sells some mix of coins, hearts and a small Blue Emerald
+                  top-up instead (see `SPECIAL_OFFERS`/`BUNDLES`'s own
+                  comment for the quantities and the reasoning behind them). */}
+              {/* Every current Special Offer sells hearts (see `SPECIAL_OFFERS`'s
+                  own comment) — `visibleOffers` drops any offer that does
+                  while hearts are still locked (on request: "nếu chưa có
+                  heart currency thì không hiện những bundle, hay shop heart
+                  trong shop"), which today empties the whole list, so the
+                  section itself disappears too rather than showing an empty
+                  head. A future coins/emerald-only offer would still show
+                  here even before hearts unlock — only offers that actually
+                  include hearts are the ones being withheld. */}
+              {visibleOffers.length > 0 && (
+              <div className="shop-section">
+                <div className="shop-section-head">
+                  <h3>{s.specialOffers}</h3>
+                  <p>{s.limitedTimeBundles}</p>
                 </div>
-
-                <div className="shop-section">
-                  <div className="shop-section-head">
-                    <h3>{s.bundlesTitle}</h3>
-                    <p>{s.gemsAndCoinsTogether}</p>
-                  </div>
-                  <div className="bundle-list">
-                    {BUNDLES.map((bundle) => (
-                      <div key={bundle.id} className={`bundle-row${bundle.flag ? " is-best" : ""}`}>
-                        <div className="bundle-icon"><GemIcon /></div>
-                        <div className="bundle-mid">
-                          {bundle.flag && <div className="bundle-flag">{s.offerFlag(bundle.flag)}</div>}
-                          <div className="bundle-amount">
-                            {bundle.gems.toLocaleString("en-US")} {s.gemsSuffix}
-                            {bundle.bonus && <span className="bundle-bonus">{bundle.bonus}</span>}
-                          </div>
-                          <div className="bundle-sub">
-                            <CoinIcon /> {bundle.coins.toLocaleString("en-US")} {s.coinsSuffix}
-                          </div>
-                        </div>
-                        <button type="button" className="bundle-price" onClick={notifyIapComingSoon}>
-                          {bundle.price}
-                        </button>
+                {/* Stacked top to bottom, not a side-scrolling rail — every
+                    offer is visible without a swipe, the same "no hidden
+                    shelf" reasoning the Bundles list below already follows. */}
+                <div className="offer-stack">
+                  {visibleOffers.map((offer) => (
+                    <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
+                      <span className="offer-tag">{s.offerTag(offer.id)}</span>
+                      <h4>{s.offerName(offer.id)}</h4>
+                      <div className="offer-contents">
+                        {offer.coins != null && (
+                          <>
+                            <CoinIcon /> {offer.coins.toLocaleString("en-US")}
+                          </>
+                        )}
+                        {offer.hearts != null && (
+                          <>
+                            {offer.coins != null && <span className="offer-plus">+</span>}
+                            <HeartIcon /> {offer.hearts.toLocaleString("en-US")}
+                          </>
+                        )}
+                        {offer.emeralds != null && (
+                          <>
+                            {(offer.coins != null || offer.hearts != null) && <span className="offer-plus">+</span>}
+                            <EmeraldIcon /> {offer.emeralds.toLocaleString("en-US")}
+                          </>
+                        )}
+                        {offer.bonus && <span className="offer-plus">{s.offerFlag(offer.bonus)}</span>}
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="shop-section" ref={coinPackSectionRef}>
-                  <div className="shop-section-head">
-                    <h3>{s.coinsTitle}</h3>
-                    <p>{s.buyCoinsDirectly}</p>
-                  </div>
-                  <div className="pack-grid">
-                    {COIN_PACKS.map((pack) => (
-                      <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
-                        <CoinIcon />
-                        <div className="pack-amount">
-                          {pack.coins.toLocaleString("en-US")}
-                          {pack.bonus && <span className="pack-bonus">{pack.bonus}</span>}
-                        </div>
-                        <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
-                          {pack.price}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                      <button type="button" className="buy-btn" onClick={notifyIapComingSoon}>
+                        {offer.price}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
-            )}
+              )}
 
-            {/* The Coins tab: the original booster shop, unchanged — the one
-                real, spendable purchase flow in the game. */}
-            {shopTab === "coins" && (
-              <div className="shop-panel">
+              {/* Every Bundle sells hearts too (`BUNDLES`'s own comment —
+                  it is not an optional field there the way it is on
+                  `SpecialOffer`), so the whole section is withheld outright
+                  rather than filtered item by item — same request as
+                  `visibleOffers` above. */}
+              {heartsUnlocked && (
+              <div className="shop-section">
+                <div className="shop-section-head">
+                  <h3>{s.bundlesTitle}</h3>
+                  <p>{s.bundleContents}</p>
+                </div>
+                <div className="bundle-list">
+                  {BUNDLES.map((bundle) => (
+                    <div key={bundle.id} className={`bundle-row${bundle.flag ? " is-best" : ""}`}>
+                      <div className="bundle-icon"><CoinIcon /></div>
+                      <div className="bundle-mid">
+                        {bundle.flag && <div className="bundle-flag">{s.offerFlag(bundle.flag)}</div>}
+                        <div className="bundle-amount">
+                          {bundle.coins.toLocaleString("en-US")} {s.coinsSuffix}
+                          {bundle.bonus && <span className="bundle-bonus">{bundle.bonus}</span>}
+                        </div>
+                        <div className="bundle-sub">
+                          <HeartIcon /> {bundle.hearts} {s.heartsSuffix} · <EmeraldIcon /> {bundle.emeralds.toLocaleString("en-US")} {s.emeraldSuffix}
+                        </div>
+                      </div>
+                      <button type="button" className="bundle-price" onClick={notifyIapComingSoon}>
+                        {bundle.price}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
+              <div className="shop-section" ref={coinPackSectionRef}>
+                <div className="shop-section-head">
+                  <h3>{s.coinsTitle}</h3>
+                  <p>{s.buyCoinsDirectly}</p>
+                </div>
+                <div className="pack-grid">
+                  {COIN_PACKS.map((pack) => (
+                    <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
+                      <CoinIcon />
+                      <div className="pack-amount">
+                        {pack.coins.toLocaleString("en-US")}
+                        {pack.bonus && <span className="pack-bonus">{pack.bonus}</span>}
+                      </div>
+                      <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
+                        {pack.price}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Hearts sold directly, its own section beside Coins — on
+                  request: "Ngoài coins ra giờ sẽ có mục mua riêng". Same
+                  `pack-grid` layout as Coins, capped at `MAX_HEARTS` per
+                  pack (see `HEART_PACKS`'s own comment for why). Withheld
+                  entirely before hearts unlock (level 10) — same request as
+                  `visibleOffers`/the Bundles section above: selling a
+                  currency the player cannot even see or use yet would just
+                  be confusing, not tempting. */}
+              {heartsUnlocked && (
+              <div className="shop-section">
+                <div className="shop-section-head">
+                  <h3>{s.heartsTitle}</h3>
+                  <p>{s.buyHeartsDirectly}</p>
+                </div>
+                <div className="pack-grid">
+                  {HEART_PACKS.map((pack) => (
+                    <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
+                      <HeartIcon />
+                      <div className="pack-amount">{pack.hearts.toLocaleString("en-US")}</div>
+                      <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
+                        {pack.price}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
+              {/* Boosters — the one purchase flow that actually spends
+                  something (gold earned by playing, not real money). Moved
+                  to the very end of the unified Shop screen on request; this
+                  used to be its own "Coins tab", separate from everything
+                  real-money above it. `boostersSectionRef` is what the
+                  `hub-nav`'s own Shop hint-dot scrolls to now, since there is
+                  no tab to switch to any more. */}
+              <div className="shop-section" ref={boostersSectionRef}>
+                <div className="shop-section-head">
+                  <h3>{s.boostersTitle}</h3>
+                </div>
                 <div className="shop-grid">
-                  {(["radiusOvercharge", "prismShot", "chainSort"] as const).map((type) => {
+                  {/* Chain Sort withheld until level 5 — its own tutorial
+                      level — is reached, i.e. level 4 cleared
+                      (`CHAIN_SORT_UNLOCK_LEVEL_ID`'s own comment). Radius
+                      Overcharge and Prism Shot stay visible from the very
+                      start: their own tutorial IS level 3 itself, so
+                      nothing before it has taught them either, but the Shop
+                      already sold them pre-onboarding and nobody asked to
+                      change that half — Chain Sort is the one card that
+                      used to appear here before a player had any idea the
+                      booster system existed at all. */}
+                  {(["radiusOvercharge", "prismShot", "chainSort"] as const)
+                    .filter((type) => type !== "chainSort" || hasClearedLevel(CHAIN_SORT_UNLOCK_LEVEL_ID - 1))
+                    .map((type) => {
                     const price = boosterPrice(type);
                     const owned = wallet.boosters[type];
                     const canAfford = wallet.gold >= price;
@@ -3385,14 +4197,14 @@ export default function SandGame() {
                   })}
                 </div>
               </div>
-            )}
+            </div>
             </div>
 
             {/* Pinned to the screen itself, outside `.shop-scroll` above —
                 `pushToast`'s own `.sand-toast` cannot be reused here (it
                 renders inside `.scene-wrap`, underneath this screen's opaque
                 background), and a snackbar that scrolled away with whatever
-                panel is open would miss the tap that triggered it. */}
+                section is in view would miss the tap that triggered it. */}
             {iapNotice && (
               <div className="shop-iap-toast" role="status">{s.iapComingSoon}</div>
             )}
@@ -3573,21 +4385,45 @@ export default function SandGame() {
                 className={entry === tab ? "is-active" : ""}
                 data-tab={entry}
                 onClick={() => {
+                  // Force-close the daily-login modal the instant the player
+                  // taps away to a different hub tab (on request — it used
+                  // to just sit there, un-gated on `tab`, so it kept
+                  // covering whichever screen the player switched to
+                  // underneath it). Only on an actual switch (`entry !==
+                  // tab`): tapping the tab already active is a no-op, not a
+                  // "leaving" gesture. Lights `dailyLoginMissedClaim` (see
+                  // its own doc comment) only if today's reward genuinely
+                  // wasn't claimed yet — a reopen-after-claim (gift button,
+                  // "see tomorrow isn't up yet") interrupted this way has
+                  // nothing left to remind the player about.
+                  if (dailyLogin && entry !== tab) {
+                    setDailyLoginOverride(null);
+                    if (!dailyLogin.claimedToday) setDailyLoginMissedClaim(true);
+                  }
                   setTab(entry);
+                  // Leaving Zen Mode: any tab OTHER than Modes means "I want
+                  // something else now" — reset both `playingZen` (so `raw`
+                  // falls back to the main list) and `zenPickerOpen` (so a
+                  // later tap back into Modes shows the two mode buttons
+                  // again, not straight back into the level list).
+                  if (entry !== "modes") {
+                    setPlayingZen(false);
+                    setZenPickerOpen(false);
+                  }
                   // The Shop's own hint dot: a tap here is exactly the
                   // "go buy the boosters you just tried" action it was
-                  // asking for, so land straight on the Coins tab (the
-                  // booster shop, `shopTab`'s default anyway) and clear it —
-                  // same "a look is enough to dismiss it" contract as
+                  // asking for, so scroll straight to the Boosters section
+                  // at the end of the Shop and clear the dot — same "a look
+                  // is enough to dismiss it" contract as
                   // `previewCostumeCard`'s `markSkinBadgeSeen` above.
                   if (entry === "shop" && boosterShopHint) {
-                    setShopTab("coins");
+                    setScrollToBoosters(true);
                     setBoosterShopHint(false);
                     setBoosterShopHintState(false);
                   }
                 }}
                 aria-current={entry === tab ? "page" : undefined}
-                aria-label={`${HUB_TAB_NAME[entry]}${entry === "skin" && unseenSkins.length > 0 ? s.skinTabHasOfferSuffix : ""}${entry === "shop" && boosterShopHint ? s.shopTabHasBoosterHintSuffix : ""}`}
+                aria-label={`${HUB_TAB_NAME[entry]}${entry === "skin" && unseenSkins.length > 0 ? s.skinTabHasOfferSuffix : ""}${entry === "shop" && boosterShopHint ? s.shopTabHasBoosterHintSuffix : ""}${entry === "home" && dailyLoginMissedClaim ? s.homeTabHasDailyLoginHintSuffix : ""}`}
                 title={HUB_TAB_NAME[entry]}
               >
                 <span className="hub-nav-bubble">
@@ -3598,6 +4434,11 @@ export default function SandGame() {
                       "buy now", so it stays lit even mid-preview until that
                       card is actually looked at. */}
                   {entry === "skin" && unseenSkins.length > 0 && (
+                    <span className="hub-nav-dot" aria-hidden="true" />
+                  )}
+                  {/* Same dot, same class — see `dailyLoginMissedClaim`'s own
+                      doc comment for exactly when this lights up. */}
+                  {entry === "home" && dailyLoginMissedClaim && (
                     <span className="hub-nav-dot" aria-hidden="true" />
                   )}
                   {/* Same dot, same class, different trigger — see
@@ -3662,7 +4503,7 @@ export default function SandGame() {
                   <button
                     type="button"
                     className="settings-round-button"
-                    onClick={() => { setSettingsOpen(false); restart(); }}
+                    onClick={() => { setSettingsOpen(false); if (tryStartAttempt()) restart(); }}
                     aria-label={s.restartAction}
                     title={s.restartAction}
                   >
@@ -3798,6 +4639,24 @@ export default function SandGame() {
                   </button>
                   <button type="button" className="settings-devlink" onClick={() => resetGold()}>
                     <CoinIcon /> Reset gold
+                  </button>
+                  {/* `setHearts` re-reads storage immediately rather than
+                      waiting for the 1-second timer/`heartsStoreVersion`
+                      effect, so the HUD chip updates the instant this is
+                      tapped. */}
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => { spendHeart(devNow().getTime()); setHearts(getHeartsState(devNow().getTime())); }}
+                  >
+                    <HeartIcon /> -1 heart
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => { resetHearts(); setHearts(getHeartsState(devNow().getTime())); }}
+                  >
+                    <HeartIcon /> Refill hearts
                   </button>
                   {/* Fills the bar to a claimable chest in one tap, without
                       having to win five levels first — the only way to reach
@@ -3995,14 +4854,23 @@ export default function SandGame() {
               <div className="result-card is-win">
                 <div className="result-card-header">
                   <h2>{s.frameCleared}</h2>
-                  <button type="button" className="result-close-btn" onClick={goHome} aria-label={s.backToHome}>
-                    <CancelIcon />
-                  </button>
+                  {(playingZen || onboardingLockLifted) && (
+                    <button type="button" className="result-close-btn" onClick={goHome} aria-label={s.backToHome}>
+                      <CancelIcon />
+                    </button>
+                  )}
                 </div>
                 <div className="result-card-body">
-                  <p className="result-gold-earned">
-                    <CoinIcon /> {s.goldEarned(wonGold)}
-                  </p>
+                  {/* Zen Mode pays no gold at all — its own quiet line
+                      instead of "+0 gold", which would read as a shortfall
+                      rather than the deliberate "not the point" it is. */}
+                  {playingZen ? (
+                    <p className="result-gold-earned">{s.zenCleared}</p>
+                  ) : (
+                    <p className="result-gold-earned">
+                      <CoinIcon /> {s.goldEarned(wonGold)}
+                    </p>
+                  )}
                   {hasNextLevel && (
                     <div className="result-actions">
                       {/* A win that just unlocked a progression skin
@@ -4013,7 +4881,13 @@ export default function SandGame() {
                           plays (on request — the two are meant to match),
                           with `cannonUnlockAdvanceTo` set so dismissing it is
                           what actually calls `openLevel`. Every other win
-                          continues the same way it always has. */}
+                          continues the same way it always has. Either path
+                          runs `triggerLevelFtue` for the level about to
+                          open — a report that level 3's booster tutorial
+                          never showed when reached via Continue (only via
+                          Home's Play tap) traced back to this exact button
+                          never running that check at all; see the function's
+                          own comment. */}
                       <button
                         type="button"
                         onClick={() => {
@@ -4027,6 +4901,7 @@ export default function SandGame() {
                             return;
                           }
                           openLevel(levelIndex + 1);
+                          triggerLevelFtue(expandLevelForPixelBoard(playables[levelIndex + 1].level));
                         }}
                       >
                         {s.continueLabel}
@@ -4045,7 +4920,7 @@ export default function SandGame() {
               <h2>{s.outOfShots}</h2>
               <p>{s.clearedPercent(cleared, state.remainingCells)}</p>
               <div className="result-actions">
-                <button type="button" onClick={restart}>
+                <button type="button" onClick={() => { if (tryStartAttempt()) restart(); }}>
                   {s.playAgain}
                 </button>
                 <button type="button" className="is-quiet" onClick={goHome}>
@@ -4120,15 +4995,16 @@ export default function SandGame() {
             top-right. Gated on `!playing` on top of that — the very first
             render is always the hub, but this stays defensive rather than
             relying on that ordering.
-            The day strip already says everything a status line below it
-            used to repeat in words (which day, how much, whether it's
-            claimed — `.is-today`/`.is-past` carry that visually), so this
-            card is just the strip and the one action that matters — Claim,
-            full stop. No "Later"/"Close" text button any more: the corner
-            `.result-close-btn` is the dismiss action now, same as the WIN
-            card's own X, so a player who does not want to claim today just
-            closes the card instead of choosing between two ways to say the
-            same thing. */}
+            Now a real calendar grid for the current month (`getDailyLoginCalendar`)
+            instead of a 7-chip streak strip — every cell IS a real date, so
+            "tomorrow" in the grid is actually tomorrow. Monday/Tuesday/
+            Wednesday read as the "great value" tier (gold tag + a free
+            booster charge), Saturday/Sunday as the weekend tier (highest
+            gold) — everything else is a plain cell. `.is-past`/`.is-today`/
+            `.is-claimed` carry all the status a line of text used to repeat
+            in words. No "Later"/"Close" text button: the corner
+            `.result-close-btn` is the one dismiss action, same as the WIN
+            card's own X. */}
         {!playing && !chest && dailyLogin && (
           <div
             className="result-screen"
@@ -4158,57 +5034,84 @@ export default function SandGame() {
                 </div>
                 <div className="daily-login-header-strip" />
                 <div className="daily-login-body">
-                  {/* The week reads as three tiers now, not seven identical
-                      chips: days 1-3 are dressed as the early "hời" days (a
-                      warm value badge, per the ask), 4-6 stay the plain
-                      chip the whole strip used to be, and day 7 breaks out
-                      into its own full-width hero card below — the one
-                      reward the whole week is building toward, sized and
-                      coloured so a player cannot mistake it for "just
-                      another day". Values are still whatever
-                      `DAILY_LOGIN_REWARDS`/the sheet says — this only
-                      changes how each tier is dressed, not what it pays. */}
-                  <div className="daily-login-strip">
-                    {DAILY_LOGIN_REWARDS.slice(0, 6).map((_, index) => {
-                      const isToday = index === dailyLogin.day;
-                      const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
-                      const isValue = index < 3;
-                      return (
-                        <div
-                          key={index}
-                          className={`daily-login-day${isValue ? " is-value" : ""}${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
-                        >
-                          {isValue && <span className="daily-login-value-tag" aria-hidden="true">{s.greatValue}</span>}
-                          <span className="daily-login-label">{s.dayLabel(index + 1)}</span>
-                          <span ref={isToday ? todayCoinRef : undefined}>
-                            <CoinIcon />
-                          </span>
-                          <strong>{dailyLoginReward(index)}</strong>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {/* Derived from `dailyCalendar` itself rather than a fresh
+                      `devNow()` call — `devNow()` reads the dev date-offset
+                      tool's `localStorage` entry, invisible to the server
+                      (`typeof window === "undefined"` there), so calling it
+                      directly here would render a different month during
+                      SSR than the client hydrates with (a real hydration
+                      mismatch) the moment that offset is non-zero. Any
+                      current-month cell's own `date` is exactly as
+                      hydration-safe as `dailyCalendar` already is — empty
+                      (so no title) until the real grid swaps in right after
+                      mount, same as every other value on this modal. */}
                   {(() => {
-                    const index = 6;
-                    const isToday = index === dailyLogin.day;
-                    const isPast = index < dailyLogin.day || (isToday && dailyLogin.claimedToday);
-                    return (
-                      <div
-                        className={`daily-login-hero${isToday ? " is-today" : ""}${isPast ? " is-past" : ""}`}
-                      >
-                        <span className="daily-login-hero-tag" aria-hidden="true">{s.bestReward}</span>
-                        <span className="daily-login-hero-body">
-                          <span className="daily-login-hero-icon" ref={isToday ? todayCoinRef : undefined}>
-                            <CoinIcon />
-                          </span>
-                          <span className="daily-login-hero-text">
-                            <span className="daily-login-label">{s.dayLabel(index + 1)}</span>
-                            <strong>{dailyLoginReward(index)}</strong>
-                          </span>
-                        </span>
-                      </div>
-                    );
+                    const firstCell = dailyCalendar[0];
+                    if (!firstCell) return null;
+                    return <div className="daily-login-month-title">{s.monthTitle(new Date(`${firstCell.date}T12:00:00`))}</div>;
                   })()}
+                  {/* A dark, square-celled grid (per the ask — "grid đen, ô
+                      vuông", "phóng to ô") that SCROLLS on its own
+                      (`overflow-y: auto`, capped height) so the player swipes
+                      down to see further days instead of everything being
+                      squeezed to fit unscrolled. 5 cells a row now, not 7 —
+                      no weekday header any more ("không đánh Mon->Sun, chỉ
+                      đánh dấu ngày"): each cell's own day-of-month number is
+                      the only date label, and with 5 columns instead of 7 in
+                      the same card width each cell is visibly bigger. */}
+                  <div className="daily-login-calendar-scroll">
+                    <div className="daily-login-calendar">
+                      {dailyCalendar.map((cell) => {
+                        // Mon-Fri are plain now — no perk, just the rising
+                        // gold amount. The weekend (Sat/Sun) carries the
+                        // gold cell wash — that alone marks it as the
+                        // special tier, no "WEEKEND" text label needed on
+                        // top — plus the free Prism Shot perk
+                        // (`DAILY_LOGIN_BOOSTER_PERK`), shown as the
+                        // booster's own icon rather than its name spelled
+                        // out, so the cell stays a glance, not a read.
+                        const isWeekend = cell.weekday >= 5;
+                        const className = [
+                          "daily-login-cell",
+                          cell.isToday && "is-today",
+                          cell.isPast && "is-past",
+                          cell.isFuture && "is-future",
+                          cell.isClaimed && "is-claimed",
+                          isWeekend && "is-weekend",
+                        ].filter(Boolean).join(" ");
+                        return (
+                          <div key={cell.date} className={className}>
+                            <span className="daily-login-cell-day">{cell.dayOfMonth}</span>
+                            {cell.isClaimed ? (
+                              <span className="daily-login-cell-check" aria-hidden="true">✓</span>
+                            ) : (
+                              <>
+                                <span
+                                  className="daily-login-cell-coin"
+                                  ref={cell.isToday ? todayCoinRef : undefined}
+                                >
+                                  <CoinIcon />
+                                </span>
+                                <strong>{cell.reward}</strong>
+                              </>
+                            )}
+                            {cell.boosterPerk && !cell.isClaimed && (
+                              <span
+                                className="daily-login-perk-icon"
+                                aria-label={s.dailyLoginPerkTag(s.boosterName(cell.boosterPerk))}
+                                title={s.dailyLoginPerkTag(s.boosterName(cell.boosterPerk))}
+                              >
+                                <BoosterIcon type={cell.boosterPerk} />
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {dailyLogin.streak > 1 && (
+                    <div className="daily-login-streak">{s.dailyLoginStreak(dailyLogin.streak)}</div>
+                  )}
                   {/* Claim only — no "Later"/"Close" text button any more, the
                       corner X above is the one dismiss action every card gets
                       for free. Already claimed today: nothing to claim, so no

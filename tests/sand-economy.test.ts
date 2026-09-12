@@ -17,14 +17,19 @@ import {
   buyBoosterCharge,
   computeDailyLoginState,
   computeRewardTrackState,
+  getDailyLoginCalendar,
   getEmeralds,
   LEVELS_PER_NODE,
+  LEVEL_MILESTONE_LEVELS,
+  LEVEL_MILESTONE_BONUS,
+  levelMilestoneBonus,
   CYCLE_EMERALDS,
   cycleReward,
   NODES_PER_CHEST,
   spendEmeralds,
   dailyLoginReward,
   DAILY_LOGIN_REWARDS,
+  DAILY_LOGIN_BOOSTER_PERK,
   getBoosterCount,
   getGold,
   levelGoldReward,
@@ -33,20 +38,47 @@ import {
   STARTER_BOOSTER_CHARGES,
   STARTER_GOLD,
   __resetWalletForTests,
+  computeHeartsState,
+  MAX_HEARTS,
+  HEARTS_UNLOCK_LEVEL_ID,
 } from "../app/game/economy.ts";
 import { seedEconomyConfig } from "../app/game/economy-config.ts";
 
 // ---- levelGoldReward --------------------------------------------------------
+// Tuned so a mid-difficulty level (score 50) pays exactly BOOSTER_PRICE / 5 —
+// 5 first-clears roughly buys one Radius Overcharge/Prism Shot charge.
 
-test("levelGoldReward scales 1:1 with difficulty score, rounded to the nearest 5", () => {
-  assert.equal(levelGoldReward(0), 20);
-  assert.equal(levelGoldReward(100), 120);
-  // 20 + 47 = 67 -> nearest 5 is 65; 20 + 48 = 68 -> nearest 5 is 70. Two
-  // adjacent scores landing on different multiples of 5 is expected, not a
-  // bug — the rounding is what keeps the *displayed* number tidy, not a
-  // guarantee that neighbours never differ.
-  assert.equal(levelGoldReward(47), 65);
-  assert.equal(levelGoldReward(48), 70);
+test("levelGoldReward scales with difficulty score, rounded to the nearest 5", () => {
+  assert.equal(levelGoldReward(0), 5);
+  assert.equal(levelGoldReward(100), 35);
+  assert.equal(levelGoldReward(50), 20, "a mid-difficulty level pays exactly BOOSTER_PRICE.radiusOvercharge / 5");
+  assert.equal(levelGoldReward(50), BOOSTER_PRICE.radiusOvercharge / 5);
+  // 5 + 0.3*58 = 22.4 -> nearest 5 is 20; 5 + 0.3*59 = 22.7 -> nearest 5 is
+  // 25. Two adjacent scores landing on different multiples of 5 is expected,
+  // not a bug — the rounding is what keeps the *displayed* number tidy, not
+  // a guarantee that neighbours never differ.
+  assert.equal(levelGoldReward(58), 20);
+  assert.equal(levelGoldReward(59), 25);
+});
+
+// ---- level milestone bonus ---------------------------------------------------
+
+test("levelMilestoneBonus pays only the decade levels, growing each time", () => {
+  assert.equal(levelMilestoneBonus(1), 0);
+  assert.equal(levelMilestoneBonus(15), 0);
+  assert.equal(LEVEL_MILESTONE_LEVELS.length, 5);
+  assert.deepEqual([...LEVEL_MILESTONE_LEVELS], [10, 20, 30, 40, 50]);
+  for (let i = 0; i < LEVEL_MILESTONE_LEVELS.length; i += 1) {
+    assert.equal(levelMilestoneBonus(LEVEL_MILESTONE_LEVELS[i]), LEVEL_MILESTONE_BONUS[i]);
+    if (i > 0) assert.ok(LEVEL_MILESTONE_BONUS[i] > LEVEL_MILESTONE_BONUS[i - 1], "each milestone should pay more than the last");
+  }
+  // Every milestone bonus should land roughly between 2/3 of the cheaper
+  // boosters' price and 3/4 of the priciest one, per the design ask (a small
+  // margin either side since the exact figures are hand-picked, not derived).
+  for (const bonus of LEVEL_MILESTONE_BONUS) {
+    assert.ok(bonus >= (2 / 3) * BOOSTER_PRICE.radiusOvercharge - 5);
+    assert.ok(bonus <= (3 / 4) * BOOSTER_PRICE.chainSort + 5);
+  }
 });
 
 // ---- wallet: gold -----------------------------------------------------------
@@ -124,45 +156,97 @@ test("Chain Sort costs strictly more than either other booster — no cap on how
 });
 
 // ---- daily login: computeDailyLoginState -------------------------------------
+// Reward now follows the REAL calendar weekday (Monday = 0 .. Sunday = 6),
+// not a looping streak position — 2026-08-29 is a real-world Saturday,
+// 2026-08-28 a Friday, 2026-08-26 a Wednesday, 2026-08-31 a Monday.
 
-test("no record yet: day 0, unclaimed", () => {
+test("no record yet: today's real weekday, unclaimed, no streak", () => {
   const state = computeDailyLoginState(null, new Date("2026-08-29T09:00:00"));
-  assert.deepEqual(state, { day: 0, reward: DAILY_LOGIN_REWARDS[0], claimedToday: false });
+  assert.deepEqual(state, {
+    weekday: 5,
+    date: "2026-08-29",
+    reward: DAILY_LOGIN_REWARDS[5],
+    boosterPerk: "prismShot",
+    claimedToday: false,
+    streak: 0,
+  });
 });
 
-test("claimed earlier today: same day, reported as already claimed", () => {
+test("claimed earlier today: reported as already claimed, streak held", () => {
   const now = new Date("2026-08-29T21:00:00");
-  const state = computeDailyLoginState({ lastDay: 2, lastClaimedOn: "2026-08-29" }, now);
-  assert.deepEqual(state, { day: 2, reward: DAILY_LOGIN_REWARDS[2], claimedToday: true });
+  const state = computeDailyLoginState({ claimedDates: ["2026-08-29"], lastClaimedOn: "2026-08-29", streak: 3 }, now);
+  assert.equal(state.claimedToday, true);
+  assert.equal(state.streak, 3);
+  assert.equal(state.reward, DAILY_LOGIN_REWARDS[5]);
 });
 
-test("claimed exactly yesterday: streak advances by one day", () => {
+test("claimed exactly yesterday: not claimed today yet, streak still held (bumped only by an actual claim)", () => {
   const now = new Date("2026-08-29T09:00:00");
-  const state = computeDailyLoginState({ lastDay: 2, lastClaimedOn: "2026-08-28" }, now);
-  assert.deepEqual(state, { day: 3, reward: DAILY_LOGIN_REWARDS[3], claimedToday: false });
-});
-
-test("streak wraps from day 7 (index 6) back to day 1 (index 0), not past the array", () => {
-  const now = new Date("2026-08-29T09:00:00");
-  const state = computeDailyLoginState({ lastDay: DAILY_LOGIN_REWARDS.length - 1, lastClaimedOn: "2026-08-28" }, now);
-  assert.equal(state.day, 0);
-  assert.equal(state.reward, DAILY_LOGIN_REWARDS[0]);
-});
-
-test("a gap of 2+ days resets the streak to day 0, even from a high streak", () => {
-  const now = new Date("2026-08-29T09:00:00");
-  const state = computeDailyLoginState({ lastDay: 5, lastClaimedOn: "2026-08-26" }, now);
-  assert.equal(state.day, 0);
+  const state = computeDailyLoginState({ claimedDates: ["2026-08-28"], lastClaimedOn: "2026-08-28", streak: 2 }, now);
   assert.equal(state.claimedToday, false);
+  assert.equal(state.streak, 2);
 });
 
-test("DAILY_LOGIN_REWARDS is a 7-day cycle, non-decreasing, and stays well under a typical level's reward", () => {
+test("a gap of 2+ days resets the streak to 0", () => {
+  const now = new Date("2026-08-29T09:00:00");
+  const state = computeDailyLoginState({ claimedDates: ["2026-08-26"], lastClaimedOn: "2026-08-26", streak: 5 }, now);
+  assert.equal(state.claimedToday, false);
+  assert.equal(state.streak, 0);
+});
+
+test("weekday reward table: Mon-Fri are plain and rise gently, Sat-Sun pay the most (+perk)", () => {
   assert.equal(DAILY_LOGIN_REWARDS.length, 7);
-  for (let i = 1; i < DAILY_LOGIN_REWARDS.length; i += 1) {
-    assert.ok(DAILY_LOGIN_REWARDS[i] >= DAILY_LOGIN_REWARDS[i - 1], "each day should pay at least as much as the last");
+  for (let i = 1; i < 5; i += 1) {
+    assert.ok(DAILY_LOGIN_REWARDS[i] >= DAILY_LOGIN_REWARDS[i - 1], "Mon..Fri should not pay less than the day before");
   }
+  assert.ok(DAILY_LOGIN_REWARDS[5] > DAILY_LOGIN_REWARDS[4], "Saturday should pay more than Friday");
+  assert.ok(DAILY_LOGIN_REWARDS[6] > DAILY_LOGIN_REWARDS[5], "Sunday should pay more than Saturday");
+  assert.deepEqual(Object.keys(DAILY_LOGIN_BOOSTER_PERK).map(Number).sort(), [5, 6], "only the weekend (Sat/Sun) grants a booster perk");
+  assert.ok(Object.values(DAILY_LOGIN_BOOSTER_PERK).every((type) => type === "prismShot"), "the weekend perk is Prism Shot on both days");
   const weeklyTotal = DAILY_LOGIN_REWARDS.reduce((sum, value) => sum + value, 0);
-  assert.ok(weeklyTotal / 7 < levelGoldReward(50), "the average daily bonus should stay a supplement, not outpace a mid-difficulty level");
+  // The week-long average sits in the same ballpark as a mid-difficulty
+  // level's one-off reward rather than dwarfing it — a bonus for showing up,
+  // paid at most once a day, not a replacement for playing levels (Sunday's
+  // own single best day is allowed to run a bit ahead of that, same as the
+  // old cycle's own day-7 "hero" reward always did).
+  assert.ok(weeklyTotal / 7 <= levelGoldReward(50) * 1.1, "the average daily bonus should stay close to a mid-difficulty level's reward, not dwarf it");
+});
+
+test("computeDailyLoginState's boosterPerk is null Mon-Fri, and Prism Shot on the weekend", () => {
+  const monday = computeDailyLoginState(null, new Date("2026-08-31T09:00:00"));
+  assert.equal(monday.weekday, 0);
+  assert.equal(monday.boosterPerk, null);
+  const friday = computeDailyLoginState(null, new Date("2026-08-28T09:00:00"));
+  assert.equal(friday.weekday, 4);
+  assert.equal(friday.boosterPerk, null);
+  const saturday = computeDailyLoginState(null, new Date("2026-08-29T09:00:00"));
+  assert.equal(saturday.weekday, 5);
+  assert.equal(saturday.boosterPerk, "prismShot");
+  const sunday = computeDailyLoginState(null, new Date("2026-08-30T09:00:00"));
+  assert.equal(sunday.weekday, 6);
+  assert.equal(sunday.boosterPerk, "prismShot");
+});
+
+// ---- daily login: getDailyLoginCalendar --------------------------------------
+
+test("getDailyLoginCalendar lists exactly the days of the month, in order, no week padding, with exactly one claimable today", () => {
+  const cells = getDailyLoginCalendar(new Date("2026-08-15T09:00:00"));
+  // August 2026 has 31 days — no leading/trailing days from neighbouring
+  // months any more (the grid no longer aligns to real weekday columns, per
+  // the "5 ô một hàng, không đánh Mon->Sun" ask), so the flat list is
+  // exactly the month's own day count, day 1 first.
+  assert.equal(cells.length, 31);
+  assert.equal(cells[0].dayOfMonth, 1);
+  assert.equal(cells[cells.length - 1].dayOfMonth, 31);
+  const todays = cells.filter((cell) => cell.isToday);
+  assert.equal(todays.length, 1);
+  assert.equal(todays[0].date, "2026-08-15");
+  assert.equal(todays[0].dayOfMonth, 15);
+  for (const cell of cells) {
+    assert.equal(cell.reward, DAILY_LOGIN_REWARDS[cell.weekday]);
+    assert.equal(cell.isPast, cell.date < "2026-08-15");
+    assert.equal(cell.isFuture, cell.date > "2026-08-15");
+  }
 });
 
 // ---- economy.csv overrides (economy-config.ts) -------------------------------
@@ -195,9 +279,17 @@ test("a sheet row overrides one daily-login day without disturbing the rest of t
 
 test("computeDailyLoginState's reward field reflects a sheet override too, not just dailyLoginReward directly", () => {
   seedEconomyConfig([{ key: "dailyLoginDay1", value: 777 }]);
-  const state = computeDailyLoginState(null, new Date("2026-08-29T09:00:00"));
-  assert.equal(state.day, 0);
+  // 2026-08-31 is a real-world Monday (weekday 0), which dailyLoginDay1 overrides.
+  const state = computeDailyLoginState(null, new Date("2026-08-31T09:00:00"));
+  assert.equal(state.weekday, 0);
   assert.equal(state.reward, 777);
+  seedEconomyConfig([]);
+});
+
+test("a sheet edit moves a level milestone's bonus", () => {
+  seedEconomyConfig([{ key: "levelMilestoneBonus10", value: 999 }]);
+  assert.equal(levelMilestoneBonus(10), 999);
+  assert.equal(levelMilestoneBonus(20), LEVEL_MILESTONE_BONUS[1], "an unlisted milestone keeps its hardcoded value");
   seedEconomyConfig([]);
 });
 
@@ -288,4 +380,66 @@ test("emerald spends atomically, like gold", () => {
   assert.equal(getEmeralds(), 0);
   assert.equal(spendEmeralds(1), false);
   assert.equal(getEmeralds(), 0);
+});
+
+// ---- hearts -------------------------------------------------------------
+// A play-attempt currency locked until level 10, regenerating on a wall
+// clock (`HEART_REGEN_MINUTES`) rather than being earned by playing — see
+// `computeHeartsState`'s own comment in economy.ts.
+
+test("hearts unlock at level 10, not earlier or later", () => {
+  assert.equal(HEARTS_UNLOCK_LEVEL_ID, 10);
+});
+
+test("a full tank reports no countdown, whatever regenStartedAt says", () => {
+  const now = Date.parse("2026-09-11T12:00:00Z");
+  assert.deepEqual(computeHeartsState({ hearts: MAX_HEARTS, regenStartedAt: null }, now), {
+    hearts: MAX_HEARTS,
+    msUntilNext: null,
+  });
+  // A stray `regenStartedAt` left over from a full tank is ignored — `hearts
+  // >= MAX_HEARTS` wins regardless.
+  assert.deepEqual(computeHeartsState({ hearts: MAX_HEARTS, regenStartedAt: now - 1000 }, now), {
+    hearts: MAX_HEARTS,
+    msUntilNext: null,
+  });
+});
+
+test("no time passed: same heart count, full countdown remaining", () => {
+  const now = Date.parse("2026-09-11T12:00:00Z");
+  const state = computeHeartsState({ hearts: 2, regenStartedAt: now }, now);
+  assert.equal(state.hearts, 2);
+  assert.equal(state.msUntilNext, 30 * 60_000);
+});
+
+test("exactly one regen interval passed: one more heart, fresh countdown for the next", () => {
+  const start = Date.parse("2026-09-11T12:00:00Z");
+  const now = start + 30 * 60_000;
+  const state = computeHeartsState({ hearts: 2, regenStartedAt: start }, now);
+  assert.equal(state.hearts, 3);
+  assert.equal(state.msUntilNext, 30 * 60_000);
+});
+
+test("partway through an interval: same heart count, countdown ticked down by the elapsed time", () => {
+  const start = Date.parse("2026-09-11T12:00:00Z");
+  const now = start + 5 * 60_000;
+  const state = computeHeartsState({ hearts: 2, regenStartedAt: start }, now);
+  assert.equal(state.hearts, 2);
+  assert.equal(state.msUntilNext, 25 * 60_000);
+});
+
+test("regen caps at MAX_HEARTS even after a very long absence", () => {
+  const start = Date.parse("2026-09-11T12:00:00Z");
+  const now = start + 100 * 30 * 60_000; // 100 intervals worth
+  const state = computeHeartsState({ hearts: 1, regenStartedAt: start }, now);
+  assert.equal(state.hearts, MAX_HEARTS);
+  assert.equal(state.msUntilNext, null);
+});
+
+test("zero hearts still counts down toward the first one back", () => {
+  const start = Date.parse("2026-09-11T12:00:00Z");
+  const now = start + 10 * 60_000;
+  const state = computeHeartsState({ hearts: 0, regenStartedAt: start }, now);
+  assert.equal(state.hearts, 0);
+  assert.equal(state.msUntilNext, 20 * 60_000);
 });

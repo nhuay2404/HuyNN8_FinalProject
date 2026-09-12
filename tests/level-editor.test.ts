@@ -138,6 +138,42 @@ test("a new draft is the board itself, at the resolution the game runs", () => {
   assert.deepEqual(expandLevelForPixelBoard(level).frame, level.frame, "expansion is a no-op now");
 });
 
+// ---- Zen Mode: draftToLevel forces unlimited shots/boosters -----------------
+
+test("draftToLevel leaves an ordinary draft's shotLimit/forcedBoosterCharges alone", () => {
+  const draft = { ...solidDraft(), shotLimit: 12, forcedBoosterCharges: { prismShot: 2 } };
+  const level = draftToLevel(draft, 1);
+  assert.equal(level.shotLimit, 12);
+  assert.deepEqual(level.forcedBoosterCharges, { prismShot: 2 });
+});
+
+test("draftToLevel forces unlimited shots and every booster charge for a Zen draft, ignoring the draft's own numbers", () => {
+  const draft = { ...solidDraft(), mode: "zen" as const, shotLimit: 12, forcedBoosterCharges: { prismShot: 2 } };
+  const level = draftToLevel(draft, 1);
+  assert.equal(level.shotLimit, Infinity);
+  assert.deepEqual(level.forcedBoosterCharges, {
+    radiusOvercharge: Infinity,
+    prismShot: Infinity,
+    chainSort: Infinity,
+  });
+});
+
+test("draftToLevel carries a draft's customPalette straight through to the level", () => {
+  const draft = { ...solidDraft(), mode: "zen" as const, customPalette: { red: 0x336699 } };
+  const level = draftToLevel(draft, 1);
+  assert.deepEqual(level.customPalette, { red: 0x336699 });
+});
+
+test("draftToLevel leaves customPalette undefined when the draft never set one", () => {
+  const level = draftToLevel(solidDraft(), 1);
+  assert.equal(level.customPalette, undefined);
+});
+
+test("a fresh draft defaults to no mode (the ordinary main-list kind)", () => {
+  const draft = createDraft("Fresh");
+  assert.equal(draft.mode, undefined);
+});
+
 test("two drafts made in the same millisecond still get different ids", () => {
   // Duplicating a level does exactly this, and colliding ids would make the
   // editor edit two entries at once.

@@ -19,6 +19,7 @@ const WALLET_KEY = "sand-cannon:v1:wallet";
 const CLEARED_KEY = "sand-cannon:v1:cleared-levels";
 const DAILY_KEY = "sand-cannon:v1:daily-login";
 const PROGRESS_KEY = "sand-cannon:v1:reward-track";
+const HEARTS_KEY = "sand-cannon:v1:hearts";
 
 // ---- balancing constants ---------------------------------------------------
 // See CHANGELOG-prototype.md for the full reasoning behind every number here.
@@ -53,6 +54,7 @@ const CONFIG_KEY = {
         : "boosterPriceChainSort",
   dailyLoginDay: (dayIndex: number) => `dailyLoginDay${dayIndex + 1}`,
   cycleEmeralds: (cycleIndex: number) => `rewardTrackCycle${cycleIndex + 1}`,
+  levelMilestoneBonus: (levelId: number) => `levelMilestoneBonus${levelId}`,
 } as const;
 
 /**
@@ -71,25 +73,17 @@ function starterGold(): number {
  * wall in front of a mechanic they have never seen work.
  */
 /**
- * The hard-currency balance shown on the Shop's Gems tab. Purely a display
- * number for now — nothing in the game spends or earns gems yet, and the
- * Gems tab's own bundles/offers are not wired to a real payment processor
- * (see `SandGame.tsx`'s Shop screen) — so this is a starter prop, the gem
- * equivalent of what `STARTER_GOLD` was before gold became real and
- * spendable.
- */
-export const STARTER_GEMS = 240;
-
-/**
- * Blue Emerald — the skin currency. Earned ONLY from the home screen's reward
- * track (the progression section at the bottom of this file), never from
- * clearing a level directly and never sold for real money, so the one thing
- * it buys (a locked cannon skin — `costumePrice` in `costumes.ts`) is gated
- * on actually playing rather than on either currency that already exists.
+ * Blue Emerald — the skin currency. Earned mainly from the home screen's
+ * reward track (the progression section at the bottom of this file), never
+ * from clearing a level directly — the one thing it buys (a locked cannon
+ * skin — `costumePrice` in `costumes.ts`) stays gated on actually playing.
+ * A small top-up also rides along in the Shop's real-money bundles now
+ * (2026-09d, on request — see `SandGame.tsx`'s Shop screen), alongside gold
+ * and hearts; the reward track is still the only FREE source.
  *
- * Starts at 0, unlike gold and gems: the whole point of the track is that the
- * first 500 arrives as a reward the player watched themselves fill, so a
- * fresh install must not already be holding enough to skip it.
+ * Starts at 0, unlike gold: the whole point of the track is that the first
+ * 500 arrives as a reward the player watched themselves fill, so a fresh
+ * install must not already be holding enough to skip it.
  */
 export const STARTER_EMERALDS = 0;
 
@@ -132,16 +126,21 @@ export function boosterPrice(type: BoosterType): number {
  * module does not have to import the scorer — the caller (`SandGame.tsx`)
  * already has both the level and a reason to compute its score.
  *
- * `REWARD_BASE` is the floor (the easiest conceivable level still pays out
- * something for finishing it), `REWARD_PER_POINT` is 1:1 with the score, and
- * the result is rounded to the nearest 5 so neighbouring levels do not pay
- * out visibly arbitrary numbers like 47 vs 49.
+ * Tuned so playing roughly 5 levels (first clears) buys one Radius
+ * Overcharge/Prism Shot charge (`BOOSTER_PRICE`, 100 gold): a mid-difficulty
+ * level (score 50) pays exactly 20 gold, `BOOSTER_PRICE / 5`. `REWARD_BASE`
+ * is the floor (the easiest conceivable level still pays out something for
+ * finishing it), `REWARD_PER_POINT` is the slope, and the result is rounded
+ * to the nearest 5 so neighbouring levels do not pay out visibly arbitrary
+ * numbers like 17 vs 19.
  *
- * Range: 20 (score 0) to 120 (score 100). See CHANGELOG-prototype.md for the
- * worked-through tiers and the 50-level lifetime estimate.
+ * Range: 5 (score 0) to 35 (score 100), average 20 across the score range.
+ * See CHANGELOG-prototype.md for the worked-through tiers and the 50-level
+ * lifetime estimate, and GDD.md §10 for the "5 trận / 1 booster" pacing goal
+ * this was rebalanced around.
  */
-const REWARD_BASE = 20;
-const REWARD_PER_POINT = 1;
+const REWARD_BASE = 5;
+const REWARD_PER_POINT = 0.3;
 
 function roundToFive(value: number) {
   return Math.round(value / 5) * 5;
@@ -152,27 +151,66 @@ export function levelGoldReward(difficultyScore: number): number {
 }
 
 /**
- * Daily login, a 7-day cycle that loops rather than escalating forever —
- * escalating within the week rewards coming back the next day, looping caps
- * how much a player can lean on logins alone instead of playing levels.
- * Deliberately smaller than clearing even one easy level most days (20–30
- * gold): this is a bonus for showing up, not the main way to earn — the
- * level roster is. See CHANGELOG-prototype.md for the full reasoning.
+ * A one-time bonus stacked ON TOP of `levelGoldReward` (or its CSV override)
+ * for the five "decade" milestone levels — 10, 20, 30, 40, 50 — paid on the
+ * same first-clear beat as the level's own reward (`markLevelCleared`,
+ * `SandGame.tsx`'s WIN handler). Growing across the five milestones and
+ * landing between 2/3 and 3/4 of a booster's price (`BOOSTER_PRICE`), so
+ * each decade reads as "almost enough for a booster all by itself" rather
+ * than a token bump — see GDD.md §10.4.
+ *
+ * Any level id not in `LEVEL_MILESTONE_LEVELS` gets 0 — `levelMilestoneBonus`
+ * below is safe to call unconditionally for every level, not just milestones.
  */
-export const DAILY_LOGIN_REWARDS: readonly number[] = [10, 15, 20, 25, 30, 40, 80];
-/** Day `dayIndex`'s (0-indexed) actual reward — `DAILY_LOGIN_REWARDS[dayIndex]`
- * unless `economy.csv` overrides that one day. The 7-day CYCLE LENGTH itself
- * is not overridable from the sheet — only the amounts — so every existing
- * `% DAILY_LOGIN_REWARDS.length` wraparound stays correct with no change. */
-export function dailyLoginReward(dayIndex: number): number {
-  return getEconomyConfigOverride(CONFIG_KEY.dailyLoginDay(dayIndex)) ?? DAILY_LOGIN_REWARDS[dayIndex];
+export const LEVEL_MILESTONE_LEVELS: readonly number[] = [10, 20, 30, 40, 50];
+/** `LEVEL_MILESTONE_LEVELS[i]`'s bonus — 65 (≈2/3 of 100) up to 115 (≈3/4 of
+ * 150), increasing with each decade. */
+export const LEVEL_MILESTONE_BONUS: readonly number[] = [65, 75, 90, 100, 115];
+
+/** `LEVEL_MILESTONE_BONUS[index]` unless `economy.csv` overrides that
+ * milestone's `levelMilestoneBonus<levelId>` row. `undefined` for a level id
+ * that is not a milestone at all — callers use `levelMilestoneBonus` below,
+ * which folds that case to 0. */
+function milestoneBonusAt(index: number): number {
+  return getEconomyConfigOverride(CONFIG_KEY.levelMilestoneBonus(LEVEL_MILESTONE_LEVELS[index])) ?? LEVEL_MILESTONE_BONUS[index];
 }
+
+/** The milestone bonus for level `levelId` — 0 for every non-milestone level. */
+export function levelMilestoneBonus(levelId: number): number {
+  const index = LEVEL_MILESTONE_LEVELS.indexOf(levelId);
+  return index === -1 ? 0 : milestoneBonusAt(index);
+}
+
+/**
+ * Daily login, keyed by the REAL calendar weekday now (index 0 = Monday ...
+ * 6 = Sunday — `weekdayIndex` below), not by a streak position that used to
+ * loop every 7 claims regardless of what day it actually was. Monday through
+ * Friday are plain gold, rising gently; Saturday and Sunday (the weekend)
+ * pay the most AND are the only days `DAILY_LOGIN_BOOSTER_PERK` also hands
+ * out a free Prism Shot charge on top — the weekend is the one tier that
+ * reads as a genuinely better day to check in. Every entry stays well under
+ * a mid-difficulty level's own reward (`levelGoldReward`) — this is a bonus
+ * for showing up, not the main way to earn. See CHANGELOG-prototype.md for
+ * the full reasoning and GDD.md §10.6 for the weekday table.
+ */
+export const DAILY_LOGIN_REWARDS: readonly number[] = [10, 12, 15, 18, 20, 30, 40];
+/** `DAILY_LOGIN_REWARDS[weekday]` unless `economy.csv` overrides that
+ * weekday's `dailyLoginDay<N>` row (`N` = weekday + 1, Monday = day 1). */
+export function dailyLoginReward(weekday: number): number {
+  return getEconomyConfigOverride(CONFIG_KEY.dailyLoginDay(weekday)) ?? DAILY_LOGIN_REWARDS[weekday];
+}
+
+/** Saturday(5)/Sunday(6) each also grant one free Prism Shot charge — the
+ * only "ưu đãi" (extra perk) on top of gold, exclusive to the weekend. */
+export const DAILY_LOGIN_BOOSTER_PERK: Partial<Record<number, BoosterType>> = {
+  5: "prismShot",
+  6: "prismShot",
+};
 
 // ---- wallet -----------------------------------------------------------------
 
 export type Wallet = {
   gold: number;
-  gems: number;
   /** Blue Emerald — see `STARTER_EMERALDS`. Skins only. */
   emeralds: number;
   boosters: Record<BoosterType, number>;
@@ -181,7 +219,6 @@ export type Wallet = {
 function defaultWallet(): Wallet {
   return {
     gold: starterGold(),
-    gems: STARTER_GEMS,
     emeralds: STARTER_EMERALDS,
     boosters: {
       radiusOvercharge: starterBoosterCharges("radiusOvercharge"),
@@ -232,7 +269,6 @@ function readWallet(): Wallet {
     const boosters = (parsed?.boosters ?? {}) as Partial<Record<BoosterType, number>>;
     cachedWallet = {
       gold: sanitiseCount(parsed?.gold, starterGold()),
-      gems: sanitiseCount(parsed?.gems, STARTER_GEMS),
       emeralds: sanitiseCount(parsed?.emeralds, STARTER_EMERALDS),
       boosters: {
         radiusOvercharge: sanitiseCount(boosters.radiusOvercharge, starterBoosterCharges("radiusOvercharge")),
@@ -295,10 +331,6 @@ export function getGold(): number {
   return readWallet().gold;
 }
 
-export function getGems(): number {
-  return readWallet().gems;
-}
-
 export function getEmeralds(): number {
   return readWallet().emeralds;
 }
@@ -349,7 +381,7 @@ export function resetGold() {
   writeWallet({ ...wallet, gold: 0 });
 }
 
-/** Dev-only: puts the WHOLE wallet — gold, gems, emeralds, every booster
+/** Dev-only: puts the WHOLE wallet — gold, emeralds, every booster
  * charge — back to its starter defaults, not just gold. Broader than
  * `resetGold` above (which only zeroes gold for testing the Shop on its
  * own); this is the "reset entire game" button's own piece of a full
@@ -408,7 +440,6 @@ export function __resetWalletForTests(overrides?: Partial<Wallet>) {
   const base = defaultWallet();
   cachedWallet = {
     gold: overrides?.gold ?? base.gold,
-    gems: overrides?.gems ?? base.gems,
     emeralds: overrides?.emeralds ?? base.emeralds,
     boosters: { ...base.boosters, ...(overrides?.boosters ?? {}) },
   };
@@ -489,21 +520,36 @@ export function resetClearedLevels() {
 }
 
 // ---- daily login --------------------------------------------------------
+// Tied to the REAL calendar now, not a streak position that looped every 7
+// claims regardless of what day it actually was: a level's reward depends on
+// today's actual weekday (Mon..Sun), and the modal renders the current MONTH
+// as a real grid (see `getDailyLoginCalendar`) so "tomorrow" always visibly
+// matches tomorrow's real date. `claimedDates` (rather than a single streak
+// counter) is what lets that grid put an actual checkmark on every day this
+// browser really claimed, not just "before today".
 
 export type DailyLoginState = {
-  /** 0-indexed position in `DAILY_LOGIN_REWARDS` for TODAY, whether or not it has been claimed yet. */
-  day: number;
-  /** Today's reward, `DAILY_LOGIN_REWARDS[day]`. */
+  /** Today's real weekday, 0 = Monday .. 6 = Sunday. */
+  weekday: number;
+  /** Today's calendar date (device-local), `YYYY-MM-DD`. */
+  date: string;
+  /** Today's reward, `DAILY_LOGIN_REWARDS[weekday]`. */
   reward: number;
+  /** The free booster charge today also grants, if `weekday` is Mon/Tue/Wed — see `DAILY_LOGIN_BOOSTER_PERK`. */
+  boosterPerk: BoosterType | null;
   /** Whether today's reward has already been claimed. */
   claimedToday: boolean;
+  /** Consecutive calendar days claimed, counting today once claimed. 0 if today is not claimed and yesterday was not either. */
+  streak: number;
 };
 
 export type DailyLoginRecord = {
-  /** The streak position of the last claim, 0-indexed into `DAILY_LOGIN_REWARDS`. */
-  lastDay: number;
+  /** Every date (device-local `YYYY-MM-DD`) actually claimed, pruned to the trailing `CLAIMED_DATES_RETENTION_DAYS` — enough to paint the visible calendar's checkmarks without the array growing forever. */
+  claimedDates: string[];
   /** The calendar date (device-local, `YYYY-MM-DD`) of the last claim. */
   lastClaimedOn: string;
+  /** Consecutive calendar days claimed as of `lastClaimedOn`. */
+  streak: number;
 };
 
 /** Device-local calendar date as `YYYY-MM-DD`, so the streak follows the
@@ -522,52 +568,71 @@ function daysBetween(fromKey: string, toKey: string): number {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000);
 }
 
+/** Real weekday for `date`, Monday = 0 .. Sunday = 6 — `Date#getDay()`
+ * (Sunday = 0) rotated so the week (and `DAILY_LOGIN_REWARDS`) reads left to
+ * right the way a Vietnamese calendar does, Monday first. */
+function weekdayIndex(date: Date): number {
+  return (date.getDay() + 6) % 7;
+}
+
+const CLAIMED_DATES_RETENTION_DAYS = 60;
+
+/** Keeps `dates` de-duplicated, sorted, and trimmed to the trailing
+ * `CLAIMED_DATES_RETENTION_DAYS` relative to `now` — the calendar only ever
+ * renders one month at a time, so nothing older is ever drawn again. */
+function pruneClaimedDates(dates: readonly string[], now: Date): string[] {
+  const cutoff = todayKey(new Date(now.getTime() - CLAIMED_DATES_RETENTION_DAYS * 86_400_000));
+  return Array.from(new Set(dates)).filter((date) => date >= cutoff).sort();
+}
+
 function readDailyRecord(): DailyLoginRecord | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(DAILY_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<DailyLoginRecord> | null;
-    if (typeof parsed?.lastClaimedOn !== "string" || typeof parsed.lastDay !== "number") return null;
-    return { lastDay: parsed.lastDay, lastClaimedOn: parsed.lastClaimedOn };
+    if (typeof parsed?.lastClaimedOn !== "string" || !Array.isArray(parsed.claimedDates)) return null;
+    const claimedDates = parsed.claimedDates.filter((date): date is string => typeof date === "string");
+    return {
+      claimedDates,
+      lastClaimedOn: parsed.lastClaimedOn,
+      streak: typeof parsed.streak === "number" && Number.isFinite(parsed.streak) ? Math.max(0, Math.floor(parsed.streak)) : 1,
+    };
   } catch {
     return null;
   }
 }
 
 /**
- * The actual streak decision, as a pure function of the last claim and now —
- * split out from `getDailyLoginState` so `sand-economy.test.ts` can drive it
- * with fabricated records/dates directly, without a `window.localStorage` to
- * round-trip through (this file's persistence is untested under `node
- * --test` the same way `level-drafts.ts`'s is — see that file's tests, or
- * the lack of them — but the date/streak arithmetic here is exactly the kind
- * of thing worth proving by itself: gap math, week wraparound, reset-on-miss).
+ * The actual claim/streak decision, as a pure function of the last record and
+ * now — split out from `getDailyLoginState` so `sand-economy.test.ts` can
+ * drive it with fabricated records/dates directly, without a
+ * `window.localStorage` to round-trip through.
  *
- * A gap of exactly 0 days (already claimed today) reports `claimedToday` and
- * holds the streak at `lastDay`. A gap of 1 day advances the streak by one,
- * wrapping past the end of `DAILY_LOGIN_REWARDS` back to day 0 — a full week
- * kept, not a countdown to zero. Any other gap (2+ days missed, or no record
- * at all) resets to day 0: a broken streak starts over, on purpose — see
- * CHANGELOG-prototype.md.
+ * `weekday`/`reward`/`boosterPerk` are entirely determined by the real
+ * calendar date, independent of `record` — the whole point of the rework is
+ * that today's reward is today's reward, streak or no streak. `record` only
+ * decides `claimedToday` (a date exactly matching one already in
+ * `claimedDates`) and `streak` (held over from the last claim if the gap to
+ * today is 0 or 1 day, reset to 0 by any bigger gap — a broken streak starts
+ * over, same as before the rework).
  */
 export function computeDailyLoginState(record: DailyLoginRecord | null, now: Date): DailyLoginState {
-  if (!record) return { day: 0, reward: dailyLoginReward(0), claimedToday: false };
-
-  const gap = daysBetween(record.lastClaimedOn, todayKey(now));
-  let day: number;
-  let claimedToday: boolean;
-  if (gap <= 0) {
-    day = record.lastDay;
-    claimedToday = true;
-  } else if (gap === 1) {
-    day = (record.lastDay + 1) % DAILY_LOGIN_REWARDS.length;
-    claimedToday = false;
-  } else {
-    day = 0;
-    claimedToday = false;
+  const date = todayKey(now);
+  const weekday = weekdayIndex(now);
+  const reward = dailyLoginReward(weekday);
+  const boosterPerk = DAILY_LOGIN_BOOSTER_PERK[weekday] ?? null;
+  const claimedToday = record?.claimedDates.includes(date) ?? false;
+  let streak = 0;
+  if (record) {
+    if (claimedToday) {
+      streak = record.streak;
+    } else {
+      const gap = daysBetween(record.lastClaimedOn, date);
+      streak = gap <= 1 ? record.streak : 0;
+    }
   }
-  return { day, reward: dailyLoginReward(day), claimedToday };
+  return { weekday, date, reward, boosterPerk, claimedToday, streak };
 }
 
 /** What today's login screen should show, without claiming anything. Thin wrapper over `computeDailyLoginState` — see that function for the actual decision. */
@@ -575,26 +640,97 @@ export function getDailyLoginState(now = new Date()): DailyLoginState {
   return computeDailyLoginState(readDailyRecord(), now);
 }
 
+export type DailyLoginCalendarCell = {
+  /** The cell's calendar date, `YYYY-MM-DD`. */
+  date: string;
+  /** Day-of-month, for the cell's own label — the ONLY date label the grid
+   * shows now (no weekday header row: "không đánh Mon->Sun, chỉ đánh dấu
+   * ngày"). */
+  dayOfMonth: number;
+  /** Real weekday, 0 = Monday .. 6 = Sunday — same indexing as `DAILY_LOGIN_REWARDS`. Not shown in the UI any more, only used to look up `reward`/`boosterPerk`. */
+  weekday: number;
+  /** What claiming THIS date pays (or paid/would pay) — `dailyLoginReward(weekday)`. */
+  reward: number;
+  /** Whether this weekday also grants a free booster charge. */
+  boosterPerk: BoosterType | null;
+  isToday: boolean;
+  isPast: boolean;
+  isFuture: boolean;
+  /** True only if this exact date is in `claimedDates` — never inferred from "before today". */
+  isClaimed: boolean;
+};
+
 /**
- * Claims today's reward and pays it into the wallet. Returns `null` if
- * today's reward is already claimed (nothing is paid twice) — the caller
+ * Builds `date`'s calendar month as a flat, row-major array of its actual
+ * days (1..daysInMonth) — no leading/trailing padding from neighbouring
+ * months, since the grid no longer aligns to real weekdays (5 cells a row,
+ * not 7 — `SandGame.tsx`'s daily-login modal lays this out with a 5-column
+ * CSS grid, wrapping wherever it wraps rather than resetting at each real
+ * week boundary).
+ */
+function buildMonthCells(date: Date, claimedDates: ReadonlySet<string>, todayStr: string): DailyLoginCalendarCell[] {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells: DailyLoginCalendarCell[] = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const cellDate = new Date(year, month, day);
+    const cellKey = todayKey(cellDate);
+    const weekday = weekdayIndex(cellDate);
+    cells.push({
+      date: cellKey,
+      dayOfMonth: day,
+      weekday,
+      reward: dailyLoginReward(weekday),
+      boosterPerk: DAILY_LOGIN_BOOSTER_PERK[weekday] ?? null,
+      isToday: cellKey === todayStr,
+      isPast: cellKey < todayStr,
+      isFuture: cellKey > todayStr,
+      isClaimed: claimedDates.has(cellKey),
+    });
+  }
+  return cells;
+}
+
+/** The current month as a flat grid of cells, real claim state included —
+ * what the daily-login modal actually renders. Pure wrapper the same shape
+ * as `getDailyLoginState`: reads storage once, computes, returns. */
+export function getDailyLoginCalendar(now = new Date()): DailyLoginCalendarCell[] {
+  const record = readDailyRecord();
+  return buildMonthCells(now, new Set(record?.claimedDates ?? []), todayKey(now));
+}
+
+/**
+ * Claims today's reward and pays it into the wallet — gold always, plus one
+ * free charge of `state.boosterPerk` on a Mon/Tue/Wed claim. Returns `null`
+ * if today's reward is already claimed (nothing is paid twice) — the caller
  * (the daily-login modal) should not have offered a Claim button in that
  * state to begin with, but this is the actual guard.
  */
 export function claimDailyLogin(now = new Date()): DailyLoginState | null {
-  const state = getDailyLoginState(now);
+  const previous = readDailyRecord();
+  const state = computeDailyLoginState(previous, now);
   if (state.claimedToday) return null;
-  const record: DailyLoginRecord = { lastDay: state.day, lastClaimedOn: todayKey(now) };
+  const gap = previous ? daysBetween(previous.lastClaimedOn, state.date) : Infinity;
+  const streak = previous && gap === 1 ? previous.streak + 1 : 1;
+  const record: DailyLoginRecord = {
+    claimedDates: pruneClaimedDates([...(previous?.claimedDates ?? []), state.date], now),
+    lastClaimedOn: state.date,
+    streak,
+  };
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(DAILY_KEY, JSON.stringify(record));
     } catch {
-      // Private mode / quota: the gold is still paid below; only the streak
-      // bookkeeping is lost, so the worst case is day 0 again tomorrow.
+      // Private mode / quota: the gold/booster is still paid below; only the
+      // streak bookkeeping is lost, so the worst case is a reset streak
+      // tomorrow.
     }
   }
   addGold(state.reward);
-  return { ...state, claimedToday: true };
+  if (state.boosterPerk) addBoosterCharges(state.boosterPerk, 1);
+  return { ...state, claimedToday: true, streak };
 }
 
 export function __resetDailyLoginForTests() {
@@ -942,3 +1078,200 @@ export function __resetRewardTrackForTests() {
     // Nothing to clean up if storage is unavailable.
   }
 }
+
+// ---- hearts (lives) ---------------------------------------------------------
+// A play-attempt currency, separate from gold/emeralds: unlike those,
+// hearts do not sit in `Wallet` (nothing about them round-trips through
+// `addGold`-shaped math) and are not earned by playing — they regenerate on
+// a wall clock, the same "real time, not a stat" shape `daily-login`'s date
+// arithmetic already has above, just counted in minutes instead of days.
+//
+// Locked entirely until `HEARTS_UNLOCK_LEVEL_ID` is first cleared
+// (`isHeartsUnlocked`) — a brand new player never sees the HUD chip or pays
+// a heart to play, the same "discover it by earning it" reasoning
+// `STARTER_BOOSTER_CHARGES`'s own comment gives for a free first charge of
+// each booster. Before that level, `spendHeart` is never called (every call
+// site in `SandGame.tsx` checks `isHeartsUnlocked()` first) and Zen Mode
+// never calls it at all — Zen is unlimited play by design (see
+// zen-levels.ts), a lives system would contradict the entire point of it.
+//
+// "Spent" means one PLAY ATTEMPT started — the Home screen's Play button, or
+// an explicit Restart (the FAIL card's "Play again", Settings' own Restart)
+// — never a WIN card's Continue into the next level (that continues a
+// session already paid for) and never the scripted FTUE demo's own
+// `restart()` calls (an automated tutorial beat, not a player choosing to
+// retry). See each call site's own comment in `SandGame.tsx`.
+
+/** The level id that unlocks the hearts system — before this level is first
+ * cleared, hearts do not exist as far as the player is concerned: no HUD
+ * chip, no cost to play. */
+export const HEARTS_UNLOCK_LEVEL_ID = 10;
+
+/** Full tank. */
+export const MAX_HEARTS = 5;
+
+/** How long one missing heart takes to regenerate. */
+export const HEART_REGEN_MINUTES = 30;
+const HEART_REGEN_MS = HEART_REGEN_MINUTES * 60_000;
+
+/** Whether the hearts system has been unlocked on this browser yet — level
+ * `HEARTS_UNLOCK_LEVEL_ID` cleared at least once. */
+export function isHeartsUnlocked(): boolean {
+  return hasClearedLevel(HEARTS_UNLOCK_LEVEL_ID);
+}
+
+export type HeartsState = {
+  /** Current hearts, 0..`MAX_HEARTS`. */
+  hearts: number;
+  /** Milliseconds until the next heart finishes regenerating — `null` once the tank is full (nothing regenerating). */
+  msUntilNext: number | null;
+};
+
+type HeartsRecord = {
+  hearts: number;
+  /** When the CURRENT regen cycle started, or `null` if the tank is full
+   * (nothing regenerating, so no start time to track). Advanced forward by
+   * whole `HEART_REGEN_MS` steps every time this record is read stale — see
+   * `computeHeartsState` — rather than left to drift, so the remainder
+   * toward the NEXT heart after this read is always measured from a point
+   * that is really the start of that specific heart's own countdown. */
+  regenStartedAt: number | null;
+};
+
+function defaultHeartsRecord(): HeartsRecord {
+  return { hearts: MAX_HEARTS, regenStartedAt: null };
+}
+
+/**
+ * The actual regen math, as a pure function of the stored record and now —
+ * same split as `computeDailyLoginState`/`computeRewardTrackState` above, so
+ * `sand-economy.test.ts` can drive it with fabricated records/dates instead
+ * of a real clock or `window.localStorage`.
+ *
+ * A full tank (`hearts >= MAX_HEARTS`) always reports `msUntilNext: null` —
+ * nothing to regenerate toward. Otherwise, every whole `HEART_REGEN_MS`
+ * elapsed since `regenStartedAt` becomes one more heart (capped at
+ * `MAX_HEARTS`), and the remainder is what is left of the CURRENT heart's
+ * own countdown — not the elapsed time restarted from zero, so reading this
+ * twice in a row a second apart reports one second less, not the same
+ * number twice.
+ */
+export function computeHeartsState(record: HeartsRecord, now: number): HeartsState {
+  if (record.hearts >= MAX_HEARTS || record.regenStartedAt === null) {
+    return { hearts: Math.min(MAX_HEARTS, record.hearts), msUntilNext: null };
+  }
+  const elapsed = Math.max(0, now - record.regenStartedAt);
+  const regenerated = Math.floor(elapsed / HEART_REGEN_MS);
+  const hearts = Math.min(MAX_HEARTS, record.hearts + regenerated);
+  if (hearts >= MAX_HEARTS) {
+    return { hearts: MAX_HEARTS, msUntilNext: null };
+  }
+  const remainder = elapsed - regenerated * HEART_REGEN_MS;
+  return { hearts, msUntilNext: HEART_REGEN_MS - remainder };
+}
+
+/** The record `computeHeartsState` would have produced meanwhile, folded
+ * back into storage — so a later read (or a spend) starts from "how many
+ * hearts are ACTUALLY there right now", not a stale pre-regen count. */
+function settleHeartsRecord(record: HeartsRecord, now: number): HeartsRecord {
+  const state = computeHeartsState(record, now);
+  if (state.msUntilNext === null) return { hearts: state.hearts, regenStartedAt: null };
+  return { hearts: state.hearts, regenStartedAt: now - (HEART_REGEN_MS - state.msUntilNext) };
+}
+
+function readHeartsRecord(): HeartsRecord {
+  if (typeof window === "undefined") return defaultHeartsRecord();
+  try {
+    const raw = window.localStorage.getItem(HEARTS_KEY);
+    if (!raw) return defaultHeartsRecord();
+    const parsed = JSON.parse(raw) as Partial<HeartsRecord> | null;
+    if (typeof parsed?.hearts !== "number") return defaultHeartsRecord();
+    const regenStartedAt = typeof parsed.regenStartedAt === "number" ? parsed.regenStartedAt : null;
+    return { hearts: Math.max(0, Math.min(MAX_HEARTS, Math.floor(parsed.hearts))), regenStartedAt };
+  } catch {
+    return defaultHeartsRecord();
+  }
+}
+
+function writeHeartsRecord(record: HeartsRecord) {
+  cachedHeartsState = null;
+  heartsVersion += 1;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(HEARTS_KEY, JSON.stringify(record));
+    } catch {
+      // Private mode / quota: the session keeps the in-memory value, only
+      // persistence across reloads is lost, same trade-off every other
+      // persisted store in this file makes.
+    }
+  }
+  for (const listener of heartsListeners) listener();
+}
+
+/** What the HUD chip should show right now, without spending anything. */
+export function getHeartsState(now = Date.now()): HeartsState {
+  return computeHeartsState(readHeartsRecord(), now);
+}
+
+/**
+ * The Play/Restart entry points' one gate: spends a heart and returns `true`
+ * if there was one to spend, or changes nothing and returns `false` if the
+ * tank was empty — the caller's cue to block the attempt (toast + the
+ * regen countdown) instead of starting it. Settles the record to "how many
+ * hearts are really there right now" first, so a spend attempted the instant
+ * a heart finishes regenerating sees it.
+ */
+export function spendHeart(now = Date.now()): boolean {
+  const settled = settleHeartsRecord(readHeartsRecord(), now);
+  if (settled.hearts <= 0) {
+    writeHeartsRecord(settled);
+    return false;
+  }
+  const hearts = settled.hearts - 1;
+  // Only START a fresh regen clock if the tank was full the instant before
+  // this spend (`regenStartedAt` was `null`) — a tank already missing hearts
+  // keeps counting toward the heart already in flight; spending another does
+  // not reset that progress.
+  const regenStartedAt = settled.regenStartedAt ?? now;
+  writeHeartsRecord({ hearts, regenStartedAt });
+  return true;
+}
+
+/** Dev-only: refills to a full tank, alongside the Settings screen's other economy resets. */
+export function resetHearts() {
+  writeHeartsRecord(defaultHeartsRecord());
+}
+
+export function __resetHeartsForTests() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(HEARTS_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
+let cachedHeartsState: HeartsState | null = null;
+let heartsVersion = 0;
+const heartsListeners = new Set<() => void>();
+
+/** `useSyncExternalStore`'s subscribe function for the HUD chip. */
+export function subscribeHearts(listener: () => void) {
+  heartsListeners.add(listener);
+  return () => heartsListeners.delete(listener);
+}
+
+/** A number that changes exactly when hearts are spent or reset — regen
+ * ticking by itself does NOT bump this (nothing writes storage just because
+ * time passed), so the HUD countdown re-renders off its own 1-second timer
+ * in `SandGame.tsx`, not this. This is only for "the STORED record changed"
+ * (a spend, a dev reset). */
+export function getHeartsVersion(): number {
+  return heartsVersion;
+}
+
+/** A stable reference for the server snapshot — a full tank, never mutated
+ * (matches a fresh install's real starting state, and hearts are locked
+ * until level 10 anyway, so no real player's server-rendered pass ever
+ * shows anything else). */
+export const SERVER_HEARTS: HeartsState = { hearts: MAX_HEARTS, msUntilNext: null };

@@ -344,16 +344,24 @@ function buildHeroCannon(groups: CostumeRigGroups) {
 }
 
 /**
- * A frost-rimed cannon: the same three masses the classic cannon is built
- * from, at the same sizes, wearing pale ice-blue and frost-white instead of
- * steel and paint. `frost` flavor — its own sparkle bling palette
- * (`FROST_SPARKLE_COLORS`, `SandCannonEngine.ts`) rather than the rune
- * costume's violet/gold, so a shot reads as flung ice glinting in the air.
+ * A frost-rimed cannon: the same three masses every other costume is built
+ * from, at the same sizes and footprint (aim math never has to know a skin
+ * is equipped), but the masses themselves are no longer smooth cylinders and
+ * spheres wearing a different palette — on request ("thêm yếu tố để khiến
+ * nó khác hơn chứ không phải thay màu"): a plain colour swap over the
+ * classic shell wasn't enough, this needed shapes none of the other three
+ * costumes use.
  *
- * What carries the "frozen over" read: icicles hanging off the pedestal rim
- * (the one shape none of the other three costumes use), a barrel banded in
- * ice rather than smooth steel, and a muzzle crystal cluster standing in for
- * the classic cannon's plain ring.
+ * What actually carries "carved out of a glacier" now: a faceted, low-poly
+ * pedestal (8-sided, not smoothly round like every other costume's base) with
+ * one big asymmetric glacier spike bursting out of one edge — this skin's
+ * own signature accessory, the same role the rune costume's floating studs
+ * or the hero costume's satchel play; a housing built from an icosahedron
+ * instead of a sphere, so it reads as a hewn crystal knuckle rather than a
+ * smooth ball; and a ragged accretion of ice spikes creeping up one whole
+ * side of the barrel in place of the old two symmetric bands — real ice
+ * grows lopsided and clumped, not in two even rings. The icicle rim and
+ * muzzle crystal cluster from the previous pass earn their keep and stay.
  */
 function buildFrostCannon(groups: CostumeRigGroups) {
   const { added, attach } = collector();
@@ -367,15 +375,36 @@ function buildFrostCannon(groups: CostumeRigGroups) {
   const glow = new THREE.MeshBasicMaterial({ color: 0xbdf3ff });
   const crystal = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
-  // Pedestal: the classic cannon's own base dimensions, same footprint as
-  // every other costume.
-  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 40), frost);
+  // Pedestal: the classic cannon's own base dimensions (radius/height), so
+  // the footprint every costume shares stays identical — but only 8
+  // radial segments instead of the smooth 40 every other costume's pedestal
+  // uses, so this one alone reads as a hewn, faceted block of ice rather
+  // than a turned disc. The cheapest possible shape change that still reads
+  // instantly, before a single accessory is added.
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.3, 0.48, 8), frost);
   attach(groups.cannonRoot, pedestal);
 
-  // Icicles hanging off the pedestal rim — the one shape unique to this
-  // costume. Deliberately outside the engine's own ammo-tinted ring (radius
-  // 0.86, see `AMMO_RING_RADIUS`), same clearance the rune costume's glyph
-  // ring keeps.
+  // The one shape none of the other three costumes have anywhere on them: a
+  // single oversized glacier spike bursting out of one edge of the pedestal,
+  // asymmetric on purpose (real ice does not grow in tidy radial symmetry) —
+  // this costume's own signature accessory, the same job the rune costume's
+  // floating glyph studs or the hero costume's satchel do for theirs. Tall
+  // enough to read past the icicle rim below it, angled outward and up so
+  // it clears the turret's own rotation without ever intersecting it.
+  const glacierSpike = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1.05, 7), ice);
+  glacierSpike.position.set(0.92, 0.28, 0.62);
+  glacierSpike.rotation.set(0.3, 0, -0.55);
+  attach(groups.cannonRoot, glacierSpike);
+  // A smaller shard leaning against the big spike's own base — a real ice
+  // formation is never just one clean spike, it is a cluster.
+  const glacierSpikeSmall = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.5, 6), ice);
+  glacierSpikeSmall.position.set(1.05, 0.18, 0.42);
+  glacierSpikeSmall.rotation.set(0.2, 0, -0.3);
+  attach(groups.cannonRoot, glacierSpikeSmall);
+
+  // Icicles hanging off the pedestal rim — kept from the previous pass, still
+  // clear of the engine's own ammo-tinted ring (radius 0.86, see
+  // `AMMO_RING_RADIUS`), same clearance the rune costume's glyph ring keeps.
   const icicleRadius = AMMO_RING_RADIUS + 0.24;
   const icicleCount = 10;
   for (let index = 0; index < icicleCount; index += 1) {
@@ -386,11 +415,16 @@ function buildFrostCannon(groups: CostumeRigGroups) {
     attach(groups.cannonRoot, icicle);
   }
 
-  // Housing, where the classic cannon has its cradle, with a frost crystal on
-  // each side in place of the rune costume's ember ones. Same squash as every
-  // other rig's cradle, so it keeps covering the barrel's back rim through
-  // the whole recoil travel.
-  const housing = new THREE.Mesh(new THREE.SphereGeometry(0.62, 28, 18), ice);
+  // Housing, where the classic cannon has its smooth cradle sphere: an
+  // icosahedron instead, so it reads as a hewn crystal knuckle rather than a
+  // ball with a different paint job — the same faceted-not-round idea the
+  // pedestal above uses, on the shape every other costume's cradle shares.
+  // Radius bumped slightly (0.62 -> 0.66) to cover the same ground a sphere
+  // of 0.62 would: an icosahedron's faces sit closer to its centre than its
+  // vertices do, so matching the old radius exactly would have let the
+  // barrel's own back rim (radius 0.38) peek through between facets during
+  // recoil. Same squash as every other rig's cradle either way.
+  const housing = new THREE.Mesh(new THREE.IcosahedronGeometry(0.66, 0), ice);
   housing.scale.set(1, 0.86, 1);
   attach(groups.turret, housing);
   for (const side of [-1, 1]) {
@@ -407,12 +441,40 @@ function buildFrostCannon(groups: CostumeRigGroups) {
   barrel.position.z = -0.98;
   attach(groups.barrelVisual, barrel);
 
-  // Two frozen bands along the barrel, glowing rather than painted — reads
-  // as ice that formed there rather than a trim ring bolted on.
-  for (const ringZ of [-0.55, -1.55] as const) {
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.055, 14, 32), glow);
-    band.position.z = ringZ;
-    attach(groups.barrelVisual, band);
+  // A ragged accretion of ice spikes crawling up ONE side of the barrel,
+  // replacing the old two symmetric glow bands — a smooth ring reads as trim
+  // bolted onto a barrel; a lopsided cluster of jagged spikes reads as ice
+  // that actually grew there, clumped and uneven the way real accretion
+  // always is, never in two tidy rings. Every spike sits within a narrow
+  // angular wedge (roughly the barrel's underside) rather than scattered
+  // all the way around, so the buildup reads as one continuous frozen
+  // drift down that side instead of an evenly-spaced belt.
+  const spikeSpots: { z: number; angle: number; length: number; radius: number }[] = [
+    { z: -0.4, angle: 3.6, length: 0.26, radius: 0.05 },
+    { z: -0.58, angle: 4.0, length: 0.4, radius: 0.07 },
+    { z: -0.82, angle: 3.75, length: 0.3, radius: 0.055 },
+    { z: -1.05, angle: 4.15, length: 0.46, radius: 0.075 },
+    { z: -1.3, angle: 3.85, length: 0.24, radius: 0.05 },
+    { z: -1.5, angle: 4.05, length: 0.34, radius: 0.06 },
+    { z: -1.7, angle: 3.7, length: 0.22, radius: 0.045 },
+  ];
+  for (const spot of spikeSpots) {
+    // The barrel tapers from 0.38 at the back to 0.24 at the front — each
+    // spike's base has to sit flush against the barrel's own radius at its
+    // own z, interpolated the same way the cylinder geometry itself does,
+    // or the spikes would either float off the surface or bury themselves
+    // inside it as they march toward the muzzle.
+    const barrelT = (spot.z - (-0.98 - 1.175)) / 2.35;
+    const barrelRadiusHere = 0.38 + (0.24 - 0.38) * Math.min(1, Math.max(0, barrelT));
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(spot.radius, spot.length, 6), glow);
+    spike.position.set(Math.cos(spot.angle) * barrelRadiusHere, Math.sin(spot.angle) * barrelRadiusHere, spot.z);
+    // A cone's tip points along its own local +Y by default; rotating it
+    // `angle - 90°` around Z aims that +Y straight along the same
+    // `(cos(angle), sin(angle))` radial direction the position above already
+    // uses, so the spike reads as growing straight OUT of the barrel's
+    // surface at its own spot rather than at some unrelated tilt.
+    spike.rotation.z = spot.angle - Math.PI / 2;
+    attach(groups.barrelVisual, spike);
   }
 
   // Muzzle: a small cluster of crystal shards standing in for the classic

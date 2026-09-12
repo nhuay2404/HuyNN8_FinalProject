@@ -4,4 +4,4 @@
 # nen chi can them dong cho level nao ban muon tu tay chinh, khong bat buoc dien het 50 level.
 # Cot "name" chi de doc cho de, game khong doc cot nay - dung "id" (dung SandLevelConfig.id) de tra cuu.
 id,name,reward
-1,Level 1,20
+1,Level 1,10

@@ -82,10 +82,25 @@ export interface Strings {
   closeTab: (tabName: string) => string;
   skinTabHasOfferSuffix: string;
   shopTabHasBoosterHintSuffix: string;
+  homeTabHasDailyLoginHintSuffix: string;
   notBuiltYet: string;
   modesTitle: string;
   modesBlurb: string;
+  /** The Zen Mode card on the Modes screen. */
+  zenModeButton: string;
+  zenModeBlurb: string;
+  /** The Zen level picker's own screen title (replaces `modesTitle` while it's open). */
+  zenModeTitle: string;
+  /** Shown instead of the Zen level grid when there are no Zen levels yet (should not normally happen — `BUILT_IN_ZEN_LEVELS` always ships at least one — but a build with that array emptied, or every saved Zen draft currently invalid, falls back to this rather than an empty screen). */
+  zenEmptyBlurb: string;
+  /** The Theme Mode card on the Modes screen — always paired with `notBuiltYet`, never clickable. */
+  themeModeButton: string;
+  /** The WIN card's own line for a Zen clear, replacing `goldEarned` — Zen Mode pays no gold. */
+  zenCleared: string;
   homeScreenAria: string;
+  /** The Modes screen's own "?" button — its aria-label/title, and the popup card's title. */
+  modesHelpAria: string;
+  modesHelpTitle: string;
 
   // ---- Home / level ----------------------------------------------------------
   levelButtonLabel: (id: number) => string;
@@ -98,6 +113,10 @@ export interface Strings {
   // ---- Currency pills --------------------------------------------------------
   coinsAria: (amount: number) => string;
   emeraldAria: (amount: number) => string;
+  /** The hearts HUD chip, once unlocked (level 10) — `count` current, `max` the tank size (`MAX_HEARTS`). */
+  heartsAria: (count: number, max: number) => string;
+  /** The toast when a Play/Restart tap is blocked at 0 hearts — `mmss` the same `m:ss` format. */
+  outOfHearts: (mmss: string) => string;
 
   // ---- Ammo HUD ----------------------------------------------------------------
   colorName: (color: SandColor) => string;
@@ -113,6 +132,8 @@ export interface Strings {
    * mid-match — it becomes a buy-one-charge button instead of an arm
    * button (see `SandGame.tsx`'s `booster-hud`), `price` in gold. */
   boosterBuyAria: (name: string, price: number) => string;
+  /** The booster tray's own gold balance chip (SandGame.tsx's `.booster-hud-gold`) — read-only, unlike `coinsAria`'s "buy more" hub chip. */
+  boosterTrayGoldAria: (amount: number) => string;
   shotInFlight: string;
   sandSettling: string;
   /** The Freeze Map bar's aria-label — `shots` is how many shots are left
@@ -126,9 +147,9 @@ export interface Strings {
 
   // ---- Toasts --------------------------------------------------------------------
   toastNotEnoughEmerald: string;
-  toastNoColorInRange: (color: string) => string;
-  toastHitFrame: string;
-  toastMissedFrame: string;
+  // `toastNoColorInRange`/`toastHitFrame`/`toastMissedFrame` used to live
+  // here — a NO_MATCH/MISS engine event now flashes `.miss-flash` instead
+  // of pushing a text toast (see SandGame.tsx's `missFlashBump`).
   toastLockOpened: string;
   toastBoosterArmed: (name: string) => string;
   toastBoosterCancelled: (name: string) => string;
@@ -160,27 +181,22 @@ export interface Strings {
   /** Shown once the freeze has thawed, right before control hands back to
    * the player. */
   ftueFreezeOutro: string;
-  /** Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`), same
-   * shape as `ftueFreezeIntro` above — see `SandGame.tsx`'s
-   * `boosterFtueStep`. Shown spotlighting the Radius Overcharge button,
-   * before its scripted demo shot fires. */
+  /** Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`) — see
+   * `SandGame.tsx`'s `boosterFtueStep`. Shown spotlighting the Radius
+   * Overcharge button, inviting the player to actually tap and arm it
+   * themselves (no scripted stand-in shot, no separate "outro" — they fire
+   * their own shot with it, then the tutorial moves straight to Prism Shot). */
   ftueBoosterRadiusIntro: string;
-  /** Shown spotlighting the Prism Shot button, before ITS scripted demo
-   * shot fires. */
+  /** Shown spotlighting the Prism Shot button, same "tap it yourself"
+   * invitation as `ftueBoosterRadiusIntro`. */
   ftueBoosterPrismIntro: string;
-  /** Shown once both demo shots have fired, right before control hands
-   * back to the player (who gets the level's full `forcedBoosterCharges`
-   * again — the level resets on this beat's tap, unlike freeze's). */
-  ftueBoosterOutro: string;
-  /** Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`),
-   * same shape as `ftueFreezeIntro` above — see `SandGame.tsx`'s
-   * `chainSortFtueStep`. Shown spotlighting the Chain Sort button, before
-   * its scripted demo shot fires. */
+  /** Level 5's Chain Sort tutorial (`SandLevelConfig.ftueChainSortDemo`) —
+   * see `SandGame.tsx`'s `chainSortFtueStep`. Same "tap it yourself"
+   * invitation as `ftueBoosterRadiusIntro`/`ftueBoosterPrismIntro` now (on
+   * request, this tutorial was redesigned to match theirs): shown
+   * spotlighting the real Chain Sort button, inviting the player to tap and
+   * arm it for real, then fire their own shot with it. */
   ftueChainSortIntro: string;
-  /** Shown once the demo shot has fired, right before control hands back
-   * to the player (who gets the level's full `forcedBoosterCharges`
-   * again — the level resets on this beat's tap, unlike freeze's). */
-  ftueChainSortOutro: string;
   /** The Skin screen's label for a `unlockLevel` skin — replaces the emerald
    * price everywhere one would otherwise show (the grid card's price pill,
    * the main preview panel's own locked button), since the skin is not for
@@ -197,19 +213,22 @@ export interface Strings {
   lockedLabel: string;
   fromEditorSuffix: string;
   // ---- Shop --------------------------------------------------------------------
+  // One unified screen now (2026-09d), no more Gems/Coins tabs — see
+  // `SandGame.tsx`'s Shop screen for the section order (offers, bundles, buy
+  // coins, buy hearts, THEN boosters at the very end).
   shopTitle: string;
-  gemsAria: (amount: number) => string;
-  shopCurrencyTabsAria: string;
-  gemsTab: string;
-  coinsTab: string;
   specialOffers: string;
   limitedTimeBundles: string;
   bundlesTitle: string;
-  gemsAndCoinsTogether: string;
+  bundleContents: string;
   coinsTitle: string;
   buyCoinsDirectly: string;
-  gemsSuffix: string;
+  heartsTitle: string;
+  buyHeartsDirectly: string;
+  boostersTitle: string;
   coinsSuffix: string;
+  heartsSuffix: string;
+  emeraldSuffix: string;
   offerName: (id: string) => string;
   offerTag: (id: string) => string;
   /** `SpecialOffer.bonus`/`Bundle.bonus`/`CoinPack.bonus`/`.flag` are plain
@@ -261,6 +280,8 @@ export interface Strings {
   playAgain: string;
   home: string;
   gotIt: string;
+  /** Generic "go back one step" — the Modes screen's own back button today. */
+  back: string;
 
   // ---- Daily login -----------------------------------------------------------------
   dailyLoginAria: string;
@@ -268,13 +289,12 @@ export interface Strings {
   close: string;
   dayLabel: (n: number) => string;
   claimCoins: (amount: number) => string;
-  /** Days 1-3's small badge — one short word, since the pill it sits on is
-   * only as wide as a sixth of the card (layout only, per the request; the
-   * actual amounts are tuned separately). */
-  greatValue: string;
-  /** Day 7's own badge, on the full-width hero card — "this is the reward
-   * the whole week is building toward". */
-  bestReward: string;
+  /** The weekend's booster-perk icon's accessible name/tooltip ("+1 <booster>") — the cell itself shows only the icon. */
+  dailyLoginPerkTag: (boosterName: string) => string;
+  /** The current streak, shown under the calendar once it is 2+. */
+  dailyLoginStreak: (days: number) => string;
+  /** The month name shown above the calendar grid. */
+  monthTitle: (date: Date) => string;
 }
 
 const EN_COLOR_NAME: Record<SandColor, string> = {
@@ -341,9 +361,18 @@ const EN: Strings = {
   closeTab: (tabName) => `Close ${tabName}`,
   skinTabHasOfferSuffix: " — a skin you can afford is waiting",
   shopTabHasBoosterHintSuffix: " — go stock up on the boosters you just tried",
+  homeTabHasDailyLoginHintSuffix: " — you still haven't claimed today's login reward",
   notBuiltYet: "Not built yet.",
   modesTitle: "Modes",
   modesBlurb: "Where the different ways to play would be picked from.",
+  zenModeButton: "Zen Mode",
+  zenModeBlurb: "Unlimited shots, unlimited boosters — just for the picture.",
+  zenModeTitle: "Zen Mode",
+  zenEmptyBlurb: "No Zen levels yet.",
+  themeModeButton: "Theme Mode",
+  zenCleared: "Cleared — no rush, no score.",
+  modesHelpAria: "What are Modes?",
+  modesHelpTitle: "About Modes",
   homeScreenAria: "Home screen",
 
   levelButtonLabel: (id) => `Level ${id}`,
@@ -355,6 +384,8 @@ const EN: Strings = {
 
   coinsAria: (amount) => `${amount} coins — buy more`,
   emeraldAria: (amount) => `${amount} Blue Emerald`,
+  heartsAria: (count, max) => `${count} of ${max} hearts`,
+  outOfHearts: (mmss) => `Out of hearts — next one in ${mmss}`,
 
   colorName: (color) => EN_COLOR_NAME[color],
   shotsLeftWithNext: (remaining, color, next) => `${remaining} ${color} shots left, next up ${next}`,
@@ -371,15 +402,13 @@ const EN: Strings = {
         : "Clears the whole connected mass of that colour, corners included — no radius limit.",
   boosterAria: (name, left) => `${name} — ${left} left`,
   boosterBuyAria: (name, price) => `Buy 1 ${name} — ${price} gold`,
+  boosterTrayGoldAria: (amount) => `${amount} gold`,
   shotInFlight: "Shot in flight",
   sandSettling: "Sand settling",
   freezeCooldown: (shots) => `Frozen — ${shots} shot${shots === 1 ? "" : "s"} left`,
   freezeLabel: "FREEZE",
 
   toastNotEnoughEmerald: "Not enough Blue Emerald",
-  toastNoColorInRange: (color) => `No ${color} in range — shot spent`,
-  toastHitFrame: "Hit the frame — no shot spent",
-  toastMissedFrame: "Missed the frame — no shot spent",
   toastLockOpened: "Lock opened — the sand is free",
   toastBoosterArmed: (name) => `${name} armed — next shot`,
   toastBoosterCancelled: (name) => `${name} cancelled`,
@@ -410,11 +439,9 @@ const EN: Strings = {
   ftueFreezeIntro: "This is a Freeze Orb — hit it and it locks the whole pile in place!",
   ftueFreezeExplainThaw: "To break the freeze, clear every bit of sand in its colour!",
   ftueFreezeOutro: "That's it — that's how Freeze Orb works!",
-  ftueBoosterRadiusIntro: "This is Radius Overcharge — it doubles your blast radius for one shot. Watch!",
-  ftueBoosterPrismIntro: "This is Prism Shot — it clears every colour in reach, not just the one you're holding. Watch!",
-  ftueBoosterOutro: "That's it — you've got 3 Radius Overcharge and 2 Prism Shot to try yourself!",
-  ftueChainSortIntro: "This is Chain Sort — it clears the whole connected patch of that colour, corners included, no radius limit. Watch!",
-  ftueChainSortOutro: "That's it — you've got a Chain Sort charge to try yourself!",
+  ftueBoosterRadiusIntro: "This is Radius Overcharge — it doubles your blast radius for one shot. Tap it to arm it!",
+  ftueBoosterPrismIntro: "This is Prism Shot — it clears every colour in reach, not just the one you're holding. Tap it to arm it!",
+  ftueChainSortIntro: "This is Chain Sort — it clears the whole connected patch of that colour, corners included, no radius limit. Tap it to arm it!",
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
 
@@ -424,19 +451,19 @@ const EN: Strings = {
   fromEditorSuffix: " (from the editor)",
 
   shopTitle: "Shop",
-  gemsAria: (amount) => `${amount} gems`,
-  shopCurrencyTabsAria: "Shop currency tabs",
-  gemsTab: "Gems",
-  coinsTab: "Coins",
   specialOffers: "Special Offers",
   limitedTimeBundles: "Limited-time bundles",
   bundlesTitle: "Bundles",
-  gemsAndCoinsTogether: "Gems and coins together",
+  bundleContents: "Coins, hearts and Blue Emerald together",
   coinsTitle: "Coins",
-  buyCoinsDirectly: "Buy coins directly — no gems needed",
-  gemsSuffix: "Gems",
+  buyCoinsDirectly: "Buy coins directly",
+  heartsTitle: "Hearts",
+  buyHeartsDirectly: "Top up hearts directly",
+  boostersTitle: "Boosters",
   coinsSuffix: "Coins",
-  offerName: (id) => (id === "starter" ? "Islander's Starter Pack" : "Weekend Gem Rush"),
+  heartsSuffix: "Hearts",
+  emeraldSuffix: "Blue Emerald",
+  offerName: (id) => (id === "starter" ? "Islander's Starter Pack" : "Weekend Heart Rush"),
   offerTag: (id) => (id === "starter" ? "First purchase" : "Weekend only"),
   offerFlag: (raw) => raw,
   iapComingSoon: "Real-money purchases aren't live in this build yet.",
@@ -478,12 +505,14 @@ const EN: Strings = {
   playAgain: "Play again",
   home: "Home",
   gotIt: "Got it",
+  back: "Back",
 
   dailyLoginAria: "Daily login reward",
   dailyLoginTitle: "Daily Login",
   close: "Close",
-  greatValue: "Hot",
-  bestReward: "Best reward",
+  dailyLoginPerkTag: (boosterName) => `+1 ${boosterName}`,
+  dailyLoginStreak: (days) => `${days}-day streak`,
+  monthTitle: (date) => date.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
   dayLabel: (n) => `Day ${n}`,
   claimCoins: (amount) => `Claim ${amount} coins`,
 };
@@ -506,10 +535,19 @@ const VI: Strings = {
   closeTab: (tabName) => `Đóng ${tabName}`,
   skinTabHasOfferSuffix: " — có skin bạn đủ tiền mua",
   shopTabHasBoosterHintSuffix: " — mua thêm booster bạn vừa dùng thử",
+  homeTabHasDailyLoginHintSuffix: " — bạn chưa nhận phần thưởng đăng nhập hôm nay",
   notBuiltYet: "Chưa xây dựng xong.",
   modesTitle: "Chế độ",
   modesBlurb: "Nơi bạn sẽ chọn các chế độ chơi khác nhau.",
+  zenModeButton: "Zen Mode",
+  zenModeBlurb: "Bắn thoải mái, không giới hạn đạn hay booster — chỉ để thư giãn.",
+  zenModeTitle: "Zen Mode",
+  zenEmptyBlurb: "Chưa có level Zen nào.",
+  themeModeButton: "Theme Mode",
+  zenCleared: "Đã dọn xong — không tính thời gian, không tính điểm.",
   homeScreenAria: "Màn hình chính",
+  modesHelpAria: "Các chế độ là gì?",
+  modesHelpTitle: "Giới thiệu các chế độ",
 
   levelButtonLabel: (id) => `Màn ${id}`,
   playLevelAria: (levelName) => `Chơi ${levelName}`,
@@ -520,6 +558,8 @@ const VI: Strings = {
 
   coinsAria: (amount) => `${amount} xu — mua thêm`,
   emeraldAria: (amount) => `${amount} Blue Emerald`,
+  heartsAria: (count, max) => `${count}/${max} tim`,
+  outOfHearts: (mmss) => `Hết tim — tim tiếp theo sau ${mmss}`,
 
   colorName: (color) => VI_COLOR_NAME[color],
   shotsLeftWithNext: (remaining, color, next) => `Còn ${remaining} phát ${color}, tiếp theo ${next}`,
@@ -536,15 +576,13 @@ const VI: Strings = {
         : "Dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo — không giới hạn bán kính.",
   boosterAria: (name, left) => `${name} — còn ${left}`,
   boosterBuyAria: (name, price) => `Mua 1 ${name} — ${price} vàng`,
+  boosterTrayGoldAria: (amount) => `${amount} vàng`,
   shotInFlight: "Đạn đang bay",
   sandSettling: "Cát đang lắng",
   freezeCooldown: (shots) => `Đóng băng — còn ${shots} lượt`,
   freezeLabel: "FREEZE",
 
   toastNotEnoughEmerald: "Không đủ Blue Emerald",
-  toastNoColorInRange: (color) => `Không có màu ${color} trong tầm — vẫn mất một phát`,
-  toastHitFrame: "Trúng khung — không mất phát",
-  toastMissedFrame: "Trượt ra ngoài khung — không mất phát",
   toastLockOpened: "Đã mở khoá — cát được tự do",
   toastBoosterArmed: (name) => `Đã kích hoạt ${name} — phát bắn tới`,
   toastBoosterCancelled: (name) => `Đã huỷ ${name}`,
@@ -575,11 +613,9 @@ const VI: Strings = {
   ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại!",
   ftueFreezeExplainThaw: "Muốn phá băng? Dọn sạch hết cát cùng màu với nó!",
   ftueFreezeOutro: "Vậy đó — Freeze Orb hoạt động như thế!",
-  ftueBoosterRadiusIntro: "Đây là Radius Overcharge — tăng gấp đôi bán kính bắn cho 1 phát! Xem nhé!",
-  ftueBoosterPrismIntro: "Đây là Prism Shot — dọn sạch mọi màu trong tầm bắn, không chỉ màu đang cầm! Xem nhé!",
-  ftueBoosterOutro: "Vậy đó — bạn có sẵn 3 Radius Overcharge và 2 Prism Shot để tự thử!",
-  ftueChainSortIntro: "Đây là Chain Sort — dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo, không giới hạn bán kính! Xem nhé!",
-  ftueChainSortOutro: "Vậy đó — bạn có sẵn 1 lượt Chain Sort để tự thử!",
+  ftueBoosterRadiusIntro: "Đây là Radius Overcharge — tăng gấp đôi bán kính bắn cho 1 phát! Chạm vào để trang bị!",
+  ftueBoosterPrismIntro: "Đây là Prism Shot — dọn sạch mọi màu trong tầm bắn, không chỉ màu đang cầm! Chạm vào để trang bị!",
+  ftueChainSortIntro: "Đây là Chain Sort — dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo, không giới hạn bán kính! Chạm vào để trang bị!",
   // Kept in English on purpose — "Progression" per the design ask, the same
   // way "Blue Emerald" above stays untranslated.
   progressionLabel: "Progression",
@@ -591,19 +627,19 @@ const VI: Strings = {
   fromEditorSuffix: " (từ trình chỉnh sửa)",
 
   shopTitle: "Cửa hàng",
-  gemsAria: (amount) => `${amount} đá quý`,
-  shopCurrencyTabsAria: "Tab tiền tệ cửa hàng",
-  gemsTab: "Đá quý",
-  coinsTab: "Xu",
   specialOffers: "Ưu Đãi Đặc Biệt",
   limitedTimeBundles: "Gói ưu đãi có thời hạn",
   bundlesTitle: "Combo",
-  gemsAndCoinsTogether: "Đá quý và xu cùng lúc",
+  bundleContents: "Xu, tim và Blue Emerald cùng lúc",
   coinsTitle: "Xu",
-  buyCoinsDirectly: "Mua xu trực tiếp — không cần đá quý",
-  gemsSuffix: "Đá quý",
+  buyCoinsDirectly: "Mua xu trực tiếp",
+  heartsTitle: "Tim",
+  buyHeartsDirectly: "Nạp thêm tim trực tiếp",
+  boostersTitle: "Booster",
   coinsSuffix: "Xu",
-  offerName: (id) => (id === "starter" ? "Gói Khởi Đầu Islander" : "Gói Đá Quý Cuối Tuần"),
+  heartsSuffix: "Tim",
+  emeraldSuffix: "Blue Emerald",
+  offerName: (id) => (id === "starter" ? "Gói Khởi Đầu Islander" : "Gói Tim Cuối Tuần"),
   offerTag: (id) => (id === "starter" ? "Mua lần đầu" : "Chỉ cuối tuần"),
   offerFlag: (raw) => VI_OFFER_FLAG[raw] ?? raw,
   iapComingSoon: "Giao dịch tiền thật chưa hoạt động trong bản build này.",
@@ -645,12 +681,14 @@ const VI: Strings = {
   playAgain: "Chơi lại",
   home: "Trang chủ",
   gotIt: "Đã hiểu",
+  back: "Quay lại",
 
   dailyLoginAria: "Phần thưởng điểm danh",
   dailyLoginTitle: "Điểm Danh Hằng Ngày",
   close: "Đóng",
-  greatValue: "Hời",
-  bestReward: "Quà xịn nhất",
+  dailyLoginPerkTag: (boosterName) => `+1 ${boosterName}`,
+  dailyLoginStreak: (days) => `Chuỗi ${days} ngày`,
+  monthTitle: (date) => `Tháng ${date.getMonth() + 1}, ${date.getFullYear()}`,
   dayLabel: (n) => `Ngày ${n}`,
   claimCoins: (amount) => `Nhận ${amount} xu`,
 };

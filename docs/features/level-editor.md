@@ -16,6 +16,7 @@ Mở ở `/editor` (hoặc bấm nút ✎ trong game).
 | Khoá màu | Nút `🔒 Locked` — modifier của cọ, không phải tool riêng, xem [lock-and-key.md](lock-and-key.md) |
 | Đóng dấu chìa khoá | Nút `Key` — đóng dấu cả hình chìa khoá lởm chởm, không quét từng ô, xem [lock-and-key.md](lock-and-key.md) |
 | Gió | Mục **Wind** — thêm/xoá/đảo thứ tự pha, zone vẽ đè lên tranh khi bấm tiêu đề pha, xem [wind.md](wind.md) |
+| Zen Mode | Checkbox **🧘 Zen Mode level** — bật thì `Shots` bị vô hiệu hoá (luôn không giới hạn khi chơi), level chỉ hiện trên danh sách Zen trong game (Modes → Zen Mode), không lẫn vào level switcher chính. Bảng 24 swatch màu cũng đổi thành 1 color picker tự do (snap về màu gần nhất khi vẽ), và import ảnh bỏ qua `Max colours` — luôn khớp màu chính xác nhất có thể. Xem [zen-mode.md](zen-mode.md) |
 
 Lưới trong editor **chính là board pixel thật** (mặc định 60×70), `pixelScale` luôn là `1` trong
 editor và ô chọn scale đã bị bỏ — không còn chuyện author nhìn một bức 12 ô nhưng game chạy một bức

@@ -16,6 +16,7 @@ hoặc chỉnh chức năng tương ứng, không cần đọc lại toàn bộ 
 | [features/rendering-pixel-board.md](features/rendering-pixel-board.md) | Board pixel 2D trong khung 3D, va chạm, texture |
 | [features/economy-and-wallet.md](features/economy-and-wallet.md) | Ví vàng, booster shop, Daily Login |
 | [features/level-rewards.md](features/level-rewards.md) | Thưởng vàng theo từng level |
+| [features/zen-mode.md](features/zen-mode.md) | Zen Mode — danh sách level riêng, không giới hạn đạn/booster, không thưởng vàng |
 
 Nội dung hand-tunable (không cần đụng code để chỉnh) nằm ở [`design/`](../design/) —
 xem [design/levels/README.md](../design/levels/README.md) và

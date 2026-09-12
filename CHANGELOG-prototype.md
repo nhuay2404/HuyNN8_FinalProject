@@ -7011,3 +7011,1405 @@ thay đổi — không có level nào chuyển từ "giải được" sang "khô
 **Test:** `tsc --noEmit` sạch (2 lỗi cũ không liên quan), 159/159 test pass (157 cũ + 2 test mới). Verify trực
 tiếp trên browser: level 21 (Lock & Key) tải đúng, bắn dọn cát quanh chìa không crash, không lỗi console. Rebuild
 `outputs/3d-cannon-sort.html`.
+
+## 169. Cân bằng lại economy: thưởng level theo "5 trận/1 booster", bonus mốc hàng chục, Daily Login gắn lịch thật (11/09)
+
+**Yêu cầu:** (1) mỗi level nên trả đủ vàng sao cho chơi khoảng 5 trận (lần đầu thắng) là mua được 1 booster;
+(2) các mốc hàng chục (10/20/30/40/50) nên có bonus tăng dần, rơi vào khoảng 2/3–3/4 giá 1 booster; (3) Daily
+Login nên gắn liền với lịch thật ngoài đời (hôm nay thứ mấy thì ô "hôm nay" đúng thứ đó), 3 ngày đầu tuần vừa
+phải + có ưu đãi thêm, 2 ngày cuối tuần trả nhiều hơn, và layout nên là lưới của cả tháng thay vì dải 7 ô lặp.
+
+**1) `levelGoldReward` (`app/game/economy.ts`):** đổi `REWARD_BASE`/`REWARD_PER_POINT` từ `20`/`1` (khoảng
+20–120 vàng) xuống `5`/`0.3` (khoảng 5–35 vàng) — một level độ khó trung bình (score 50) giờ trả đúng **20
+vàng = `BOOSTER_PRICE.radiusOvercharge` (100) ÷ 5**. `public/design/level-rewards.csv`'s override cho Level 1
+đổi từ 20 xuống 10 cho khớp scale mới.
+
+**2) Bonus mốc hàng chục — tính năng mới:** `levelMilestoneBonus(levelId)` (economy.ts), cộng THÊM vào thưởng
+thường của level đó (công thức hoặc CSV override), chỉ ở lần thắng đầu tiên, tại `LEVEL_MILESTONE_LEVELS =
+[10, 20, 30, 40, 50]` với `LEVEL_MILESTONE_BONUS = [65, 75, 90, 100, 115]` — tăng dần, mỗi mốc rơi vào khoảng
+2/3–3/4 giá một booster. Override từng mốc qua `economy.csv` (`levelMilestoneBonus10`..`levelMilestoneBonus50`
+— key mới, `CONFIG_KEY.levelMilestoneBonus`). Gọi ở `SandGame.tsx`'s WIN handler (cộng vào `granted` trước khi
+`addGold`) và ở pill thưởng mốc trong Gallery (cùng công thức, hiển thị trước cả khi level unlock).
+
+**3) Daily Login — viết lại gắn lịch thật (thay đổi lớn nhất):** trước đây là một chu kỳ 7 ngày tự lặp
+(`lastDay` streak position, quấn vòng `% 7`) hoàn toàn không liên quan gì tới ngày thật — "ngày 1" của streak
+có thể rơi vào bất kỳ thứ nào tuỳ lúc người chơi bắt đầu. Giờ:
+
+- `dailyLoginReward(weekday)` nhận **thứ thật trong tuần** (0 = Thứ Hai .. 6 = Chủ Nhật, `weekdayIndex(date)`
+  tính từ `Date` thật của máy) thay vì vị trí streak — bảng mới `DAILY_LOGIN_REWARDS = [10, 12, 15, 18, 20, 30,
+  40]` (T2→CN). T2–T4 còn nhận thêm 1 lượt booster miễn phí luân phiên (`DAILY_LOGIN_BOOSTER_PERK`: T2→Radius
+  Overcharge, T3→Prism Shot, T4→Chain Sort) — phần "ưu đãi" ngoài vàng đúng như yêu cầu.
+- `DailyLoginRecord` đổi shape: từ `{ lastDay, lastClaimedOn }` sang `{ claimedDates: string[], lastClaimedOn,
+  streak }` — `claimedDates` lưu TỪNG ngày thật đã claim (cắt còn 60 ngày gần nhất qua `pruneClaimedDates`),
+  để lưới lịch tô đúng dấu ✓ trên ngày thật đã claim thay vì suy luận "trước hôm nay = đã claim". Đây là thay
+  đổi shape lưu trữ không tương thích ngược — một record cũ (`lastDay` number) không parse được nữa
+  (`readDailyRecord` coi là chưa từng claim), tức người chơi cũ sẽ mất streak hiện tại một lần duy nhất sau bản
+  cập nhật này — chấp nhận được vì server/account không tồn tại, hoàn toàn client-only.
+- `computeDailyLoginState` viết lại: `weekday`/`reward`/`boosterPerk` tính thẳng từ ngày thật, KHÔNG phụ thuộc
+  record nữa; `streak` giữ nguyên khi gap ≤ 1 ngày, reset 0 khi bỏ lỡ ≥ 2 ngày, chỉ thực sự +1 trong
+  `claimDailyLogin` lúc claim thành công.
+- `getDailyLoginCalendar(now)` — hàm mới, dựng lưới ô phẳng của CẢ THÁNG hiện tại (Thứ Hai đầu mỗi hàng, luôn
+  bội số của 7, đệm ngày tháng lân cận ở đầu/cuối với `isCurrentMonth: false`), mỗi ô mang `date`, `weekday`,
+  `reward`, `boosterPerk`, `isToday`/`isPast`/`isFuture`/`isClaimed`.
+- `app/SandGame.tsx`'s daily-login modal viết lại hoàn toàn: từ dải 6 chip + 1 "hero card" (day 7) sang lưới
+  CSS Grid 7 cột (`getDailyLoginCalendar`), header thứ Thứ Hai→Chủ Nhật, tag "Hời" cho T2-T4, tag "Cuối tuần"
+  cho T7/CN, dòng streak khi ≥ 2 ngày liên tiếp. CSS mới trong `globals.css` (`.daily-login-calendar`,
+  `.daily-login-cell*`, `.daily-login-weekday-*`, `.daily-login-streak`) thay thế toàn bộ
+  `.daily-login-strip`/`.daily-login-day`/`.daily-login-hero*` cũ.
+- i18n (`app/i18n.ts`): thêm `weekdayShort`, `weekendBonus`, `dailyLoginPerkTag`, `dailyLoginStreak`,
+  `monthTitle`; bỏ `bestReward` (không còn "ngày 7 hero card" riêng).
+
+**Test:** `tests/sand-economy.test.ts` viết lại toàn bộ khối `levelGoldReward`/daily-login cho công thức và
+record shape mới, thêm test cho `levelMilestoneBonus` và `getDailyLoginCalendar` (32/32 pass). Toàn bộ suite
+`npm test`: 162/162 pass. `tsc --noEmit`: sạch, cùng 3 lỗi cloudflare-workers-types cũ không liên quan (đã xác
+nhận có sẵn trên `main`, không phải do thay đổi này). Verify trực tiếp trên dev server: lưới Daily Login hiển
+thị đúng "Tháng 9, 2026", ô ngày 11 (Thứ Sáu thật) được khoanh "hôm nay" đúng cột FRI, claim +20 vàng đúng số,
+chuyển thành ✓; Gallery hiển thị pill milestone level 10 = "+80" (15 công thức + 65 bonus), level 20 = "+95"
+(20 công thức + 75 bonus).
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md`, `docs/features/level-rewards.md`, `GDD.md` (§10.3,
+§10.3b mới, §10.6) — số liệu và mô tả khớp đúng code.
+
+## 170. Daily Login: lưới đen ô vuông tự cuộn được, sửa hydration mismatch mới phát hiện (11/09)
+
+**Feedback:** lưới lịch #169 mới làm bị "dồn hết vô 1 HUD trông rất xấu" — 5-6 tuần bị ép co vừa đúng
+một card không cuộn được, và cần đổi sang "grid đen, ô vuông".
+
+**1) Redesign lưới (`app/globals.css`, `app/SandGame.tsx`):** bọc `.daily-login-weekday-row` +
+`.daily-login-calendar` trong `.daily-login-calendar-scroll` — nền tối riêng (`#100c08`), `max-height:
+254px` + `overflow-y: auto`, nên tháng cần 6 tuần (tháng bắt đầu Chủ Nhật và có 31 ngày — vd 11/2026)
+tự cuộn thay vì bị nén. Header thứ `position: sticky; top` bên trong khối cuộn đó nên dính lại khi
+cuộn qua các tuần. Mỗi ô đổi từ pill bo tròn cao thấp không đều (do tag "Hời"/"Cuối tuần" absolute đè
+lên ô hàng trên) sang **hình vuông thật** (`aspect-ratio: 1`), nền tối riêng từng ô; `gap` 3px giữa
+các ô trên nền tối của khối cuộn chính là đường kẻ lưới đen, không cần border riêng. Tag "Hời"/"Cuối
+tuần" và tag booster-perk chuyển từ pill nổi đè lên ô khác sang góc/mép bên trong chính ô của nó — hết
+tình trạng đè chữ lên hàng bên cạnh khi ô co nhỏ lại.
+
+**2) Bug hydration mismatch phát hiện khi test lại (không liên quan trực tiếp tới yêu cầu redesign,
+nhưng phải sửa cùng lúc vì chặn hẳn trang không load được):** `getDailyLoginCalendar(devNow())` bị gọi
+thẳng trong JSX lúc render ở bản #169 — hàm này đọc `localStorage` thật ngay khi có `window`. Lúc SSR
+(`window` không tồn tại) luôn thấy `claimedDates` rỗng; lúc client hydrate (có `window` thật) đọc được
+dữ liệu claim thật → hai lần render (server vs client) ra nội dung khác nhau → React báo "Hydration
+failed because the server rendered text didn't match the client". Tái hiện được bằng cách reload trang
+sau khi đã claim ít nhất 1 ngày trong phiên trước.
+
+Sửa theo đúng pattern `initialDailyLogin`/`SERVER_DAILY_LOGIN` module đã dùng cho chính state hôm nay:
+- `SERVER_DAILY_CALENDAR` (mảng rỗng cố định, đứng vai server snapshot) + `cachedInitialDailyCalendar`/
+  `readInitialDailyCalendar` (cache một lần lúc mount, đứng vai client snapshot) — cả hai đi qua
+  `useSyncExternalStore` giống hệt cách `initialDailyLogin` đã làm.
+- State React mới `dailyCalendarOverride`, set trong `claimDailyLoginWithFlight` ngay sau khi claim
+  thành công, để ô "hôm nay" đổi thành ✓ mà không cần đọc lại storage giữa render.
+- Tiêu đề tháng (`s.monthTitle`) đổi từ gọi `devNow()` thẳng trong JSX sang suy ra từ ô đầu tiên có
+  `isCurrentMonth: true` trong `dailyCalendar` đã hydration-safe — `devNow()` phụ thuộc dev date-offset
+  tool trong `localStorage`, chỉ tồn tại phía client, nên gọi trực tiếp cũng lệch SSR/client y hệt vấn
+  đề trên (phát hiện bằng cách bật thử dev-date-offset rồi reload, lỗi tái hiện ngay).
+
+Đánh đổi chấp nhận được: cache theo trang (giống `initialDailyLogin` vốn đã vậy) nghĩa là một sửa
+`economy.csv` cho `dailyLoginDay*` cần F5 lại mới thấy trên lưới, không còn tự live-update qua poll 4s
+như bản #169 (bản đó live-update được NHỜ chính cái bug đọc thẳng storage mỗi render).
+
+**Test:** verify trực tiếp trên dev server — reload sau khi đã claim: không còn lỗi hydration, ô ngày
+đã claim đúng ✓. Set `dev-date-offset-days` sang tháng 11/2026 (6 tuần) qua `localStorage`, reload: lưới
+hiện đúng "NOVEMBER 2026", 6 hàng, cuộn được, header thứ dính lại đúng khi cuộn, nút Claim hiện đúng số
+(Chủ Nhật 15/11 → 40 vàng). `npm test`: 162/162 pass (không đổi test nào, đây là thay đổi UI + hạ tầng
+render thuần). `tsc --noEmit`: sạch, cùng 3 lỗi cloudflare cũ không liên quan.
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md` — thêm mục "Giao diện: lưới đen, ô vuông, tự
+cuộn" giải thích cả style lẫn cái bẫy hydration để ai sửa lại phần này sau không dẫm lại.
+
+## 171. Daily Login: bỏ ưu đãi booster luân phiên 3 ngày đầu tuần, dồn về chỉ 2 ngày cuối tuần tặng Prism Shot (11/09)
+
+**Feedback:** "bỏ việc 3 ngày đầu hàng tuần tặng prism [...] 5 ngày đầu tuần sẽ bình thường, chỉ có 2
+ngày cuối tuần là tặng prism".
+
+**`app/game/economy.ts`:** `DAILY_LOGIN_BOOSTER_PERK` đổi từ `{0: radiusOvercharge, 1: prismShot, 2:
+chainSort}` (T2/T3/T4, luân phiên 3 loại booster) sang `{5: prismShot, 6: prismShot}` (T7/Chủ Nhật,
+cùng một loại — Prism Shot). Số vàng T2-CN giữ nguyên như bản #169 (10/12/15/18/20/30/40) — chỉ bỏ
+phần "ưu đãi" ở 3 ngày đầu tuần, không đổi số vàng nào.
+
+**`app/SandGame.tsx` + `app/globals.css`:** bỏ hẳn tier "great value" (Thứ Hai-Thứ Tư) — không còn tag
+"Hời", không còn lớp `.is-value` riêng. Giờ chỉ còn MỘT tier đặc biệt: cuối tuần (`.is-weekend`, vẫn
+tag "WEEKEND" + tag "+1 Prism Shot"). T2-T6 render như ô thường, không tag, không styling khác biệt.
+Tiện thể sửa luôn thứ tự cascade CSS: `.is-weekend` giờ khai báo TRƯỚC `.is-today` (trước đây ngược
+lại — một ô vừa là cuối tuần vừa là "hôm nay" sẽ bị nền vàng cuối tuần đè mất màu nhấn "hôm nay", do
+`.is-weekend` khai báo sau thắng cascade; đổi thứ tự để `.is-today` luôn thắng, đúng ý đồ thiết kế gốc
+dù bug này không phải do yêu cầu lần này gây ra).
+
+**`app/i18n.ts`:** bỏ key `greatValue` (không còn dùng ở đâu).
+
+**Test (`tests/sand-economy.test.ts`):** cập nhật kỳ vọng `DAILY_LOGIN_BOOSTER_PERK` còn đúng 2 khoá
+(5, 6), cùng giá trị `"prismShot"`; viết lại test boosterPerk để phủ đủ Thứ Hai/Thứ Sáu (null) và Thứ
+Bảy/Chủ Nhật (`"prismShot"`) thay vì chỉ Thứ Hai/Thứ Bảy như trước. 162/162 pass. `tsc --noEmit` sạch
+(3 lỗi cloudflare cũ, không liên quan).
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md`, `GDD.md` §10.6, comment trong
+`public/design/economy.csv`.
+
+## 172. Daily Login: lưới 5 ô/hàng, bỏ header thứ, ô to hơn, chỉ đánh số ngày (11/09)
+
+**Feedback:** "Mỗi hàng sẽ có 5 ô. Không đánh mon -> sun, chỉ đánh dấu ngày. Phóng to ô ra, người chơi
+có thể swipe xuống để xem phần thưởng những ngày".
+
+**`app/game/economy.ts` — `buildMonthCells`/`getDailyLoginCalendar`:** trước đây pad thêm ngày đầu/cuối
+của tháng lân cận để lưới luôn là bội số của 7 (thẳng hàng Thứ Hai→Chủ Nhật theo cột). Giờ layout
+không còn 7 cột nữa nên không cần thẳng hàng thứ — bỏ hẳn phần đệm, hàm chỉ còn lặp `day = 1..
+daysInMonth` của đúng tháng đang xem, trả về ĐÚNG số ô = số ngày trong tháng, ngày 1 luôn ở ô đầu
+tiên. Bỏ luôn field `isCurrentMonth` khỏi `DailyLoginCalendarCell` — không còn ô đệm nên field này
+luôn `true`, hết ý nghĩa. `weekday` vẫn giữ (chỉ để tra `reward`/`boosterPerk`, không render ra UI).
+
+**`app/SandGame.tsx` + `app/globals.css`:** bỏ hẳn `.daily-login-weekday-row` (header Thứ Hai→Chủ
+Nhật) — không còn render dòng thứ nào nữa, mỗi ô chỉ còn số ngày trong tháng (`dayOfMonth`) ở góc.
+`.daily-login-calendar`: `grid-template-columns` đổi từ `repeat(7, 1fr)` sang `repeat(5, 1fr)` — cùng
+bề ngang card, 5 cột thay vì 7 khiến mỗi ô to hơn hẳn ("phóng to ô"), kéo theo tăng font/icon bên
+trong (ngày 8→10px, số vàng 10→13px, icon xu 12→16px, tag 5→6.5px, dấu ✓ 15→19px) cho cân đối với ô
+lớn hơn. `.daily-login-calendar-scroll`: `max-height` chỉnh 254px→190px, vừa đủ hé lộ một phần hàng
+kế tiếp bị cắt — gợi ý rõ ràng còn nội dung bên dưới, mời người chơi **kéo xuống (swipe)** thay vì
+tưởng lưới đã hết. Tiêu đề tháng giờ suy ra từ `date` của ô đầu tiên (luôn là ngày 1, do không còn ô
+đệm) thay vì tìm ô `isCurrentMonth` (field đã bỏ).
+
+**`app/i18n.ts`:** bỏ key `weekdayShort` (không còn dùng ở đâu, cùng loại dọn dẹp như `greatValue` ở
+bản #171).
+
+**Test (`tests/sand-economy.test.ts`):** viết lại test `getDailyLoginCalendar` — kỳ vọng đúng
+`daysInMonth` ô (31 cho tháng 8/2026), không còn kỳ vọng bội số 7 hay "hàng đầu bắt đầu Thứ Hai".
+162/162 pass. `tsc --noEmit` sạch (3 lỗi cloudflare cũ, không liên quan).
+
+**Verify trực tiếp trên dev server:** lưới hiện đúng 5 cột, chỉ số ngày (1, 2, 3...), không có header
+thứ; cuộn xuống thấy hết 30 ngày tháng 9, các ngày cuối tuần (19, 20, 26, 27 — Thứ Bảy/Chủ Nhật) vẫn
+đúng tag WEEKEND + "+1 Prism S...".
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md` (mục "Giao diện" viết lại toàn bộ cho khớp
+layout 5 cột + không header thứ).
+
+## 173. Daily Login: nền ô đổi sang màu kem thay vì nâu tối (11/09)
+
+**Feedback:** "Tôi muốn nền các ô có màu nền kem".
+
+**`app/globals.css`:** `.daily-login-cell` background đổi từ nâu tối `#2b2418` sang `var(--locked)`
+(kem — cùng tông với card/UI còn lại của game). Đi kèm đổi màu chữ cho tương phản: số ngày
+(`.daily-login-cell-day`) từ `#a99a86` sang `var(--muted)`, số vàng (`.daily-login-cell strong`) từ
+`#f5ead9` sang `var(--ink)`. Ô cuối tuần (`.is-weekend`) đổi nền từ nâu tối `#5c3c12` sang
+`var(--gold)`, chữ số vàng đổi sang `var(--gold-ink)` cho tương phản. Tag góc ô (`.daily-login-cell-tag`,
+dùng cho tag "WEEKEND") đổi từ chữ màu trần sang một pill nền `var(--danger)`/chữ `var(--danger-ink)`
+— chữ màu trần từng đủ tương phản trên nền tối, nhưng trên nền kem/gold sáng thì không, nên cần nền
+riêng cho tag mới đọc được. Panel bọc ngoài (`.daily-login-calendar-scroll`, khoảng cách `gap` giữa
+ô) vẫn giữ nền tối `#100c08` như bản #170/#172 — đây là phần tạo ra đường kẻ lưới đen giữa các ô kem,
+kết hợp đúng cả hai yêu cầu "grid đen" (bản #170) và "ô kem" (bản này) cùng lúc.
+
+**Test:** không đổi logic, chỉ CSS — 162/162 pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev
+server: ô thường nền kem chữ nâu đậm dễ đọc, ô cuối tuần nền vàng gold với tag "WEEKEND" hồng pill rõ
+ràng, ô "hôm nay" vẫn nền xanh accent nổi bật giữa các ô kem xung quanh.
+
+**Docs:** không cần sửa `docs/features/economy-and-wallet.md` thêm — mục "Giao diện" ở đó đã mô tả ở
+mức khái quát (không liệt kê mã màu cụ thể), vẫn đúng sau thay đổi này.
+
+## 174. Daily Login: bỏ nhãn chữ "WEEKEND", đổi ưu đãi booster từ text sang icon (11/09)
+
+**Feedback:** "không nên để quá nhiều text, nên để biểu tượng với icon booster. Không cần để weekend
+luôn".
+
+**`app/SandGame.tsx`:**
+- Bỏ hẳn tag chữ "WEEKEND"/"Cuối tuần" khỏi mỗi ô cuối tuần — nền vàng gold (`is-weekend`) đã đủ để
+  phân biệt tier, không cần nhãn chữ lặp lại ý đó nữa.
+- Đổi phần ưu đãi booster từ text ("+1 Prism Shot") sang **icon booster thật** — dùng lại đúng
+  component `BoosterIcon` (component đã có sẵn, cùng icon Shop/HUD dùng cho từng loại booster) thay vì
+  chữ, đặt trong một badge tròn nhỏ ở góc dưới-phải ô. Giữ `aria-label`/`title` (nội dung y hệt text cũ
+  "+1 <tên booster>") để không mất thông tin cho screen reader/hover, chỉ bớt chữ hiển thị mặc định.
+
+**`app/globals.css`:** thay `.daily-login-cell-tag` (pill chữ) và `.daily-login-perk-tag` (text) bằng
+một class duy nhất `.daily-login-perk-icon` — badge tròn 15px, nền trắng mờ `rgba(255,255,255,.65)`
+làm nền cho icon 10px nổi rõ trên nền vàng/kem của ô. Đặt ở góc dưới-phải (không phải giữa) để không
+đè lên số vàng — bản đầu tiên đặt giữa-dưới ô đã bị đè lên số, phải sửa lại sau khi xem trên browser.
+
+**`app/i18n.ts`:** bỏ key `weekendBonus` (không còn dùng ở đâu — nhãn "WEEKEND"/"Cuối tuần" đã bỏ).
+`dailyLoginPerkTag` vẫn giữ, giờ chỉ dùng cho `aria-label`/`title`, không còn hiển thị trực tiếp.
+
+**Test:** không đổi logic (`DailyLoginCalendarCell`/`DAILY_LOGIN_BOOSTER_PERK` không đổi), chỉ UI —
+162/162 pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev server: ô cuối tuần chỉ còn nền vàng +
+icon booster nhỏ góc dưới-phải, không còn text nào ngoài số ngày và số vàng.
+
+## 175. Zen Mode: tab Modes có nội dung thật — level không giới hạn đạn/booster, có editor riêng (11/09)
+
+**Yêu cầu:** "Ở phần mode, tạo 2 nút zen mode và theme mode" — sau khi hỏi rõ phạm vi: Zen Mode là các
+màn đặc biệt không giới hạn lượt bắn/booster, có công cụ editor riêng để tạo; Theme Mode (chọn chủ đề
+như Nhật Bản/Việt Nam để sort) để placeholder lần này vì cần nội dung thật, không phải việc đổi code.
+
+**Bối cảnh:** tab "Modes" (bottom nav, trước đây tên "Customize") đã tồn tại sẵn từ lâu nhưng luôn
+hiện "Not built yet." — không phải HUD mới, chỉ là điền nội dung vào chỗ trống có sẵn.
+
+### 1) Data model — `LevelDraft.mode` (`app/game/level-drafts.ts`)
+
+Thêm field mới `mode?: "zen"` (absent = draft thường, không đổi hành vi cũ). `draftToLevel(draft, id)`
+— khi `draft.mode === "zen"` — ép `shotLimit: Infinity` và `forcedBoosterCharges` thành `Infinity` cho
+cả 3 booster, BỎ QUA hoàn toàn số `shotLimit`/`forcedBoosterCharges` mà draft tự mang theo. Đây không
+phải cơ chế "không giới hạn" mới: `Infinity` cho `shotLimit` và `forcedBoosterCharges` đã là hai giá
+trị được engine hỗ trợ sẵn từ trước (`sand-rules.ts`'s `withResult`/`ammoRemaining`,
+`SandCannonEngine`'s booster override) — Zen Mode chỉ luôn dùng lại đúng hai giá trị đó, không thêm gì
+vào engine.
+
+### 2) Nội dung khởi điểm — `design/levels/zen-levels.ts` (file mới)
+
+`BUILT_IN_ZEN_LEVELS`: 3 tranh mượn lại từ danh sách chính (level 3/10/21 gốc), qua `toZenLevel()` —
+đổi id sang khoảng `ZEN_ID_BASE = 100_000` (không bao giờ trùng id danh sách chính), ép không giới
+hạn, đổi tên thêm hậu tố `" (Zen)"`, và **tước sạch mọi field FTUE/tutorial** (`tutorial`,
+`ftueGesture`, 3 cặp `ftue*Demo`/`*Targets`, `forcedOpeningQueue`, `hideBoosterHud`,
+`requiresBooster`) — nếu không tước, một tranh mượn từ level từng có FTUE (vd level 3 dạy booster) sẽ
+vô tình bật lại overlay hướng dẫn ngay giữa Zen Mode.
+
+### 3) HUD — `app/SandGame.tsx`, `app/globals.css`
+
+- `collectZenPlayables()` (mới, cạnh `collectPlayables()` hiện có): gom `BUILT_IN_ZEN_LEVELS` + draft
+  `mode: "zen"` hợp lệ. `collectPlayables()` (danh sách chính) được thêm bộ lọc loại trừ
+  `draft.mode === "zen"` — trước bản này, một draft Zen sẽ vô tình lẫn vào cả hai danh sách.
+- `zenPlayables` đọc qua `useSyncExternalStore` với `SERVER_ZEN_PLAYABLES` làm snapshot server — cùng
+  pattern hydration-safe `boot`/`playables` chính đã dùng, tránh lặp lại đúng bug hydration mismatch
+  đã gặp và sửa ở Daily Login (#170).
+- Tab Modes: 2 thẻ **Zen Mode** (bấm mở danh sách level Zen, layout như Gallery, luôn mở khoá — Zen
+  không có progression) và **Theme Mode** (khoá, `disabled`, vẫn dòng "Not built yet." cũ).
+- State mới: `playingZen` (đang ở ngữ cảnh Zen — quyết định `raw`/`level` đọc từ `zenPlayables` hay
+  `playables`), `zenLevelIndex`, `zenPickerOpen` (tab Modes đang hiện 2 thẻ hay danh sách level).
+  `openZenLevel(index)` — chọn 1 level Zen là CHƠI LUÔN (không qua bước preview trên Home như Gallery
+  danh sách chính).
+- **Bug tự phát hiện khi test:** `.modes-screen` (như Gallery/Shop/Skin) trước giờ chỉ gate theo `tab`,
+  dựa trên bất biến ngầm "Play chỉ bấm được từ tab Home nên `playing` và `tab !== "home"` không bao
+  giờ cùng true" — `openZenLevel` phá bất biến đó (bắt đầu chơi ngay từ tab "modes"). Thêm `!playing`
+  vào điều kiện render `.modes-screen` để sửa (không màn nào khác bị ảnh hưởng, vì bất biến cũ vẫn
+  đúng với mọi luồng khác).
+- WIN handler: toàn bộ nhánh kinh tế (`recordLevelPlayed`, `markLevelCleared`, `addGold`, mở khoá
+  skin) bọc trong `if (!playingZen)` — Zen Mode không trả vàng, không cộng Reward Track, không tính
+  first-clear. Card WIN vẫn hiện nhưng dòng vàng đổi thành câu ngắn (`s.zenCleared`) thay vì
+  `goldEarned(0)` (tránh đọc như bị thiếu hụt). `hasNextLevel` ép `false` khi `playingZen` — Zen không
+  có "Continue sang level kế", chỉ có nút đóng quay lại danh sách. `goHome` khi `playingZen` trả về
+  tab "modes" (danh sách Zen) thay vì Home thường. Bấm bất kỳ tab nào khác ngoài "modes" reset cả
+  `playingZen`/`zenPickerOpen` (chỗ `onClick` chung của `hub-nav`) — chặn trường hợp state Zen còn sót
+  lại làm lệch level đang chơi khi quay về danh sách chính.
+
+### 4) Level editor — `app/LevelEditor.tsx`
+
+Checkbox mới **"🧘 Zen Mode level"** ngay dưới ô Name. Bật lên: ô `Shots` bị `disabled` + đổi nhãn
+"(ignored — Zen is unlimited)"; danh sách level bên trái hiện "unlimited shots" thay vì số; nút "Test
+in game" (chỉ hoạt động với danh sách chính qua `?level=` — xem mục docs bên dưới) đổi thành dòng chữ
+hướng dẫn "Saved automatically. Play it in-game: Modes → Zen Mode." thay vì một link sẽ dẫn sai chỗ.
+"Duplicate" giữ nguyên cờ `mode` của bản gốc.
+
+**Test:** thêm 3 test trong `tests/level-editor.test.ts` (`draftToLevel` ép đúng `Infinity` cho draft
+Zen, giữ nguyên số cho draft thường, draft mới mặc định không có `mode`). 165/165 pass (162 cũ + 3
+mới). `tsc --noEmit` sạch (3 lỗi cloudflare cũ, không liên quan).
+
+**Verify trực tiếp trên dev server:** Modes → Zen Mode → chọn "Level 3 (Zen)" → HUD hiện đúng ∞ cho cả
+3 booster + đạn; bấm Home (trong Settings) quay đúng về danh sách Zen chứ không phải Home thường; bấm
+tab Home ở bottom-nav quay về Home thường đúng "Level 1", Play vẫn chạy bình thường (không regression).
+Editor: tick checkbox → ô Shots disable đúng, sidebar list đổi "unlimited shots" đúng.
+
+**Docs:** [docs/features/zen-mode.md](docs/features/zen-mode.md) (mới, mô tả đầy đủ cơ chế + state),
+[docs/features/level-editor.md](docs/features/level-editor.md) (thêm dòng checkbox), `GDD.md` §16.5
+(mới, Zen Mode đã ship / Theme Mode còn placeholder), `docs/README.md` (thêm vào bảng chỉ mục).
+
+## 176. Zen level editor: import ảnh chính xác màu tối đa, cọ vẽ đổi sang color picker tự do (11/09)
+
+**Yêu cầu:** "Khi import image của zen level editor, tool sẽ ráng lấy màu chính xác nhất từ ảnh. Bây
+giờ không còn bảng màu nữa mà color picker rồi tô ở zen mode level editor thôi." Đã hỏi lại phạm vi
+trước khi làm: người dùng muốn RGB tự do hoàn toàn cho import ảnh, nhưng cọ vẽ tay vẫn snap về 1
+trong 24 màu `SandColor` có sẵn. Sau khi cân nhắc, đã giải thích và chọn phương án khả thi: **vẫn 24
+màu `SandColor`** (RGB tự do sẽ phá vỡ luật ghép "body cùng màu"/bánh xe đạn hữu hạn — một ảnh thật
+có hàng nghìn sắc độ gần giống nhau, mỗi pixel giữ đúng màu gốc sẽ biến gần như mọi pixel thành 1 body
+riêng lẻ, không bắn dọn được nữa), nhưng bỏ hẳn bước RÚT GỌN thêm màu (khớp mỗi pixel với màu
+`SandColor` gần nhất trong TOÀN BỘ 24 màu, không gộp xuống ít màu hơn nữa) — đây là độ chính xác cao
+nhất hệ thống hiện tại cho phép mà không phá luật chơi.
+
+**`app/LevelEditor.tsx` — chỉ áp dụng khi `draft.mode === "zen"`:**
+
+- **Import ảnh:** `importImageFile` giờ luôn truyền `maxColors = SAND_COLORS.length` (bỏ qua state
+  `importMaxColors`) cho draft Zen — trước đây field "Max colours" (mặc định = tổng số màu, nhưng
+  người dùng có thể chỉnh xuống thấp hơn) luôn có khả năng gộp bớt màu; giờ với Zen thì không bao giờ
+  gộp nữa. UI: field "Max colours" (input số + nhãn) đổi thành dòng chữ tĩnh "🧘 Full colour accuracy"
+  cho draft Zen, tránh một control không còn tác dụng gì.
+- **Cọ vẽ tay:** bảng 24 swatch màu (`.editor-swatches` cũ) đổi thành 1 `<input type="color">` (color
+  picker tự do của trình duyệt) + 1 ô xem trước cạnh bên — chọn màu bất kỳ trên picker, `onChange`
+  parse RGB rồi gọi `nearestSandColor(r,g,b)` (hàm khớp màu gần nhất, y hệt hàm import ảnh đã dùng)
+  để ra màu `SandColor` thật sự sẽ vẽ, cập nhật `color` state. Ô xem trước luôn hiện ĐÚNG màu đã snap
+  (không phải màu vừa chọn trên picker) để tác giả biết chính xác cái sắp được vẽ. Editor thường
+  (không phải Zen) giữ nguyên bảng 24 swatch cũ, không đổi gì.
+
+**CSS mới (`app/globals.css`):** `.editor-zen-picker`, `.editor-zen-color-input` (style lại
+`<input type="color">` cho khớp kích thước `.editor-swatch` cũ), `.editor-zen-picker-preview`.
+
+**Test:** không đổi logic thuần (`nearestSandColor`/`imageToRows` không đổi chữ ký hay hành vi cho
+editor thường) — chỉ thêm nhánh UI/tham số cho riêng Zen. 165/165 test cũ vẫn pass, `tsc --noEmit`
+sạch (3 lỗi cloudflare cũ, không liên quan). Verify trực tiếp trên dev server: bật checkbox Zen Mode
+→ bảng swatch biến mất, hiện color picker; đổi màu picker sang `#ff0055` (hồng đỏ) → cả input lẫn ô
+xem trước đổi đúng sang màu `SandColor` gần nhất (`#e8433f`, đỏ).
+
+**Docs cập nhật:** `docs/features/zen-mode.md` (mục mới "Import ảnh + tô tay trong editor", giải
+thích rõ lý do kỹ thuật không dùng RGB tự do), `docs/features/level-editor.md` (thêm 1 câu vào dòng
+Zen Mode).
+
+## 177. Nút Back cho Zen/Theme Mode, thêm currency Hearts (lượt chơi có giới hạn, mở khoá level 10) (11/09)
+
+**Yêu cầu:** "Đã thêm nút backicon, bây giờ sẽ có thể quay lại từ zen/theme mode" + "Thêm currency
+heart, heart bây giờ tính là 1 lượt chơi của người chơi. Heart sẽ mở khóa khi người chơi hoàn thành
+level 10. Tổng cộng max 5 heart (...). Thời gian hồi 1 heart là 30 phút (...) heart curency UI sẽ đặt
+ngang với coin, blue emerald". Hai asset mới (`public/icons/backIcon.png`, `public/icons/HeartIcon.png`)
+đã có sẵn trong repo trước khi bắt đầu — dùng thẳng, không tự vẽ icon mới.
+
+### 1) Nút Back cho màn Modes
+
+Trước đây màn Modes (2 thẻ Zen/Theme, và danh sách level Zen bên trong) không có nút back riêng —
+chỉ rời được bằng cách bấm tab khác ở `.hub-nav`, giống Gallery/Shop/Skin. Giờ thêm MỘT nút Back cố
+định ở góc trên-trái màn Modes (dùng `BackIcon`, component mới trong `SandGame.tsx`, artwork
+`backIcon.png`), lùi đúng một cấp mỗi lần bấm: danh sách Zen → 2 thẻ chọn chế độ → Home. `.modes-back-btn`
+CSS viết lại hoàn toàn (trước dùng tạm `CancelIcon`/dấu X mượn style `.result-close-btn`).
+
+**Bug tự phát hiện khi verify trên browser:** `.modes-heading` là flex-child co theo nội dung (không
+có `width`/`align-self` rõ ràng) — nút Back `position:absolute;left:0` bên trong nó vì vậy bám sát
+mép chữ "Modes" thay vì mép trái thật của màn hình, đè lên chữ "Mo" (chỉ còn thấy "des"). Sửa bằng
+`align-self: stretch` trên `.modes-heading` để nó thật sự chiếm hết bề ngang màn hình.
+
+### 2) Currency Hearts — lượt chơi có giới hạn
+
+**`app/game/economy.ts` — section mới "hearts (lives)":**
+- `HEARTS_UNLOCK_LEVEL_ID = 10`, `MAX_HEARTS = 5`, `HEART_REGEN_MINUTES = 30`.
+- `isHeartsUnlocked()` = `hasClearedLevel(10)` — trước khi qua level 10, hearts coi như không tồn
+  tại: không hiện HUD, Play không tốn gì cả (giống cách booster có 1 viên miễn phí trước khi thành
+  currency thật — hearts thì ngược lại, "chưa mở khoá là chưa có luật này").
+- `computeHeartsState(record, now)` — hàm thuần (cùng kiểu `computeDailyLoginState`): lưu
+  `{ hearts, regenStartedAt }`, mỗi `HEART_REGEN_MS` trôi qua kể từ `regenStartedAt` là +1 tim (tối
+  đa `MAX_HEARTS`), phần dư là mili-giây còn lại tới tim kế tiếp. `spendHeart(now)` chốt record về
+  đúng trạng thái hiện tại (gọi `computeHeartsState` trước) rồi mới trừ, nên trừ đúng lúc tim vừa hồi
+  xong vẫn ra kết quả đúng — không cần một job nền chạy định kỳ để "hồi" tim, mọi thứ tính lại từ
+  timestamp mỗi lần đọc.
+- "Tốn 1 tim = 1 lượt chơi": chỉ tại 3 nơi — nút Play (Home), "Play again" (card FAIL), Restart
+  (Settings lúc đang chơi) — mỗi nơi gọi `tryStartAttempt()` (hàm mới trong `SandGame.tsx`) trước khi
+  thực sự `startPlaying()`/`restart()`, chặn (toast đếm ngược) nếu hết tim. KHÔNG tốn tim ở: Continue
+  sang level kế sau khi thắng (đang chơi liên tục, không phải lượt mới), 3 chỗ `restart()` do FTUE tự
+  gọi (demo hướng dẫn tự động, không phải người chơi chủ động), và toàn bộ Zen Mode (thiết kế vốn
+  không giới hạn — `tryStartAttempt` no-op khi `playingZen`).
+- Unlock giữa phiên: thắng level 10 lần đầu set `heartsUnlockedOverride` (state React) ngay lập tức,
+  HUD hiện chip tim NGAY trong phiên đó — không cần reload trang.
+
+**HUD (`app/SandGame.tsx`, `app/globals.css`):** chip tim thêm vào `.hub-currency-row`, cùng hàng
+coin/Blue Emerald đúng như yêu cầu. Số tim hiện tại là badge nhỏ đè lên icon (`.hub-heart-count`),
+KHÔNG phải số trong pill như coin/emerald — pill riêng (`.hub-heart-badge`, chỉ render khi thiếu tim)
+hiện đếm ngược `m:ss` (`formatHeartCountdown`, hàm mới) tới tim kế tiếp, tự cập nhật mỗi giây qua
+`setInterval` trong `useEffect`.
+
+**Bẫy hydration đã tránh (bài học lặp lại từ Daily Login #170):** `isHeartsUnlocked()`/
+`getHeartsState()` đều đọc `localStorage` — nếu gọi thẳng trong JSX/`useMemo` lúc render sẽ lệch giữa
+SSR (luôn thấy "chưa unlock", "tank đầy") và lần render đầu phía client (đọc được storage thật ngay
+lập tức). Sửa bằng đúng 2 pattern đã áp dụng: `heartsUnlocked` đi qua `useSyncExternalStore` với
+snapshot server cố định `false`; giá trị tim/đếm ngược khởi tạo bằng `SERVER_HEARTS` (tank đầy) và
+CHỈ được tính lại bên trong một `useEffect` (không bao giờ chạy lúc SSR/hydrate), không phải một
+`useMemo` đọc storage trực tiếp mỗi render.
+
+**Test:** thêm 8 test thuần cho `computeHeartsState` trong `tests/sand-economy.test.ts` (tank đầy bỏ
+qua `regenStartedAt` cũ, không trôi thời gian, đúng 1 khoảng hồi, giữa khoảng, hồi bù rất lâu vẫn
+cap ở `MAX_HEARTS`, 0 tim vẫn đếm ngược đúng). 172/172 pass (165 cũ + 3 test Zen editor trước đó của
+phiên này + đợt này). `tsc --noEmit` sạch (3 lỗi cloudflare cũ).
+
+**Verify trực tiếp trên dev server:** unlock qua nút dev "Unlock all maps", chip tim hiện đúng 5/5;
+bấm Play trừ đúng còn 4, hiện "+1 in 29:43" đếm ngược thật (kiểm tra lại sau vài giây thấy giảm);
+dùng nút dev "-1 heart" dồn về 0, bấm Play bị chặn đúng, toast "Out of hearts — next one in 25:48"
+hiện rõ, không vào được màn chơi; nút Back ở Modes lùi đúng cấp cả hai chiều (danh sách Zen ↔ 2 thẻ
+↔ Home).
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md` (mục mới "Hearts (lượt chơi)"), `GDD.md`
+§16.5 (thêm đoạn nút Back) và §16.6 mới (Hearts, tóm tắt + link).
+
+## 178. Heart HUD: icon đè lên tray đồng nhất coin/emerald; thu nhỏ icon trong GameDevOption (11/09)
+
+**Feedback:** "tôi muốn UI heart phải đồng nhất với 2 UI kia, phải là cái Icon đè lên cái tray. Ngoài
+ra trong game dev option, thu nhỏ lại icon" — kèm ảnh chụp cho thấy heart cũ tách rời (icon + badge số
++ 1 pill đếm ngược nổi riêng), không cùng silhouette với coin/emerald (icon đè lên đúng 1 tray/pill).
+
+**`app/SandGame.tsx`:** viết lại JSX chip hearts — bỏ `.hub-heart-icon-wrap` (icon đứng riêng + badge
+số đè góc) và pill đếm ngược tách rời, thay bằng đúng cấu trúc `.hub-gold-wrap`/`.hub-emerald-wrap` đã
+có: `<HeartIcon />` đè lên MỘT pill duy nhất (`.hub-heart-badge`), số tim là `<strong>` bên trong pill
+(giống coin/emerald), đếm ngược là `<small>` ngay cạnh trong CÙNG pill đó (chỉ hiện khi chưa đầy tim).
+
+**`app/globals.css`:**
+- `.hub-heart-wrap`/`.hub-heart-badge` viết lại theo đúng pattern `.hub-emerald-wrap`/`.hub-emerald-badge`
+  — icon 44px đè lên pill bằng `margin-right: -36px` (y hệt kỹ thuật overlap coin/emerald dùng), pill
+  nền hồng nhạt `#ffd7de`.
+- Thêm rule cơ sở `.heart-icon { width:20px; height:20px; ... }` (giống `.coin-icon`/`.emerald-icon`
+  đã có size mặc định nhỏ từ trước) — trước đây `HeartIcon` dùng "trần" (không wrap trong
+  `.hub-heart-icon-wrap`) ở 2 nút dev "-1 heart"/"Refill hearts" thì không có rule nào ràng kích
+  thước, ảnh PNG gốc hiện ra to bất thường so với icon dev khác. Rule cụ thể hơn trong `.hub-heart-wrap
+  .heart-icon` (44px) vẫn thắng ở HUD nhờ specificity cao hơn — không cần đổi gì ở đó.
+
+**Test:** không đổi logic (`computeHeartsState`/`spendHeart` không đổi) — chỉ CSS/markup. 172/172
+pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev server: chip hearts giờ đúng 1 khối liền — icon
+đè lên pill hồng chứa cả số tim lẫn đếm ngược "+1 in 26:33", cùng silhouette hàng coin/emerald; icon
+tim trong GameDevOption ("-1 heart"/"Refill hearts") đã nhỏ lại bằng cỡ icon dev khác.
+
+## 179. Heart HUD: số lượng quay lại nằm trên icon, tray chỉ còn giữ đếm ngược (11/09)
+
+**Feedback:** "tôi muốn số luọng icon sẽ nằm trên icon HeartIcon luôn" — sau bản #178 (đưa số lượng
+vào trong tray như coin/emerald để "đồng nhất"), người dùng muốn số lượng quay lại nằm TRÊN icon
+(badge), nhưng vẫn giữ nguyên hiệu ứng icon đè lên tray đã thống nhất ở #178 — hai yêu cầu kết hợp
+lại: icon vẫn đè lên tray (đồng nhất silhouette coin/emerald), nhưng số lượng là badge trên icon,
+tray giờ chỉ còn giữ đếm ngược.
+
+**`app/SandGame.tsx`:** JSX chip hearts đổi lại cấu trúc 2 phần — `.hub-heart-icon-wrap` (icon +
+`.hub-heart-count` badge số đè góc, y hệt bản gốc trước #178) làm phần tử đầu, `.hub-heart-badge`
+(tray hồng, giờ CHỈ chứa `<small>` đếm ngược, bỏ hẳn `<strong>{count}</strong>` bên trong) làm phần
+tử sau — nhưng vẫn dùng đúng kỹ thuật overlap `margin-right: -36px` trên `.hub-heart-icon-wrap` để
+icon đè lên mép tray, không quay lại kiểu 2 khối tách rời không chạm nhau như bản gốc trước #178. Tray
+giờ chỉ render khi CHƯA đầy tim (`hearts.msUntilNext !== null`) — đầy tim thì chỉ còn icon+badge số,
+không có tray trống nào cả.
+
+**`app/globals.css`:** khôi phục lại `.hub-heart-icon-wrap`/`.hub-heart-count` (badge tròn đè góc
+dưới-phải icon, nền `var(--ink)`, viền trắng `box-shadow`) từ bản gốc, đồng thời giữ nguyên
+`.hub-heart-badge` overlap-pill approach của #178 (padding-left 42px chừa chỗ icon đè lên, chỉ còn 1
+dòng `<small>` đếm ngược thay vì `<strong>+<small>`).
+
+**Test:** không đổi logic — 172/172 pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev server: tank
+đầy (5/5) chỉ hiện icon+badge "5", không tray; sau khi tốn 1 tim hiện đúng icon+badge "4" đè lên tray
+hồng "+1 in 29:46".
+
+## 180. Heart HUD: bỏ chữ "in"/"sau" khỏi tray đếm ngược, chỉ còn m:ss (11/09)
+
+**Feedback:** "bỏ chữ in đi, countdown thôi".
+
+**`app/SandGame.tsx`:** tray hearts đổi từ `s.heartRegenLabel(formatHeartCountdown(...))` (ra "+1 in
+29:46"/"+1 sau 29:46") sang gọi thẳng `formatHeartCountdown(...)` — chỉ còn "29:46".
+
+**`app/i18n.ts`:** xoá hẳn key `heartRegenLabel` (không còn nơi nào dùng) khỏi `Strings`, `EN`, `VI`.
+
+**Test:** không đổi logic — 172/172 pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev server: tray
+hearts giờ chỉ hiện "24:42", không còn chữ thừa.
+
+## 181. Shop: bỏ hẳn Gems, gộp 2 tab thành 1 màn, Bundles đổi sang Coins+Hearts+Emerald, thêm mục mua Hearts riêng, Boosters chuyển xuống cuối (11/09)
+
+**Yêu cầu:** "cập nhật lại mục Gems trong shop. Bỏ gems luôn. Bỏ coins luôn [tab]. Không chia ra 2 tab
+mà để vô thành 1 UI hết. Nhưng có điều để những thứ mua ở coins ở cuối cùng." + "Bỏ gems, thay bằng
+heart, tự bạn đánh giá định lượng coins và heart ở trong bundle" + "Bundles giờ sẽ là Coins + heart +
+1 ít blue emerald" + "Ngoài coins ra giờ sẽ có mục mua riêng [Hearts]".
+
+### 1) Xoá Gems khỏi toàn bộ game, không chỉ Shop
+
+`app/game/economy.ts`: `Wallet.gems`, `STARTER_GEMS`, `getGems()` xoá hẳn — Gems trước đó "hiển thị
+số, chưa nối kiếm/tiêu/thanh toán thật" (đúng như GDD.md từng ghi), nên xoá không mất logic thật nào.
+`readWallet()` vẫn đọc được ví cũ còn field `gems` dư trong `localStorage` mà không crash (JSON thêm 1
+property vô hại, tự biến mất ở lần ghi tiếp theo). `app/SandGame.tsx`: xoá component `GemIcon`
+(không còn nơi nào dùng). `app/globals.css`: đổi tên biến `--gem`/`--gem-deep`/`--gem-ink` thành
+`--iap-accent`/`--iap-accent-deep`/`--iap-accent-ink` (vẫn giữ đúng 3 mã màu teal cũ — chỉ đổi tên
+cho khỏi gây hiểu lầm là "màu của Gems" khi Gems đã không còn tồn tại), xoá `.shop-gem-badge` và mọi
+selector `.gem-icon`.
+
+### 2) Gộp 2 tab (Gems/Coins) thành 1 màn duy nhất
+
+`shopTab` state (`"gems" | "coins"`) xoá hẳn, cùng `.shop-tabs`/`.shop-tab-btn` (segmented switch) và
+`.shop-gem-badge` (số dư Gems ở góc heading). Shop giờ là MỘT `<div className="shop-panel">` cuộn dọc
+duy nhất chứa tất cả section theo thứ tự cố định — không còn khái niệm "tab đang mở".
+
+**Thứ tự section (đúng yêu cầu "để những thứ mua ở coins ở cuối cùng"):** Special Offers → Bundles →
+Coins (mua trực tiếp) → Hearts (mua trực tiếp, MỚI) → **Boosters** (trước là tab "Coins" riêng, giờ
+xuống cuối cùng).
+
+### 3) Bundles/Special Offers đổi thành phần: Coins + Hearts + Blue Emerald
+
+`SPECIAL_OFFERS`/`BUNDLES` (kiểu dữ liệu trong `SandGame.tsx`) đổi field `gems` → `hearts` +
+`emeralds` (giữ nguyên `coins`). Định lượng tự quyết theo yêu cầu ("tự bạn đánh giá"):
+
+- **Bundles** (5 mốc $0.99→$49.99): Coins giữ NGUYÊN số cũ (400 → 35.000). Hearts tăng dần 1 → 2 → 3
+  → `MAX_HEARTS` → `MAX_HEARTS` (không mốc nào bán quá 5, vì bể tim không giữ được nhiều hơn). Blue
+  Emerald 50 → 800 (mốc rẻ không đủ mua 1 skin — Rune Cannon 500 Emerald — mốc đắt thì đủ và dư).
+- **Special Offers** (2 ưu đãi): "Islander's Starter Pack" ($4.99) — 1.200 coins + 3 hearts + 150
+  emerald. "Weekend Heart Rush" ($9.99, đổi tên từ "Weekend Gem Rush") — không có coins (giữ đúng bất
+  đối xứng bản gốc: ưu đãi cuối tuần không bán coins), 5 hearts (full refill) + 300 emerald + bonus
+  "+35% extra".
+
+Bundle-icon đổi từ `GemIcon` sang `CoinIcon` (coins giờ là số liệu chính/đứng đầu mỗi dòng bundle, y
+hệt logic cũ nhưng đổi currency dẫn đầu). `bundle-sub` hiện cả hearts lẫn emerald cách nhau dấu `·`.
+
+### 4) Mục mua Hearts riêng — tính năng mới
+
+`HEART_PACKS` (kiểu dữ liệu mới, 3 mốc: 1 tim $0.99, 3 tim $1.99, 5 tim "Full refill" $2.99) + section
+Shop mới "Hearts" (`s.heartsTitle`/`s.buyHeartsDirectly`), dùng lại đúng layout `.pack-grid`/`.pack-card`
+Coins đã có — chỉ đổi icon (`HeartIcon` thay `CoinIcon`, thêm size override 32px cho context này).
+Trần ở `MAX_HEARTS` vì mua thêm quá số đó không có chỗ chứa.
+
+### 5) Cập nhật các shortcut phụ thuộc tab cũ
+
+- `openCoinPacks` (nút vàng ở HUD) — bỏ `setShopTab("gems")`, giờ chỉ `setTab("shop")` +
+  `scrollIntoView` tới `coinPackSectionRef` (đơn giản hơn hẳn vì không còn phải đợi tab mount).
+- Hint-dot của `hub-nav` (gợi ý "quay lại mua booster") — trước đổi sang tab "Coins", giờ
+  `scrollIntoView` tới `boostersSectionRef` (ref mới, gắn vào section Boosters ở cuối màn).
+
+**Test:** không có test nào phụ thuộc `shopTab`/Gems (khu vực Shop chưa từng có test tự động — toàn
+bộ là UI mock). 172/172 test hiện có vẫn pass (đảm bảo phần economy/gameplay không bị ảnh hưởng dây
+chuyền). `tsc --noEmit` sạch (3 lỗi cloudflare cũ, không liên quan) — xác nhận không còn tham chiếu
+nào tới `gems`/`shopTab`/`GemIcon`/`STARTER_GEMS` sót lại ở bất kỳ đâu trong `app/`.
+
+**Verify trực tiếp trên dev server:** Shop mở ra đúng 1 màn không tab; Special Offers hiện đúng
+coins+hearts+emerald (hoặc chỉ hearts+emerald cho ưu đãi cuối tuần); Bundles hiện coins làm số chính,
+hearts+emerald ở dòng phụ; cuộn xuống thấy đúng thứ tự Coins → Hearts → Boosters (Boosters đúng ở
+cuối); nút vàng HUD cuộn thẳng tới đúng section Coins.
+
+**Docs cập nhật:** `docs/features/economy-and-wallet.md` (mục mới "Shop — 1 màn thống nhất, Gems đã
+bỏ hẳn"), `GDD.md` §10 (bảng 3 currency, bỏ dòng Gems), §10.7 mới (toàn bộ redesign Shop), §13.1 (sơ
+đồ Mermaid), §16.2/§16.4 (bỏ nhắc Gems khỏi roadmap "đã cài nhưng chưa ship").
+
+## 182. Modes: 2 thẻ nhỏ đổi thành nút bấm hình chữ nhật bo góc, Zen Mode dùng thumbnail thật (11/09)
+
+**Feedback:** "Dùng thumbnail zen mode có trong mục icon. Tôi muốn nó là 1 nút bấm hình chữ nhật bo
+góc như này" — kèm ảnh chụp: 1 nút lớn full-width, bo góc, viền cam/vàng, phủ kín bằng ảnh
+`ZenModeThumbnail.png` (tranh pixel art rừng tre thiền định, đã có sẵn trong `public/icons/`).
+
+**`app/SandGame.tsx`:** 2 thẻ nhỏ nằm cạnh nhau (`.modes-grid`, icon emoji + tên + mô tả) đổi thành 2
+nút ảnh lớn xếp chồng dọc (`.modes-stack`) — mỗi nút chiếm trọn bề ngang màn hình:
+- **Zen Mode**: `<img src="/icons/ZenModeThumbnail.png">` phủ kín toàn bộ nút, tên "Zen Mode" hiện
+  dạng pill mờ tối ở góc dưới-trái (đè lên ảnh, không phải text nằm dưới ảnh).
+- **Theme Mode**: chưa có artwork riêng nên giữ ĐÚNG hình dạng/kích thước/viền như nút Zen Mode (để
+  hai nút vẫn đọc như một cặp đồng bộ), chỉ đổi nền phẳng màu khoá + icon 🗺️ căn giữa thay vì ảnh, tên
+  đổi icon 🔒 báo hiệu chưa mở khoá.
+
+**`app/globals.css`:** `.modes-grid`/`.modes-card*` (cũ) xoá hẳn, thay bằng `.modes-stack` (flex cột,
+gap 16px) + `.modes-image-btn` (nút hình chữ nhật `aspect-ratio: 4/3`, bo góc `var(--r-lg)`, viền 5px
+`var(--gold-line)` — đúng viền cam/vàng trong ảnh mẫu) + `.modes-image-btn-art` (ảnh phủ kín,
+`object-fit: cover`) + `.modes-image-btn-label` (pill tên đè lên ảnh) + `.modes-image-btn.is-locked`
+(viền xám, mờ, cho Theme Mode).
+
+**Test:** không đổi logic (`zenPickerOpen`/`setZenPickerOpen` giữ nguyên) — chỉ đổi JSX/CSS. 172/172
+pass, `tsc --noEmit` sạch. Verify trực tiếp trên dev server: nút Zen Mode hiện đúng ảnh thumbnail bo
+góc viền cam, bấm vào vẫn mở đúng danh sách level Zen như trước; nút Theme Mode hiện cùng khung hình
+dạng, khoá đúng.
+
+## 183. Sửa bug import ảnh ra màu hoàn toàn sai — đẩy bão hoà trước khi so màu (11/09)
+
+**Bug report:** "khi tôi import hình ảnh thì nó hiện 1 màu hoàn toàn khác" — kèm 2 ảnh: import
+`ZenModeThumbnail.png` (cảnh rừng tre tông xanh lá nhạt) vào Zen editor ra kết quả toàn tím/nâu/xám,
+gần như không còn nét xanh nào so với ảnh gốc.
+
+**Điều tra:** không phải bug thuật toán — viết script Node so `nearestColorAmong` bằng khoảng cách RGB
+thuần VS khoảng cách CIE Lab (chính xác hơn về mặt cảm nhận màu sắc) cho vài mẫu màu lấy từ ảnh gốc
+(bầu trời/núi xanh lá nhạt) — CẢ HAI công thức đều cho cùng kết quả sai (`brown`/`white`/`blue`).
+Nguyên nhân thật sự: cả 24 màu `SandColor` đều là màu candy BÃO HOÀ CAO (xem `SAND_COLOR_HEX`'s
+comment — "fully-saturated candy colour" theo đúng nghĩa đen), không có màu xanh lá NHẠT/xỉn nào
+trong bảng — nên bất kỳ công thức đo khoảng cách nào cũng sẽ thấy 1 pixel xanh lá nhạt (bão hoà thấp)
+gần với `brown`/`white`/`blue` (những màu xỉn hiếm hoi có sẵn) hơn là `grass`/`green` (bão hoà cao,
+"xa" về mặt số học dù đúng tông màu).
+
+**Cách sửa:** thêm bước ĐẨY ĐỘ BÃO HOÀ (`boostSaturation`, `app/LevelEditor.tsx`) cho pixel TRƯỚC khi
+so khớp trong `nearestSandColor` — đổi RGB→HSL, nhân `S` (saturation) lên `SATURATION_BOOST = 3` lần
+(giới hạn tối đa 1), đổi ngược lại RGB rồi mới so khoảng cách với 24 màu palette. Verify bằng script
+Node: mẫu màu núi/lá từ ảnh gốc đổi từ `brown`/`blue` (sai) sang `grass`/`green` (đúng tông) sau khi
+đẩy bão hoà factor 3-4. Chỉ áp dụng ở bước so khớp ẢNH THẬT → palette (`nearestSandColor`), KHÔNG đụng
+bước gộp bớt màu khi vượt `Max colours` (`nearestColorAmong` gọi trực tiếp, so giữa các màu palette
+với nhau — không liên quan tới bug vì cả hai đầu vào đã bão hoà cao sẵn).
+
+Áp dụng cho MỌI import ảnh trong editor (không riêng Zen) — đây là bản sửa đúng hành vi chung, người
+dùng bảng màu 24 màu ở bất kỳ level nào (Zen hay danh sách chính) đều được lợi.
+
+**Test:** không có test tự động cho `nearestSandColor`/`imageToRows` (hàm nội bộ, không export khỏi
+`LevelEditor.tsx`) — verify bằng script Node độc lập (so RGB/Lab distance) + verify trực tiếp trên dev
+server (import lại đúng `ZenModeThumbnail.png` vào draft Zen, kết quả đổi hẳn từ tím/xám/nâu sang
+xanh lá đúng tông). 172/172 test hiện có không bị ảnh hưởng, `tsc --noEmit` sạch.
+
+**Docs cập nhật:** `docs/features/zen-mode.md` (mục mới "Bug đã sửa: import ảnh ra màu hoàn toàn
+sai", giải thích rõ đây là giới hạn bảng màu chứ không phải lỗi công thức, và cách đẩy bão hoà giải
+quyết).
+
+## 184. Zen Mode: mỗi ảnh import có bảng màu HEX riêng — "100% chính xác" trong giới hạn 24 ô màu (12/09)
+
+**Yêu cầu:** "tôi muốn màu import từ ảnh trong zen mode phải 100% chính xác" — sau khi đã sửa bug
+saturation ở #183, người dùng vẫn thấy chưa đủ đúng: mọi pixel dù nhạt hay đậm cùng hướng màu vẫn bị
+ép về một trong 24 hex candy CỐ ĐỊNH DÙNG CHUNG cho mọi level (`SAND_COLOR_HEX`), không phải màu thật
+của chính bức ảnh đó.
+
+**Vẫn không thể là RGB tự do tuyệt đối cho từng pixel** (đã giải thích và được người dùng đồng ý ở
+lần hỏi trước khi làm editor ảnh) — luật "bắn cùng màu để dọn" và bánh xe đạn cần một số hữu hạn "ô
+màu" để còn ghép body/nạp đạn được, hàng nghìn sắc độ riêng biệt sẽ biến mỗi pixel thành 1 body không
+ai bắn trúng nổi. Nhưng có khoảng trống thật: 24 Ô MÀU (`SandColor` — dùng cho matching) là hữu hạn và
+dùng chung, nhưng HEX MÀ MỖI Ô ĐÓ VẼ RA không bắt buộc phải giống nhau giữa các level.
+
+**Cách làm — bảng màu (`customPalette`) riêng theo từng level:**
+- `SandLevelConfig` (`app/game/sand-types.ts`) có thêm field mới, optional:
+  `customPalette?: Partial<Record<SandColor, number>>` — hex ghi đè riêng cho level này, chỉ ảnh hưởng
+  RENDER, không đụng gì tới matching/ammo wheel (vẫn nguyên 24 `SandColor`, `rows` vẫn nguyên chữ cái).
+- `imageToRows` (`app/LevelEditor.tsx`) giờ trả về thêm `palette`: với mỗi ô `SandColor` có ít nhất 1
+  pixel rơi vào, tính màu TRUNG BÌNH THẬT của đúng những pixel ảnh gốc đã rơi vào ô đó (không phải màu
+  candy chia sẻ nữa).
+- Import ảnh cho draft Zen lưu bảng này vào `draft.customPalette` (`LevelDraft`, `level-drafts.ts`) →
+  `draftToLevel` chuyển thẳng sang `SandLevelConfig.customPalette`.
+- `SandCannonEngine.ts` có hàm mới `sandColorHex(level, color)` = `level.customPalette?.[color] ??
+  SAND_COLOR_HEX[color]`, thay thế toàn bộ 4 chỗ từng đọc thẳng `SAND_COLOR_HEX[...]` (tô sand khi
+  build board, tint radius ring, màu crosshair, màu viên đạn bay).
+- `app/SandGame.tsx`: HUD đạn đang nạp/dải đạn sắp tới/tint bầu trời (`hex`/`ammoSky`) và `PixelThumb`
+  (thumbnail trong Modes) nhận thêm tham số palette, đọc `raw?.customPalette`/`level.customPalette`.
+- `app/LevelEditor.tsx`'s canvas preview của chính editor cũng đọc `draft.customPalette` — tác giả
+  thấy đúng màu sẽ lên game ngay lúc đang chỉnh, không cần chờ vào game mới biết.
+- Chỉ set `customPalette` khi `draft.mode === "zen"` — danh sách 50 level chính không đổi gì, vẫn luôn
+  vẽ bằng `SAND_COLOR_HEX` chung để giữ phong cách hình ảnh nhất quán across levels như trước giờ.
+
+**Kết quả:** mỗi bức ảnh Zen có 24 hex RIÊNG, tinh chỉnh đúng theo màu thật của chính nó, thay vì dùng
+chung 24 màu candy với mọi level khác. Mất mát duy nhất còn lại so với ảnh gốc là những pixel có màu
+thật khác nhau nhưng cùng rơi vào một ô `SandColor` (bắt buộc — mechanic cần số ô hữu hạn để còn bắn
+được) — không còn kiểu mất mát "đổi hẳn sang một họ màu candy khác hẳn" như trước #183, hay "cùng một
+màu candy dùng chung cho mọi sắc độ" như ngay sau #183.
+
+**Test:** thêm 2 test cho `draftToLevel` (`tests/level-editor.test.ts`) — `customPalette` của draft đi
+thẳng sang level không đổi, và vẫn `undefined` khi draft chưa từng set. 174/174 test hiện có pass,
+`tsc --noEmit` sạch (chỉ còn 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn từ trước).
+
+**Verify trên dev server:** tạo draft Zen mới, import lại đúng `ZenModeThumbnail.png` — preview trong
+editor, thumbnail ở Modes → Zen Mode, và màn chơi 3D thật (bao gồm cả màu viên đạn đang nạp) đều ra
+đúng tông màu thật của ảnh gốc (trời xanh nhạt, núi sage, tre xanh đậm khác hẳn nhau), không còn đồng
+loạt một màu `grass` candy như trước.
+
+**Docs cập nhật:** `docs/features/zen-mode.md` (mục mới "100% chính xác: palette riêng cho từng level
+Zen").
+
+## 185. Modes: thêm icon "?" giải thích các chế độ, bỏ nút back ở màn chọn 2 thẻ (12/09)
+
+**Yêu cầu:** "Đặt 1 icon '?' ở góc trên cùng bên phải để giải thích sơ về các mode" + "Ở sảnh chính chọn
+modes, không cần để icon back".
+
+- **Nút back:** trước đây `.modes-back-btn` luôn hiện ở cả hai trạng thái của tab Modes (màn 2 thẻ
+  Zen/Theme, và danh sách level Zen). Giờ chỉ còn hiện khi đang xem danh sách level Zen (bấm về lại
+  màn 2 thẻ) — màn 2 thẻ (trạng thái đầu tiên khi mở tab Modes) bỏ hẳn nút back, vì `.hub-nav`'s các
+  tab khác (Home, Gallery, ...) đã là cách rời tab Modes rồi, có thêm 1 nút back làm y hệt việc đó là
+  thừa. Danh sách level Zen thì vẫn cần nút riêng vì nó là 1 màn *bên trong* Modes mà không tab nào
+  khác biết cách lùi ra.
+- **Icon "?":** nút tròn viền, chữ "?" đặt ở góc phải `.modes-heading` (đối xứng vị trí nút back cũ,
+  luôn hiện ở CẢ HAI trạng thái) — bấm vào mở 1 card overlay nhỏ (`.modes-help-screen`/
+  `.modes-help-card`, cùng họ với `.settings-screen`: nền mờ + card nổi lên giữa màn hình) liệt kê
+  ngắn gọn từng mode: "🧘 Zen Mode — Unlimited shots, unlimited boosters — just for the picture." và
+  "🔒 Theme Mode — Not built yet." (tái dùng thẳng `s.zenModeBlurb`/`s.notBuiltYet` đã có sẵn, không
+  tạo thêm câu mới trùng nghĩa). Đóng bằng nút X (`CancelIcon`, giống mọi card khác) hoặc bấm ra ngoài
+  vùng card.
+
+**Test:** không cần test tự động mới (thuần UI/JSX, không có logic tính toán) — verify trực tiếp trên
+dev server: màn 2 thẻ không còn nút back, danh sách Zen vẫn có, nút "?" mở đúng nội dung ở cả hai màn
+và đóng lại đúng cách. 174/174 test hiện có không bị ảnh hưởng, `tsc --noEmit` sạch.
+
+**Lưu ý ngoài phạm vi:** test "the built-in level list is what the game and editor both start from"
+(`tests/level-editor.test.ts`) đang fail — `design/levels/sand-levels.ts` đã có thêm 1 level thứ 51
+("Meditation", ship từ editor) từ trước khi phiên làm việc này bắt đầu, không liên quan gì tới thay
+đổi ở entry này. Chưa đụng tới vì không rõ đây có phải nội dung cố ý hay chưa.
+
+## 186. Mở game lần đầu vào thẳng Level 1, khoá nút (X) đến hết level 3, radius Level 1 to hơn, Shop ẩn mục Heart khi chưa mở khoá (12/09)
+
+**Yêu cầu:** "Khi người mở game ra lần đầu tiên, lập tức chơi level 1 luôn, hướng dẫn đến level 3 rồi
+mới hiện nút (X) ở frame cleared" + "Cho radius level 1 to hơn nữa" + "Chỉnh sửa hành vi của shop, nếu
+chưa có heart currency thì không hiện những bundle, hay shop heart trong shop".
+
+- **Mở game lần đầu → chơi Level 1 ngay:** key mới `sand-cannon:v1:first-open-seen`
+  (`hasOpenedBefore`/`markOpened`, `app/SandGame.tsx`) — `useLayoutEffect` chạy đúng 1 lần lúc mount,
+  nếu key chưa từng set thì gọi thẳng `startPlaying()` (y hệt hành động tap nút Play ở Home cho Level
+  1) TRƯỚC KHI trình duyệt kịp vẽ khung hình đầu tiên, nên người chơi không hề thấy màn Home lướt qua —
+  vào thẳng gameplay, kèm luôn overlay hướng dẫn gesture của Level 1 (đã tồn tại sẵn, không phải logic
+  mới). Mọi lần mở lại sau đó (kể cả reload) hành xử y như trước — Home + nút Play. `resetEntireGame`
+  (GameDevOption) giờ xoá luôn key này để tester lặp lại được trải nghiệm "mở lần đầu".
+- **Nút (X) ở card "Frame Cleared" khoá đến hết level 3:** hằng số `WIN_CLOSE_BUTTON_FROM_LEVEL_ID = 4`
+  — nút ✕ (quay về Home) trên card thắng chỉ hiện khi `raw.id >= 4` (hoặc đang chơi Zen, không áp dụng
+  onboarding này). Level 1-3 luôn có nút Continue để đi tiếp nên không bao giờ bị kẹt màn hình, chỉ là
+  không còn đường tắt thoát ra Home giữa chừng onboarding.
+- **Radius Level 1 to hơn:** `sortRadius` của `defaultLevel` (`design/levels/sand-levels.ts`) tăng từ
+  `2` lên `4` — cả bức tranh chỉ 1 màu nên phát súng đầu tiên ăn một miếng lớn, rõ ràng "quyền lực"
+  hơn hẳn so với trước.
+- **Shop ẩn mục liên quan Heart khi chưa mở khoá:** biến `visibleOffers` lọc bỏ khỏi `SPECIAL_OFFERS`
+  bất kỳ offer nào có bán hearts trong khi `!heartsUnlocked`; mục "Bundles" (mọi bundle đều bán hearts)
+  và mục "Hearts — top up trực tiếp" (`HEART_PACKS`) bị ẩn hoàn toàn cho tới khi `heartsUnlocked` (clear
+  xong level 10). Trước khi mở khoá, Shop chỉ còn Coins rồi tới Boosters — không còn dòng nào nhắc tới
+  1 currency người chơi còn chưa từng thấy trên HUD.
+
+**Test:** không cần test tự động mới cho 3 thay đổi này (thuần hành vi mount-effect/hằng số cấu hình/
+điều kiện hiển thị JSX, không có logic tính toán mới) — verify trực tiếp trên dev server: xoá sạch
+localStorage rồi tải lại → vào thẳng gameplay Level 1 kèm overlay gesture, một phát súng ăn 1 vùng lớn
+đúng như radius mới; Shop lúc hearts chưa mở khoá chỉ còn Coins + Boosters, giả lập clear xong level 10
+(set `cleared-levels` + `hearts` trong localStorage) thì Special Offers/Bundles/Hearts hiện lại đầy đủ.
+174 test hiện có không đổi kết quả (173 pass, 1 fail — vẫn là lỗi "51 levels" đã ghi chú ở #185, không
+liên quan gì tới đợt sửa này).
+
+## 187. Tăng radius Level 2, vẫn thấp hơn Level 1 (12/09)
+
+**Yêu cầu:** "tăng radius level 2 lên nhưng không bằng với level 1".
+
+`sortRadius` của `secondConsequence` (Level 2, `design/levels/sand-levels.ts`) tăng từ `3` lên `3.5` —
+vẫn thấp hơn Level 1's `4` (vừa tăng ở #186): Level 2 đã có 3 màu (yellow/blue/green) thay vì 1 màu
+duy nhất như Level 1 nên hợp lý giữ độ khoan dung của radius thấp hơn một chút.
+
+## 188. Shop: ẩn Chain Sort cho tới khi mở khoá level 3 (12/09)
+
+**Yêu cầu:** "phải kèm theo tutorial sử dụng booster luôn chứ?" + "Và ko hiển thị booster chain cho
+tới level 3".
+
+- **Tutorial dùng booster:** đã có sẵn — `SandLevelConfig.ftueBoosterDemo` trên Level 3 (dạy Radius
+  Overcharge + Prism Shot bằng scripted intro/demo/outro) chạy đúng bên trong khoảng onboarding vừa
+  khoá nút ✕ ở #186 (level 1-3), nên tới khi nút ✕ mở lại ở level 4, người chơi chắc chắn đã được dạy
+  cách bấm 1 trong 2 booster này rồi — không cần thêm gì.
+- **Ẩn Chain Sort tới level 3:** mục Boosters trong Shop trước đây liệt kê cả 3 booster (Radius
+  Overcharge, Prism Shot, Chain Sort) ngay từ đầu game — kể cả khi người chơi còn chưa biết hệ thống
+  booster tồn tại. Giờ Chain Sort bị lọc khỏi lưới cho tới khi `hasClearedLevel(2)` (đã dọn xong level
+  2, tức level 3 đã mở khoá) — Radius Overcharge/Prism Shot vẫn hiện từ đầu như cũ (tutorial của chính
+  chúng LÀ level 3, Shop vốn đã bán trước đó, không đổi phần này). Booster tray trong lúc chơi
+  (`.booster-hud`) không đổi gì — nó vốn đã ẩn hết tới level 3 rồi hiện đủ cả 3 cùng lúc.
+
+**Test:** không cần test tự động mới (điều kiện lọc JSX thuần, tái dùng `hasClearedLevel` đã có sẵn) —
+verify trên dev server: ví vàng 10,000 + chưa clear level nào → Shop chỉ còn Radius Overcharge/Prism
+Shot; giả lập clear xong level 1-2 (`cleared-levels`) → Chain Sort hiện lại đầy đủ. `tsc --noEmit` sạch,
+174 test hiện có không đổi (173 pass, 1 fail — vẫn là lỗi "51 levels" không liên quan, đã ghi ở #185).
+
+## 189. Sửa bug: tutorial booster level 3 không hiện khi vào bằng nút Continue (12/09)
+
+**Báo lỗi:** "khi tới level 3, tôi ko thấy hướng dẫn sử dụng booster?"
+
+**Nguyên nhân:** `SandLevelConfig.ftueBoosterDemo` của Level 3 vẫn còn nguyên — nhưng toàn bộ logic
+kiểm tra "level này có FTUE chưa xem cần bật lên không" (tutorial, ftueGesture, ftueFreezeDemo,
+ftueBoosterDemo, ftueChainSortDemo) chỉ từng nằm trong `startPlaying()`, hàm gắn RIÊNG với nút Play ở
+Home. Nút **Continue** trên card "Frame Cleared" (đường đi thật sự của hầu hết người chơi giữa các
+level) lại gọi thẳng `openLevel(levelIndex + 1)` — chỉ đổi bảng cát đang chơi, chưa bao giờ chạy qua
+bất kỳ kiểm tra FTUE nào. Kết quả: tutorial booster (và freeze/chain sort FTUE của các level khác) chỉ
+từng hiện nếu người chơi thoát ra Home rồi bấm Play lại đúng level đó — không hiện khi đi tiếp bằng
+Continue, tức gần như không bao giờ hiện trong lối chơi bình thường.
+
+**Cách sửa:** tách phần thân của `startPlaying()` (mọi kiểm tra FTUE) ra hàm riêng
+`triggerLevelFtue(lvl: SandLevelConfig)`, nhận thẳng level SẮP mở thay vì đọc biến `level` của lần
+render hiện tại (biến đó tại thời điểm bấm Continue vẫn là level VỪA thắng, chưa phải level sắp vào).
+Gọi hàm này ở 3 chỗ:
+- `startPlaying()` — như cũ, cho Home's Play tap.
+- Nút Continue's `onClick` — thêm `triggerLevelFtue(expandLevelForPixelBoard(playables[levelIndex + 1].level))` ngay sau `openLevel(levelIndex + 1)`.
+- `dismissCannonUnlock` — đường Continue "phụ" khi vừa mở khoá skin mới (giữ Continue lại 1 nhịp cho
+  màn ăn mừng cannon), cũng gọi `triggerLevelFtue` cho level `cannonUnlockAdvanceTo` trỏ tới.
+
+`jumpToLevel` (GameDevOption) giữ nguyên logic riêng — nó vốn đã tự chạy đúng các kiểm tra này.
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn là lỗi "51 levels"
+không liên quan, đã ghi từ #185). Verify sống trên dev server bị hạn chế bởi việc mô phỏng thao tác
+"kéo-thả để bắn" qua trình duyệt tự động không ổn định với bảng Level 2 (bắn trúng bảng Level 1 thì dễ,
+Level 2 to hơn thì súng bắn trượt liên tục dù đúng toạ độ) — không dựng được cảnh thắng Level 2 rồi bấm
+Continue để tận mắt xem overlay hiện ra. Đã xác nhận đúng bằng cách đọc lại code + `tsc`/test suite:
+`triggerLevelFtue` là đúng y nguyên thân hàm cũ của `startPlaying` (đã chạy đúng từ trước qua đường
+Play), chỉ đổi biến `level` (đóng theo render cũ) thành tham số `lvl` (level sắp mở) — không có logic
+mới nào chưa được kiểm chứng. Nên nhờ người chơi xác nhận lại trực tiếp trong app.
+
+## 190. Ẩn Chain Sort trong lúc tutorial Radius/Prism, ẩn nút Settings suốt level 1-3 (12/09)
+
+**Yêu cầu:** "khi đang trong tut giới thiệu 2 booster radius và prism, thì hãy ẩn booster chain đi" +
+"Cùng lúc nút setting cũng ẩn đi sau khi người chơi hoàn thành level 3" (đã hỏi lại: chọn phạm vi "ẩn
+suốt cả level 1-3, hiện lại từ level 4").
+
+- **Ẩn Chain Sort trong lúc tutorial:** `.booster-hud` (`app/SandGame.tsx`) lọc bỏ `chainSort` khỏi
+  danh sách nút khi `boosterFtueStep !== null` (đang ở bất kỳ bước nào của tutorial — intro-radius,
+  demo-radius, intro-prism, demo-prism, outro). Charges kịch bản của tutorial (`forcedBoosterCharges`)
+  vốn không có Chain Sort nên nút đó chưa từng làm được gì trong lúc này — ẩn đi tránh 1 nút thừa gây
+  phân tâm giữa bài học. Hiện lại ngay khi bước "outro" đóng.
+- **Ẩn nút Settings suốt level 1-3:** `.settings-wrap` (nút bánh răng góc trên phải) giờ thêm điều kiện
+  `!playing || raw.id > WIN_CLOSE_BUTTON_FROM_LEVEL_ID` (hằng số `= 4` đã có từ #186) — chỉ ẩn khi
+  ĐANG CHƠI (`playing`) một trong 3 level onboarding, mọi tab khác (Home, Shop, Gallery, Skin, Modes)
+  không đổi gì, luôn thấy nút Settings như trước. Cùng logic khoá với nút ✕ ở card "Frame Cleared" —
+  không có gì để thoát ra giữa chừng mà Settings' Home/Restart cung cấp thêm được so với luồng
+  Continue/Play-again sẵn có của chính level đó.
+
+**Test:** không cần test tự động mới (điều kiện JSX thuần, tái dùng hằng số/state đã có) — verify trên
+dev server bằng GameDevOption's "Jump to level" → Level 3: đang giữa overlay "This is Prism Shot" chỉ
+thấy 2 nút booster (Radius Overcharge, Prism Shot) và không có nút Settings; bấm hết tutorial thì cả 3
+booster hiện đủ nhưng Settings vẫn ẩn (còn đang ở level 3). `tsc --noEmit` sạch, 174 test hiện có không
+đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185).
+
+## 191. Chain Sort ẩn tới level 5, tutorial booster loop lại cho tới khi tap to continue (12/09)
+
+**Yêu cầu:** "Chainsort chưa nên hiện cho tới level 5" + "tutorial diễn ra nhanh quá, nên để người xem
+từng bước chứ? Nếu người chơi dừng lại ở bước đó thì loop lại khoảnh khắc dùng booster đó cho tới khi
+tap to continue".
+
+- **Chain Sort ẩn tới level 5:** hằng số mới `CHAIN_SORT_UNLOCK_LEVEL_ID = 5` (thay cho mốc level 3 ở
+  #190) — áp dụng cho cả `.booster-hud` lúc chơi (`level.id >= 5`, level 5 vẫn hiện vì chính tutorial
+  của nó cần nút đó để spotlight) lẫn mục Boosters trong Shop (`hasClearedLevel(4)`).
+- **Tutorial booster loop tới khi tap to continue:** trước đây bước "demo-radius"/"demo-prism"
+  (`boosterFtueStep`) và "demo" (`chainSortFtueStep`) bắn 1 phát kịch bản rồi TỰ ĐỘNG nhảy sang bước kế
+  tiếp ngay khi bắn xong — quá nhanh để nhìn kịp. Giờ các bước "demo-*" này:
+  - Vẫn hiện đúng caption của bước "intro" tương ứng (không đổi chữ) + dòng "Tap to continue".
+  - Sau khi bắn xong, chờ `BOOSTER_DEMO_LOOP_PAUSE_MS` (1.4s) để người chơi kịp nhìn kết quả, rồi tự
+    reset lại bảng và bắn lại y hệt — lặp vô hạn.
+  - CHỈ dừng loop và đi tiếp khi người chơi tự bấm "Tap to continue" — `advanceBoosterFtue`/
+    `advanceChainSortFtue` giờ xử lý luôn 2 bước "demo-*"/"demo" này (trước đây chỉ xử lý bước
+    "intro-*"), và reset bảng về sạch trước khi sang bước kế tiếp.
+  - Đổi thứ tự khai báo `advanceBoosterFtue`/`advanceChainSortFtue` xuống sau `state`/`level` (cần
+    `setState`/`createSandGameState(level)` để reset bảng) — tránh lỗi tham chiếu biến trước khi khai
+    báo (temporal dead zone) mà bản thân đã từng vấp phải ở #189.
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan, đã ghi từ #185). Verify sống trên dev server: Jump to Level 3 → tap "Tap to continue" ở
+Radius Overcharge → phát kịch bản bắn, caption + "Tap to continue" VẪN còn đó (không tự nhảy) → đợi
+~1.4s → bảng tự reset và bắn lại y hệt → bấm "Tap to continue" mới thật sự chuyển sang caption Prism
+Shot. Chain Sort không xuất hiện trong tray lẫn Shop cho tới khi giả lập clear xong level 4.
+
+## 192. Sửa bug loop tutorial làm cát vơi đi thật + tắt overlay đen khi xem tác dụng booster (12/09)
+
+**Báo lỗi:** "Tôi muốn loop lại từ chính cái scene đó chứ không phải sort tiếp khiến cát vơi đi trời
+ạ" + "Khi giới thiệu booster xong thì tắt opacity đen đi để người xem tác dụng của booster, sau 3 giây
+hiện nút tap to continue để giới thiệu booster prism...".
+
+**Nguyên nhân của bug "cát vơi đi":** bản loop dựng ở #191 "reset" bảng bằng
+`setState(createSandGameState(level))` — nhưng React `state` chỉ là BẢN SAO được engine tự đẩy ra
+ngoài qua callback `onState` (xem constructor `new SandCannonEngine(..., {onState: setState})`) —
+KHÔNG PHẢI nguồn sự thật. Board thật (cát, số lượt bắn, số charge booster) sống hẳn bên trong instance
+`SandCannonEngine`, hoàn toàn không hề bị đụng tới bởi lệnh `setState` đó. Kết quả: mỗi vòng loop bắn
+THẬT vào board đã bị vơi từ vòng trước — vàng React tưởng đã "reset" nhưng thực ra cứ dọn tiếp, dọn
+tiếp.
+
+**Cách sửa "reset đúng scene":** đổi sang bump `runId` — đúng cơ chế `restart()`/`openLevel()`/
+`goHome()` đã dùng cho MỌI lần "trả lại 1 board sạch" từ trước giờ: nó dỡ bỏ và dựng lại toàn bộ
+`SandCannonEngine` (charges, cát, mọi thứ về lại như lúc mới vào level). Hai effect bắn demo
+(`boosterFtueStep`/`chainSortFtueStep`) đã có sẵn `engine` trong dependency array, nên khi `runId` đổi
+→ `engine` đổi identity → effect TỰ ĐỘNG chạy lại và bắn lại phát demo, không cần tự viết vòng lặp gọi
+lại hàm.
+
+**Thêm hành vi tắt overlay đen khi xem tác dụng booster:** state mới `boosterDemoRevealing`/
+`chainSortDemoRevealing` — bật lên NGAY khi bước "demo-*" bắt đầu bắn, khiến toàn bộ overlay đen +
+caption + spotlight biến mất HOÀN TOÀN (không hiện gì cả) để người chơi thấy rõ tác dụng thật của
+booster trên bức tranh. Giữ trạng thái "trần trụi" này `BOOSTER_DEMO_REVEAL_MS` (3 giây, đúng yêu cầu
+"sau 3 giây") rồi mới hiện lại caption + "Tap to continue" (`BOOSTER_DEMO_CAPTION_HOLD_MS`, thêm 3
+giây nữa) — bấm thì đi tiếp qua booster kế/outro, không bấm thì `runId` bump lại và cả nhịp lặp lại
+từ đầu (board sạch, bắn lại, tắt overlay lại...) cho tới khi có tap.
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan). Verify sống trên dev server bằng cách click trực tiếp `.ftue-freeze-overlay` qua console
+(tránh lệch thời điểm khi overlay đang tắt): tap intro-radius → overlay biến mất ngay (đúng), 3s sau
+tự bắn lại từ board y hệt ban đầu nếu không tap (số lượt bắn/charge quay lại đúng số gốc, không tiếp
+tục giảm — xác nhận hết bug "cát vơi đi"), tap giữa lúc caption đang hiện thì chuyển đúng sang Prism
+Shot, hết cả 2 booster thì vào outro rồi trả lại y hệt 1 board sạch (26 lượt, 3/2 charge) cho người
+chơi tự chơi thật.
+
+## 193. Viết lại tutorial 2 booster ở Level 3: người chơi tự bắn thật, không còn demo kịch bản (12/09)
+
+**Yêu cầu:** "Nó nên là hiện giới thiệu highlight booster -> bắt người chơi nhấn vào -> tắt opacity, để
+người chơi tự nhắm và bắn -> bắn xong, sau khi cát sand settling được 1 giây thì giới thiệu prism
+shot... -> bắt người chơi nhấn vào -> tắt opacity đen đi rồi để người chơi tự bắn. Sau khi bắn xong,
+sau cát sand settling được 1 giây thì cho người chơi booster như cũ rồi tiếp tục màn hiện tại."
+
+Thay hoàn toàn cách tiếp cận "bắn hộ bằng script rồi loop cho tới khi tap to continue" (#191, #192) —
+CHỈ áp dụng cho level 3's Radius Overcharge/Prism Shot (level 5's Chain Sort giữ nguyên, không được
+yêu cầu đổi). `boosterFtueStep` đổi state machine:
+
+- **`intro-radius`/`intro-prism`** — overlay tối + spotlight (hole xuyên thấu) đúng như trước, NHƯNG
+  giờ overlay có thêm class `.is-noninteractive` (`pointer-events: none`) — không còn "tap to continue"
+  nào cả, mọi cú chạm xuyên thẳng qua overlay tới ĐÚNG NÚT BOOSTER THẬT trong tray bên dưới. Caption đổi
+  từ "...Watch!" sang "...Tap it to arm it!" ("Chạm vào để trang bị!") mời người chơi tự bấm.
+- **`shoot-radius`/`shoot-prism`** — không hiện gì cả (không overlay, không caption) — người chơi tự
+  ngắm và tự bắn y hệt 1 phát bắn bình thường. Chuyển vào state này khi `armedBooster` (đã có sẵn, đồng
+  bộ từ engine) khớp đúng loại booster đang giới thiệu.
+- Phát hiện "bắn xong + cát đã settle": theo dõi `state.phase` quay lại `"READY"` VÀ `state.shotsUsed`
+  vượt qua mốc lúc bắt đầu bước "shoot-*" (không phân biệt trúng/trượt — "bắn xong" tính từ lúc phát
+  súng thật sự rời nòng, không cần phải trúng cát) — giữ nguyên `BOOSTER_TRY_SETTLE_HOLD_MS` (1 giây)
+  rồi mới chuyển bước kế: `shoot-radius` → `intro-prism`, `shoot-prism` → **thẳng về `null`** (không còn
+  outro) — trả lại quyền điều khiển ngay trên board hiện tại (không reset), đúng yêu cầu "cho người
+  chơi booster như cũ rồi tiếp tục màn hiện tại". Cùng lúc bật luôn Shop's "go buy more" hint dot
+  (trước đây gắn với bước "outro" đã bị xoá).
+- Xoá hẳn `advanceBoosterFtue`, `boosterFtueTapReady`, `boosterDemoRevealing`, effect bắn script cho
+  cặp booster này, và chuỗi i18n `ftueBoosterOutro` (không còn dùng).
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan). Verify sống trên dev server: Jump to Level 3 → thấy spotlight + "Tap it to arm it!" trên
+Radius Overcharge, bấm THẲNG vào nút thật trong tray (xuyên qua overlay) → nút bắt sáng, overlay biến
+mất hoàn toàn → tự ngắm/bắn 1 phát thật → 1 giây sau khi cát settle thì chuyển đúng sang spotlight Prism
+Shot → lặp lại tương tự → bắn xong Prism thì KHÔNG còn overlay/outro nào nữa, board giữ nguyên trạng
+thái vừa bắn, `booster-shop-hint` đã bật — người chơi chơi tiếp bình thường ngay lập tức.
+
+## 194. Miss/no-match: đổi từ toast chữ sang vignette đỏ nhẹ; settling: bỏ 3 chấm, khung tranh giảm opacity (12/09)
+
+**Yêu cầu:** "Khi hit miss, không hiện UI pop up thông báo miss lên, mà thay vì đó cho background có 1
+lớp đỏ nhẹ và viền tranh cũng có filter đỏ nhẹ" + "Từ giờ khi sandsettling, bỏ 3 dấu chấm đi, thay vì
+đó là khung tranh giảm opacity, để người chơi focus vào dòng chảy của cát".
+
+- **Miss/no-match → vignette đỏ, bỏ toast chữ:** sự kiện `NO_MATCH` (bắn trúng cát nhưng sai màu) và
+  `MISS` (bắn trượt ra ngoài/trúng khung) trước đây `pushToast` 3 câu chữ khác nhau
+  (`toastNoColorInRange`/`toastHitFrame`/`toastMissedFrame`) — giờ cả 3 gộp thành 1 hiệu ứng hình ảnh
+  duy nhất: `.miss-flash`, một `radial-gradient` trong suốt ở giữa (đúng chỗ bức tranh, không đổi màu
+  cát) và ngả sang đỏ nhạt (`rgba(255,154,139,...)`, từ cùng tông `--danger` app đã dùng) ra tới rìa —
+  tức bầu trời/background VÀ đúng chỗ viền khung tranh đều nhuốm đỏ nhẹ, cát ở giữa giữ nguyên. Chớp
+  rồi tắt trong 0.5s (`miss-flash-pulse`), bump counter `missFlashBump` để 2 lần miss liên tiếp đều
+  replay lại từ đầu. Xoá hẳn 3 chuỗi i18n không còn dùng.
+- **Bỏ 3 chấm lúc sand settling, thay bằng khung tranh giảm opacity:** `.settle-badge` (3 chấm nhấp
+  nháy) xoá hẳn — thông báo cho screen reader vẫn giữ lại dưới dạng `.sr-only` (ẩn hình, không ẩn khỏi
+  cây accessibility). Thay vào đó: `SandCannonEngine.ts` có thêm `setFrameBusyDim(busy)` (gọi từ
+  `SandGame.tsx` mỗi khi `busy` — `PROJECTILE_FLYING`/`HIT_RESOLUTION`/`SETTLING`/`MERGING` — đổi) và
+  `updateFrameDim` (chạy mỗi frame trong vòng lặp `animate()`, ease tuyến tính `frameDimT` về mục tiêu
+  trong `FRAME_BUSY_DIM_TRANSITION_MS` = 220ms) — hạ `opacity` của MỌI vật liệu khung tranh (backing,
+  lip, 2 rail, 2 post — tái dùng `MeshBasicMaterial.opacity` gốc, shader ripple đóng băng không đụng
+  tới nó) xuống còn `FRAME_BUSY_DIM_OPACITY = 0.4` trong lúc bận, về lại 1.0 khi rảnh. Chỉ khung mờ đi
+  — cát, cannon giữ nguyên độ sáng, đúng ý "để người chơi focus vào dòng chảy của cát".
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan, đã ghi từ #185). Verify sống trên dev server: bắn trượt ra ngoài khung ở Level 1 →
+`.miss-flash` mount đúng lúc rồi tự tắt sau nửa giây (không còn toast chữ nào cho miss/no-match nữa).
+`setFrameBusyDim`/`updateFrameDim` được review kỹ theo đúng khuôn mẫu `updateFreezeVisualsAnimation`
+đã có sẵn và dùng property `opacity` gốc của `MeshBasicMaterial` (không đụng shader) nên tin cậy được
+dù không bắt được đúng khung hình đang mờ qua ảnh chụp màn hình (hiệu ứng chỉ kéo dài ~220ms mỗi lượt).
+
+## 195. Sửa thật sự bug khung tranh không giảm opacity lúc sand settling (#194 chưa work) (12/09)
+
+**Báo lỗi:** "Khung tranh chưa có giảm opacity khi cát settling? HÃY SỬA LẠI" — đúng, bản #194 hoàn
+toàn không có tác dụng trên máy thật.
+
+**Nguyên nhân thật sự:** #194 làm mờ khung bằng cách set `material.opacity`/`material.transparent`
+trực tiếp trên `MeshBasicMaterial` của khung — nhưng shader của các mảnh khung (backing/lip/rail/post)
+đã bị `onBeforeCompile` THAY THẾ HOÀN TOÀN (kỹ thuật ripple đổi màu lúc đóng băng, có từ trước) để tự
+vẽ màu theo `uColorFrom`/`uColorTo`/`uProgress`. Dòng thay thế đó VẪN viết `opacity` vào kênh alpha
+(`vec4(..., opacity)`), nhưng các mảnh khung này chưa từng được thiết lập để đi qua pass blend
+trong suốt (không có `transparent`/`depthWrite` phù hợp cho tổ hợp mesh nhiều lớp của khung) — nên đổi
+alpha một mình không có tác dụng NHÌN THẤY ĐƯỢC dù giá trị uniform đổi đúng. Xác nhận bằng cách tự tay
+set `material.opacity = 0.05` trực tiếp qua console trên dev server — hình khung không đổi tí nào, kể
+cả khi đợi rất lâu; trong khi đổi thẳng `uColorFrom`/`uColorTo` (kỹ thuật ripple đã có sẵn, đã chạy
+đúng từ trước) thành màu đỏ thì đổi màu NGAY LẬP TỨC — chứng minh muốn khung đổi gì thấy được thì phải
+đi qua đúng con đường shader này, không phải qua `material.opacity`.
+
+**Cách sửa đúng:** thêm hẳn 1 uniform mới `uDim` (0..1) vào shader của khung (cùng chỗ với
+`uColorFrom`/`uColorTo`/`uProgress` đã có), NHÂN thẳng vào màu đã tính ra:
+`diffuseColor = vec4( freezeColor * (1.0 - uDim), opacity )` — tối màu bằng cách nhân RGB (giả lập
+hiệu ứng "giảm opacity" bằng mắt thường) thay vì đụng alpha thật, dùng ĐÚNG con đường render đã được
+xác nhận hoạt động (ripple đổi màu). `setFrameBusyDim`/`updateFrameDim` không đổi API/logic bên ngoài
+(vẫn ease `frameDimT` theo `FRAME_BUSY_DIM_TRANSITION_MS`/`FRAME_BUSY_DIM_OPACITY` y hệt #194), chỉ đổi
+chỗ áp dụng cuối cùng: ghi `entry.uniforms.uDim.value` thay vì `material.opacity`. Xoá hẳn field
+`frameOpacityMaterials` không còn cần nữa.
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan). Verify sống trên dev server bằng cách gắn tạm `window.__engine = this` (đã xoá trước khi
+chốt) để gọi trực tiếp `engine.setFrameBusyDim(true)`/`(false)` qua console, kèm phóng to tạm
+`FRAME_BUSY_DIM_TRANSITION_MS`/hạ `FRAME_BUSY_DIM_OPACITY` để mắt thường thấy rõ quá trình chuyển tiếp
+— xác nhận khung tối hẳn xuống rồi sáng lại đúng như thiết kế, đã trả `FRAME_BUSY_DIM_OPACITY`/
+`FRAME_BUSY_DIM_TRANSITION_MS` về đúng giá trị gốc (0.4 / 220ms) trước khi hoàn tất.
+
+## 196. Chỉnh lại hiệu ứng khung tranh: mix về màu bầu trời (~20% trong suốt) thay vì tối màu (12/09)
+
+**Yêu cầu:** "Ý tôi là khiến nó kiểu 20% transparent á" — làm rõ lại ý của #195: người dùng muốn khung
+THẬT SỰ NHÌN NHƯ TRONG SUỐT (nhìn xuyên qua được), không phải chỉ tối màu đi.
+
+**Điều tra thêm real alpha transparency (trước khi kết luận):** đo trực tiếp bằng `gl.readPixels` trên
+dev server — set `material.opacity = 0`/`transparent = true` CHỈ trên đúng 6 vật liệu khung (backing,
+lip, 2 rail, 2 post), byte đọc lại TUYỆT ĐỐI KHÔNG ĐỔI so với lúc chưa đổi (dù đã thử thêm
+`depthWrite = false`/`needsUpdate = true`) — xác nhận lại kết luận #195: material.opacity thật sự
+không có tác dụng gì trên các vật liệu này, dù `renderer.properties.get(material).uniforms.opacity`
+đọc lại đúng giá trị đã set. Không rõ nguyên nhân sâu xa (đã thử nhiều cách chẩn đoán), nhưng dữ liệu
+đo được nhất quán và lặp lại được nhiều lần — con đường alpha thật sự đóng, không phải do code viết sai
+ở #195.
+
+**Cách sửa cho đúng Ý ĐỊNH "20% transparent":** thay vì nhân màu về ĐEN (`freezeColor * (1 - uDim)`,
+đọc như "tối đi" chứ không phải "trong suốt"), đổi shader trộn (`mix`) màu khung về ĐÚNG MÀU BẦU TRỜI
+đằng sau nó (`uSkyColor`, lấy đúng màu fog `0xaedee4` file này đã dùng sẵn) — về mặt thị giác, "phai
+dần vào màu nền phía sau" đúng là cảm giác "trong suốt" thật sự mang lại, dù kỹ thuật vẫn là mix màu
+chứ không phải blend alpha GPU thật. Đổi tên hằng số `FRAME_BUSY_DIM_OPACITY` (0.4, "giữ lại 40% độ
+đục") thành `FRAME_BUSY_DIM_TRANSPARENCY = 0.2` (đúng nghĩa "20% trong suốt" — lúc mờ nhất, khung là
+80% màu gốc + 20% màu bầu trời).
+
+**Test:** `tsc --noEmit` sạch, 174 test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không
+liên quan). Verify sống trên dev server bằng `window.__engine` tạm thời (đã xoá): `setFrameBusyDim(true)`
+rồi đọc `frameFreezeMaterials[0].uniforms.uDim.value` — đúng bằng `0.2` ở trạng thái mờ nhất, và ảnh
+chụp cho thấy viền khung ngả sang tông lạnh của bầu trời thay vì tối sẫm — đúng cảm giác "phai vào nền"
+thay vì "tối màu" như bản trước.
+
+## 197. Cập nhật GDD.md cho các thay đổi #184-196 (12/09)
+
+**Yêu cầu:** "Cập nhật vào changelog và GDD."
+
+Changelog (#184-196) đã ghi khi làm; lượt này bổ sung nốt GDD.md — theo đúng quy ước sẵn có của tài
+liệu (thêm ghi chú có ngày vào section đang tồn tại, không renumber):
+
+- **3.3 (Miss/no-match):** thêm đoạn mô tả `.miss-flash` — vignette đỏ thay 3 toast chữ cũ.
+- **9 (Booster):** thêm đoạn `CHAIN_SORT_UNLOCK_LEVEL_ID = 5`.
+- **12.3 (Bảng 24 màu):** thêm đoạn `customPalette` riêng theo level — chỉ Zen Mode, 100% chính xác
+  màu ảnh gốc trong giới hạn 24 ô.
+- **13.2 (HUD):** thêm dòng bảng "Khung tranh mờ lúc bận" — thay 3 chấm settle-badge cũ.
+- **13.4 (FTUE):** đổi tiêu đề "hai cơ chế" → "ba cơ chế", thêm dòng bảng + đoạn mô tả tutorial
+  booster: Radius/Prism (level 3) giờ người chơi tự bắn thật, Chain Sort (level 5) vẫn scripted-demo-
+  loop như cũ.
+- **13.6 (mới):** "Onboarding khoá cứng — level 1-3, mở game lần đầu" — first-open auto-play, khoá nút
+  ✕/Settings tới level 4, radius Level 1/2 tăng.
+- **16.5 (Modes):** cập nhật đoạn nút Back (chỉ còn ở danh sách Zen, bỏ ở màn hai thẻ) + đoạn icon "?"
+  mới.
+- **16.6 (Hearts):** thêm đoạn Shop ẩn Bundles/Hearts/offer-có-heart trước khi mở khoá.
+- **Phụ lục A:** cập nhật `sortRadius` Level 1 (2→4) và Level 2 (3→3.5).
+
+**Test:** tài liệu thuần, không có code/test nào đổi theo — `git status --short` xác nhận chỉ
+`GDD.md`/`CHANGELOG-prototype.md` đổi thêm so với các entry trước đó.
+
+## 198. Khung tranh lúc sand settling: đổi từ mix màu bầu trời sang "kính trắng mờ" kiểu Minecraft glass pane (12/09)
+
+**Yêu cầu:** "Tôi muốn cái khung tranh khi sandsettling sẽ kiểu như white glass panel with low opacity
+with white filter on, glass, white glass minecraft texture-like" — làm lại hẳn art direction của hiệu
+ứng #196 (mix về màu bầu trời `0xaedee4`), giữ nguyên toàn bộ cơ chế bật/tắt/ease đã có, chỉ đổi MÀU và
+THÊM MỘT LỚP HOA VĂN để nó đọc đúng thành một tấm kính trắng mờ phủ lên khung, không phải "phai vào nền".
+
+- **Đổi màu mix từ sky-blue sang trắng:** `FRAME_BUSY_DIM_SKY_COLOR` (`0xaedee4`) đổi tên thành
+  `FRAME_BUSY_DIM_GLASS_COLOR` = `0xffffff`; uniform `uSkyColor` đổi tên `uGlassColor` theo. Nâng nhẹ
+  `FRAME_BUSY_DIM_TRANSPARENCY` từ `0.2` lên `0.35` — vẫn đúng tinh thần "low opacity" (khung vẫn thấy
+  rõ màu gốc xuyên qua), nhưng đủ đậm để lớp kính trắng thật sự đọc được thay vì mờ nhạt.
+- **Thêm lưới "mullion" kiểu ô kính Minecraft:** 3 hằng số mới —
+  `FRAME_BUSY_DIM_GRID_CELL` (1.0, đơn vị world, ướm theo `FIT_WIDTH`/`FIT_HEIGHT` ~5-6 unit nên luôn
+  ra khoảng 5-6 ô trên khung bất kể level to nhỏ), `FRAME_BUSY_DIM_GRID_LINE_WIDTH` (0.035, độ mờ viền
+  mỗi ô) và `FRAME_BUSY_DIM_GRID_BOOST` (1.6, độ sáng thêm của vạch lưới). Shader tính
+  `mod(vFreezeXY, cellSize)` rồi lấy khoảng cách gần nhất tới biên ô để vẽ vạch sáng — dùng đúng
+  `vFreezeXY` (không gian "local theo tranh" đã có sẵn cho hiệu ứng ripple đóng băng, liên tục xuyên
+  suốt backing/lip/2 rail/2 post), nên lưới kính nối liền một mạch qua mọi mảnh khung, đọc như MỘT tấm
+  kính lớn phủ nguyên khung chứ không phải mỗi mảnh một ô riêng.
+- Cả màu mix lẫn độ sáng vạch lưới đều nhân theo `uDim` — lưới kính chỉ hiện dần lên cùng lúc khung mờ
+  đi lúc bận, biến mất hoàn toàn lúc rảnh, không phải hoa văn tĩnh vẽ sẵn.
+- Cập nhật toàn bộ doc comment liên quan (`FRAME_BUSY_DIM_TRANSPARENCY`, `updateFrameDim`,
+  `createFrameFreezeMaterial`, `.sr-only`'s comment trong `globals.css`) theo đúng art direction mới —
+  không còn nhắc "phai vào bầu trời" mà là "tấm kính trắng mờ phủ lên khung".
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174
+test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify
+sống trên dev server bằng `window.__engine` tạm thời (đã xoá trước khi chốt, xác nhận bằng
+`grep -n "__engine"` rỗng): `setFrameBusyDim(true)` → đợi hết `FRAME_BUSY_DIM_TRANSITION_MS` →
+`frameFreezeMaterials[].uniforms.uDim.value` đều đúng `0.35` → ảnh chụp cho thấy khung ngả trắng rõ kèm
+lưới vạch trắng sáng kiểu ô kính, liên tục xuyên suốt cả 4 cạnh khung; `setFrameBusyDim(false)` → khung
+trả lại đúng màu gỗ/cream ban đầu, không còn dấu vết lưới.
+
+## 199. Bỏ lưới kính, chỉ để rìa khung tranh (rail/post) trắng ra lúc sand settling (12/09)
+
+**Yêu cầu:** "bỏ grid trắng ra đi, mà thay vì đó cho rìa khung tranh nó trắng" — đơn giản hoá lại hẳn
+#198: bỏ lưới mullion, và thu hẹp vùng đổi màu lại đúng phần "rìa khung tranh" — phần viền rail/post
+người chơi thật sự đọc là "cái khung", không phải backing/lip phía trong (phần lớn bị cát che, chỉ lộ
+ra ở những khoảng trống trong tranh).
+
+- **Bỏ hẳn lưới:** xoá toàn bộ code `paneUv`/`paneEdgeDist`/`paneLine` cùng 3 hằng số
+  `FRAME_BUSY_DIM_GRID_CELL`/`FRAME_BUSY_DIM_GRID_LINE_WIDTH`/`FRAME_BUSY_DIM_GRID_BOOST` — shader trở
+  lại đúng một dòng `mix( freezeColor, uGlassColor, uDim )` như bản #196, chỉ khác màu đích (trắng thay
+  vì sky-blue).
+- **Chỉ rail/post trắng ra, backing/lip đứng yên:** `updateFrameDim` giờ chỉ ghi `uDim` khác 0 cho
+  entry có `isRail === true` — `entry.uniforms.uDim.value = entry.isRail ? dim : 0`. Backing/lip (2
+  entry còn lại trong `frameFreezeMaterials`) luôn nhận `uDim = 0`, tức shader của chúng không đổi gì
+  so với lúc rảnh dù `frameDimTarget` đang bật.
+- **Nâng độ trắng:** vì hiệu ứng giờ thu hẹp vào đúng dải viền mỏng (không còn phủ cả mảng backing lớn
+  + lưới để "đọc" rõ), tăng `FRAME_BUSY_DIM_TRANSPARENCY` từ `0.35` lên `0.8` để rìa thật sự đọc thành
+  "trắng ra" rõ ràng thay vì một sắc thái nhạt khó nhận ra trên dải viền hẹp.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174
+test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify
+sống trên dev server bằng `window.__engine` tạm thời (đã xoá trước khi chốt, `grep -n "__engine"`
+rỗng): `setFrameBusyDim(true)` → đợi hết transition →
+`frameFreezeMaterials.map(e => ({isRail: e.isRail, uDim: e.uniforms.uDim.value}))` xác nhận đúng 4 rail/
+post ở `0.8`, 2 backing/lip ở `0`; ảnh chụp cho thấy đúng viền ngoài (rail/post) trắng rõ, phần
+backing/lip lộ ra trong khoảng trống của tranh vẫn giữ nguyên màu cream gốc, không có lưới nào cả.
+`setFrameBusyDim(false)` → viền trả lại đúng màu gỗ nâu ban đầu.
+
+## 200. Nghĩ lại: cả khung tranh (không riêng rìa) fill trắng ở opacity thấp ~20% (12/09)
+
+**Yêu cầu:** "Nghĩ lại rồi. Bây giờ khi trong trạng thái sandsettling, khung tranh sẽ được fill màu
+trắng với lớp material giảm opacity xuống cỡ 20%" — quay lại phạm vi rộng như bản đầu (#194/#196):
+TOÀN BỘ khung, không chỉ riêng rìa như #199, và đúng nghĩa "lớp material trắng, opacity thấp" chứ
+không phải mix sang màu bầu trời như #196.
+
+- **Bỏ hẳn phân biệt `isRail`:** `updateFrameDim` quay lại ghi `uDim` giống nhau cho cả 6 mảnh khung
+  (backing, lip, 2 rail, 2 post) — không còn `entry.isRail ? dim : 0` như #199, chỉ còn
+  `entry.uniforms.uDim.value = dim` áp dụng đều.
+- **Hạ `FRAME_BUSY_DIM_TRANSPARENCY` từ `0.8` (bản #199, chỉ áp cho rìa hẹp) xuống lại `0.2`** — đúng
+  số "20%" người dùng nêu, và hợp lý hơn khi hiệu ứng giờ phủ lên cả mảng lớn (backing) thay vì chỉ
+  dải viền mỏng: cần opacity thấp để không lấn át toàn bộ picture frame.
+- Giữ nguyên `uGlassColor = 0xffffff` (trắng, không đổi từ #198/#199) và toàn bộ cơ chế mix-qua-uniform
+  đã có (`mix(freezeColor, uGlassColor, uDim)`, không có lưới/pane nào — #199 đã bỏ lưới, giữ nguyên).
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174
+test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify
+sống trên dev server bằng `window.__engine` tạm thời (đã xoá trước khi chốt, `grep -n "__engine"`
+rỗng): `setFrameBusyDim(true)` → đợi hết transition →
+`frameFreezeMaterials.map(e => ({isRail: e.isRail, uDim: e.uniforms.uDim.value}))` xác nhận cả 6 mảnh
+(kể cả 2 backing/lip trước đây bị loại ở #199) đều lên đúng `0.2`; ảnh chụp cho thấy cả khung (viền
+lẫn phần tranh lộ ra trong khoảng trống) ngả trắng nhẹ đều nhau, đúng cảm giác "một lớp material trắng
+mỏng phủ lên trên" chứ không phải khung tự đổi hẳn màu. `setFrameBusyDim(false)` → khung trả lại đúng
+màu gốc, không còn dấu vết trắng.
+
+## 201. Bỏ hẳn hiệu ứng khung tranh, trả lại 3 chấm settling (vị trí mới) + khay booster trống ở level 1-2 (12/09)
+
+**Yêu cầu:** "Chỉnh sửa lại rồi. Giờ khung tranh khi sand settling sẽ giữ màu nguyên bản. Không còn màu
+trắng hay opacity giảm gì nữa" + "Khi sandsettling, sẽ xuất hiện dấu 3 chấm và anim của nó. Vị trí xuất
+hiện sẽ luôn ở dưới khung tranh, trên ụ súng. Giữa ụ súng và khung tranh" + "Ở level 1, và level 2. Vẫn
+sẽ xuất hiện HUD booster tray nhưng nó sẽ trống trơn". Ba yêu cầu độc lập, gộp vào một entry vì cùng một
+lượt sửa.
+
+- **Bỏ hẳn hiệu ứng frame-dim (toàn bộ chuỗi #194→#200):** xoá sạch khỏi `SandCannonEngine.ts` —
+  `FRAME_BUSY_DIM_TRANSPARENCY`/`FRAME_BUSY_DIM_GLASS_COLOR`/`FRAME_BUSY_DIM_TRANSITION_MS`, field
+  `frameDimTarget`/`frameDimT`, uniform `uDim`/`uGlassColor` khỏi `frameFreezeMaterials` và shader của
+  `createFrameFreezeMaterial` (trả `diffuseColor` về đúng 1 dòng gốc
+  `vec4( freezeColor, opacity )`, không mix gì thêm), method `setFrameBusyDim`/`updateFrameDim`, và lệnh
+  gọi `updateFrameDim(delta)` trong `animate()`. `SandGame.tsx` bỏ hẳn effect gọi
+  `engine?.setFrameBusyDim(busy)`. Khung tranh giờ luôn giữ đúng màu tác giả đặt
+  (`FRAME_RAIL_COLOR`/`FRAME_INNER_COLOR`, hoặc bản `_FROZEN` khi Freeze Map active) trong MỌI trạng
+  thái, không còn đường nào đổi màu/opacity nó theo `busy` nữa.
+- **Trả lại `.settle-badge` (3 chấm), vị trí mới:** JSX + markup y hệt bản gốc trước #194 (`<div
+  className="settle-badge" role="status" aria-label={...}><i /><i /><i /></div>`, gate
+  `busy && !winReveal`) — nhưng CSS đổi hẳn vị trí: từ `top: 70px` (pixel tuyệt đối, phía TRÊN khung,
+  giữa trời) sang `position: absolute; left: 50%; top: 56%; transform: translate(-50%, -50%)` — đúng
+  toạ độ `.ftue-gesture` (glyph "Drag to aim" của level 1) đã dùng cho dải trời trống GIỮA khung và ụ
+  súng (comment sẵn có trên `.scene-wrap` gọi đúng dải này là "a band of clear sky between the frame's
+  bottom edge and the cannon below"). Dùng lại luôn `top: 56%` có sẵn thay vì tự đo một trị số mới, vì
+  đây chính xác là dải yêu cầu. Keyframes `settle-dot-grow` (đã xoá ở #194) thêm lại y nguyên.
+- **Level 1/2: khay booster hiện nhưng trống, không ẩn cả khay:** JSX của `.booster-hud` đổi điều kiện
+  bao ngoài từ `playing && !level.ftueGesture && !level.hideBoosterHud && !winReveal` thành chỉ
+  `playing && !winReveal` — khay LUÔN mount khi đang chơi. Bên trong, một IIFE tính
+  `showBoosterButtons = !level.ftueGesture && !level.hideBoosterHud`; `false` thì trả `null` (khay rỗng,
+  0 con), `true` thì chạy đúng `.filter().map()` cũ y nguyên logic/thứ tự booster. Xác nhận qua
+  `document.querySelector('.booster-hud').children.length === 0` trên level 1.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server bằng `window.__engine` tạm thời (đã xoá trước khi chốt, `grep -n "__engine"` rỗng): bắn
+`runScriptedShot` trên level 1, poll `state.phase` mỗi 50ms trong 1.5s — bắt đúng
+`PROJECTILE_FLYING`/`SETTLING`, `document.querySelectorAll('.settle-badge').length > 0` đúng lúc đó;
+ảnh chụp giữa lúc settling cho thấy 3 chấm nằm đúng dải trời giữa khung và ụ súng, khung tranh giữ
+nguyên màu gỗ/cream không đổi tí nào. `document.querySelector('.booster-hud')` tồn tại với
+`children.length === 0` trên level 1 (chưa bắn xong sạch tranh nên vẫn đang ở level 1).
+
+## 202. Sửa size/vị trí tray booster trống ở level 1-2 cho khớp mọi level khác (12/09)
+
+**Báo lỗi:** "Size và vị trí của tray booster không đồng nhất. Traybooster ở level 1 và 2 nên có kích
+thước, hình dạng và vị trí giống như tất cả level còn lại" — đúng, bản #201 mount `.booster-hud` trên
+mọi level nhưng chỉ nhồi nội dung bên trong nếu có, không nhồi kích thước.
+
+**Nguyên nhân:** `.booster-hud` không có `height`/`min-height` riêng — chiều cao của nó hoàn toàn do
+nội dung bên trong quyết định (padding 16px trên + 16px dưới bao quanh 1 hàng `.booster-btn` cao 38px
+= 70px). Level 3+ có 2-3 nút nên tray cao đúng 70px; level 1/2 sau #201 mount tray với 0 nút bên trong
+→ box co lại chỉ còn đúng phần padding (2×16=32px, không tính safe-area) — thấp hơn hẳn, đọc như "một
+thanh mỏng" khác hẳn hình dạng/kích thước tray thật.
+
+**Cách sửa:** thêm `min-height: 70px` (đúng bằng 38px của `.booster-btn` cộng 16px×2 padding trên/dưới)
+vào `.booster-hud` — giờ dù có 0, 2 hay 3 nút bên trong, khung ngoài luôn cao tối thiểu 70px, đúng y hệt
+size/vị trí/hình dạng ở mọi level.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server: `.booster-hud`'s `getBoundingClientRect()` ở Level 1 (0 nút, sau khi mở game lần đầu)
+ra đúng `{top: 742, bottom: 812, height: 70}`; nhảy tới Level 4 (`GameDevOption` → "Level (1-51)" → Go, 2
+nút) qua đúng cùng phép đo ra `{top: 742, bottom: 812, height: 70}` — khớp tuyệt đối, kể cả `left`/
+`right`.
+
+## 203. Sửa bug off-by-one: nút Settings mid-play còn ẩn cả ở level 4 (12/09)
+
+**Báo lỗi:** "chỉ có level 1 tới 3 không hiện nút setting thôi chứ những level sau vẫn hiện" — đúng,
+điều kiện ẩn nút Settings lúc đang chơi (`app/SandGame.tsx`) đọc
+`!playing || raw.id > WIN_CLOSE_BUTTON_FROM_LEVEL_ID` với `WIN_CLOSE_BUTTON_FROM_LEVEL_ID = 4` — `4 > 4`
+là `false` nên level 4 vẫn bị ẩn, chỉ level 5 trở đi mới thật sự hiện lại. Bản thân comment ngay phía
+trên dòng đó đã ghi đúng ý định "it is back the instant level 4 starts" — code lệch 1 so với comment
+của chính nó.
+
+**Đối chiếu:** nút ✕ ở card "Frame Cleared" (chỗ khác cũng dùng `WIN_CLOSE_BUTTON_FROM_LEVEL_ID`, dòng
+`(playingZen || raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID)`) đã dùng đúng `>=` từ đầu — chỉ riêng điều
+kiện của nút Settings bị gõ nhầm `>` thay vì `>=`.
+
+**Cách sửa:** đổi `raw.id > WIN_CLOSE_BUTTON_FROM_LEVEL_ID` thành `raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID`
+— khớp đúng với nút ✕ và với comment của chính khối code này.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server qua `GameDevOption` → "Level (1-51)": Level 3 — không có nút Settings; Level 4 — nút
+Settings hiện lại, bấm vào mở đúng card Home/Restart như mọi level bình thường khác.
+
+## 204. Onboarding lock (Settings/nút ✕/khay booster) chỉ áp dụng lượt chơi đầu, không khoá lại khi chơi lại (12/09)
+
+**Yêu cầu:** "Nút setting không xuất hiện ở level 1, 2, 3 khi người chơi vào game lần đầu, nếu người
+chơi chơi lại, kích hoạt level từ gallery HUB thì nó vẫn hiện. Booster cũng vậy" — đúng, bản #203 (và
+#186/#190 trước đó) chỉ xét `raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID` (level hiện tại có phải >= 4 hay
+không), không phân biệt "đang ở trong chuỗi onboarding lần đầu" với "chơi lại level 1-3 sau khi đã qua
+onboarding từ lâu" — chơi lại level 1/2/3 từ Gallery vẫn bị khoá y hệt lần đầu, dù người chơi đã dọn
+xong cả 3 level đó từ trước.
+
+**Cách sửa:** thêm biến dẫn xuất mới `onboardingLockLifted` (`app/SandGame.tsx`, ngay sau `level`) =
+`raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID || hasClearedLevel(WIN_CLOSE_BUTTON_FROM_LEVEL_ID - 1)` — tái
+dùng đúng `hasClearedLevel` (`economy.ts`) mà lưới Gallery/Chain Sort đã tin cậy cho "đã dọn xong level
+này ít nhất một lần chưa". Một khi level 3 đã dọn xong dù chỉ một lần, biến này đúng VĨNH VIỄN từ đó —
+cùng dạng "mở khoá một lần rồi thôi" với mọi cơ chế unlock khác trong file. Thay thế 3 chỗ từng đọc
+thẳng `raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID`:
+- Nút ✕ card "Frame Cleared": `(playingZen || raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID)` →
+  `(playingZen || onboardingLockLifted)`.
+- Nút Settings mid-play: `(!playing || raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID)` →
+  `(!playing || onboardingLockLifted)`.
+- Danh sách nút trong khay booster: `showBoosterButtons = !level.ftueGesture && !level.hideBoosterHud` →
+  thêm `|| onboardingLockLifted` — level 1/2 chơi lại sau khi đã qua onboarding thấy đủ nút thật ngay,
+  không còn khay trống nữa.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server: set tạm `localStorage['sand-cannon:v1:cleared-levels'] = "[1,2,3]"` rồi reload → vào
+Gallery → bấm Level 1 → Settings hiện lại VÀ khay booster có đủ 2 nút thật (Radius Overcharge charge 1,
+Prism Shot charge 2) ngay từ đầu, không còn trống — xác nhận qua
+`document.querySelector('.booster-hud').children.length === 2` và
+`!!document.querySelector('.settings-wrap') === true`. Trả `cleared-levels` về đúng giá trị gốc
+(`"[1]"`) sau khi verify xong, không để lại state giả trên máy người dùng.
+
+## 205. Daily Login buộc tắt khi chuyển hub bằng thanh tác vụ, kèm chấm đỏ nhắc nếu chưa nhận (12/09)
+
+**Yêu cầu:** "Khi daily login hiện lên, nếu người nhấn phần thanh tác vụ ở dưới và chuyển sang hub
+khác, thì daily login đó buộc phải tắt đi. NẾU lúc bị buộc tắt nhưng người chơi vẫn chưa nhận phần
+thưởng, thì sẽ hiện chấm đỏ góc phải trên cùng để thông báo, và cũng chấm đỏ trên home hub luôn."
+
+**Trước đây:** modal Daily Login (`{!playing && !chest && dailyLogin && (...)}`) không hề gate theo
+`tab` — bấm `hub-nav` để chuyển Shop/Skin/Gallery/Modes trong lúc modal đang mở (nav có z-index 31, cao
+hơn overlay modal z-index 30, nên vẫn bấm được xuyên qua) không đóng modal, để nó cứ đứng yên đè lên
+trên màn vừa chuyển sang.
+
+- **Buộc đóng khi chuyển tab:** `hub-nav`'s `onClick` (`app/SandGame.tsx`) giờ kiểm tra
+  `dailyLogin && entry !== tab` trước khi `setTab(entry)` — có thì gọi `setDailyLoginOverride(null)`
+  đóng modal ngay. Chỉ áp dụng khi THẬT SỰ đổi tab (`entry !== tab`) — bấm lại đúng tab đang mở không
+  tính là "rời đi".
+- **Chấm đỏ nhắc nếu chưa nhận:** state mới `dailyLoginMissedClaim` (mặc định `false`) — bật lên đúng
+  lúc buộc đóng modal NẾU `!dailyLogin.claimedToday` (đóng thường qua nút ✕/bấm ra ngoài không bật cờ
+  này, chỉ trường hợp bị kéo đi giữa chừng). Hiện dưới dạng 2 chấm đỏ dùng lại đúng class
+  `.hub-nav-dot` đã có sẵn (cùng họ với chấm đỏ Skin/Shop):
+  - Trên tab Home của `hub-nav`.
+  - Trên chính nút quà tặng góc phải trên cùng (`.gift-button`, nút mở lại modal) — class mới
+    `.gift-button-dot`, cùng công thức nhưng viền `--panel` thay vì `--hub-navy` để hợp với nền mint
+    của nút thay vì nền tối của `.hub-nav`.
+  - Cả hai đọc `aria-label` phụ mới `homeTabHasDailyLoginHintSuffix` (song ngữ, `i18n.ts`) khi bật, cùng
+    kiểu với `skinTabHasOfferSuffix`/`shopTabHasBoosterHintSuffix` đã có.
+- **Tắt khi nào:** `setDailyLoginMissedClaim(false)` ngay trong `claimDailyLoginWithFlight` sau khi
+  claim thành công — chỉ NHẬN THƯỞNG thật sự mới tắt, mở lại modal xem qua (không claim) thì cờ vẫn giữ
+  nguyên. Không persist qua `localStorage` — nếu người chơi tắt app/reload trước khi nhận, modal tự mở
+  lại (`initialDailyLogin` sẵn có) đã đủ nhắc, không cần cờ này sống sót qua reload nữa.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server: modal Daily Login tự mở (chưa claim hôm đó) → bấm tab Shop → modal đóng ngay, chấm đỏ
+hiện trên cả tab Home lẫn nút quà tặng (xác nhận qua `homeBtn.querySelector('.hub-nav-dot')` +
+`document.querySelector('.gift-button-dot')`) → bấm lại nút quà tặng mở lại modal, chấm đỏ vẫn còn →
+bấm "Claim 30 coins" → cả hai chấm đỏ biến mất ngay. Kiểm tra thêm: mở lại modal (đã claim hôm đó) rồi
+chuyển tab Shop — modal đóng nhưng KHÔNG bật chấm đỏ nào (đã nhận thưởng từ trước).
+
+## 206. Frost Cannon: đổi hẳn hình khối thay vì chỉ đổi màu (12/09)
+
+**Yêu cầu:** "chỉnh sửa model frost canon lại, thêm yếu tố để khiến nó khác hơn chứ không phải thay
+màu" — đúng, bản trước (`buildFrostCannon`, `costumes.ts`) dùng lại NGUYÊN VẸN 3 khối hình học của
+classic cannon (pedestal `CylinderGeometry` 40 cạnh, housing `SphereGeometry`, barrel
+`CylinderGeometry` cùng kích thước) chỉ đổi vật liệu sang xanh băng + rắc thêm vài icicle nhỏ quanh
+viền — về bản chất vẫn là "cannon cũ sơn lại", đúng điều người dùng phàn nàn.
+
+- **Pedestal:** `CylinderGeometry(1.08, 1.3, 0.48, 40)` → `... , 8)` — cùng kích thước/footprint hệt 3
+  skin kia, chỉ đổi số cạnh tròn thành 8 mặt phẳng. Cách rẻ nhất để đọc ngay thành "khối băng được chặt
+  ra" thay vì "đĩa tiện tròn", trước khi thêm bất kỳ phụ kiện nào.
+- **Mũi băng lớn (phụ kiện chữ ký riêng của skin này):** một `ConeGeometry` lớn (0.22×1.05) nhô lệch
+  hẳn ra khỏi một cạnh bệ, cố ý KHÔNG đối xứng (băng thật không mọc đối xứng quanh tâm) — cùng vai trò
+  "phụ kiện riêng" mà dải hạt phát sáng nổi của Rune Cannon hay túi da của Hero Cannon đang giữ cho
+  skin của chúng. Kèm một mảnh nhỏ tựa vào gốc mũi lớn — một cụm băng thật không bao giờ chỉ có một
+  mũi đơn lẻ.
+- **Housing:** `SphereGeometry(0.62, 28, 18)` → `IcosahedronGeometry(0.66, 0)` (bán kính nhích lên
+  0.62→0.66 để mặt phẳng của khối đa diện vẫn che kín rìa sau nòng súng — radiusBottom 0.38 — suốt hành
+  trình giật lùi, vì mặt của icosahedron nằm gần tâm hơn đỉnh của nó so với một mặt cầu cùng bán kính) —
+  đọc như một mắt băng bị đẽo mặt, không phải quả cầu đổi màu.
+- **Nòng súng:** bỏ hẳn 2 vòng nhẫn phát sáng đối xứng cũ, thay bằng 7 gai băng lệch cỡ
+  (`ConeGeometry`, bán kính 0.045-0.075, dài 0.22-0.46) mọc dọc một dải góc hẹp (~3.6-4.15 rad, tức mặt
+  dưới nòng) từ gần housing tới gần đầu nòng — mỗi gai tự tính bán kính nòng đúng tại toạ độ z của nó
+  (nòng vốn thon dần 0.38→0.24) để gốc luôn áp sát bề mặt, và tự xoay theo đúng hướng xuyên tâm
+  (`rotation.z = angle - 90°`) để trông như mọc THẲNG RA khỏi nòng chứ không phải dán lên. Đọc như một
+  dải băng tích tụ lệch một bên thật sự, không phải vòng trim đối xứng gắn thêm.
+- Icicle quanh viền bệ và cụm pha lê đầu nòng của bản trước giữ nguyên — cả hai vẫn là hình khối riêng
+  không skin nào khác có, chỉ 3 khối "lõi" (pedestal/housing/barrel) là được làm lại lần này.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174
+test hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185; không
+test nào exercise hình học rig, đúng như kỳ vọng). Verify sống trên dev server: `GameDevOption` →
+"Acquire all skins" → Skin tab → chọn Frost Cannon — màn showroom lẫn cannon thật trong gameplay đều
+hiện đúng pedestal 8 mặt, khối housing đa diện, mũi băng lớn nhô lệch, và các icicle/pha lê cũ vẫn còn;
+không lỗi console nào liên quan tới `costumes`/rig geometry (console có vài warning React/network khác,
+xác nhận không liên quan tới thay đổi lần này bằng cách lọc theo từ khoá "costume" — rỗng).
+
+## 207. Miss-flash giờ phủ trọn rìa màn hình, kể cả đè lên số đạn và nút Settings (12/09)
+
+**Báo lỗi:** "Tôi muốn hiệu ứng đỏ khi miss sẽ tràn toàn rìa màn hình luôn chứ không phải dừng lại
+trước UI số đạn hay setting" — đúng, `.miss-flash` (`app/SandGame.tsx`) trước đây render bên TRONG
+`.scene-wrap`, mà `.scene-wrap` tự nó đã `inset` xuống dưới thanh HUD trên cùng
+(`calc(max(var(--hud-inset), env(safe-area-inset-top)) + var(--hud-height) + 10px) 0 0`) và có
+`overflow: hidden` — nên dù `.miss-flash` tự đặt `inset: 0`, nó chỉ phủ được đúng phần dưới thanh HUD,
+không bao giờ chạm tới góc chứa `.hud-top-left` (số đạn) hay `.settings-wrap` (nút Settings) dù z-index
+có cao cỡ nào, vì bị `.scene-wrap` cắt cứng trước khi tới lượt z-index tính tới.
+
+**Cách sửa:** dời hẳn node `.miss-flash` ra khỏi `.scene-wrap`, đặt làm con trực tiếp của `.game-frame`
+(ngang hàng `.hud-top-left`/`.settings-wrap`/`.scene-wrap`, ngay đầu danh sách con của `.game-frame`) —
+`.game-frame` mới là khung ngoài cùng bao trọn cả HUD lẫn scene, nên `inset: 0` ở cấp này phủ đúng toàn
+bộ màn chơi thật sự. Nâng `z-index` từ `6` lên `33` — cao hơn cả `.hud-top-left` (31) lẫn `.settings-wrap`
+(32), hai thứ trước đây `.miss-flash` không bao giờ với tới được. Logic bật/tắt (`missFlashBump`,
+`key={missFlashBump}` để 2 lần miss liên tiếp đều replay) giữ nguyên y hệt, chỉ đổi vị trí DOM.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server bằng `window.__engine` tạm thời (đã xoá trước khi chốt, `grep -n "__engine"` rỗng):
+bắn `runScriptedShot` ra hẳn ngoài khung tranh (toạ độ pixel-grid vượt hẳn `level.frame` 50×50 của
+level 1 nhưng vẫn trong tầm đạn) → xác nhận đúng sự kiện `MISS` qua `state.phase` đi qua
+`PROJECTILE_FLYING → READY` (không có `SETTLING`, tức không trúng cát) → đo trực tiếp
+`getComputedStyle('.miss-flash').opacity` đạt đỉnh `0.98` đúng lúc, và `getBoundingClientRect()` của nó
+ra `{top: 0, bottom: 812}` — phủ đúng từ đỉnh màn hình (qua cả dải HUD) xuống tới đáy, thay vì bắt đầu
+từ dưới thanh HUD như trước.
+
+## 208. Áp dụng y hệt fix #207 cho lớp opacity đen của cả 3 tutorial overlay (12/09)
+
+**Yêu cầu:** "Làm vậy với lớp opacity đen khi tutorial luôn" — đúng lỗi y hệt #207 nhưng ở
+`.ftue-freeze-overlay`/`.ftue-freeze-spotlight` (dùng chung bởi cả 3 tutorial: freeze-orb level 31,
+cặp booster level 3, Chain Sort level 5) — cả ba đều render bên trong `.scene-wrap`, bị chính
+`overflow: hidden` và inset-dưới-HUD của nó cắt đứt lớp tối trước khi kịp chạm tới góc số đạn/Settings,
+dù `.ftue-freeze-spotlight`'s box-shadow spread lớn cỡ nào.
+
+**Khác với #207 ở chỗ:** miss-flash không có toạ độ nào phụ thuộc `.scene-wrap` (chỉ là 1 radial-gradient
+phủ đều `inset:0`), dời ra là xong. Ba overlay tutorial này có SPOTLIGHT RING định vị bằng toạ độ pixel
+thật (`engine.screenPointForGrid` cho freeze-orb; `getBoundingClientRect()` trừ container cho 2 cái
+kia) — toạ độ đó vốn được tính TƯƠNG ĐỐI SO VỚI `.scene-wrap`, nên chỉ dời DOM node ra ngoài thôi sẽ
+làm ring lệch đúng bằng chiều cao HUD.
+
+- **Booster (level 3) + Chain Sort (level 5):** cả hai vốn đã tự đo `getBoundingClientRect()` của nút
+  thật rồi trừ đi container — đổi thẳng `container = document.querySelector(".scene-wrap")` thành
+  `document.querySelector(".game-frame")`. Không cần cộng offset gì thêm vì phép trừ container đã tự
+  cho ra đúng toạ độ tương đối với `.game-frame` ngay từ đầu.
+- **Freeze-orb (level 31):** `engine.screenPointForGrid` luôn trả về toạ độ tương đối `.scene-host`
+  (= `.scene-wrap`), không đổi được hàm engine — giữ nguyên `spot` gốc, cộng thêm `hudOffsetY` đo trực
+  tiếp lúc render: `sceneWrapEl.getBoundingClientRect().top - gameFrameEl.getBoundingClientRect().top`
+  (khoảng cách thật giữa 2 phần tử, không suy từ công thức CSS `calc()` để khỏi lệch nếu công thức đó
+  đổi sau này) — cộng vào `spot.y` trước khi gán `top`.
+- Cả 3 block JSX dời hẳn ra khỏi `.scene-wrap`, thành con trực tiếp của `.game-frame` (ngay sau
+  `.scene-wrap` đóng), y hệt cách `.miss-flash` đã dời ở #207. `.ftue-freeze-overlay`'s `z-index`: 30 →
+  33 (trên cả `.hud-top-left` 31 lẫn `.settings-wrap` 32, cùng tier `.miss-flash`).
+- Trục x không cần bù gì — `.scene-wrap`'s left/right vốn đã trùng khít `.game-frame` (`inset: ... 0
+  0`), chỉ có top lệch đúng bằng chiều cao HUD.
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn), 174 test
+hiện có không đổi (173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống
+trên dev server: xoá `sand-cannon:v1:booster-ftue-seen` rồi `GameDevOption` → Level 3 → overlay
+"Radius Overcharge" hiện đúng, lớp tối phủ tới tận số vàng/nút Settings ở góc trên (trước đây sáng
+nguyên), vòng spotlight vẫn khoanh đúng tâm nút Radius Overcharge thật (không lệch) — bấm xuyên overlay
+vào đúng nút vẫn arm được booster như cũ (xác nhận qua ảnh chụp: nút bật sáng xanh, overlay biến mất).
+Xác nhận thêm ở bước "Prism Shot" (level khác, HUD có thêm thanh Freeze) — lớp tối vẫn phủ đúng toàn bộ
+HUD kể cả thanh Freeze mới, không riêng 2 góc cố định.
+
+## 209. Viết lại tutorial Chain Sort (level 5) theo đúng flow của Radius/Prism: người chơi tự bắn thật (12/09)
+
+**Yêu cầu:** "Tôi muốn flow tutorial giới thiệu chainsort cũng sẽ giống như 2 booster trước đó" — level
+3's Radius Overcharge/Prism Shot đã được viết lại thành "tự bắn thật" từ #193; Chain Sort (level 5) khi
+đó cố tình GIỮ NGUYÊN kiểu cũ (bắn kịch bản, giữ kết quả 3s, hiện lại caption 3s, không tap thì lặp),
+với lý do "Chain Sort không có tự bắn thử vô hại — một phát lan hết một màu sẽ đổi cả bức tranh". Yêu
+cầu lần này ghi đè quyết định đó: đưa Chain Sort về đúng cùng flow, chấp nhận đánh đổi đó.
+
+- **`chainSortFtueStep`:** `"intro" | "demo" | "outro" | null` → `"intro" | "shoot" | null` — bỏ hẳn 2
+  state phụ `chainSortFtueTapReady`/`chainSortDemoRevealing` (không còn tap-to-continue/loop nào cần
+  theo dõi).
+- **Xoá hẳn effect bắn kịch bản** (`engine.runScriptedBoosterShot("chainSort", ...)`) cùng 2 hằng số
+  `BOOSTER_DEMO_REVEAL_MS`/`BOOSTER_DEMO_CAPTION_HOLD_MS` (không còn nơi nào dùng sau khi xoá effect này)
+  — và luôn cả `advanceChainSortFtue` (không còn tap nào để advance thủ công nữa).
+- **Thêm 2 effect mới**, đặt ngay cạnh cặp effect của `boosterFtueStep` và TÁI DÙNG chung
+  `shootStepBaselineShotsRef` (2 tutorial không bao giờ chạy cùng lúc vì khác level, dùng chung ref an
+  toàn):
+  - Arm-detection: `chainSortFtueStep === "intro" && armedBooster === "chainSort"` → chuyển sang
+    `"shoot"`, ghi baseline `state.shotsUsed`.
+  - Settle-detection: `chainSortFtueStep === "shoot"` và `state.phase === "READY"` với `shotsUsed` vượt
+    baseline → giữ `BOOSTER_TRY_SETTLE_HOLD_MS` (1s) rồi `setChainSortFtueStep(null)` + bật Shop's
+    booster hint —in hệt cách `shoot-prism` của cặp Radius/Prism kết thúc.
+- **JSX:** gộp lại thành đúng 1 block như booster (`chainSortFtueStep === "intro"` mới render, không
+  còn nhánh "outro"/tap-to-continue) — spotlight vẫn đo `getBoundingClientRect()` trực tiếp so với
+  `.game-frame` (đã sửa ở #208), không cần đổi gì thêm cho phần toạ độ.
+- **`restart()`/`goHome()`:** phát hiện cả hai từ trước tới giờ chưa từng reset `chainSortFtueStep` về
+  `null` (chỉ reset `freezeFtueStep`/`boosterFtueStep`) — một lỗ hổng có sẵn từ bản cũ, vô hại vì luồng
+  cũ luôn tự kết thúc đúng cách trước khi có thể bị restart giữa chừng. Thêm `setChainSortFtueStep(null)`
+  vào cả hai cho nhất quán với 2 tutorial kia, phòng trường hợp restart giữa chừng bước "intro"/"shoot".
+- **`SandCannonEngine.runScriptedBoosterShot`:** xoá hẳn — không còn nơi nào gọi sau khi bỏ effect bắn
+  kịch bản.
+- **i18n:** `ftueChainSortIntro` đổi đuôi câu từ "Watch!"/"Xem nhé!" sang "Tap it to arm it!"/"Chạm vào
+  để trang bị!" (khớp đúng giọng văn `ftueBoosterRadiusIntro`/`ftueBoosterPrismIntro`); xoá hẳn
+  `ftueChainSortOutro` (không còn bước "outro" nào dùng tới).
+
+**Test:** `tsc --noEmit` sạch (chỉ 2 lỗi cloudflare-workers-types không liên quan, luôn có sẵn — không
+phát sinh lỗi "declared but never used" nào sau khi xoá state/hằng số/hàm), 174 test hiện có không đổi
+(173 pass, 1 fail — vẫn lỗi "51 levels" không liên quan, đã ghi từ #185). Verify sống trên dev server:
+xoá `sand-cannon:v1:booster-ftue-seen` rồi `GameDevOption` → Level 5 → overlay "This is Chain Sort...
+Tap it to arm it!" hiện đúng, lớp tối phủ cả HUD; bấm xuyên overlay vào đúng nút Chain Sort thật → armed
+(ring cầu vồng quanh nòng, nút tím), overlay biến mất; bắn `runScriptedShot` một phát thật trúng mảng
+cát lớn → `state.phase` đi qua `PROJECTILE_FLYING → SETTLING → READY`, mảng cát cả một góc tranh biến
+mất hết (đúng "không giới hạn bán kính"), charge Chain Sort về `0`, không còn overlay nào, người chơi
+chơi tiếp bình thường ngay trên board vừa bắn — không reset, không "outro".

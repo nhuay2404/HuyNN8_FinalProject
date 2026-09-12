@@ -125,6 +125,17 @@ Bắn hụt hẳn ra ngoài khung hoặc trúng thành khung thì **không** t�
 board là một quyết định của người chơi (chọn sai chỗ), một cú *không chạm gì* là input lỗi/tay trượt,
 hai loại lỗi khác nhau nên bị phạt khác nhau.
 
+**Phản hồi hình ảnh (2026-09e):** cả hai loại lỗi này (`NO_MATCH` lẫn `MISS`) giờ dùng chung một hiệu
+ứng `.miss-flash` — vignette đỏ nhạt (từ tông `--danger`) phủ từ rìa màn hình vào, chớp rồi tắt trong
+0.5s, cát ở giữa tranh giữ nguyên. Thay hẳn 3 toast chữ cũ (từng phân biệt no-color-in-range/hit-frame/
+missed-frame) — không phân biệt lỗi nào bằng chữ nữa, chỉ một tín hiệu hình ảnh tức thời duy nhất, để
+người chơi không phải rời mắt khỏi tranh đọc chữ. **Phủ trọn toàn màn hình, kể cả đè lên HUD (2026-09n):**
+ban đầu `.miss-flash` sống bên trong `.scene-wrap` (dải cảnh 3D, đã bị chính nó inset xuống dưới thanh
+HUD trên cùng) nên vignette không bao giờ chạm tới góc chứa số đạn/nút Settings dù `inset: 0`. Dời hẳn
+node này ra làm con trực tiếp của `.game-frame` (ngang hàng `.hud-top-left`/`.settings-wrap`), nâng
+z-index lên trên cả hai — giờ `inset: 0` phủ đúng nghĩa toàn bộ khung hình chơi, rìa nào cũng đỏ, kể cả
+đè lên số đạn và nút Settings trong thoáng chốc của cú chớp.
+
 ### 3.4. Win / Fail
 
 Win kiểm tra trước, fail kiểm tra sau — **phát cuối dọn sạch khung là thắng**, không phải hoà. Thắng
@@ -436,17 +447,35 @@ bằng cách dùng thử, không phải đọc mô tả rồi đoán. Số viên
 chờ một solver/validator sau này. Chi tiết đầy đủ:
 [booster-radius-prism-spec.md](docs/features/booster-radius-prism-spec.md).
 
+**Chain Sort ẩn tới level 5 (2026-09e):** hằng số `CHAIN_SORT_UNLOCK_LEVEL_ID = 5` — nút Chain Sort
+trong khay booster lúc chơi (`level.id >= 5`) lẫn ô Chain Sort trong Shop (`hasClearedLevel(4)`) đều ẩn
+cho tới khi level 5 mở khoá. Radius Overcharge/Prism Shot không bị ảnh hưởng, hiện từ đầu game — hai
+booster này có tutorial riêng ở level 3 (xem 13.4), còn Chain Sort có tutorial riêng ở chính level 5,
+nên ẩn nó đi tới lúc đó tránh một nút chưa ai dạy cách dùng nằm sờ sờ trong tray/Shop từ sớm.
+
+**Level 1-2: khay booster hiện nhưng trống trơn, không ẩn cả khay (2026-09i):** trước đây level 1
+(`ftueGesture: true`) và level 2 (`hideBoosterHud: true`) ẩn hẳn `.booster-hud` — giờ khay LUÔN mount
+khi đang chơi, chỉ riêng danh sách nút bên trong nó trống (không có Radius/Prism/Chain Sort nào) cho hai
+level này. Lý do: layout HUD tổng thể (khoảng trống dành cho khay ở đáy màn hình) giữ nguyên ngay từ
+level 1, không bị dịch lên/xuống một lần nữa khi booster thật sự mở khoá ở level 3. `.booster-hud` có
+`min-height: 70px` (2026-09j, sửa lỗi tray trống bị co lại thấp hơn khi không có nút bên trong) để
+size/vị trí luôn giống hệt nhau dù có 0, 2 hay 3 nút — đã xác nhận `getBoundingClientRect()` khớp tuyệt
+đối giữa level 1 (0 nút) và level có nút thật. **Chỉ trống ở LƯỢT ĐẦU (2026-09k):** cùng `onboardingLockLifted`
+dùng cho Settings/nút ✕ (xem 13.6) — một khi level 3 đã dọn xong một lần, chơi lại level 1/2 từ Gallery
+sẽ thấy khay có đủ nút thật ngay từ đầu, không còn trống nữa.
+
 ---
 
 ## 10. Economy
 
-Toàn bộ **client-only** (`localStorage`), không tài khoản/server. Ba loại "tiền":
+Toàn bộ **client-only** (`localStorage`), không tài khoản/server. Ba loại "tiền" (Gems đã bỏ hẳn,
+2026-09d — xem §10.7):
 
 | Currency | Nguồn kiếm | Dùng để | Trạng thái |
 | --- | --- | --- | --- |
 | **Vàng (Gold)** | Thắng level lần đầu (mục 10.3) + Daily Login | Mua lượt booster | Thật, đang hoạt động |
-| **Blue Emerald** | **Chỉ** từ Reward Track (mục 10.5) — không bao giờ thưởng trực tiếp khi thắng level | Mua skin súng (mục 11) | Thật, đang hoạt động |
-| **Gems** | — | Tab "Gems" trong Shop | **Chưa hoạt động** — số hiển thị cho có (`STARTER_GEMS = 240`), chưa nối với IAP thật, chưa có gì tiêu/kiếm được nó. Chỗ dành cho hard currency tương lai |
+| **Blue Emerald** | Reward Track (mục 10.5, nguồn FREE duy nhất) + một ít trong Bundle của Shop (mục 10.7) | Mua skin súng (mục 11) | Thật, đang hoạt động |
+| **Hearts (Tim)** | Hồi theo thời gian (mục 16.6) + mua trực tiếp/trong Bundle ở Shop (mục 10.7) | 1 lượt chơi (Play/Restart) | Thật, đang hoạt động |
 
 ### 10.1. Ví khởi đầu
 
@@ -468,15 +497,33 @@ Toàn bộ **client-only** (`localStorage`), không tài khoản/server. Ba lo�
 ### 10.3. Thưởng vàng theo level
 
 ```
-levelGoldReward(score) = round((20 + score) / 5) * 5
+levelGoldReward(score) = round((5 + score * 0.3) / 5) * 5
 ```
 
 `score` là điểm `computeLevelDifficulty` (0–100, mục 8.1) tính trên `raw` level (scale blueprint,
-không phải pixel board). Kết quả nằm trong **20–120 vàng**, làm tròn bội số 5. Trả **đúng một lần**
+không phải pixel board). Kết quả nằm trong **5–35 vàng**, làm tròn bội số 5. Trả **đúng một lần**
 khi thắng lần đầu trên trình duyệt — chơi lại không farm thêm được, vì số thưởng chỉ có ý nghĩa khi
 nó thật sự đo theo độ khó. Level nào cần số khác công thức thì thêm dòng vào
 `public/design/level-rewards.csv` (override tay, không bắt buộc điền hết). Chi tiết:
 [level-rewards.md](docs/features/level-rewards.md).
+
+**Mục tiêu cân bằng (2026-09):** chơi khoảng **5 level (lần đầu thắng)** là đủ mua **1 lượt Radius
+Overcharge/Prism Shot** (100 vàng) — công thức trên được neo sao cho một level độ khó trung bình
+(score 50) trả đúng 20 vàng = 100 ÷ 5.
+
+### 10.3b. Thưởng mốc hàng chục (10/20/30/40/50)
+
+Cộng THÊM vào thưởng thường của level đó (công thức trên hoặc CSV override), chỉ ở **lần thắng đầu
+tiên**, tại 5 level mốc hàng chục — số tăng dần qua từng mốc, luôn rơi vào khoảng **2/3 đến 3/4 giá
+một booster**, để mỗi mốc đọc thành "gần đủ mua nguyên một booster" chứ không phải một khoản lặt vặt:
+
+| Level mốc | 10 | 20 | 30 | 40 | 50 |
+| --- | --- | --- | --- | --- | --- |
+| Bonus (vàng) | 65 | 75 | 90 | 100 | 115 |
+| ≈ tỉ lệ so với giá booster | 2/3 × 100 | 3/4 × 100 | 3/4 × 120 | 2/3 × 150 | 3/4 × 150 |
+
+Override từng mốc qua `economy.csv` (`levelMilestoneBonus10`..`levelMilestoneBonus50`). Gallery
+hiển thị pill = thưởng thường + bonus mốc, kể cả trước khi level đó unlock, như một mồi nhử.
 
 ### 10.4. Cách hand-tune không đụng code
 
@@ -500,15 +547,56 @@ vòng tiếp tục — **không loop về đầu**, cycle sau luôn trả nhiề
 
 ### 10.6. Daily Login
 
-Chu kỳ 7 ngày **lặp lại**, không leo thang mãi — cố tình nhỏ hơn thưởng một level dễ (20–30 vàng hầu
-hết các ngày): đây là bonus vì ghé qua, bảng level mới là cách kiếm vàng chính.
+Gắn liền với **lịch thật** (2026-09 rework), không còn là chu kỳ 7 ngày tự lặp không quan tâm hôm nay
+là thứ mấy: thưởng của **hôm nay** tính thẳng từ thứ thật trong tuần (Thứ Hai → Chủ Nhật, theo đồng
+hồ máy người chơi), và modal hiển thị nguyên một **lưới lịch tháng hiện tại** — Thứ Hai ở đầu mỗi
+hàng, mỗi ô là một ngày thật, ✓ chỉ hiện trên đúng ngày đã claim thật (không suy luận từ "trước hôm
+nay").
 
-| Ngày | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| Thứ | T2 | T3 | T4 | T5 | T6 | T7 | CN |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Vàng | 10 | 15 | 20 | 25 | 30 | 40 | 80 |
+| Vàng | 10 | 12 | 15 | 18 | 20 | 30 | 40 |
+| Ưu đãi thêm | — | — | — | — | — | +1 Prism Shot | +1 Prism Shot |
 
-Streak vỡ (bỏ ≥ 2 ngày) thì **reset về ngày 0** — cố ý, để streak có ý nghĩa thật. Tính theo ngày
-local của máy người chơi, không phải UTC.
+5 ngày đầu tuần (T2–T6) bình thường — chỉ có vàng, tăng dần nhẹ, không có tag hay ưu đãi gì thêm. 2
+ngày cuối tuần (T7, Chủ Nhật) là tier đặc biệt duy nhất: trả vàng cao nhất tuần **và** kèm 1 lượt
+Prism Shot miễn phí. Tổng vẫn cố tình nhỏ hơn thưởng một level dễ tới trung bình: đây là bonus vì ghé
+qua, bảng level mới là cách kiếm vàng chính.
+
+Streak (chuỗi ngày liên tiếp claim, hiển thị dưới lưới khi ≥ 2) vỡ khi bỏ lỡ ≥ 2 ngày thì **reset về
+0** — cố ý, để streak có ý nghĩa thật; giữ nguyên nếu claim liên tục hoặc gap tới hôm nay ≤ 1 ngày.
+Tính theo ngày local của máy người chơi, không phải UTC.
+
+**Buộc tắt khi chuyển hub, kèm chấm đỏ nhắc nếu chưa nhận (2026-09l):** trước đây modal Daily Login
+không hề gắn với tab hub đang mở — bấm thanh tác vụ dưới để sang Shop/Skin/Gallery/Modes trong lúc
+modal đang hiện thì nó cứ đứng yên đè lên trên màn vừa chuyển sang. Giờ bấm bất kỳ tab nào khác (thật
+sự đổi tab, không phải bấm lại đúng tab đang mở) trong lúc modal đang mở sẽ **buộc đóng nó ngay lập
+tức**. Nếu lúc đóng cưỡng bức đó phần thưởng hôm nay **vẫn chưa được nhận**, bật đèn báo `.hub-nav-dot`
+đỏ trên tab Home VÀ một chấm đỏ tương tự trên chính nút quà tặng góc phải trên cùng (nút mở lại modal)
+— cả hai đều tắt ngay khi người chơi bấm nhận thưởng thật sự, không phải chỉ mở lại modal xem qua. Đóng
+bằng cách thường (nút ✕ hoặc bấm ra ngoài) không bật hai chấm đỏ này — chỉ trường hợp bị "kéo đi" giữa
+chừng bởi một cú bấm khác mới cần nhắc lại.
+
+### 10.7. Shop — 1 màn thống nhất, Gems đã bỏ hẳn (2026-09d)
+
+**Bỏ Gems khỏi toàn bộ game**, không chỉ khỏi Shop — `Wallet.gems`/`STARTER_GEMS`/`getGems()` xoá
+hẳn khỏi `economy.ts` (Gems trước đó vốn đã "hiển thị số, chưa nối kiếm/tiêu/thanh toán thật" — không
+có logic thật nào bị mất). Shop đổi từ 2 tab (Gems / Coins) sang **1 màn duy nhất, cuộn dọc, không
+tab** — thứ tự từ trên xuống:
+
+1. **Special Offers** — 2 ưu đãi giới hạn, giờ bán Coins + Hearts + một ít Blue Emerald (thay vì
+   Coins + Gems trước đây).
+2. **Bundles** — 5 mốc giá ($0.99 → $49.99), mỗi mốc bán CẢ BA: Coins (giữ nguyên số cũ), Hearts
+   (tăng dần theo giá, tối đa `MAX_HEARTS` — không mốc nào bán quá số tim bể chứa có thể giữ), một ít
+   Blue Emerald (không đủ mua nguyên 1 skin ở mốc rẻ, đáng kể ở mốc đắt).
+3. **Coins** — mua xu trực tiếp, y nguyên 7 mốc cũ.
+4. **Hearts** — mục mua riêng MỚI, y hệt layout Coins, 3 mốc (1 / 3 / 5 tim, mốc cao nhất "Full
+   refill").
+5. **Boosters** — chuyển xuống **cuối cùng** (trước đây là tab "Coins" riêng) — đây là luồng mua duy
+   nhất thật sự tiêu tiền chơi được (vàng), tách biệt hẳn với mọi thứ real-money bán ở trên.
+
+Không có control nào ở đây nối payment processor thật — mọi nút giá (trừ Boosters) chỉ hiện toast
+"chưa hoạt động" (`notifyIapComingSoon`), y như thiết kế cũ.
 
 ---
 
@@ -529,6 +617,18 @@ ranh giới arc "Wall Obstacle → Lock & Key" và "Freeze Map → Tổng hợp"
 hiệu "đã qua chặng này", không phải một món hàng, nên card của nó trong Gallery hiện badge
 Progression thay vì nút Buy. Nguồn: `costumes.ts` (registry rig + giá), `SandGame.tsx` (màn Skin,
 Gallery milestone card).
+
+**Frost Cannon: hình khối riêng, không chỉ đổi màu (2026-09m).** Bản trước chỉ đổi palette lên đúng ba
+khối classic (pedestal/housing/barrel hình trụ-cầu-trụ y hệt) cộng vài icicle nhỏ rắc quanh viền — đọc
+như "cannon cũ sơn lại", không đủ khác. `buildFrostCannon` (`costumes.ts`) giờ đổi hẳn HÌNH KHỐI, không
+chỉ chất liệu: pedestal đổi từ hình trụ tròn trơn (40 cạnh, giống 3 skin kia) sang hình trụ 8 cạnh có
+mặt phẳng (đọc như khối băng được chặt ra, không phải đĩa tiện tròn); housing đổi từ khối cầu trơn sang
+`IcosahedronGeometry` (khối đa diện mặt phẳng, như một mắt băng bị đẽo); thêm hẳn một mũi băng lớn bất
+đối xứng nhô ra từ một cạnh bệ (phụ kiện riêng của skin này, cùng vai trò với dải hạt phát sáng của Rune
+Cannon hay túi da của Hero Cannon) kèm một mảnh nhỏ tựa vào gốc nó; và dải "băng bám" dọc một bên nòng
+súng — 7 gai băng lệch cỡ, lệch pha, mọc dọc một dải góc hẹp (không còn 2 vòng nhẫn phát sáng đối xứng
+như trước) để đọc đúng như băng tích tụ tự nhiên, không phải một vòng trim gắn thêm. Icicle quanh viền
+bệ và cụm pha lê ở đầu nòng của bản trước vẫn giữ nguyên.
 
 ---
 
@@ -568,6 +668,15 @@ có; `teal`/`indigo` chia đôi hai đầu ấm-lạnh; `magenta`/`crimson` cho 
 đầy đủ mà bản gốc (`purple`/`red`) cố tình không có) — **không** thêm màu ngẫu nhiên, luôn kiểm nó có
 lấp một khoảng hue còn trống hay chỉ lặp lại một màu đã có ở độ bão hoà khác.
 
+**`customPalette` riêng theo level — chỉ Zen Mode (2026-09e):** 24 Ô MÀU (`SandColor`, dùng cho
+matching/ammo wheel) vẫn hữu hạn và dùng chung cho mọi level — nhưng từ bản Zen Mode "100% chính xác",
+HEX MÀ MỖI Ô ĐÓ VẼ RA không còn bắt buộc giống nhau giữa các level nữa.
+`SandLevelConfig.customPalette?: Partial<Record<SandColor, number>>` ghi đè riêng cho một level, chỉ
+ảnh hưởng render (sand tint, radius ring, crosshair, đạn bay) — matching/`rows` không đổi gì. Chỉ
+level Zen import từ ảnh mới set field này (`imageToRows` tính màu TRUNG BÌNH THẬT của các pixel ảnh
+gốc rơi vào từng ô, không phải màu candy chia sẻ); 50 level chính không bao giờ set, luôn vẽ bằng
+`SAND_COLOR_HEX` chung để giữ phong cách hình ảnh nhất quán giữa các level như trước giờ.
+
 ### 12.4. Wall / Key / Freeze — cùng một kỹ thuật bevel, khác tông màu
 
 Cả ba mechanic-object vẽ bằng đúng một công thức "sáng cạnh thiếu hàng xóm, tối cạnh có hàng xóm"
@@ -603,7 +712,7 @@ màu đạn sẽ phát khi khoá mở.
 flowchart TB
     Home["Home\n(Play button + Reward Track bar)"]
     Home --> Gallery["Gallery\n(lưới level, khoá tuần tự theo hasClearedLevel,\nmilestone card Level 20/40 = skin)"]
-    Home --> Shop["Shop\n(tab Gold / Gems — Gems chưa nối thanh toán)"]
+    Home --> Shop["Shop\n(1 màn thống nhất, không tab — xem 10.7)"]
     Home --> Skin["Skin\n(showroom 3D, preview animation bắn,\npicker 4 costume)"]
     Home --> Modes["Modes (chip Reward Track — xem 10.5)"]
     Gallery --> InGame["In-game\n(HUD + aim-zone)"]
@@ -626,6 +735,7 @@ lưới Gallery nhiều cột.
 | Nút booster | Chỉ icon, **không chữ** | Tái dùng hệ màu gameplay, tránh HUD rối chữ; khi armed có ring overlay quay/nhấp nháy liên tục quanh buồng đạn + đầu nòng, để trạng thái armed không bao giờ trông "đứng yên/dễ quên" |
 | Freeze bar | Thanh đếm ngược N lượt khi Freeze Map đang active | Chỉ hiện khi level có trigger `@` |
 | `.aim-zone` + `.aim-joystick` | Joystick ảo kéo-thả, span toàn bộ scene (không chỉ một góc màn hình) | Cho phép chạm/kéo bắt đầu ở bất kỳ đâu trên tranh, không ép người chơi nhắm đúng một điểm cố định mới bắt đầu kéo được |
+| `.settle-badge` — 3 chấm nhấp nháy, giữa khung tranh và ụ súng (2026-09i) | Trong lúc đạn bay/đang resolve/cát settle, 3 chấm nhấp nháy (`settle-dot-grow`, mỗi chấm lệch pha 0.15s) hiện đúng ở dải trời trống giữa mép dưới khung tranh và ụ súng — cùng toạ độ `top: 56%` mà `.ftue-gesture` (mục 13.6/level 1) đã dùng cho đúng dải này, không phải một trị số pixel mới. Khung tranh không đổi màu/opacity gì nữa — giữ nguyên màu gốc trong mọi trạng thái | Đưa 3 chấm trở lại sau một chuỗi thử nghiệm khác trên chính khung tranh (mix sang màu bầu trời, "kính trắng" có lưới kiểu Minecraft glass pane, rồi phủ trắng đều ở opacity thấp — tất cả đã revert); vị trí mới (giữa khung và súng) thay cho vị trí cũ (phía trên khung, `top: 70px`) |
 
 ### 13.3. Input & feedback
 
@@ -637,15 +747,45 @@ lưới Gallery nhiều cột.
 - Slider sensitivity 0.5–2.0 trong Settings, scale trực tiếp phản ứng ngắm — không có "aim assist"
   ẩn nào khác đứng sau slider này.
 
-### 13.4. FTUE — hai cơ chế khác nhau, đừng nhầm
+### 13.4. FTUE — ba cơ chế khác nhau, đừng nhầm
 
 | Cơ chế | Field | Hiện khi nào | Tắt khi nào |
 | --- | --- | --- | --- |
 | `tutorial` | `{ title, steps }` | Lần đầu mở level đó | Vĩnh viễn sau lần xem đầu (lưu theo `id` trong `localStorage`) |
 | `ftueGesture` | `boolean` | Icon tay-kéo đè lên joystick thật (không phải hộp chữ) | Tắt ngay khi chạm lần đầu (`AIM_TOUCHED`) trong phiên đó — **nhưng hiện lại**: mỗi khi app bị kill & mở lại (`sessionStorage`), hoặc sau `FTUE_GESTURE_REPLAY_AFTER_MS` = 6 giờ kể từ lần hiện gần nhất dù chưa kill app (`localStorage`) |
+| Tutorial booster (freeze/`ftueBoosterDemo`/`ftueChainSortDemo`) | field theo từng level | Level có field tương ứng, mỗi lần vào (không chỉ lần đầu — không lưu `localStorage`) | Hết chuỗi bước của level đó, trả lại quyền điều khiển ngay trên board hiện tại |
 
 Chỉ Level 1 (`defaultLevel`) bật `ftueGesture` — cố tình chỉ một màu cát để bài học duy nhất là
 "ngắm-và-bắn" không bị pha loãng bởi bất kỳ HUD/luật nào khác (ẩn cả khay booster suốt level đó).
+
+**Tutorial booster — CẢ BA booster giờ dạy theo đúng một cách (2026-09o, trước đó là 2026-09e):**
+
+- **Radius Overcharge / Prism Shot (level 3) — người chơi tự bắn thật.** `boosterFtueStep` đi qua
+  `intro-radius → shoot-radius → intro-prism → shoot-prism → null`. Bước `intro-*` là overlay tối +
+  spotlight xuyên thấu đúng nút booster thật, nhưng có `.is-noninteractive` (`pointer-events: none`) —
+  không có "tap to continue" nào cả, chạm xuyên overlay tới thẳng nút thật trong tray (arm thật, không
+  demo). Bước `shoot-*` không hiện gì — người chơi tự ngắm/tự bắn một phát thật; phát hiện "xong" bằng
+  `state.phase === "READY"` VÀ `state.shotsUsed` vượt mốc lúc bắt đầu bước, giữ `BOOSTER_TRY_SETTLE_HOLD_MS`
+  = 1 giây rồi mới sang bước kế. Hết `shoot-prism` thì về thẳng `null` — không có bước "outro", board
+  giữ nguyên trạng thái vừa bắn, Shop's booster hint dot bật ngay lúc đó.
+- **Chain Sort (level 5) — giờ giống hệt cặp trên (2026-09o), không còn scripted demo.** Trên request
+  "Tôi muốn flow tutorial giới thiệu chainsort cũng sẽ giống như 2 booster trước đó" — bỏ hẳn bản cũ
+  "bắn kịch bản, giữ nguyên kết quả 3s, hiện lại caption 3s nữa, không tap thì lặp lại từ đầu"
+  (`BOOSTER_DEMO_REVEAL_MS`/`BOOSTER_DEMO_CAPTION_HOLD_MS`, cả hai đã xoá luôn cùng đợt này).
+  `chainSortFtueStep` giờ chỉ còn `intro → shoot → null`, tái dùng NGUYÊN VẸN cùng cặp effect
+  arm-detection/settle-detection (và cùng `shootStepBaselineShotsRef`) `boosterFtueStep` đã dùng — spot
+  lệch giữa mọi thứ chỉ là armedBooster/type kiểm tra "chainSort" thay vì "radiusOvercharge"/"prismShot".
+  Vì Chain Sort không có ring aim cố định (không có bán kính để vẽ, xem mục 9), spotlight của nó vẫn chỉ
+  khoanh đúng NÚT trong tray, không khoanh vùng ảnh hưởng trên board — giống hệt cách Radius/Prism cũng
+  chỉ khoanh nút, không khoanh cả ring bán kính.
+
+**Lớp tối `.ftue-freeze-spotlight` phủ trọn toàn màn hình, kể cả HUD (2026-09n):** cả ba overlay
+tutorial dùng chung công thức này (freeze-orb level 31, cặp booster level 3, Chain Sort level 5) trước
+đây sống bên trong `.scene-wrap` (dải cảnh 3D, tự inset xuống dưới HUD trên cùng) nên lớp tối — dù
+box-shadow spread rất lớn — không bao giờ chạm tới góc chứa số đạn/nút Settings. Dời cả ba ra làm con
+trực tiếp của `.game-frame` (cùng cách sửa `.miss-flash` đã áp dụng), nâng z-index để phủ đúng toàn màn
+hình — HUD giờ cũng tối đi trong lúc overlay đang mở, khớp đúng cảm giác "cả màn hình dừng lại, chỉ mỗi
+nút được spotlight còn dùng được" mà một overlay dạng modal nên có.
 
 ### 13.5. Ngôn ngữ
 
@@ -654,6 +794,28 @@ Song ngữ **Anh/Việt** (`app/i18n.ts`), Anh là mặc định. Toàn bộ cop
 thiếu ở một trong hai ngôn ngữ, nên không có chuyện một màn hình bị lệch ngôn ngữ do quên dịch. Text
 riêng cho dev/QA (menu Settings → GameDevOption: link editor, +500 vàng debug, nhảy thẳng tới level)
 cố tình **không** nằm trong hệ thống dịch này — không phải copy người chơi thật sẽ thấy.
+
+### 13.6. Onboarding khoá cứng — level 1-3, mở game lần đầu (2026-09e)
+
+- **Mở game lần đầu → vào thẳng Level 1.** Key `sand-cannon:v1:first-open-seen`
+  (`hasOpenedBefore`/`markOpened`) — `useLayoutEffect` chạy đúng một lần lúc mount, chưa từng set thì
+  gọi thẳng `startPlaying()` TRƯỚC KHI trình duyệt vẽ khung hình đầu, nên Home không hề lướt qua mắt
+  người chơi; kèm luôn `ftueGesture` của Level 1 như hành động Play thật. Mọi lần mở lại sau (kể cả
+  reload) hành xử như cũ — Home + nút Play. `resetEntireGame` xoá luôn key này để test lại được.
+- **Nút ✕ (card "Frame Cleared"), nút Settings, và nội dung khay booster khoá suốt level 1-3 — CHỈ lượt
+  chơi đầu tiên (2026-09k).** Hằng số `WIN_CLOSE_BUTTON_FROM_LEVEL_ID = 4`, nhưng điều kiện hiện lại
+  không còn chỉ là `raw.id >= 4` (Settings thêm điều kiện `!playing` — ngoài lúc chơi, tab khác không
+  đổi gì) — biến `onboardingLockLifted` = `raw.id >= 4 || hasClearedLevel(3)`. Lý do thêm nhánh
+  `hasClearedLevel(3)`: nếu chỉ xét `raw.id`, một lượt CHƠI LẠI level 1-3 sau này (bấm từ Gallery, hoặc
+  Play lại từ Home) sẽ bị khoá lại y hệt lần đầu — vô lý vì chuỗi onboarding đã xong từ lâu. Một khi
+  level 3 đã được dọn xong dù chỉ một lần, `onboardingLockLifted` đúng vĩnh viễn từ đó — chơi lại level
+  1/2/3 bao nhiêu lần sau đó cũng thấy Settings/nút ✕/khay booster đầy đủ như mọi level khác. Level 1-3
+  luôn có Continue để đi tiếp nên không bao giờ bị kẹt, chỉ là không còn đường tắt thoát ra Home/Restart
+  giữa chừng chuỗi onboarding LẦN ĐẦU. Không áp dụng cho Zen Mode.
+- **Radius Level 1/2 nới rộng để phát súng đầu "quyền lực" hơn:** `sortRadius` Level 1 tăng 2 → 4,
+  Level 2 tăng 3 → 3.5 (vẫn thấp hơn Level 1 vì đã có 3 màu thay vì 1) — xem Phụ lục A.
+- Chuỗi onboarding này bao trọn tutorial booster thật của level 3 (mục 13.4) — tới lúc nút ✕ mở lại ở
+  level 4, người chơi chắc chắn đã tự bắn thử cả Radius Overcharge lẫn Prism Shot.
 
 ---
 
@@ -700,7 +862,6 @@ làm sai độ khó đã cân).
 - **Wind** (mục 5.4) — engine xong, chưa có level dùng.
 - **`requiresBooster`** (mục 9) — field đã có trên `SandLevelConfig`, chưa có solver/validator nào
   đọc nó.
-- **Gems** (mục 10) — hiển thị số, chưa nối kiếm/tiêu/thanh toán thật.
 
 ### 16.3. Ngoài phạm vi MVP (theo brief §34)
 
@@ -713,7 +874,60 @@ rigidbody simulation, âm thanh.
   rộng/level 51+).
 - Solver đọc `requiresBooster` để validator editor chặn ship một level "cần booster" mà không có
   nước đi nào thật sự bắt buộc dùng nó.
-- Nối Gems với một luồng IAP thật khi monetization cần hard currency thứ hai.
+- Nối Shop với một luồng IAP thật (Special Offers, Bundles, Coins/Hearts packs — mục 10.7) khi
+  monetization thật sự cần.
+
+### 16.5. Modes (2026-09) — Zen Mode đã ship, Theme Mode còn placeholder
+
+Tab "Modes" (`HUB_TABS`, trước đây tên "Customize", đã đổi tên từ trước) giờ có nội dung thật thay vì
+"Not built yet" trống — hai thẻ:
+
+- **Zen Mode — đã hoạt động thật.** Một danh sách level RIÊNG (`zenPlayables`, không chung với 50
+  level chính), luôn **không giới hạn số đạn và không giới hạn lượt booster** — cơ chế dùng lại đúng
+  hai giá trị "không giới hạn" đã có sẵn trong engine (`shotLimit: Infinity`, `forcedBoosterCharges`
+  toàn `Infinity` cho cả 3 booster), không phải cơ chế mới. **Không trả vàng, không cộng Reward
+  Track, không tính first-clear** — chơi lại thoải mái, không phải cách kiếm thêm ngoài mục 10. Nội
+  dung khởi điểm: 3 tranh lấy lại từ danh sách chính (level 3/10/21), đổi tên thêm "(Zen)", tước hết
+  field FTUE/tutorial. Level editor (`/editor`) có checkbox "🧘 Zen Mode level" — bật lên thì field
+  Shots bị vô hiệu hoá (ghi "ignored"), draft lưu với `mode: "zen"` và chỉ xuất hiện trên danh sách
+  Zen trong game, không lẫn vào danh sách chính. Chi tiết đầy đủ:
+  [docs/features/zen-mode.md](docs/features/zen-mode.md).
+- **Theme Mode — vẫn là placeholder.** Ý tưởng: người chơi chọn một chủ đề (Nhật Bản, Việt Nam, …) để
+  sort theo motif đó — cần nội dung tranh/asset thật theo từng chủ đề, chưa phải việc đổi code, nên
+  thẻ này vẫn khoá, hiện đúng chữ "Not built yet." như tab Modes vốn có trước đây.
+
+Màn danh sách level Zen (không phải màn hai thẻ) có nút **Back** riêng (icon `backIcon.png`), không
+chỉ dựa vào `.hub-nav` như Gallery/Shop/Skin — bấm lùi đúng một cấp, từ danh sách Zen về lại hai thẻ.
+Màn hai thẻ (trạng thái đầu tiên khi mở tab Modes) **không có** nút back riêng (2026-09e) — `.hub-nav`
+đã là cách rời tab Modes rồi, thêm một nút làm y hệt việc đó là thừa.
+
+**Icon "?" giải thích các mode (2026-09e):** nút tròn góc phải `.modes-heading`, hiện ở CẢ HAI trạng
+thái (màn hai thẻ lẫn danh sách Zen) — bấm mở một card overlay ngắn (`.modes-help-screen`, cùng họ với
+`.settings-screen`) liệt kê từng mode bằng đúng copy đã có sẵn (`s.zenModeBlurb`/`s.notBuiltYet`, không
+tạo câu mới trùng nghĩa). Đóng bằng nút X hoặc bấm ra ngoài card.
+
+### 16.6. Hearts — lượt chơi có giới hạn, mở khoá ở level 10 (2026-09c)
+
+Currency thứ tư, tách khỏi Wallet, hồi theo đồng hồ thật — xem
+[docs/features/economy-and-wallet.md](docs/features/economy-and-wallet.md#hearts-lượt-chơi--2026-09c)
+cho chi tiết đầy đủ. Tóm tắt:
+
+| Thông số | Giá trị |
+| --- | --- |
+| Mở khoá | Thắng level 10 lần đầu (trước đó không tồn tại — không HUD, không tốn gì) |
+| Tối đa | 5 tim |
+| Hồi | 1 tim / 30 phút |
+| Tốn 1 tim | Bấm Play (Home), "Play again" (FAIL), Restart (Settings) |
+| KHÔNG tốn | Continue sang level kế sau WIN, `restart()` do FTUE tự chạy, mọi thứ trong Zen Mode |
+
+HUD: chip tim cùng hàng với vàng/Blue Emerald, số tim hiện dạng badge đè lên icon, đếm ngược `m:ss`
+tới tim kế tiếp hiện cạnh bên khi chưa đầy. Hết tim thì Play/Restart bị chặn, hiện toast đếm ngược
+thay vì cho vào chơi.
+
+**Shop ẩn hẳn mọi mục liên quan Hearts trước khi mở khoá (2026-09e):** biến `visibleOffers` lọc khỏi
+Special Offers (10.7) bất kỳ offer nào bán hearts trong khi `!heartsUnlocked`; mục Bundles (mọi bundle
+đều bán hearts) và mục Hearts top-up ẩn hoàn toàn. Trước khi clear xong level 10, Shop chỉ còn Coins
+rồi tới Boosters — không nhắc tới một currency người chơi còn chưa từng thấy trên HUD.
 
 ---
 
@@ -740,8 +954,8 @@ theo cùng đơn vị. `freeze` = `freezeDuration` (lượt), trống nghĩa là
 
 | Level | Arc | w×h | sortRadius | shotLimit | freeze | keyFriction |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Nhập môn | 10×10 | 2 | ∞ | — | — |
-| 2 | Nhập môn | 17×16 | 3 | ∞ | — | — |
+| 1 | Nhập môn | 10×10 | 4 | ∞ | — | — |
+| 2 | Nhập môn | 17×16 | 3.5 | ∞ | — | — |
 | 3 | Nhập môn | 15×14 | 2 | 26 | — | — |
 | 4 | Beatchart gốc | 80×90 | 16 | 30 | — | — |
 | 5 | Beatchart gốc | 80×90 | 15 | 40 | — | — |

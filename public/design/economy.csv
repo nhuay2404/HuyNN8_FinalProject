@@ -11,10 +11,17 @@
 # boosterPriceRadiusOvercharge     | gia 1 vien Radius Overcharge o Shop
 # boosterPricePrismShot            | gia 1 vien Prism Shot o Shop
 # boosterPriceChainSort            | gia 1 vien Chain Sort o Shop
-# dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo ngay trong chu ky 7 ngay
+# dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo THU THAT trong tuan: Day1=Thu Hai (T2),
+#                                  | Day2=Thu Ba (T3), Day3=Thu Tu (T4), Day4=Thu Nam (T5), Day5=Thu Sau (T6),
+#                                  | Day6=Thu Bay (T7), Day7=Chu Nhat (CN). T2-T6 binh thuong, chi co T7-CN la
+#                                  | cao nhat va kem 1 luot Prism Shot mien phi (xem DAILY_LOGIN_BOOSTER_PERK
+#                                  | trong economy.ts).
 # rewardTrackCycle1..5             | Blue Emerald cua tung ruong tren thanh Reward Track o man Home
 #                                  | (moi 1 level thang = day 1 moc; day du 5 moc = 5 level thi mo duoc
 #                                  |  ruong). Ruong tu chu ky 6 tro di tu dong tang 25%/chu ky.
+# levelMilestoneBonus10..50        | thuong THEM (cong them vao thuong level binh thuong) khi thang LAN DAU
+#                                  | cac level moc hang chuc 10/20/30/40/50 - tang dan qua tung moc, roi vao
+#                                  | khoang 2/3 - 3/4 gia 1 booster (xem GDD.md muc 10.4)
 # costumePrice_rune-cannon         | gia skin Rune Cannon, tinh bang Blue Emerald
 key,value
 starterGold,100
@@ -25,15 +32,20 @@ boosterPriceRadiusOvercharge,100
 boosterPricePrismShot,100
 boosterPriceChainSort,150
 dailyLoginDay1,10
-dailyLoginDay2,15
-dailyLoginDay3,20
-dailyLoginDay4,25
-dailyLoginDay5,30
-dailyLoginDay6,40
-dailyLoginDay7,80
+dailyLoginDay2,12
+dailyLoginDay3,15
+dailyLoginDay4,18
+dailyLoginDay5,20
+dailyLoginDay6,30
+dailyLoginDay7,40
 rewardTrackCycle1,500
 rewardTrackCycle2,600
 rewardTrackCycle3,750
 rewardTrackCycle4,900
 rewardTrackCycle5,1250
+levelMilestoneBonus10,65
+levelMilestoneBonus20,75
+levelMilestoneBonus30,90
+levelMilestoneBonus40,100
+levelMilestoneBonus50,115
 costumePrice_rune-cannon,500

@@ -425,9 +425,82 @@ function nearestColorAmong(r: number, g: number, b: number, candidates: readonly
   return best;
 }
 
-/** The full-palette colour whose RGB is closest to a pixel. */
+/**
+ * Every `SAND_COLOR_HEX` entry is a fully-saturated candy colour (see that
+ * const's own comments) — a real photo's pixels almost never are. Matching
+ * a muted pixel to the palette by raw RGB distance alone systematically
+ * favours the FEW desaturated entries the palette happens to have (`white`,
+ * `black`, `brown`, `blue`, `darkbrown`) over the correct hue family: a
+ * muted sage green sits numerically closer to `brown` or `white` in plain
+ * RGB space than to `grass`, even though it plainly reads as green to a
+ * person looking at it. This surfaced importing `ZenModeThumbnail.png` (a
+ * muted-green pixel-art scene) into a Zen draft — the result came back
+ * brown/grey/purple instead of green.
+ *
+ * `boostSaturation` below exaggerates whatever hue a pixel already leans
+ * toward (a plain HSL round-trip with S multiplied up) BEFORE it is matched,
+ * so a muted-but-clearly-green pixel gets pushed back toward green's own
+ * corner of RGB space instead of quietly sitting in a desaturated palette
+ * colour's — `SATURATION_BOOST` is picked empirically high enough to fix
+ * that real photo without needing to be exact science.
+ */
+const SATURATION_BOOST = 3;
+
+function rgbToHsl(r: number, g: number, b: number): [h: number, s: number, l: number] {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+  else if (max === gn) h = (bn - rn) / d + 2;
+  else h = (rn - gn) / d + 4;
+  return [h / 6, s, l];
+}
+
+function hueChannel(p: number, q: number, tRaw: number): number {
+  let t = tRaw;
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+
+function hslToRgb(h: number, s: number, l: number): [r: number, g: number, b: number] {
+  if (s === 0) {
+    const v = Math.round(l * 255);
+    return [v, v, v];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [
+    Math.round(hueChannel(p, q, h + 1 / 3) * 255),
+    Math.round(hueChannel(p, q, h) * 255),
+    Math.round(hueChannel(p, q, h - 1 / 3) * 255),
+  ];
+}
+
+/** A pixel's own colour, saturation pushed up before matching — see
+ * `SATURATION_BOOST`'s own comment. */
+function boostSaturation(r: number, g: number, b: number): [r: number, g: number, b: number] {
+  const [h, s, l] = rgbToHsl(r, g, b);
+  return hslToRgb(h, Math.min(1, s * SATURATION_BOOST), l);
+}
+
+/** The full-palette colour whose RGB is closest to a pixel, once that
+ * pixel's own saturation has been boosted (see `boostSaturation`) so the
+ * match favours the right hue family over an accidentally-closer
+ * desaturated palette colour. */
 function nearestSandColor(r: number, g: number, b: number): SandColor {
-  return nearestColorAmong(r, g, b, SAND_COLORS);
+  const [br, bg, bb] = boostSaturation(r, g, b);
+  return nearestColorAmong(br, bg, bb, SAND_COLORS);
 }
 
 /**
@@ -459,6 +532,18 @@ function nearestSandColor(r: number, g: number, b: number): SandColor {
  * keep the most-used colours and reassign every pixel that lost its colour to
  * whichever survivor is closest to it — never to empty, since a cut colour
  * means "call it something else", not "erase it".
+ *
+ * Also returns `palette`: for every `SandColor` bucket that ended up with at
+ * least one pixel, the TRUE average RGB of the actual source pixels that
+ * landed in it (not the shared candy hex `SAND_COLOR_HEX` would otherwise
+ * draw). Matching still has to snap every pixel to one of the 24 finite
+ * buckets — that is load-bearing for the "shoot same colour" mechanic, see
+ * `nearestSandColor`'s own comment — but once a pixel's bucket is decided,
+ * nothing requires that bucket to render as the shared candy colour rather
+ * than this picture's own colour for it. A caller that stores `palette` as
+ * the level's `customPalette` (`SandLevelConfig`) gets a picture whose ONLY
+ * loss versus the source is pixels of different true colours that happened
+ * to share a bucket — everything else renders exactly as imported.
  */
 function imageToRows(
   img: HTMLImageElement,
@@ -466,12 +551,12 @@ function imageToRows(
   height: number,
   trimWhite: boolean,
   maxColors: number,
-): string[] {
+): { rows: string[]; palette: Partial<Record<SandColor, number>> } {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return blankRows(width, height);
+  if (!context) return { rows: blankRows(width, height), palette: {} };
   context.imageSmoothingEnabled = false;
   const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
   const drawWidth = img.naturalWidth * scale;
@@ -480,6 +565,10 @@ function imageToRows(
 
   const { data } = context.getImageData(0, 0, width, height);
   const colors: (SandColor | null)[] = new Array(width * height);
+  // Each opaque pixel's own true RGB, kept alongside which bucket it snapped
+  // to — needed after the fact to compute each bucket's real average colour
+  // for `palette` (`imageToRows`'s own doc comment).
+  const trueRgb: ([r: number, g: number, b: number] | null)[] = new Array(width * height);
   for (let i = 0; i < width * height; i += 1) {
     const at = i * 4;
     const r = data[at];
@@ -488,6 +577,7 @@ function imageToRows(
     const a = data[at + 3];
     const isBackground = a < 24 || (trimWhite && r > 240 && g > 240 && b > 240);
     colors[i] = isBackground ? null : nearestSandColor(r, g, b);
+    trueRgb[i] = isBackground ? null : [r, g, b];
   }
 
   const counts = new Map<SandColor, number>();
@@ -509,16 +599,37 @@ function imageToRows(
     }
   }
 
+  const sums = new Map<SandColor, [r: number, g: number, b: number, n: number]>();
   const rows: string[] = [];
   for (let row = 0; row < height; row += 1) {
     let line = "";
     for (let x = 0; x < width; x += 1) {
-      const color = colors[row * width + x];
-      line += color === null ? EMPTY_CELL : LETTER_BY_SAND_COLOR[remap.get(color) ?? color];
+      const i = row * width + x;
+      const color = colors[i];
+      if (color === null) {
+        line += EMPTY_CELL;
+        continue;
+      }
+      const finalColor = remap.get(color) ?? color;
+      line += LETTER_BY_SAND_COLOR[finalColor];
+      const rgb = trueRgb[i];
+      if (rgb) {
+        const sum = sums.get(finalColor) ?? [0, 0, 0, 0];
+        sum[0] += rgb[0];
+        sum[1] += rgb[1];
+        sum[2] += rgb[2];
+        sum[3] += 1;
+        sums.set(finalColor, sum);
+      }
     }
     rows.push(line);
   }
-  return rows;
+
+  const palette: Partial<Record<SandColor, number>> = {};
+  for (const [color, [r, g, b, n]] of sums) {
+    palette[color] = (Math.round(r / n) << 16) | (Math.round(g / n) << 8) | Math.round(b / n);
+  }
+  return { rows, palette };
 }
 
 /** Flood fill over cells of the same starting letter, four-connected. */
@@ -1119,7 +1230,7 @@ export default function LevelEditor() {
         const y = draft.height - 1 - row;
         const seed = x * 733 + y * 197;
         context.fillStyle = jitterColorHex(
-          SAND_COLOR_HEX[cell.color],
+          draft.customPalette?.[cell.color] ?? SAND_COLOR_HEX[cell.color],
           seed,
           SAND_SATURATION_JITTER,
           SAND_LIGHTNESS_JITTER,
@@ -1310,8 +1421,22 @@ export default function LevelEditor() {
     };
     img.onload = () => {
       update((current) => {
-        const rows = imageToRows(img, current.width, current.height, trimWhite, importMaxColors);
-        return syncQueueToPicture({ ...current, rows });
+        // Zen levels always import at full accuracy — every pixel already
+        // matches the CLOSEST of the 24 sand colours (`nearestSandColor`,
+        // `imageToRows`'s own comment); `importMaxColors` merely throws some
+        // of that accuracy away afterward to keep a level's own palette
+        // small, which a Zen level (no difficulty/readability budget to
+        // respect — it is not part of the main roster) has no reason to do.
+        // On request: "tool sẽ ráng lấy màu chính xác nhất từ ảnh".
+        const maxColors = current.mode === "zen" ? SAND_COLORS.length : importMaxColors;
+        const { rows, palette } = imageToRows(img, current.width, current.height, trimWhite, maxColors);
+        // Only a Zen draft keeps `palette` — see `SandLevelConfig.customPalette`'s
+        // own comment: it renders the level with this picture's own colours
+        // instead of the shared candy hex, which is what "100% chính xác"
+        // (full colour accuracy) means once a finite, shootable palette of
+        // buckets is still required. The main 50-level roster keeps the
+        // shared candy palette on purpose (consistent look across levels).
+        return syncQueueToPicture({ ...current, rows, customPalette: current.mode === "zen" ? palette : undefined });
       }, true);
       flash(`Imported ${file.name} as the picture`);
       cleanup();
@@ -1359,8 +1484,8 @@ export default function LevelEditor() {
                     lastBrushPoint.current = null;
                   }}
                 >
-                  <strong>{entry.name || "Untitled"}</strong>
-                  <small>{entry.width}×{entry.height} · {entry.shotLimit} shots</small>
+                  <strong>{entry.mode === "zen" ? "🧘 " : ""}{entry.name || "Untitled"}</strong>
+                  <small>{entry.width}×{entry.height} · {entry.mode === "zen" ? "unlimited shots" : `${entry.shotLimit} shots`}</small>
                 </button>
               </li>
             ))}
@@ -1391,6 +1516,7 @@ export default function LevelEditor() {
                   sortRadius: draft.sortRadius,
                   shotLimit: draft.shotLimit,
                   pixelScale: draft.pixelScale,
+                  mode: draft.mode,
                 };
                 persist([...drafts, duplicated]);
                 setPickedId(duplicated.id);
@@ -1556,23 +1682,60 @@ export default function LevelEditor() {
         {/* ---- canvas ---- */}
         <section className="editor-panel editor-canvas-panel">
           <div className="editor-tools">
-            <div className="editor-swatches">
-              {SORTED_SWATCH_COLORS.map((entry) => (
-                <button
-                  key={entry}
-                  type="button"
-                  className={`editor-swatch${entry === color && !erasing && !wallMode ? " is-active" : ""}`}
-                  style={{ "--swatch": hex(entry) } as React.CSSProperties}
-                  onClick={() => {
-                    setColor(entry);
+            {/* Zen levels swap the 24-swatch grid for a free colour picker —
+                on request ("không còn bảng màu nữa mà color picker rồi tô").
+                Painting still only ever writes one of the 24 `SandColor`
+                letters (the picture has to stay a small, discrete alphabet
+                for the wheel/matching rules to work at all — see
+                `nearestSandColor`'s own comment), so whatever the picker
+                returns snaps to the closest one of those the instant it is
+                picked, same algorithm image import already uses. The swatch
+                preview next to the picker shows that SNAPPED colour, not the
+                raw picker value, so what is about to be painted is never a
+                surprise. */}
+            {draft.mode === "zen" ? (
+              <div className="editor-swatches editor-zen-picker">
+                <input
+                  type="color"
+                  className="editor-zen-color-input"
+                  value={hex(color)}
+                  onChange={(event) => {
+                    const hexValue = event.target.value;
+                    const r = parseInt(hexValue.slice(1, 3), 16);
+                    const g = parseInt(hexValue.slice(3, 5), 16);
+                    const b = parseInt(hexValue.slice(5, 7), 16);
+                    setColor(nearestSandColor(r, g, b));
                     setWallMode(false);
                     setErasing(false);
                   }}
-                  aria-label={COLOR_NAME[entry]}
-                  title={COLOR_NAME[entry]}
+                  title="Pick any colour — it snaps to the closest of the game's 24 sand colours"
                 />
-              ))}
-            </div>
+                <span
+                  className={`editor-swatch is-active editor-zen-picker-preview${erasing || wallMode ? " is-dim" : ""}`}
+                  style={{ "--swatch": hex(color) } as React.CSSProperties}
+                  aria-label={COLOR_NAME[color]}
+                  title={`Painting: ${COLOR_NAME[color]}`}
+                />
+              </div>
+            ) : (
+              <div className="editor-swatches">
+                {SORTED_SWATCH_COLORS.map((entry) => (
+                  <button
+                    key={entry}
+                    type="button"
+                    className={`editor-swatch${entry === color && !erasing && !wallMode ? " is-active" : ""}`}
+                    style={{ "--swatch": hex(entry) } as React.CSSProperties}
+                    onClick={() => {
+                      setColor(entry);
+                      setWallMode(false);
+                      setErasing(false);
+                    }}
+                    aria-label={COLOR_NAME[entry]}
+                    title={COLOR_NAME[entry]}
+                  />
+                ))}
+              </div>
+            )}
             <div className="editor-row">
               {(["brush", "bucket", "key", "freeze"] as Tool[]).map((entry) => (
                 <button
@@ -1777,23 +1940,32 @@ export default function LevelEditor() {
                 />
                 <span>Skip white background</span>
               </label>
-              <label
-                className="editor-import-max-colors"
-                title="Caps how many distinct colours the imported picture uses. The most-used colours in the image survive; every other pixel is reassigned to whichever surviving colour is closest to it."
-              >
-                <span>Max colours</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={SAND_COLORS.length}
-                  value={importMaxColors}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (!Number.isFinite(value)) return;
-                    setImportMaxColors(Math.min(SAND_COLORS.length, Math.max(1, Math.round(value))));
-                  }}
-                />
-              </label>
+              {/* Ignored for a Zen draft — see `importImageFile`'s own
+                  comment — so shown as a plain note there instead of a
+                  control that would quietly do nothing. */}
+              {draft.mode === "zen" ? (
+                <span className="editor-import-max-colors" title="Zen levels always import at full accuracy — every pixel matches the closest of all 24 sand colours, nothing gets merged down.">
+                  🧘 Full colour accuracy
+                </span>
+              ) : (
+                <label
+                  className="editor-import-max-colors"
+                  title="Caps how many distinct colours the imported picture uses. The most-used colours in the image survive; every other pixel is reassigned to whichever surviving colour is closest to it."
+                >
+                  <span>Max colours</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={SAND_COLORS.length}
+                    value={importMaxColors}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (!Number.isFinite(value)) return;
+                      setImportMaxColors(Math.min(SAND_COLORS.length, Math.max(1, Math.round(value))));
+                    }}
+                  />
+                </label>
+              )}
             </div>
           </div>
 
@@ -1829,6 +2001,15 @@ export default function LevelEditor() {
               value={draft.name}
               onChange={(event) => update((current) => ({ ...current, name: event.target.value }))}
             />
+          </label>
+
+          <label className="editor-check editor-zen-check" title="Zen levels always play with unlimited shots and unlimited booster charges — the Shots field below (and any forced booster charges this draft carries) is ignored the moment this is checked. They show up on their own separate 'Zen Mode' list in-game, never mixed with the main level roster.">
+            <input
+              type="checkbox"
+              checked={draft.mode === "zen"}
+              onChange={(event) => update((current) => ({ ...current, mode: event.target.checked ? "zen" : undefined }))}
+            />
+            <span>🧘 Zen Mode level (unlimited shots &amp; boosters, own separate list)</span>
           </label>
 
           <div className="editor-field-row">
@@ -1985,10 +2166,11 @@ export default function LevelEditor() {
 
           <div className="editor-field-row">
             <label className="editor-field">
-              <span>Shots</span>
+              <span>Shots{draft.mode === "zen" ? " (ignored — Zen is unlimited)" : ""}</span>
               <input
                 type="number"
                 min={1}
+                disabled={draft.mode === "zen"}
                 value={draft.shotLimit}
                 onChange={(event) => update((current) => ({ ...current, shotLimit: Math.max(1, Number(event.target.value) || 1) }))}
               />
@@ -2108,7 +2290,17 @@ export default function LevelEditor() {
           {/* ---- ship it ---- */}
           <h2>Use this level</h2>
           <div className="editor-row">
-            {errors.length ? (
+            {draft.mode === "zen" ? (
+              // The `?level=` deep link below only searches the MAIN list
+              // (`readBoot`/`collectPlayables`, SandGame.tsx) — a Zen draft
+              // is never in it, so that link would silently land on a
+              // different level instead of this one. Rather than a
+              // misleading link, this just points at where the level
+              // actually shows up: save here, then find it in-game.
+              <p className="editor-note">
+                🧘 Saved automatically. Play it in-game: Modes → Zen Mode.
+              </p>
+            ) : errors.length ? (
               <button type="button" className="editor-button is-primary" disabled>
                 Test in game
               </button>

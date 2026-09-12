@@ -275,6 +275,25 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * to draw. The level editor enforces both.
    */
   ammoQueue: SandColor[];
+  /**
+   * Overrides `SAND_COLOR_HEX`'s fixed candy hex for specific `SandColor`
+   * slots, for THIS level only — every other level still renders that slot
+   * with the shared candy hex. Gameplay (body matching, the ammo wheel,
+   * `ammoQueue`) is entirely unaffected: it all still operates on the same
+   * 24 `SandColor` identities, this only changes what hex a renderer looks
+   * up for one of them.
+   *
+   * Exists for Zen level image import (`app/LevelEditor.tsx`'s
+   * `imageToRows`): every imported pixel still has to snap to one of the 24
+   * `SandColor` buckets (see that file's own comment on why a finite
+   * palette is load-bearing), but the hex EACH bucket renders as, for that
+   * one picture, is the true average colour of the source pixels that
+   * actually landed in it — not the shared candy colour. A muted forest
+   * photo's "green" bucket then renders as that photo's own muted green
+   * instead of the candy-bright `grass`, which is as close to "the picture's
+   * real colours" as a finite, shootable palette can get.
+   */
+  customPalette?: Partial<Record<SandColor, number>>;
   /** Radius of the sorting disc, in blueprint cells. Scaled with the board. */
   sortRadius: number;
   /**

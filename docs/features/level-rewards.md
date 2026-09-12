@@ -9,15 +9,23 @@ Mọi level, cho tới khi có ai chỉnh tay, trả thưởng theo công thức
 [difficulty-measurement.md](difficulty-measurement.md#2-computeleveldifficulty-level-difficultyts--điểm-0100-cho-danh-sách-editor):
 
 ```ts
-levelGoldReward(score) = round((20 + score * 1) / 5) * 5
+levelGoldReward(score) = round((5 + score * 0.3) / 5) * 5
 ```
 
-`score` là `computeLevelDifficulty(level).score` (0–100). Kết quả nằm trong khoảng **20** (score 0)
-đến **120** (score 100), làm tròn tới bội số của 5 để hai level gần nhau không trả ra số lẻ trông
-tuỳ tiện (47 vs 49).
+`score` là `computeLevelDifficulty(level).score` (0–100). Kết quả nằm trong khoảng **5** (score 0)
+đến **35** (score 100), làm tròn tới bội số của 5 để hai level gần nhau không trả ra số lẻ trông
+tuỳ tiện. Được cân chỉnh (2026-09) sao cho một level độ khó trung bình (score 50) trả đúng **20
+vàng** — `BOOSTER_PRICE.radiusOvercharge / 5` — tức chơi khoảng 5 level (lần đầu thắng) là đủ mua 1
+lượt Radius Overcharge/Prism Shot. Xem [economy-and-wallet.md](economy-and-wallet.md) và GDD.md §10.
 
 Được tính trên `raw` — level ở scale blueprint như tác giả viết, không phải `level` đã mở rộng lên
 pixel board — cùng scale với chính `computeLevelDifficulty` mà editor dùng để xếp hạng danh sách.
+
+### Thưởng mốc hàng chục (10/20/30/40/50)
+
+Cộng thêm vào số trên (bất kể tới từ công thức hay CSV override), chỉ ở lần thắng đầu tiên, là
+`levelMilestoneBonus(levelId)` — 0 với mọi level không phải mốc, và một số tăng dần (65→75→90→100→115)
+ở 5 level mốc 10/20/30/40/50 — xem [economy-and-wallet.md](economy-and-wallet.md#thưởng-mốc-hàng-chục-level-102030405).
 
 ## Override tay qua CSV
 
@@ -25,7 +33,7 @@ Level nào cần một con số khác công thức thì thêm một dòng vào `
 
 ```csv
 id,name,reward
-1,Level 1,20
+1,Level 1,10
 ```
 
 - `id` phải khớp `SandLevelConfig.id`.

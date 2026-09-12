@@ -182,6 +182,27 @@ export type LevelDraft = {
    */
   importedFromId?: number;
   updatedAt: number;
+  /**
+   * `"zen"` marks this as a Zen Mode level — absent (the default) means the
+   * ordinary main-list mode. Zen levels always play with unlimited shots and
+   * unlimited booster charges (`draftToLevel` forces both, overriding
+   * whatever `shotLimit`/`forcedBoosterCharges` the draft itself carries —
+   * see that function's own comment), so the editor's shot-budget field is
+   * simply ignored for a Zen draft rather than needing its own "unlimited"
+   * input. `SandGame.tsx`'s `collectPlayables`/`collectZenPlayables` filter
+   * drafts by this field so a Zen level never leaks into the main 50-level
+   * list (or vice versa).
+   */
+  mode?: "zen";
+  /**
+   * Passed straight through to `SandLevelConfig.customPalette` — see that
+   * field's own doc comment. Set by `app/LevelEditor.tsx`'s image import for
+   * a Zen draft (`imageToRows`'s `palette` return value): the true average
+   * colour of whichever source pixels actually landed in each `SandColor`
+   * bucket, so the level renders that picture's own colours instead of the
+   * shared candy palette. Absent for every hand-painted or non-Zen draft.
+   */
+  customPalette?: Partial<Record<SandColor, number>>;
 };
 
 /** Bounds the friction slider is allowed to reach. */
@@ -261,6 +282,7 @@ export function createDraft(
   name: string,
   requestedWidth = DEFAULT_WIDTH,
   requestedHeight = DEFAULT_HEIGHT,
+  mode?: "zen",
 ): LevelDraft {
   draftCounter += 1;
   const { width, height } = clampDimensions(requestedWidth, requestedHeight);
@@ -273,12 +295,17 @@ export function createDraft(
     height,
     rows: blankRows(width, height),
     ammoQueue: [],
-    // In pixels, like everything else the editor now measures.
+    // In pixels, like everything else the editor now measures. Meaningless
+    // for a Zen draft (shots are unlimited there — `draftToLevel` ignores
+    // this field when `mode === "zen"`), but still a real number so the
+    // shot-budget input has something to show if the author switches a
+    // draft out of Zen mode later.
     sortRadius: 12,
     shotLimit: 26,
     // Always 1: what the editor holds IS the board the game runs.
     pixelScale: 1,
     updatedAt: Date.now(),
+    mode,
   };
 }
 
@@ -305,13 +332,33 @@ export function resizeDraft(draft: LevelDraft, width: number, height: number): L
   return { ...draft, width: clampedWidth, height: clampedHeight, rows, hiddenFreezeRows, hiddenKeyRows };
 }
 
+/** Every booster charged at `Infinity` — `ZEN_UNLIMITED_BOOSTERS` below, and
+ * `Infinity` for `shotLimit`, are the two sanctioned "no limit" values
+ * `sand-rules.ts` already treats specially (see `SandLevelConfig.shotLimit`'s
+ * own doc comment and `forcedBoosterCharges`) — Zen Mode does not invent a
+ * new unlimited mechanism, it just always reaches for these two. */
+const ZEN_UNLIMITED_BOOSTERS: Partial<Record<BoosterType, number>> = {
+  radiusOvercharge: Infinity,
+  prismShot: Infinity,
+  chainSort: Infinity,
+};
+
 /**
  * Join a draft to the one gameplay policy, producing something the game can run.
  *
  * `id` is passed in because a draft's identity is a string while a level's is a
  * number the HUD shows; the caller owns that numbering.
+ *
+ * A Zen draft (`draft.mode === "zen"`) always plays with unlimited shots and
+ * unlimited booster charges — `shotLimit`/`forcedBoosterCharges` are forced
+ * to `Infinity` here regardless of what the draft itself carries, rather
+ * than trusting the author to remember to set them. The draft's own
+ * `shotLimit` number (and any `forcedBoosterCharges` it happens to carry
+ * from an import) is simply never read for a Zen level — see `LevelDraft.mode`'s
+ * own comment for why the editor does not need a dedicated "unlimited" input.
  */
 export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
+  const isZen = draft.mode === "zen";
   return {
     ...RADIUS_GAMEPLAY,
     id,
@@ -321,15 +368,16 @@ export function draftToLevel(draft: LevelDraft, id: number): SandLevelConfig {
     hiddenFreezeRows: draft.hiddenFreezeRows,
     hiddenKeyRows: draft.hiddenKeyRows,
     ammoQueue: [...draft.ammoQueue],
+    customPalette: draft.customPalette,
     sortRadius: draft.sortRadius,
-    shotLimit: draft.shotLimit,
+    shotLimit: isZen ? Infinity : draft.shotLimit,
     pixelScale: effectivePixelScale(draft),
     keyFriction: draft.keyFriction ?? 0,
     freezeDuration: draft.freezeDuration ?? 0,
     forcedOpeningQueue: draft.forcedOpeningQueue,
     ftueFreezeDemo: draft.ftueFreezeDemo,
     ftueFreezeTargets: draft.ftueFreezeTargets,
-    forcedBoosterCharges: draft.forcedBoosterCharges,
+    forcedBoosterCharges: isZen ? ZEN_UNLIMITED_BOOSTERS : draft.forcedBoosterCharges,
     ftueBoosterDemo: draft.ftueBoosterDemo,
     ftueBoosterTargets: draft.ftueBoosterTargets,
     ftueChainSortDemo: draft.ftueChainSortDemo,
