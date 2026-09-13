@@ -736,6 +736,16 @@ button.settings-devtoggle {
 }
 .settings-devlink.is-danger:hover { background: var(--danger-line); }
 .settings-devlink.is-danger .icon-glyph { color: var(--danger-ink); }
+/* "Unlock all content" — the one row that GRANTS everything at once
+   (every level, skin, and a stack of every booster) rather than resetting
+   something, so it gets the same "not just another quiet row" treatment as
+   "Reset entire game" below it, but in the accent/positive colour instead
+   of the danger one — a grant, not a wipe. */
+.settings-devlink.is-highlight {
+  background: var(--accent); color: var(--accent-ink);
+}
+.settings-devlink.is-highlight:hover { background: var(--accent-line); }
+.settings-devlink.is-highlight .icon-glyph { color: var(--accent-ink); }
 /* The one dev row that takes a typed value instead of a single tap — a plain
    div styled to match `.settings-devlink` (not a button/anchor itself, since
    it holds its own interactive input and "Go" button, and nesting a control
@@ -1777,10 +1787,8 @@ button.settings-devtoggle {
 }
 .daily-login-cell-day {
   position: absolute; top: 4px; left: 5px;
-  font-size: 10px; font-weight: 700; color: var(--muted);
+  font-size: 9px; font-weight: 700; color: var(--muted);
 }
-.daily-login-cell-coin .coin-icon { width: 16px; height: 16px; color: var(--gold-line); }
-.daily-login-cell strong { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink); }
 /* A real past date — dimmed whether or not it was actually claimed (see
    `.is-claimed` below for the ones that were). */
 .daily-login-cell.is-past { opacity: .5; }
@@ -1789,37 +1797,46 @@ button.settings-devtoggle {
    day that was actually missed. */
 .daily-login-cell.is-claimed { opacity: .7; }
 .daily-login-cell-check { font-size: 19px; font-weight: 800; color: var(--accent-line); }
-/* Saturday/Sunday: the one special tier — richest gold of the week, plus
-   (see the perk icon below) a free Prism Shot charge. The gold wash alone
-   marks the tier — no "WEEKEND" text label on top of it any more (per the
-   ask: don't spell it out every cell, the colour already says it).
-   Monday-Friday are plain cream cells, no wash, no perk. Declared BEFORE
-   `.is-today` below, so a weekend day that is also today still shows the
-   accent "today" background, not the gold wash — same specificity either
-   way, source order decides. */
+/* Saturday/Sunday: the one special tier — no gold at all any more (per the
+   2026-09e ask), just the free Prism Shot charge (see the perk icon below).
+   The gold wash alone marks the tier — no "WEEKEND" text label on top of it
+   (per the earlier ask: don't spell it out every cell, the colour already
+   says it). Monday-Friday are plain cream cells, no wash, no perk. Declared
+   BEFORE `.is-today` below, so a weekend day that is also today still shows
+   the accent "today" background, not the gold wash — same specificity
+   either way, source order decides. */
 .daily-login-cell.is-weekend { background: var(--gold); }
-.daily-login-cell.is-weekend strong { color: var(--gold-ink); }
 /* Today — the one cell that can still be claimed. */
 .daily-login-cell.is-today {
   background: var(--accent);
   animation: booster-armed-pulse 1.6s ease-in-out infinite;
 }
-.daily-login-cell.is-today strong,
 .daily-login-cell.is-today .daily-login-cell-day { color: var(--accent-ink); }
 .daily-login-cell.is-today.is-claimed { animation: none; }
-/* The weekend's booster perk — the booster's own icon (`BoosterIcon`, the
-   same glyph the Shop/HUD already use for it) in a small round badge rather
-   than its name spelled out in text, per the ask ("để biểu tượng với icon
-   booster" instead of a text pill). Pinned to the cell's own bottom edge so
-   it never overflows into the row below; the badge's own light backing
-   keeps the icon legible sitting on the gold cell fill. */
+/* A cell's booster perk (weekend Radius/Prism, or the month's 13th Chain
+   Sort) — the booster's own icon (`BoosterIcon`, the same glyph the
+   Shop/HUD already use for it) rather than its name spelled out in text.
+   Large and dead-centre (2026-09f ask, "icon booster nên to ra và để ở
+   giữa") — `.daily-login-cell` is already a centred flex column, so this
+   just needs to not fight that layout with its own absolute positioning any
+   more. A booster-perk cell never also shows the coin glyph below (a cell
+   is one or the other, never both), so the two never compete for the same
+   centre. The light round backing still keeps the icon legible sitting on
+   the gold weekend wash. */
 .daily-login-perk-icon {
-  position: absolute; bottom: 3px; right: 3px;
   display: flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; border-radius: 50%;
+  width: 30px; height: 30px; border-radius: 50%;
   background: rgba(255, 255, 255, .65);
 }
-.daily-login-perk-icon .booster-icon { width: 10px; height: 10px; }
+.daily-login-perk-icon .booster-icon { width: 20px; height: 20px; }
+/* A plain gold-paying weekday cell (no booster perk that day): just the
+   coin glyph, centred the same way the perk icon above is — no amount
+   printed next to it any more (2026-09e ask), since every weekday pays the
+   same flat gold and a repeated number would say nothing worth reading. */
+.daily-login-cell-coin {
+  display: flex; align-items: center; justify-content: center;
+}
+.daily-login-cell-coin .coin-icon { width: 22px; height: 22px; }
 .daily-login-streak {
   text-align: center; margin: -2px 0 10px;
   font-size: 11px; font-weight: 700; color: var(--muted);
@@ -2483,33 +2500,36 @@ button.settings-devtoggle {
   animation: cannon-unlock-in .32s cubic-bezier(.2,.9,.24,1) both;
 }
 /* Sits above the rig (`.skin-heading`'s own top inset) rather than over it —
-   a caption on the cannon, not a curtain over it. White on black, per the
-   ask, via a real (thin — a heavy stroke was clogging the font's own strokes)
-   `-webkit-text-stroke` with a matching text-shadow fallback for the one
-   engine that ignores it. Boring Time, the same display face every button in
-   the game already uses (see the `button` rule up top) — set explicitly
-   since this text is not inside a `<button>` any more. */
+   a caption on the cannon, not a curtain over it. White, bold rather than
+   stroked (on request: "bỏ stroke, hãy khiến font chữ bold lên" — the
+   `-webkit-text-stroke`/outline `text-shadow` this used to carry is gone,
+   weight alone now does the job of standing out against the rig), plus a
+   soft drop shadow UNDER the letters (on request: "cho thêm shadow ở dưới
+   chân text") for depth against the lighter flavour washes, where bold
+   white alone reads a little flat. Boring Time, the same display face every
+   button in the game already uses (see the `button` rule up top) — set
+   explicitly since this text is not inside a `<button>` any more. */
 .cannon-unlock-text {
   margin: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 0 0;
   padding: 0 28px; text-align: center; text-transform: uppercase;
   font-family: "Boring Time", var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
-  font-size: 24px; font-weight: 400; letter-spacing: .02em;
+  font-size: 24px; font-weight: 800; letter-spacing: .02em; line-height: 1.25;
   color: #ffffff;
-  -webkit-text-stroke: 1px #1c1c1c;
-  text-shadow: 0 1px 0 #1c1c1c, 0 -1px 0 #1c1c1c, 1px 0 0 #1c1c1c, -1px 0 0 #1c1c1c;
+  text-shadow: 0 4px 6px rgba(0, 0, 0, .4);
 }
 /* Appears ~2s in (see `cannonUnlockTapReady`) at the foot of the screen,
    breathing so it reads as "waiting on you" rather than static chrome. Same
-   face and thin white-on-black stroke as the headline above, and — per the
-   ask — no pill or fill behind it, just the lettering itself floating over
-   the rig. */
+   face and drop shadow as the headline above, bold rather than stroked for
+   the same reason (see its own comment). Nudged up off the very bottom edge
+   (on request: "đưa dòng tap to continue nhích lên chút") — bottom margin
+   raised from 28px, no pill or fill behind it either way, just the
+   lettering itself floating over the rig. */
 .cannon-unlock-tap {
-  margin: auto 0 max(28px, env(safe-area-inset-bottom));
+  margin: auto 0 max(48px, env(safe-area-inset-bottom));
   color: #ffffff;
   font-family: "Boring Time", var(--font-display), "Baloo 2", system-ui, Arial, sans-serif;
-  -webkit-text-stroke: .8px #1c1c1c;
-  text-shadow: 0 1px 0 #1c1c1c, 0 -1px 0 #1c1c1c, 1px 0 0 #1c1c1c, -1px 0 0 #1c1c1c;
-  font-size: 15px; font-weight: 400; letter-spacing: .04em; text-transform: uppercase;
+  font-size: 15px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+  text-shadow: 0 3px 5px rgba(0, 0, 0, .4);
   animation: cannon-unlock-breathe 1.3s ease-in-out infinite;
 }
 @keyframes cannon-unlock-in {
@@ -3519,6 +3539,13 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   background: #ffffff; color: #2f8f4e; border-color: #2f8f4e;
   cursor: default;
 }
+/* The live counterpart of `.is-progression` above, once the skin's own level
+ * has actually been cleared (on request — a level-earned skin's own Unlock
+ * tap is what now grants and celebrates it, not the level clear itself): a
+ * real button, filled solid in the same green rather than the inert
+ * white-with-border look, so it reads as newly tappable rather than as a
+ * still-locked label. */
+.skin-equip.is-unlock { background: #2f8f4e; border-color: #2f8f4e; }
 /* A locked tray card is still fully previewable — it just reads as locked: the
    rig behind the price is dimmed and desaturated so the price pill on top of
    it stays legible over any thumbnail. */
@@ -3553,3 +3580,8 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    wallet could just pay off. */
 .skin-card-price.is-progression { background: rgba(207, 255, 223, .75); border-top-color: #6fbf8f; color: #1f5c34; }
 .skin-card.is-previewing .skin-card-price.is-progression { background-color: #b9f0cd; }
+/* Once the level requirement is actually met (`.is-unlock`, layered on top
+   of `.is-progression` above): solid rather than translucent, same idea as
+   `.skin-equip.is-unlock` — reads as "ready to tap", not just "earned". */
+.skin-card-price.is-progression.is-unlock { background: #2f8f4e; border-top-color: #2f8f4e; color: #ffffff; }
+.skin-card.is-previewing .skin-card-price.is-progression.is-unlock { background-color: #267a41; }

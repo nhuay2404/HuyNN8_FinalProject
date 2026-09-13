@@ -31,7 +31,7 @@ Mỗi hằng số dưới đây là **fallback**: số thật luôn đi qua `pub
 | `BOOSTER_PRICE.radiusOvercharge` | 100 | `boosterPriceRadiusOvercharge` |
 | `BOOSTER_PRICE.prismShot` | 100 | `boosterPricePrismShot` |
 | `BOOSTER_PRICE.chainSort` | 150 | `boosterPriceChainSort` |
-| `DAILY_LOGIN_REWARDS[T2..CN]` | 10, 12, 15, 18, 20, 30, 40 | `dailyLoginDay1`..`dailyLoginDay7` |
+| `DAILY_LOGIN_REWARDS[T2..CN]` | 10, 10, 10, 10, 10, 0, 0 (T7/CN = booster only, không vàng) | `dailyLoginDay1`..`dailyLoginDay7` |
 | `LEVEL_MILESTONE_BONUS[10,20,30,40,50]` | 65, 75, 90, 100, 115 | `levelMilestoneBonus10`..`levelMilestoneBonus50` |
 
 Radius Overcharge và Prism Shot cùng giá 100 vàng; Chain Sort đắt hơn (150) — nó không chỉ to/rộng
@@ -89,17 +89,22 @@ ngày trong tháng (2026-09b).
 | Thứ | Vàng | Ưu đãi thêm |
 | --- | --- | --- |
 | T2 (Thứ Hai) | 10 | — |
-| T3 (Thứ Ba) | 12 | — |
-| T4 (Thứ Tư) | 15 | — |
-| T5 (Thứ Năm) | 18 | — |
-| T6 (Thứ Sáu) | 20 | — |
-| T7 (Thứ Bảy) | 30 | +1 Prism Shot (cuối tuần) |
-| CN (Chủ Nhật) | 40 | +1 Prism Shot (cuối tuần, cao nhất tuần) |
+| T3 (Thứ Ba) | 10 | — |
+| T4 (Thứ Tư) | 10 | — |
+| T5 (Thứ Năm) | 10 | — |
+| T6 (Thứ Sáu) | 10 | — |
+| T7 (Thứ Bảy) | 0 | +1 Radius Overcharge (cuối tuần, KHÔNG có vàng) |
+| CN (Chủ Nhật) | 0 | +1 Prism Shot (cuối tuần, KHÔNG có vàng) |
 
-T2–T6 ("5 ngày đầu tuần") bình thường — chỉ vàng, tăng dần nhẹ, không tag không ưu đãi. T7–CN (cuối
-tuần) là tier đặc biệt DUY NHẤT: vàng cao nhất tuần **và** kèm 1 lượt Prism Shot miễn phí
-(`DAILY_LOGIN_BOOSTER_PERK`, cả hai ngày cùng loại booster — trước đây từng luân phiên 3 loại ở 3
-ngày đầu tuần, đã bỏ theo yêu cầu 2026-09b).
+T2–T6 ("5 ngày đầu tuần") đều trả một mức vàng CỐ ĐỊNH (10 — chỉ bằng một phần thưởng của một
+level, xem `levelGoldReward`, `economy.ts`) — không còn tăng dần theo ngày. T7–CN (cuối tuần) là tier đặc biệt
+DUY NHẤT nhưng KHÔNG trả vàng: `DAILY_LOGIN_REWARDS[5]`/`[6]` đều bằng 0, hai ngày đổi phiên nhau
+tặng booster (T7 → Radius Overcharge, CN → Prism Shot — `WEEKEND_BOOSTER_PERK`) thay cho vàng.
+
+Ngoài ra, **ngày 13 hằng tháng** là "ngày may mắn" riêng biệt: bất kể rơi vào thứ nào, ngày đó luôn
+tặng 1 lượt Chain Sort (`CHAIN_SORT_BONUS_DAY_OF_MONTH`, `dailyLoginBoosterPerk`) — thắng cả ưu đãi
+cuối tuần nếu ngày 13 trùng T7/CN, và cộng thêm vào vàng bình thường nếu ngày 13 rơi vào ngày
+thường.
 
 `computeDailyLoginState(record, now)` là hàm thuần:
 

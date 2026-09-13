@@ -979,8 +979,10 @@ export class ChestStage {
       gem.resting = false;
       // Where it ends up lying: flat on the floor on one face or the other, at
       // its own yaw, leaning a couple of degrees off. Drawn here, at launch,
-      // rather than when it lands, so the settle has somewhere to ease TO
-      // instead of snapping to a pose picked mid-frame.
+      // rather than when it lands, so the one instant snap into it
+      // (`updateGems`) picks a pose decided in advance, not one read off
+      // whatever orientation the stone happened to be tumbling through that
+      // frame.
       gem.restPose.copy(flatOnFloor(random));
 
       // Fanned across the front half only — a heading with `sin > 0` throws
@@ -1073,24 +1075,28 @@ export class ChestStage {
         // stone mid-tumble is standing on a corner, and only once it has flopped
         // onto a face is it as low as `GEM_REST_Y`.
         if (gem.group.position.y <= GEM_LAND_Y && gem.velocity.y < 0) {
-          gem.group.position.y = GEM_LAND_Y;
           if (Math.abs(gem.velocity.y) < GEM_SETTLE_SPEED) {
+            // Comes to rest on the spot, in one step — no lingering
+            // ease/slerp into its final height and pose afterward. That
+            // extra settle used to keep nudging a stone that already read as
+            // landed, which looked like it was quietly re-snapping into a
+            // different "fixed" pose a beat after it had stopped (2026-09h
+            // ask: "tôi muốn nó yên ở vị trí luôn chứ không tự nhiên snap").
+            // The X/Z it lands at is wherever the bounce actually left it —
+            // never recomputed — so this really is its rest position, not a
+            // placeholder waiting for a later correction.
+            gem.group.position.y = GEM_REST_Y;
+            gem.group.quaternion.copy(gem.restPose);
             gem.velocity.set(0, 0, 0);
             gem.resting = true;
           } else {
+            gem.group.position.y = GEM_LAND_Y;
             gem.velocity.y = -gem.velocity.y * GEM_BOUNCE;
             gem.velocity.x *= 0.7;
             gem.velocity.z *= 0.7;
             gem.spin.multiplyScalar(0.55);
           }
         }
-      } else {
-        // Flops the rest of the way onto its face and stays there. Stones lying
-        // still, scattered flat at every angle, is the whole look — anything
-        // that keeps moving reads as a trophy on a turntable instead of
-        // treasure spilled on the floor.
-        gem.group.quaternion.slerp(gem.restPose, Math.min(1, deltaSeconds * 9));
-        gem.group.position.y += (GEM_REST_Y - gem.group.position.y) * Math.min(1, deltaSeconds * 9);
       }
 
       // The shadow tracks the stone's ground position and shrinks with its

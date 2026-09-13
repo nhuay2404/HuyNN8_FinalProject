@@ -185,27 +185,45 @@ export function levelMilestoneBonus(levelId: number): number {
  * Daily login, keyed by the REAL calendar weekday now (index 0 = Monday ...
  * 6 = Sunday — `weekdayIndex` below), not by a streak position that used to
  * loop every 7 claims regardless of what day it actually was. Monday through
- * Friday are plain gold, rising gently; Saturday and Sunday (the weekend)
- * pay the most AND are the only days `DAILY_LOGIN_BOOSTER_PERK` also hands
- * out a free Prism Shot charge on top — the weekend is the one tier that
- * reads as a genuinely better day to check in. Every entry stays well under
- * a mid-difficulty level's own reward (`levelGoldReward`) — this is a bonus
- * for showing up, not the main way to earn. See CHANGELOG-prototype.md for
- * the full reasoning and GDD.md §10.6 for the weekday table.
+ * Friday all pay the same flat 10 gold — a fraction of what ONE
+ * mid-difficulty level's own first-clear reward pays (`levelGoldReward`'s
+ * score-50 case, 20 gold — see that function's own doc comment), so logging
+ * in reads as a modest top-up, not a replacement for playing levels. Saturday
+ * and Sunday (the weekend) pay NO gold at all: they are the only days
+ * `dailyLoginBoosterPerk` hands out a free booster charge instead, and that
+ * charge is the entire weekend reward — see CHANGELOG-prototype.md for the
+ * full reasoning and GDD.md §10.6 for the weekday table.
  */
-export const DAILY_LOGIN_REWARDS: readonly number[] = [10, 12, 15, 18, 20, 30, 40];
+export const DAILY_LOGIN_REWARDS: readonly number[] = [10, 10, 10, 10, 10, 0, 0];
 /** `DAILY_LOGIN_REWARDS[weekday]` unless `economy.csv` overrides that
  * weekday's `dailyLoginDay<N>` row (`N` = weekday + 1, Monday = day 1). */
 export function dailyLoginReward(weekday: number): number {
   return getEconomyConfigOverride(CONFIG_KEY.dailyLoginDay(weekday)) ?? DAILY_LOGIN_REWARDS[weekday];
 }
 
-/** Saturday(5)/Sunday(6) each also grant one free Prism Shot charge — the
- * only "ưu đãi" (extra perk) on top of gold, exclusive to the weekend. */
-export const DAILY_LOGIN_BOOSTER_PERK: Partial<Record<number, BoosterType>> = {
-  5: "prismShot",
+/** Saturday(5) grants Radius Overcharge, Sunday(6) grants Prism Shot — the
+ * weekend's own two charges take turns between the two entry-level boosters
+ * rather than both days handing out the same one. */
+export const WEEKEND_BOOSTER_PERK: Partial<Record<number, BoosterType>> = {
+  5: "radiusOvercharge",
   6: "prismShot",
 };
+
+/** The calendar's one monthly "lucky day": the 13th of every month grants a
+ * free Chain Sort charge — the priciest, strongest booster — regardless of
+ * what weekday it happens to land on that month, overriding the weekend's
+ * own radius/prism split above on a month where the 13th is a Sat/Sun. */
+export const CHAIN_SORT_BONUS_DAY_OF_MONTH = 13;
+
+/** What claiming `date` (a device-local calendar day, `dayOfMonth` 1-31)
+ * grants on top of `dailyLoginReward` — `null` on a plain weekday. The 13th
+ * of the month wins over the weekend split (`CHAIN_SORT_BONUS_DAY_OF_MONTH`
+ * is checked first), everywhere else it is just Saturday/Sunday's own
+ * `WEEKEND_BOOSTER_PERK`. */
+export function dailyLoginBoosterPerk(dayOfMonth: number, weekday: number): BoosterType | null {
+  if (dayOfMonth === CHAIN_SORT_BONUS_DAY_OF_MONTH) return "chainSort";
+  return WEEKEND_BOOSTER_PERK[weekday] ?? null;
+}
 
 // ---- wallet -----------------------------------------------------------------
 
@@ -535,7 +553,7 @@ export type DailyLoginState = {
   date: string;
   /** Today's reward, `DAILY_LOGIN_REWARDS[weekday]`. */
   reward: number;
-  /** The free booster charge today also grants, if `weekday` is Mon/Tue/Wed — see `DAILY_LOGIN_BOOSTER_PERK`. */
+  /** The free booster charge today grants — instead of gold on a weekend day, or on top of gold on the month's 13th — see `dailyLoginBoosterPerk`. */
   boosterPerk: BoosterType | null;
   /** Whether today's reward has already been claimed. */
   claimedToday: boolean;
@@ -621,7 +639,7 @@ export function computeDailyLoginState(record: DailyLoginRecord | null, now: Dat
   const date = todayKey(now);
   const weekday = weekdayIndex(now);
   const reward = dailyLoginReward(weekday);
-  const boosterPerk = DAILY_LOGIN_BOOSTER_PERK[weekday] ?? null;
+  const boosterPerk = dailyLoginBoosterPerk(now.getDate(), weekday);
   const claimedToday = record?.claimedDates.includes(date) ?? false;
   let streak = 0;
   if (record) {
@@ -651,7 +669,7 @@ export type DailyLoginCalendarCell = {
   weekday: number;
   /** What claiming THIS date pays (or paid/would pay) — `dailyLoginReward(weekday)`. */
   reward: number;
-  /** Whether this weekday also grants a free booster charge. */
+  /** The free booster charge this date grants, if any — see `dailyLoginBoosterPerk`. */
   boosterPerk: BoosterType | null;
   isToday: boolean;
   isPast: boolean;
@@ -683,7 +701,7 @@ function buildMonthCells(date: Date, claimedDates: ReadonlySet<string>, todayStr
       dayOfMonth: day,
       weekday,
       reward: dailyLoginReward(weekday),
-      boosterPerk: DAILY_LOGIN_BOOSTER_PERK[weekday] ?? null,
+      boosterPerk: dailyLoginBoosterPerk(day, weekday),
       isToday: cellKey === todayStr,
       isPast: cellKey < todayStr,
       isFuture: cellKey > todayStr,
@@ -702,11 +720,13 @@ export function getDailyLoginCalendar(now = new Date()): DailyLoginCalendarCell[
 }
 
 /**
- * Claims today's reward and pays it into the wallet — gold always, plus one
- * free charge of `state.boosterPerk` on a Mon/Tue/Wed claim. Returns `null`
- * if today's reward is already claimed (nothing is paid twice) — the caller
- * (the daily-login modal) should not have offered a Claim button in that
- * state to begin with, but this is the actual guard.
+ * Claims today's reward and pays it into the wallet — gold on a weekday
+ * (`state.reward`, a no-op on a weekend where it is 0 — `addGold` already
+ * ignores non-positive amounts), plus one free charge of `state.boosterPerk`
+ * on a weekend claim. Returns `null` if today's reward is already claimed
+ * (nothing is paid twice) — the caller (the daily-login modal) should not
+ * have offered a Claim button in that state to begin with, but this is the
+ * actual guard.
  */
 export function claimDailyLogin(now = new Date()): DailyLoginState | null {
   const previous = readDailyRecord();

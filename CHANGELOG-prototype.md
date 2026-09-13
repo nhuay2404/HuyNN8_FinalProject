@@ -8413,3 +8413,341 @@ Tap it to arm it!" hiện đúng, lớp tối phủ cả HUD; bấm xuyên overl
 cát lớn → `state.phase` đi qua `PROJECTILE_FLYING → SETTLING → READY`, mảng cát cả một góc tranh biến
 mất hết (đúng "không giới hạn bán kính"), charge Chain Sort về `0`, không còn overlay nào, người chơi
 chơi tiếp bình thường ngay trên board vừa bắn — không reset, không "outro".
+
+---
+
+## 210. Sửa joystick không kéo tới được rìa màn hình trên level lớn (bước 1 — vẫn chưa đúng gốc) (13/09)
+
+**Yêu cầu:** "Đối với những bức tranh có size 80x90 quá lớn khiến người chơi không thể drag joystick kéo
+radius tới toàn bộ màn hình được, luôn bị giới hạn, hãy chỉnh sửa lại."
+
+Chẩn đoán ban đầu: `cursorForCurrentStick()` (`SandCannonEngine.ts`) giới hạn tầm với của cursor bằng
+3 hằng số tỉ lệ cố định trên kích thước viewport (`AIM_CURSOR_HORIZONTAL/UP/DOWN_RATIO`), không theo
+kích thước thật của khung tranh đang hiển thị. Với level gần vuông và lấp gần hết cả `FIT_WIDTH` lẫn
+`FIT_HEIGHT` cùng lúc (80×90 là trường hợp điển hình), mép tranh thật vượt xa tầm cursor cố định đó —
+đặc biệt hướng xuống (`AIM_CURSOR_DOWN_RATIO` chỉ 0.15, so với 0.5 hai hướng kia).
+
+- **`cursorForCurrentStick()`:** đổi từ 3 hằng số tỉ lệ sang chiếu 4 mép khung thật (kể cả viền rail,
+  `FRAME_BORDER_CELLS`) ra toạ độ màn hình mỗi lần cập nhật (`screenPointForWorld` mới, dựa trên
+  `worldPointForGrid`/`project()` có sẵn), rồi lấy khoảng cách từ tâm màn hình tới từng mép làm tầm với
+  — luôn khớp đúng khung đang hiển thị bất kể size/aspect ratio.
+- **`JOYSTICK_RESPONSE_RADIUS` (256px cố định):** trên màn hình hẹp (mobile portrait), khoảng kéo thật
+  cần để đạt phản hồi 100% có thể vượt quá nửa chiều rộng màn hình — không kéo được xa vậy bằng một cử
+  chỉ thẳng trước khi chạm mép kính. Hạ trần theo `JOYSTICK_RESPONSE_RADIUS_SCREEN_FRACTION` (0.42 ×
+  cạnh ngắn hơn của `.scene-host`), giữ nguyên 256px làm trần trên trên màn hình đủ rộng.
+
+**Test:** `tsc --noEmit` sạch. Verify tay bằng mô phỏng phép chiếu camera (script Node dùng chính
+`three.js` đã cài) so hai công thức cũ/mới trên level 80×90 lẫn vài level nhỏ hơn — xác nhận công thức
+mới bám đúng mép khung chiếu thật thay vì hằng số đoán mò. **Chưa verify sống bằng drag thật ở bước
+này** — thấy sai ở bước sau (#211).
+
+## 211. Sửa joystick không kéo tới được GÓC màn hình — lỗi gốc thật sự (13/09)
+
+**Yêu cầu:** người dùng phản hồi ảnh chụp màn hình thật: vòng ring bán kính vẫn không chạm được góc
+trên-trái bức tranh dù đã sửa ở #210, kèm yêu cầu "phải thiết kế hệ thống joystick và drag sao cho nó
+luôn fit và bắn được mọi góc trên bức tranh bất kể size ảnh với size radius."
+
+Lỗi thật không nằm ở tầm với tính theo tỉ lệ màn hình (#210 đã sửa đúng phần đó) mà ở chính công thức
+map từ cử chỉu kéo sang toạ độ cursor, trong `updateAimGesture()`: `aimStick` cũ là MỘT vector chung
+(hướng kéo chuẩn hoá `dx/dist, dy/dist`, nhân với độ mạnh phản hồi ≤ 1), rồi `cursorForCurrentStick()`
+mới nhân riêng trục X với `horizontalRange`, trục Y với `verticalRange`. Vì `aimStick` bị ép nằm trong
+HÌNH TRÒN đơn vị (độ dài ≤ 1), sau khi nhân riêng theo hai trục, vùng cursor có thể tới chỉ là một HÌNH
+ELLIPSE nội tiếp trong khung chữ nhật — 4 góc thật của hình chữ nhật (cần cả hai trục đạt ±1 CÙNG LÚC,
+tức độ dài vector `√2`) nằm ngoài ellipse đó, **không bao giờ với tới được dù kéo xa cỡ nào hay theo
+hướng nào**. Càng tranh nào lấp gần hết cả `FIT_WIDTH` lẫn `FIT_HEIGHT` (80×90 và tương tự) thì góc
+càng "nhô ra xa" so với ellipse, càng rõ là không với tới.
+
+- **`updateAimGesture()`:** bỏ hẳn vector chung + nhân theo trục sau đó. Thêm `axisResponse(delta,
+  radius)` — tính phản hồi (clamp 0-1 rồi ease theo `aimDragSensitivity`, y hệt công thức cũ) RIÊNG cho
+  từng trục từ chính độ lệch có dấu của trục đó, không qua độ lớn vector chung. `aimStick.set(x, y)` giờ
+  gọi hàm này độc lập cho `dx`/`dy` — kéo đủ xa CẢ HAI trục cùng lúc (thẳng về phía góc) cho cả hai trục
+  đạt ±1 cùng lúc, cursor chạm đúng góc khung chữ nhật thay vì bị ellipse chặn lại.
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên dev server, viewport mobile giả lập 375×812, level 4
+(80×90): dispatch `PointerEvent` thật (không qua UI) vào `.aim-zone`, kéo chéo tăng dần từ tâm về góc
+trên-trái — dưới ngưỡng response radius (~155px) cursor tiệm cận góc mượt, ngay khi vượt ngưỡng
+(~158-160px) cursor nhảy thẳng tới đúng toạ độ góc khung tính tay (khớp pixel), `is-target-valid` bật
+đúng ngay trước điểm đó. Bắn thật (`pointerup`) từ vị trí đó → dọn đúng mảng cát ở góc trên-trái, số đạn
+giảm đúng 1 — xác nhận không chỉ hiển thị đúng mà bắn cũng trúng thật.
+
+---
+
+## 212. Booster Tray: chip vàng góc trái, giá booster hết charge chuyển xuống dưới icon kèm coinIcon (13/09)
+
+**Yêu cầu:** "Góc trái bên cùng của tray sẽ hiện coin currency hud, khi dùng hết booster, giá tiền sẽ để
+phía dưới biểu tượng booster thay vì ở trên, ngoài ra nên có biểu tượng coinIcon kế bên nó."
+
+- **`.booster-hud-gold`** (`SandGame.tsx`/`globals.css`) — chip vàng mới, pin góc trái-trên `.booster-hud`
+  (đã sẵn `position: absolute` nên không cần wrapper), chỉ đọc số dư (`wallet.gold`), không phải nút mua
+  — style pill vàng nhạt nhỏ (không dùng lại nguyên khối `.hub-gold-wrap` 44px, quá to cho tray 70px).
+- **`.booster-badge.is-price`** (badge giá khi booster hết charge, trước dùng chung style với badge đếm
+  charge — góc phải-trên icon): tách CSS riêng, chuyển xuống DƯỚI icon (`bottom: -8px`, căn giữa), thêm
+  `<CoinIcon />` cạnh số giá trong JSX. Badge đếm charge bình thường (còn hàng) giữ nguyên vị trí cũ.
+- **i18n:** thêm `boosterTrayGoldAria` (EN/VI) cho aria-label của chip vàng mới — không tái dùng
+  `coinsAria` (chip hub, text "buy more") vì chip tray này không phải nút bấm.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: vào Level 6, bắn cạn charge Radius Overcharge → nút chuyển
+sang trạng thái mua, badge giá "100" kèm coinIcon hiện đúng dưới icon; chip vàng góc trái tray hiện đúng
+số dư ví (10) suốt màn chơi.
+
+---
+
+## 213. Thêm skin Web-Slinger Cannon (chủ đề nhện gốc, không phải nhân vật có bản quyền), giá 1000 Blue Emerald (13/09)
+
+**Yêu cầu:** "tạo thêm 1 ụ súng có chủ đề spiderman, hãy thiết kế sao cho nó khác biệt với các loại súng
+khác, không chỉ thay đổi màu skin. Ngoài ra set giá súng là 1000 gem."
+
+Đổi hướng có chủ đích: Spider-Man là nhân vật có bản quyền (Marvel/Disney) — dùng tên/logo/bộ đồ thật
+của nhân vật này cho một món hàng bán thật bằng Blue Emerald là rủi ro vi phạm IP. Thay vào đó thiết kế
+một skin nhện/mạng nhện GỐC, không tên nhân vật, không logo, không sao chép bộ đồ cụ thể nào.
+
+- **`costumes.ts`:** costume mới `spider-cannon` ("Web-Slinger Cannon"), `build: buildSpiderCannon`.
+  Thêm hàm dùng chung `strutBetween(mesh, from, to, baseLength)` — xoay + kéo dài một mesh trục Y giữa 2
+  điểm bất kỳ (three.js không có sẵn primitive này), dùng cho chân nhện bên dưới.
+  Hình khối riêng (không chỉ đổi màu): 6 chân nhện gập khớp (2 đoạn/chân, có "đầu gối") vòng quanh bệ
+  thay vành trơn; một mạng nhện dạng nan hoa (ring + 8 spoke) thay vành trim mượt; một cặp mắt kính
+  trắng cỡ lớn gắn trên housing; hai răng nanh cong kẹp hai bên đầu nòng thay vành trim thường.
+- **`CostumeId`/`COSTUMES`/`COSTUME_ORDER`:** đăng ký costume mới, `price: 1000`, `flavor: "classic"`.
+- **`SandCannonEngine.ts`:** `SPIDER_SPARKLE_COLORS` (trắng/đỏ) + nhánh id trong `sparkleBlingColors()`.
+- **i18n:** `costumeName`/`costumeTagline` thêm nhánh `spider-cannon` (EN + VI) — thiếu bước này ban đầu
+  khiến header Skin screen hiện sai tên/tagline của costume đang equip thay vì costume đang preview,
+  phát hiện khi verify sống và sửa luôn trong cùng lượt.
+- **`economy.csv`:** thêm dòng override `costumePrice_spider-cannon,1000`.
+- **`GDD.md`:** thêm dòng bảng mục 11 + đoạn giải thích quyết định tránh IP.
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên Skin screen: card mới hiện đúng giá 1000 💎, preview 3D
+hiện đúng rig nhện (chân/mạng/mắt/răng nanh), tên/tagline "Web-Slinger Cannon — Sling. Aim. Web 'em up."
+hiện đúng sau khi sửa i18n.
+
+## 214. Thêm skin Viking Cannon (chủ đề Viking/châu Âu trung cổ), giá 1300 Blue Emerald (13/09)
+
+**Yêu cầu:** "tạo thêm 1 ụ súng có chủ đề viking, châu âu, hãy thiết kế sao cho nó khác biệt với các
+loại súng khác, không chỉ thay đổi màu skin. Ngoài ra set giá súng là 1300 gem."
+
+- **`costumes.ts`:** costume mới `viking-cannon` ("Viking Cannon"), `build: buildVikingCannon`. Mô-típ
+  chung (sừng, xích, đầu rồng, khiên), không gắn với biểu tượng văn hoá cụ thể nào có bản quyền.
+  Hình khối riêng: bệ đổi hẳn từ hình trụ sang dáng thùng rượu phình giữa/thắt hai đầu, dựng bằng
+  `THREE.LatheGeometry` (kỹ thuật profile-xoay, chưa skin nào khác dùng) kèm đai sắt + đinh tán quanh
+  vành; một cặp sừng cong thon 3 đoạn gắn trên housing (dùng lại `strutBetween`); một khiên tròn (đĩa
+  sơn đỏ + viền đồng + núm giữa) gắn mặt trước housing; một dải đinh tán xoắn ốc quấn quanh nòng thay
+  vành trim thẳng; đầu nòng tạo hình đầu rồng cách điệu (mõm gỗ + sừng tai + mắt) ôm quanh lỗ nòng — lỗ
+  nòng vẫn là "miệng rồng", không có hình khối nào che khuất đường đạn thật.
+- **`CostumeId`/`COSTUMES`/`COSTUME_ORDER`:** đăng ký, `price: 1300`, `flavor: "classic"`.
+- **`SandCannonEngine.ts`:** `VIKING_SPARKLE_COLORS` (đồng/vàng) + nhánh id trong `sparkleBlingColors()`.
+- **i18n:** `costumeName`/`costumeTagline` nhánh `viking-cannon` (EN + VI) — thêm ngay từ đầu lượt này,
+  rút kinh nghiệm từ lỗ hổng phát hiện ở #213.
+- **`economy.csv`:** dòng override `costumePrice_viking-cannon,1300`.
+- **`GDD.md`:** thêm dòng bảng mục 11 + đoạn mô tả kỹ thuật `LatheGeometry`.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: card mới giá 1300 💎, preview hiện đúng bệ thùng rượu/đai
+sắt/sừng/khiên/đầu rồng, tên/tagline "Viking Cannon — Raid. Aim. Plunder." hiện đúng ngay từ lần đầu.
+
+## 215. Thêm skin Cat Cannon (chủ đề mèo dễ thương, pastel), giá 1800 Blue Emerald (13/09)
+
+**Yêu cầu:** "tạo thêm 1 ụ súng có chủ đề mèo, hãy thiết kế sao cho nó khác biệt với các loại súng khác,
+không chỉ thay đổi màu skin. Ngoài ra set giá súng là 1800 gem. Color palette có màu pastel của màu
+hồng, trắng, cam, xám..., mèo dễ thương, có tai mèo, nhận diện của mèo, tuỳ do bạn thiết kế."
+
+- **`costumes.ts`:** costume mới `cat-cannon` ("Cat Cannon"), `build: buildCatCannon`. Bảng màu pastel
+  tự thiết kế (hồng/kem/cam/xám ban đầu — xám bị bỏ sau đó, xem #216), không gắn với giống mèo/nhân vật
+  cụ thể nào. Housing (quả cầu turret) đổi hẳn thành khuôn mặt thật: hai tai tam giác (cone 3 cạnh, kỹ
+  thuật low-poly-cho-silhouette) có tai trong hồng lồng bên trong, hai mắt tròn to kèm đốm sáng (chi
+  tiết "dễ thương" nhận diện nhất), mũi hồng nhỏ, 6 sợi ria (3 mỗi bên). Một cái đuôi cong vút lên từ bệ
+  súng theo 4 đốt thon dần (dùng lại `strutBetween`), có khoang kem ở chóp + 2 vòng sọc tabby. Bệ súng
+  viền quanh bằng 6 cụm dấu chân mèo (đệm chính + 3 ngón) thay vành trơn. Đầu nòng tạo hình một bàn chân
+  mèo thật (đệm chân + 4 ngón chân) ôm quanh lỗ nòng thay vành trim thường.
+- **`CostumeId`/`COSTUMES`/`COSTUME_ORDER`:** đăng ký, `price: 1800`, `flavor: "classic"`.
+- **`SandCannonEngine.ts`:** `CAT_SPARKLE_COLORS` (hồng/cam/kem) + nhánh id trong `sparkleBlingColors()`.
+- **i18n:** `costumeName`/`costumeTagline` nhánh `cat-cannon` (EN + VI).
+- **`economy.csv`:** dòng override `costumePrice_cat-cannon,1800`.
+- **`GDD.md`:** thêm dòng bảng mục 11 + đoạn mô tả chi tiết khuôn mặt/đuôi/dấu chân.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: card mới giá 1800 💎, preview hiện đúng mặt mèo (tai/mắt/mũi/
+ria)/đuôi cong/dấu chân quanh bệ, tên/tagline "Cat Cannon — Pounce. Aim. Purr." hiện đúng.
+
+## 216. Cat Cannon: bỏ màu xám khỏi bảng màu, đổi nòng súng + sọc đuôi sang hồng đậm (13/09)
+
+**Yêu cầu:** "tui muốn ụ súng màu khác ngoài xám." Hỏi lại người dùng cụ thể đổi phần nào/sang màu gì
+(dùng `AskUserQuestion`) — chọn: nòng Cat Cannon, sang hồng pastel.
+
+- **`costumes.ts`:** vật liệu `grey` (`0xcfcdd6`, dùng cho nòng súng + 2 vòng sọc trên đuôi) đổi thành
+  `rose` (`0xffaed0`) — một tông hồng đậm hơn, tách biệt với `pink` tươi (`0xffb9d6`) đã dùng cho tai
+  trong/mũi/đệm chân, để cả bộ chỉ còn hồng/cam/kem, không còn mảng màu trung tính.
+- **`SandCannonEngine.ts`:** `CAT_SPARKLE_COLORS` cập nhật theo (bỏ `0xcfcdd6`, thêm `0xffaed0`).
+- **`GDD.md`:** sửa câu mô tả bảng màu (bỏ "xám"), thêm đoạn ghi chú riêng cho lần đổi màu này.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: preview Cat Cannon, nòng súng hiện đúng hồng đậm thay vì
+xám, tổng thể rig chỉ còn tông hồng/cam/kem.
+
+---
+
+## 217. Cập nhật GDD.md cho các thay đổi #210-216 (13/09)
+
+**Yêu cầu:** "Cập nhật vào changelog toàn bộ thay đổi trong context này và áp dụng vào GDD luôn."
+
+Changelog (#210-216) ghi khi làm; costume mới (#213-215) đã tự cập nhật mục 11 ngay trong lúc làm. Lượt
+này bổ sung nốt hai phần chưa đụng tới — theo đúng quy ước sẵn có của tài liệu (thêm ghi chú có ngày vào
+section đang tồn tại, không renumber):
+
+- **4.1 (Cannon & input):** sửa dòng bảng `JOYSTICK_RESPONSE_RADIUS` (thêm phần hạ trần theo kích thước
+  màn hình), thêm đoạn giải thích lỗi ellipse gốc + cách sửa bằng `axisResponse` theo từng trục (#210,
+  #211).
+- **13.2 (HUD trong màn chơi):** thêm 2 dòng bảng — `.booster-hud-gold` (chip vàng góc trái tray) và
+  badge giá `.booster-badge.is-price` chuyển xuống dưới icon (#212).
+- **11 (Cosmetic/Skin súng):** đã cập nhật sẵn lúc làm #213-216 — không sửa gì thêm lượt này.
+
+**Test:** tài liệu thuần, không có code/test nào đổi theo — `git status --short` xác nhận chỉ
+`GDD.md`/`CHANGELOG-prototype.md` đổi thêm so với các entry trước đó.
+
+---
+
+## 218. Cannon-unlock banner: bỏ stroke, chữ in đậm, nhích "tap to continue" lên (13/09)
+
+**Yêu cầu:** "Chỉnh sửa dòng text you unlock rune cannon và tap to continue khi mở khóa skin mới — bỏ
+stroke, hãy khiến font chữ bold lên; đưa dòng tap to continue nhích lên chút."
+
+- **`.cannon-unlock-text`/`.cannon-unlock-tap`** (`globals.css`): bỏ hẳn `-webkit-text-stroke` +
+  `text-shadow` viền 4 hướng cả hai dòng; `font-weight` tăng 400 → 800 để độ đậm tự thay viền làm việc
+  nổi chữ trên nền rig phía sau.
+- **`.cannon-unlock-tap`:** `margin-bottom` tăng từ `max(28px, safe-area)` lên `max(48px, safe-area)` —
+  nhích dòng "TAP TO CONTINUE" lên khỏi mép dưới màn hình một chút.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: mua Web-Slinger Cannon ở Shop, xem banner unlock — chữ in
+đậm không viền, dòng tap-to-continue nằm cao hơn mép dưới rõ rệt so với trước.
+
+## 219. Cannon-unlock banner: "You unlocked" xuống dòng riêng + shadow chân chữ; Modes/Chain icon thật (13/09)
+
+**Yêu cầu:** "Nó nên là 'You unlocked' xuống dòng 'X cannon'. Ngoài ra cho thêm shadow ở dưới chân text
+you unlocked và tap to continue. Cập nhật Icons: cập nhật Mode icons vào thay thế vector icon ở modes
+hub, cập icon chainIcon vào booster chain."
+
+- **i18n:** thêm `youUnlockedPrefix` (EN "You unlocked" / VI "Bạn đã mở khoá") — `youUnlocked(name)`
+  đầy đủ vẫn giữ nguyên, chỉ dùng cho `aria-label` (đọc màn hình vẫn nghe một câu liền mạch).
+- **`SandGame.tsx`:** `.cannon-unlock-text` đổi từ 1 dòng `{youUnlocked(name)}` sang 2 dòng
+  `{youUnlockedPrefix}<br/>{costumeName}!` — verb và tên skin tách hẳn dòng.
+- **`globals.css`:** thêm `text-shadow: 0 4px 6px rgba(0,0,0,.4)` (headline) và `0 3px 5px rgba(0,0,0,.4)`
+  (tap-to-continue) — shadow đổ xuống chân chữ, không phải viền quanh chữ như bản cũ đã bỏ ở #218.
+- **`TAB_PHOTO_ICON`** (`SandGame.tsx`): thêm `modes: "/icons/ModesIcon.png"` — tab Modes giờ dùng ảnh
+  thật (tay cầm console) qua đúng cơ chế `PhotoTabIcon` 4 tab kia đã dùng (ảnh màu lúc active, silhouette
+  mask lúc idle), thay hẳn hình `<svg>` bảng màu vẽ tay cũ. `HubIcon` rút gọn lại còn đúng 1 nhánh
+  `PhotoTabIcon` vì không còn tab nào thiếu ảnh thật để cần nhánh `<svg>` dự phòng nữa.
+- **`BoosterIcon`** (`SandGame.tsx`): Chain Sort đổi từ dùng tạm icon Prism Shot sang `/icons/ChainIcon.png`
+  riêng; sửa luôn điều kiện gắn class `is-prism` (trước đây gắn cho "không phải Radius", tức gắn nhầm cả
+  Chain Sort) thành đúng "chỉ Prism Shot".
+
+**Test:** `tsc --noEmit` sạch. Verify sống: banner unlock hiện đúng "YOU UNLOCKED" / "WEB-SLINGER
+CANNON!" hai dòng, đọc `getComputedStyle` xác nhận `text-shadow` đúng giá trị trên cả hai dòng, không
+còn `-webkit-text-stroke`. Tab Modes hiện ảnh tay cầm console lúc active + silhouette lúc idle. Level 6:
+nút Chain Sort trong tray hiện icon xích riêng, khác hẳn Radius/Prism.
+
+---
+
+## 220. Skin Hub: progression skin đứng ngay sau skin mặc định, skin mua bằng Blue Emerald xếp sau (13/09)
+
+**Yêu cầu:** "Trong skin Hub, luôn cho progression skin gần skin mặc định. Còn skin mua bằng blue
+emerald sẽ sắp xếp sau. Làm xong cập nhật vào changelog và gdd."
+
+- **`COSTUME_ORDER`** (`costumes.ts`): đổi thứ tự từ `classic, rune, hero, frost, spider, viking, cat`
+  sang `classic, hero, frost, rune, spider, viking, cat` — skin mặc định dẫn đầu, 2 skin progression
+  (Hero L20, Frost L40 — mở bằng cách chơi, không mua được) bám ngay sau nó, rồi mới tới 4 skin mua thật
+  bằng Blue Emerald, xếp theo giá tăng dần (500 → 1000 → 1300 → 1800). Thứ tự này chỉ ảnh hưởng khay
+  hiển thị (`skin-grid`'s `.map`) — mọi chỗ khác đọc `COSTUME_ORDER` (`costumeUnlockedByLevel`,
+  `unseenAffordableSkins`, cache thumbnail) đều không phụ thuộc thứ tự nên đổi an toàn.
+- **`GDD.md` mục 11:** bảng skin đánh lại số thứ tự theo đúng khay mới, thêm đoạn giải thích quy tắc sắp
+  xếp; sửa luôn "2/4 skin" (đáng lẽ đã lỗi thời từ khi thêm skin thứ 5-7) thành "2/7 skin" ở đoạn ngay
+  dưới bảng.
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên Skin screen: khay hiện đúng thứ tự Field Cannon →
+Progression (Hero) → Progression (Frost) → Rune (500) → Web-Slinger (1000) → Viking (1300) → Cat (1800).
+
+---
+
+## 221. Daily Login: T2-T6 trả vàng cố định bằng 1 level, T7-CN bỏ hẳn vàng (chỉ booster); lịch bỏ số vàng, ngày hiện dạng ordinal (13/09)
+
+**Yêu cầu:** "sửa lại calender. Tiền nhận mỗi ngày chỉ nên tương đương với 1 level, còn riêng 2 ngày
+cuối tuần thì chỉ tặng booster. Hình thức calender: Loại bỏ số coin, còn số ngày phải theo format text
+như 2nd, 13th, 1st" — sau đó chỉnh lại: "lượt bỏ CHỮ SỐ coin chứ icon coins vẫn hiện chứ? Mỗi ngày tặng
+10 coins" (icon coin vẫn giữ, chỉ bỏ con số; mức vàng chốt ở 10, không phải 20 như lần chỉnh đầu).
+
+- **`DAILY_LOGIN_REWARDS`** (`economy.ts`): từ bảng tăng dần `[10,12,15,18,20,30,40]` đổi thành
+  `[10,10,10,10,10,0,0]` — T2-T6 trả CÙNG một mức vàng cố định (10, một phần thưởng của
+  `levelGoldReward(50)` — level khó trung bình), T7/CN không còn trả vàng (0), chỉ còn phần thưởng
+  booster. `economy.csv` (override runtime) cập nhật đồng bộ.
+- **`claimDailyLoginWithFlight`** (`SandGame.tsx`): bỏ animation vàng bay tới HUD khi `reward` = 0
+  (cuối tuần) — không còn cảnh 6 đồng vàng bay tới ví trong khi thực tế 0 vàng được trả.
+- **Nút Claim** tự đổi nhãn theo `dailyLogin.reward`: hiện `s.claimCoins(reward)` khi có vàng, hiện
+  `s.claimBooster(boosterName)` ("Claim +1 X" / "Nhận +1 X") khi cuối tuần không có vàng — thêm key
+  i18n `claimBooster` (EN/VI).
+- **Lưới lịch** (`SandGame.tsx`, `globals.css`): bỏ hẳn `CoinIcon` + số vàng khỏi MỌI ô (không riêng
+  cuối tuần) — mức vàng ngày thường giờ giống hệt nhau trên mọi ô nên con số không còn nói lên điều gì;
+  ô ngày thường không có booster giữ lại icon coin (không kèm số) căn giữa ô qua `.daily-login-cell-coin`
+  mới. Số ngày (`cell.dayOfMonth`) đổi từ số trần sang dạng ordinal tiếng Anh (`ordinalDay()` hàm mới —
+  "1st"/"2nd"/"13th"...) — cố định định dạng này bất kể ngôn ngữ app đang chọn, vì đây là format người
+  dùng yêu cầu cụ thể, không phải copy cần dịch.
+
+**Test:** `tsc --noEmit` sạch. `sand-economy.test.ts` cập nhật theo bảng thưởng mới, `npm test`:
+175/176 pass (1 fail còn lại — đếm level trong `level-editor.test.ts`, xác nhận có sẵn từ trước, không
+liên quan). Verify sống: mở Daily Login đúng ngày cuối tuần thật (13/09/2026, Chủ Nhật) — ô hôm nay
+không hiện icon coin, nút Claim hiện đúng tên booster; các ô ngày thường hiện icon coin không số.
+
+## 222. Daily Login: cuối tuần luân phiên booster Radius/Prism, ngày 13 hàng tháng tặng Chain Sort; icon booster to & giữa ô (13/09)
+
+**Yêu cầu:** "Ngày thường không có icon tiền xu, icon booster nên to ra và để ở giữa. riêng ngày 13 tặng
+booster chain còn nhũng ngày cuối tuần khác luân phiên booster radius và prism."
+
+- **`WEEKEND_BOOSTER_PERK`** (`economy.ts`, thay `DAILY_LOGIN_BOOSTER_PERK` cũ): Thứ Bảy tặng Radius
+  Overcharge, Chủ Nhật tặng Prism Shot — hai ngày cuối tuần không còn cùng phát 1 loại booster như cũ.
+- **`CHAIN_SORT_BONUS_DAY_OF_MONTH = 13`** + hàm **`dailyLoginBoosterPerk(dayOfMonth, weekday)`** mới:
+  ngày 13 dương lịch hàng tháng LUÔN tặng thêm 1 lượt Chain Sort, bất kể rơi vào thứ nào — thắng cả luật
+  cuối tuần (ngày 13 trùng T7/CN vẫn ra Chain Sort, không phải Radius/Prism) và cộng thêm vào vàng bình
+  thường nếu ngày 13 rơi vào ngày thường. Áp dụng cả trong `computeDailyLoginState` lẫn
+  `getDailyLoginCalendar` (lưới tháng).
+- **`.daily-login-perk-icon`** (`globals.css`): bỏ định vị góc dưới-phải (`position:absolute`), tăng
+  kích thước 15px → 30px (icon con 10px → 20px) — nằm giữa ô nhờ flex-center có sẵn của
+  `.daily-login-cell`, không còn là badge nhỏ ở góc.
+
+**Test:** `tsc --noEmit` sạch. `sand-economy.test.ts` thêm test cho luân phiên cuối tuần + ngày 13,
+175/176 pass (1 fail pre-existing không liên quan). Verify sống: ngày 13/09/2026 (hôm nay, trùng Chủ
+Nhật) hiện icon Chain Sort to giữa ô + nút "Claim +1 Chain Sort"; các ngày cuối tuần khác trong tháng
+hiện đúng 2 icon Radius/Prism xen kẽ.
+
+## 223. GameDevOption: thêm nút "Unlock all content", sắp xếp lại vị trí (13/09)
+
+**Yêu cầu:** "trong dev option Thêm nút bấm như unlock all content: tức là mở khóa toàn bộ các bundle,
+heart currency, level trong gallery, booster, canon,.... Ngoài ra sắp xếp các nút, unlock all map nên
+ngang hàng với level editor còn all content nên phía reset entire game."
+
+- **"Unlock all maps"** (`SandGame.tsx`) chuyển lên ngang hàng với **"Level editor"** trong
+  `.settings-devlink-grid` (hàng đầu tiên) — trước đó nằm cuối dãy nút 2-cột.
+- **Nút "Unlock all content" mới**, đặt full-width ngay phía trên "Reset entire game": 1 tap chạy gộp
+  `markLevelCleared` cho mọi level trong `playables` (mở hết Gallery — và tự kéo theo mở Hearts +
+  Bundles/Special Offer có hearts, vì `HEARTS_UNLOCK_LEVEL_ID` nằm trong số đó), `unlockCostume` cho
+  mọi id trong `COSTUME_ORDER` (mở hết cannon/skin), và `addBoosterCharges(type, 50)` cho cả 3 loại
+  booster (`BOOSTER_TYPES`, thêm import từ `sand-types.ts`) rồi reload. Class mới `.settings-devlink.is-highlight`
+  (`globals.css`, màu `--accent`) để phân biệt với "Reset entire game" (`.is-danger`) — một nút CẤP
+  phát, một nút XOÁ.
+
+**Test:** `tsc --noEmit` sạch, `npm test` không đổi kết quả (175/176, 1 fail pre-existing). Verify
+sống: bấm "Unlock all content" → reload → HUD hiện Hearts (5), Gallery mọi level mở khoá, khay skin
+không còn ổ khoá, Shop hiện Special Offers/Bundles có hearts, booster Radius Overcharge lên 51 sở hữu
+(1 starter + 50 vừa cấp).
+
+## 224. Sửa emerald "snap" vào vị trí cố định sau khi đã rơi và đứng yên trong reward chest (13/09)
+
+**Yêu cầu:** "chỉnh sửa blue emerald rớt ra khỏi chest, sau khi rơi ra khỏi chest, tôi muốn nó yên ở vị
+trí luôn chứ không tự nhiên snap rồi có fixed position trông rất kỳ quặc."
+
+- **`updateGems`** (`chest-model.ts`): trước đây, ngay khi một viên đá nảy chậm dần xuống dưới
+  `GEM_SETTLE_SPEED`, nó được đánh dấu `resting = true` NHƯNG vẫn đứng ở độ cao nảy tạm `GEM_LAND_Y` với
+  góc xoay giữa chừng — một nhánh `else` riêng sau đó tiếp tục lerp độ cao về `GEM_REST_Y` thật và slerp
+  góc xoay về `restPose` trong vài khung hình kế tiếp. Kết quả: viên đá trông như đã rơi xong và đứng
+  yên, rồi bỗng tự dịch chuyển/xoay thêm một nhịp để "chốt" vào vị trí cuối — đúng cảm giác "kỳ quặc"
+  được mô tả. Sửa: gộp làm một bước duy nhất — vừa xác định vận tốc đủ chậm để dừng là gán thẳng
+  `position.y = GEM_REST_Y` và `quaternion = restPose` ngay lập tức, bỏ hẳn nhánh `else` lerp/slerp hậu
+  kỳ. Toạ độ X/Z giữ nguyên đúng chỗ vật lý để viên đá rơi tới (không tính lại theo công thức khác) nên
+  đây thực sự là vị trí nghỉ cuối cùng, không phải một chỗ tạm chờ chỉnh tiếp.
+
+**Test:** `tsc --noEmit` sạch, `npm test` không đổi kết quả. Verify sống: mở reward chest nhiều lần
+(dev tool "Full reward track"), chụp màn hình cách nhau vài giây sau khi các viên đá đã rơi xong — vị
+trí/góc xoay giữ nguyên y hệt giữa các lần chụp, không còn dịch chuyển thêm sau khi đã trông như đã
+dừng.

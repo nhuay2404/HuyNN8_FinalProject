@@ -492,6 +492,25 @@ const HERO_SPARKLE_COLORS = [0x3fae5a, 0xf4c430, 0x2fd0c4];
  * — icy white/blue/cyan, so the shards read as flung ice glinting rather than
  * the rune costume's warmer magic. */
 const FROST_SPARKLE_COLORS = [0xffffff, 0xbdf3ff, 0x7fb8d8, 0xd8eefc];
+/** The Web-Slinger Cannon's own bling palette (`costumes.ts`'s
+ * `buildSpiderCannon`) — its own red shell and pale web-silk instead of the
+ * rune costume's warmer magic. `classic` flavor, so this only reaches the
+ * shot at all via `sparkleBlingColors`' per-id check below, not the
+ * flavor === "magic" branch every other bling palette rides in on. */
+const SPIDER_SPARKLE_COLORS = [0xffffff, 0xe9e9e9, 0xb31217, 0xff5b5b];
+/** The Viking Cannon's own bling palette (`costumes.ts`'s
+ * `buildVikingCannon`) — bronze and gold-glint instead of any other
+ * costume's palette, so the shards read as struck metal/embers off this
+ * skin's own gear. `classic` flavor, reached the same way the spider
+ * costume's palette is: `sparkleBlingColors`'s per-id check, not the
+ * flavor === "magic" branch. */
+const VIKING_SPARKLE_COLORS = [0xffd76a, 0xb8862b, 0xe3d7b4, 0xa8281f];
+/** The Cat Cannon's own bling palette (`costumes.ts`'s `buildCatCannon`) —
+ * its own pastel pink/peach/cream instead of any other costume's palette,
+ * so the shards read as fluffy pastel fluff off this skin's own fur.
+ * `classic` flavor, reached the same way the spider/viking costumes'
+ * palettes are: `sparkleBlingColors`'s per-id check. */
+const CAT_SPARKLE_COLORS = [0xffb9d6, 0xffc599, 0xfff3ea, 0xffaed0];
 
 // ---- the ammo the cannon is carrying ------------------------------------
 // The HUD already names the bullet in hand, but the cannon itself said nothing
@@ -2164,6 +2183,9 @@ export class SandCannonEngine {
     if (this.costume.flavor === "magic") return SPARKLE_COLORS;
     if (this.costume.id === "hero-cannon") return HERO_SPARKLE_COLORS;
     if (this.costume.id === "frost-cannon") return FROST_SPARKLE_COLORS;
+    if (this.costume.id === "spider-cannon") return SPIDER_SPARKLE_COLORS;
+    if (this.costume.id === "viking-cannon") return VIKING_SPARKLE_COLORS;
+    if (this.costume.id === "cat-cannon") return CAT_SPARKLE_COLORS;
     return null;
   }
 

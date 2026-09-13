@@ -170,6 +170,12 @@ export interface Strings {
   lockedSuffix: (price: number) => string;
   affordableSuffix: string;
   youUnlocked: (name: string) => string;
+  /** Same announcement as `youUnlocked`, split at its natural verb/name
+   * boundary — SandGame.tsx's visible `.cannon-unlock-text` renders this on
+   * its own line above the skin's own name (on request: "'You unlocked'
+   * xuống dòng 'X cannon'"), while `youUnlocked` itself stays intact for the
+   * one-line aria-label a screen reader gets instead. */
+  youUnlockedPrefix: string;
   tapToContinue: string;
   /** Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`), one
    * string per callout beat — see `SandGame.tsx`'s `freezeFtueStep`. Shown
@@ -206,6 +212,22 @@ export interface Strings {
    * skin's own name the same way — "clear Level 20" rather than a price that
    * does not apply to it. */
   progressionLockedSuffix: (level: number) => string;
+  /** Replaces `progressionLabel` once the skin's own `unlockLevel` has
+   * actually been cleared — the main preview button (and the grid card's
+   * mini pill) becomes a real tappable "Unlock" action at that point instead
+   * of staying a disabled label forever. */
+  unlockLabel: string;
+  /** The "Frame cleared" card's follow-up prompt (SandGame.tsx's
+   * `skinTryPrompt`) once a level-progression skin's own level was just
+   * cleared for the first time — asks whether to go try it on the spot
+   * rather than auto-equipping and celebrating immediately. */
+  skinTryQuestion: (name: string) => string;
+  /** The prompt's two answers — "Equip" sends the player to the Skin screen
+   * to actually unlock it there (same `cannon-unlock-banner` reveal a Shop
+   * purchase gets); "No" just continues to the next level, leaving the skin
+   * earned-but-not-yet-unlocked (shows as a tappable Unlock card later). */
+  equipLabel: string;
+  noLabel: string;
 
   // ---- Gallery -----------------------------------------------------------------
   galleryTitle: string;
@@ -289,6 +311,8 @@ export interface Strings {
   close: string;
   dayLabel: (n: number) => string;
   claimCoins: (amount: number) => string;
+  /** The Claim button's label on a weekend day (`dailyLogin.reward` is 0 — booster only, no gold to name). */
+  claimBooster: (boosterName: string) => string;
   /** The weekend's booster-perk icon's accessible name/tooltip ("+1 <booster>") — the cell itself shows only the icon. */
   dailyLoginPerkTag: (boosterName: string) => string;
   /** The current streak, shown under the calendar once it is 2+. */
@@ -419,7 +443,19 @@ const EN: Strings = {
   dragToAimCaption: "Drag to aim · release to fire",
 
   costumeName: (id) =>
-    id === "rune-cannon" ? "Rune Cannon" : id === "hero-cannon" ? "Hero Cannon" : id === "frost-cannon" ? "Frost Cannon" : "Field Cannon",
+    id === "rune-cannon"
+      ? "Rune Cannon"
+      : id === "hero-cannon"
+        ? "Hero Cannon"
+        : id === "frost-cannon"
+          ? "Frost Cannon"
+          : id === "spider-cannon"
+            ? "Web-Slinger Cannon"
+            : id === "viking-cannon"
+              ? "Viking Cannon"
+              : id === "cat-cannon"
+                ? "Cat Cannon"
+                : "Field Cannon",
   costumeTagline: (id) =>
     id === "rune-cannon"
       ? "Charge. Sparkle. Repeat."
@@ -427,7 +463,13 @@ const EN: Strings = {
         ? "Quest. Aim. Onward."
         : id === "frost-cannon"
           ? "Chill. Aim. Shatter."
-          : "Load. Aim. Boom.",
+          : id === "spider-cannon"
+            ? "Sling. Aim. Web 'em up."
+            : id === "viking-cannon"
+              ? "Raid. Aim. Plunder."
+              : id === "cat-cannon"
+                ? "Pounce. Aim. Purr."
+                : "Load. Aim. Boom.",
   buyLabel: "Buy",
   selectLabel: "Select",
   selectedLabel: "Selected",
@@ -435,6 +477,7 @@ const EN: Strings = {
   lockedSuffix: (price) => `, locked — ${price} Blue Emerald`,
   affordableSuffix: ", you can afford this",
   youUnlocked: (name) => `You unlocked ${name}!`,
+  youUnlockedPrefix: "You unlocked",
   tapToContinue: "Tap to continue",
   ftueFreezeIntro: "This is a Freeze Orb — hit it and it locks the whole pile in place!",
   ftueFreezeExplainThaw: "To break the freeze, clear every bit of sand in its colour!",
@@ -444,6 +487,10 @@ const EN: Strings = {
   ftueChainSortIntro: "This is Chain Sort — it clears the whole connected patch of that colour, corners included, no radius limit. Tap it to arm it!",
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, locked — clear Level ${level}`,
+  unlockLabel: "Unlock",
+  skinTryQuestion: (name) => `You unlocked ${name}! Want to try it now?`,
+  equipLabel: "Equip",
+  noLabel: "No",
 
   galleryTitle: "Gallery",
   lockedCardTitle: "Clear the level before this one to unlock",
@@ -515,6 +562,7 @@ const EN: Strings = {
   monthTitle: (date) => date.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
   dayLabel: (n) => `Day ${n}`,
   claimCoins: (amount) => `Claim ${amount} coins`,
+  claimBooster: (boosterName) => `Claim +1 ${boosterName}`,
 };
 
 /** `Strings.offerFlag`'s Vietnamese lookup — see that key's own comment. */
@@ -593,7 +641,19 @@ const VI: Strings = {
   dragToAimCaption: "Kéo để ngắm · thả để bắn",
 
   costumeName: (id) =>
-    id === "rune-cannon" ? "Pháo Rune" : id === "hero-cannon" ? "Pháo Anh Hùng" : id === "frost-cannon" ? "Pháo Băng Giá" : "Pháo Chiến Trường",
+    id === "rune-cannon"
+      ? "Pháo Rune"
+      : id === "hero-cannon"
+        ? "Pháo Anh Hùng"
+        : id === "frost-cannon"
+          ? "Pháo Băng Giá"
+          : id === "spider-cannon"
+            ? "Pháo Tơ Nhện"
+            : id === "viking-cannon"
+              ? "Pháo Viking"
+              : id === "cat-cannon"
+                ? "Pháo Mèo"
+                : "Pháo Chiến Trường",
   costumeTagline: (id) =>
     id === "rune-cannon"
       ? "Nạp phép. Lấp lánh. Lặp lại."
@@ -601,7 +661,13 @@ const VI: Strings = {
         ? "Phiêu lưu. Ngắm. Tiến bước."
         : id === "frost-cannon"
           ? "Đóng băng. Ngắm. Vỡ tan."
-          : "Nạp đạn. Ngắm. Bùm.",
+          : id === "spider-cannon"
+            ? "Bắn tơ. Ngắm. Tóm gọn."
+            : id === "viking-cannon"
+              ? "Cướp bờ. Ngắm. Thu chiến lợi phẩm."
+              : id === "cat-cannon"
+                ? "Vồ mồi. Ngắm. Gừ gừ."
+                : "Nạp đạn. Ngắm. Bùm.",
   buyLabel: "Mua",
   selectLabel: "Chọn",
   selectedLabel: "Đã chọn",
@@ -609,6 +675,7 @@ const VI: Strings = {
   lockedSuffix: (price) => `, đang khoá — ${price} Blue Emerald`,
   affordableSuffix: ", bạn đủ tiền mua",
   youUnlocked: (name) => `Bạn đã mở khoá ${name}!`,
+  youUnlockedPrefix: "Bạn đã mở khoá",
   tapToContinue: "Chạm để tiếp tục",
   ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại!",
   ftueFreezeExplainThaw: "Muốn phá băng? Dọn sạch hết cát cùng màu với nó!",
@@ -620,6 +687,10 @@ const VI: Strings = {
   // way "Blue Emerald" above stays untranslated.
   progressionLabel: "Progression",
   progressionLockedSuffix: (level) => `, đang khoá — hoàn thành Level ${level}`,
+  unlockLabel: "Mở khoá",
+  skinTryQuestion: (name) => `Bạn đã nhận ${name}! Muốn thử luôn không?`,
+  equipLabel: "Trang bị",
+  noLabel: "Không",
 
   galleryTitle: "Bộ sưu tập",
   lockedCardTitle: "Hoàn thành màn trước để mở khoá",
@@ -691,6 +762,7 @@ const VI: Strings = {
   monthTitle: (date) => `Tháng ${date.getMonth() + 1}, ${date.getFullYear()}`,
   dayLabel: (n) => `Ngày ${n}`,
   claimCoins: (amount) => `Nhận ${amount} xu`,
+  claimBooster: (boosterName) => `Nhận +1 ${boosterName}`,
 };
 
 const PACKS: Record<Language, Strings> = { en: EN, vi: VI };

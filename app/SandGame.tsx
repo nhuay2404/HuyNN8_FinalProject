@@ -25,6 +25,7 @@ import {
 } from "./game/costumes";
 import {
   addGold,
+  addBoosterCharges,
   boosterPrice,
   claimRewardTrack,
   getRewardTrackSnapshot,
@@ -88,7 +89,7 @@ import {
 import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
 import { getAimSensitivity, setAimSensitivity } from "./game/aim-sensitivity";
-import type { BoosterType, SandColor, SandGameState, SandLevelConfig } from "./game/sand-types";
+import { BOOSTER_TYPES, type BoosterType, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 import { getLanguage, LANGUAGES, LANGUAGE_NAME, setLanguage, subscribeLanguage, t, type Strings } from "./i18n";
 
@@ -266,31 +267,18 @@ function hubTabNames(s: Strings): Record<HubTab, string> {
   return { shop: s.tabShop, skin: s.tabSkin, home: s.tabHome, gallery: s.tabGallery, modes: s.tabModes };
 }
 
-/** One small shape set per tab (Gallery and Modes — the other three now
- * use a real photographic asset instead, see `TAB_PHOTO_ICON` below), line
- * art at rest and filled solid the instant its tab is active — a single
- * toggle in globals.css
- * (`.hub-nav-icon`'s `fill`/`stroke`, flipped by `.is-active`) rather than
- * two different icons, so every path here is drawn once and has to work
- * both ways: recognisable as an outline (no individual `fill`/`stroke` on
- * any path — they inherit the toggle from the `<svg>` itself) and still
- * read as a solid silhouette once filled, even though the odd fine line
- * (the palette's paint dabs) is only ever going to show up in the outline
- * version — normal for an outline/filled icon pair, the same way a filled
- * Material icon carries less line detail than its own outline variant.
- * Shapes stay off-centre/off-angle on purpose rather than built from a
- * mirrored primitive. */
-/** Tabs whose icon is a real photographic asset (`/public/icons/*.png`)
- * rather than the hand-drawn line art `HubIcon` draws for the rest —
- * Modes is the only one still on that shared path below. Home got the
- * reference house artwork first; Shop, Skin and Gallery followed with their
- * own matching pieces (a shopping cart, a cannon on a coat hanger, a framed
- * picture). */
+/** Every `HubTab` now has its own real photographic asset
+ * (`/public/icons/*.png`) rather than hand-drawn line art — Modes was the
+ * last holdout (a placeholder paint-palette `<svg>`, on request replaced
+ * with real artwork). Home got the reference house artwork first; Shop,
+ * Skin, Gallery and Modes followed with their own matching pieces (a
+ * shopping cart, a cannon on a coat hanger, a framed picture, a controller). */
 const TAB_PHOTO_ICON: Partial<Record<HubTab, string>> = {
   home: "/icons/HomeIcon.png",
   shop: "/icons/ShoppingCartIcon.png",
   skin: "/icons/CannonSkinIcon.png",
   gallery: "/icons/GalleryIcon.png",
+  modes: "/icons/ModesIcon.png",
 };
 
 /**
@@ -318,45 +306,33 @@ function PhotoTabIcon({ src, active }: { src: string; active: boolean }) {
   );
 }
 
+/** Every `HubTab` resolves through `TAB_PHOTO_ICON` now (Modes was the last
+ * one still drawing hand-authored `<svg>` line art) — this stays a thin
+ * wrapper rather than inlining `PhotoTabIcon` at each call site so a future
+ * tab with no artwork yet still has one place to add a fallback shape. */
 function HubIcon({ tab, active }: { tab: HubTab; active: boolean }) {
   const photoSrc = TAB_PHOTO_ICON[tab];
-  if (photoSrc) return <PhotoTabIcon src={photoSrc} active={active} />;
-  return (
-    <svg className="hub-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {tab === "modes" && (
-        <>
-          {/* Unchanged from the "Customize" paint-palette mark this tab used
-              to carry — no dedicated Modes glyph exists yet, and this still
-              reads fine as a generic placeholder shape until one does. */}
-          <path d="M12 4.2c4.6 0 7.8 3.2 7.8 7 0 2.6-1.8 3.6-3.4 3.6h-2c-.9 0-1.5.7-1.2 1.5.2.5.6.9.6 1.6 0 1.1-1 1.9-2.2 1.9C7 19.8 4 16.2 4 11.6c0-4.2 3.4-7.4 8-7.4Z" />
-          <circle cx="8.4" cy="9.8" r="1.4" />
-          <circle cx="12.9" cy="6.9" r="1.6" />
-          <circle cx="16.2" cy="10.5" r="1.2" />
-          <circle cx="14.5" cy="14.5" r="1.5" />
-        </>
-      )}
-    </svg>
-  );
+  if (!photoSrc) return null;
+  return <PhotoTabIcon src={photoSrc} active={active} />;
 }
 
 /**
  * No text on a booster button (spec §6) — just an icon reusing gameplay
- * language the player already knows. Real artwork now
- * (`/public/icons/RadiusIncreaseIcon.png`, `/public/icons/PrismChargeIcon.png`)
- * rather than hand-drawn SVG, same as `CancelIcon`/`ReturnMainHubIcon` — one
- * component so the in-play HUD tray and the Shop cards stay on the same
+ * language the player already knows. Real artwork for all three now
+ * (`/public/icons/RadiusIncreaseIcon.png`, `PrismChargeIcon.png`,
+ * `ChainIcon.png` — Chain Sort's own art replaces the borrowed Prism Shot
+ * icon it used as a stand-in), same as `CancelIcon`/`ReturnMainHubIcon` —
+ * one component so the in-play HUD tray and the Shop cards stay on the same
  * glyph automatically.
  */
 function BoosterIcon({ type }: { type: BoosterType }) {
-  // Chain Sort has no art of its own yet (on request: "dùng tạm hình booster
-  // prism") — it just falls into the same "not Radius Overcharge" branch
-  // Prism Shot already occupies, icon and tint both, so swapping in real art
-  // later is a one-line change right here rather than a hunt through every
-  // spot that reads `type === "prismShot"` for styling.
-  const src = type === "radiusOvercharge" ? "/icons/RadiusIncreaseIcon.png" : "/icons/PrismChargeIcon.png";
+  const src =
+    type === "radiusOvercharge" ? "/icons/RadiusIncreaseIcon.png"
+    : type === "chainSort" ? "/icons/ChainIcon.png"
+    : "/icons/PrismChargeIcon.png";
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img className={`booster-icon${type !== "radiusOvercharge" ? " is-prism" : ""}`} src={src} alt="" aria-hidden="true" />
+    <img className={`booster-icon${type === "prismShot" ? " is-prism" : ""}`} src={src} alt="" aria-hidden="true" />
   );
 }
 
@@ -523,6 +499,27 @@ function StepperArrow({ direction }: { direction: "prev" | "next" }) {
  * rather than the element, so they keep applying unchanged. */
 function CoinIcon() {
   return <img className="coin-icon" src="/icons/CoinIcon.png" alt="" aria-hidden="true" />;
+}
+
+/** The daily-login calendar's cell label — day-of-month as an ordinal
+ * ("1st", "2nd", "13th") instead of a bare number, per the 2026-09e ask.
+ * Kept as plain English suffixes regardless of `s`'s locale: the calendar
+ * grid no longer labels weekdays at all (`getDailyLoginCalendar`'s own doc
+ * comment), so this is the one date label left on the grid and the ask was
+ * specifically for this "2nd/13th/1st" text shape, not a translated one. */
+function ordinalDay(day: number): string {
+  const remainder100 = day % 100;
+  if (remainder100 >= 11 && remainder100 <= 13) return `${day}th`;
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
 }
 
 /** The hub currency HUD's own "buy more" mark — real artwork
@@ -1274,6 +1271,20 @@ export default function SandGame() {
   const onboardingLockLifted =
     raw.id >= WIN_CLOSE_BUTTON_FROM_LEVEL_ID || hasClearedLevel(WIN_CLOSE_BUTTON_FROM_LEVEL_ID - 1);
 
+  // Nothing to show yet on a level whose one lesson is "aim and shoot"
+  // (`ftueGesture`) or that explicitly asks to hide the tray's buttons
+  // (`hideBoosterHud`, e.g. level 2, boosters aren't taught until level 3)
+  // — the booster tray's own dock still renders with no buttons in it (see
+  // `.booster-hud`'s own comment further down). Only for the FIRST time
+  // through, though (`onboardingLockLifted`, same shape as its own doc
+  // comment above): once level 3 has been cleared once, a Gallery replay of
+  // level 1/2 shows the real buttons same as any other level. The tray's
+  // gold chip shares this exact gate (on request: "Xóa Coin Currency HUD ở
+  // level 1, 2 ở trên booster tray") — there is nothing to spend it on
+  // before boosters exist, so a balance there would just be clutter on a
+  // dock with no buttons under it.
+  const showBoosterButtons = (!level.ftueGesture && !level.hideBoosterHud) || onboardingLockLifted;
+
   // Drives the two "demo-*" freeze-tutorial steps: fires the scripted
   // shot(s) for that beat, then moves straight to the next caption once
   // they land — no tap gates a demo step, the shots landing is what ends
@@ -1517,7 +1528,7 @@ export default function SandGame() {
   const goldTweenRef = useRef<number | null>(null);
   const [goldBump, setGoldBump] = useState(0);
   const goldHudRef = useRef<HTMLSpanElement | null>(null);
-  const todayCoinRef = useRef<HTMLSpanElement | null>(null);
+  const todayCoinRef = useRef<HTMLDivElement | null>(null);
   const coinBurstId = useRef(0);
   const [coinBursts, setCoinBursts] = useState<
     Array<{ id: number; fromX: number; fromY: number; dx: number; dy: number; delay: number }>
@@ -1603,6 +1614,9 @@ export default function SandGame() {
     setDailyLoginOverride(claimed);
     setDailyCalendarOverride(getDailyLoginCalendar(devNow()));
     setDailyLoginMissedClaim(false);
+    // Weekend claims pay no gold at all (`DAILY_LOGIN_REWARDS[5]`/`[6]` are
+    // 0 — booster only), so there is nothing to fly to the wallet.
+    if (claimed.reward <= 0) return;
     const fromEl = todayCoinRef.current;
     const toEl = goldHudRef.current;
     if (!fromEl || !toEl) {
@@ -1942,21 +1956,16 @@ export default function SandGame() {
   // never a single unconfirmed tap, and emerald is scarcer than gold.
   const [skinBuyConfirm, setSkinBuyConfirm] = useState<CostumeId | null>(null);
   // The full-screen "you unlocked it" reveal — which cannon it is
-  // celebrating, or null the rest of the time. Shared by two triggers now
-  // (on request — a level-clear unlock has to get the same reveal a fresh
-  // Shop purchase does): `buySkin` sets it from the skin screen, and the
-  // "Frame cleared" card's Continue button sets it too, further down, once
-  // `pendingLevelUnlock` says a level just unlocked one. Cleared only by
-  // `dismissCannonUnlock` (the player's own tap) — there is no timer that
-  // closes this on its own, the reveal is meant to hold until they actually
-  // move past it.
+  // celebrating, or null the rest of the time. Shared by two triggers, both
+  // on the Skin screen now (on request — a level-progression unlock and a
+  // Shop purchase are meant to look identical): `buySkin` sets it after
+  // spending emerald, `unlockProgressionSkin` sets it after a level-earned
+  // skin's own Unlock tap. A level clear no longer sets this directly — see
+  // `skinTryPrompt` for the "want to try it?" step that now sits between a
+  // win and this reveal. Cleared only by `dismissCannonUnlock` (the player's
+  // own tap) — there is no timer that closes this on its own, the reveal is
+  // meant to hold until they actually move past it.
   const [cannonUnlock, setCannonUnlock] = useState<CostumeId | null>(null);
-  // Set alongside `cannonUnlock` only by the level-clear trigger, never by
-  // `buySkin` — the level index `dismissCannonUnlock` should open once the
-  // reveal closes, instead of just closing it and leaving the player
-  // sitting on the "Frame cleared" card underneath. `null` means "this
-  // reveal came from the skin screen, just close it" (`buySkin`'s own case).
-  const [cannonUnlockAdvanceTo, setCannonUnlockAdvanceTo] = useState<number | null>(null);
   // Whether the "tap to continue" prompt has appeared yet — starts false the
   // instant the reveal opens so the very first frame cannot be tapped past
   // before the player has even read the name, then flips true after a fixed
@@ -2002,6 +2011,25 @@ export default function SandGame() {
     setCannonUnlock(id);
     engine?.playUnlockCelebration();
   }, [pushToast, engine]);
+
+  /**
+   * The Skin screen's Unlock button for a `unlockLevel` skin whose level has
+   * already been cleared (`previewUnlockRequirementMet`) — the level-earned
+   * counterpart to `buySkin` above, minus the spend. On request: a level
+   * clear used to grant and equip the skin immediately, with the reveal
+   * firing the instant Continue was tapped; now the win only makes this
+   * button live (see `skinTryPrompt`'s own comment for the "want to try it?"
+   * step in between), and ownership + the reveal only happen here, once the
+   * player actually taps it.
+   */
+  const unlockProgressionSkin = useCallback((id: CostumeId) => {
+    unlockCostume(id);
+    setSelectedCostume(id);
+    setCostume(id);
+    setJustEquippedPulse(true);
+    setCannonUnlock(id);
+    engine?.playUnlockCelebration();
+  }, [engine]);
 
   // What today looked like the FIRST time this page checked — same
   // `readBoot`/`SERVER_BOOT` shape just above (a value `useSyncExternalStore`
@@ -2268,23 +2296,12 @@ export default function SandGame() {
 
   /** The reveal's own close — only reachable once `cannonUnlockTapReady`, so
    * a tap cannot skip past the name before the prompt inviting one exists.
-   * Advances to the next level afterward when this reveal came from a
-   * level-clear unlock (`cannonUnlockAdvanceTo` set, by the "Frame cleared"
-   * card's own Continue button below) — the skin-screen purchase case
-   * (`buySkin`) leaves it `null` and this just closes as it always has.
-   * `triggerLevelFtue` runs for that next level here too — see its own
-   * comment for why: this is one of the doors into a level that skips
-   * Home's Play tap entirely. */
+   * Both triggers (`buySkin`, `unlockProgressionSkin`) fire from the Skin
+   * screen now, so this just closes the banner — no level to advance into. */
   const dismissCannonUnlock = useCallback(() => {
     engine?.stopUnlockCelebration();
     setCannonUnlock(null);
-    if (cannonUnlockAdvanceTo !== null) {
-      const next = cannonUnlockAdvanceTo;
-      setCannonUnlockAdvanceTo(null);
-      openLevel(next);
-      triggerLevelFtue(expandLevelForPixelBoard(playables[next].level));
-    }
-  }, [engine, cannonUnlockAdvanceTo, openLevel, playables, triggerLevelFtue]);
+  }, [engine]);
 
   /** Picking from the gallery shows that picture on the home screen, unplayed. */
   const pickFromGallery = useCallback((index: number) => {
@@ -2522,13 +2539,19 @@ export default function SandGame() {
   // abstract, so a replay (no new gold, `markLevelCleared` already false)
   // correctly shows 0 rather than re-claiming the same number.
   const [wonGold, setWonGold] = useState(0);
-  // A skin this exact WIN just unlocked (`costumeUnlockedByLevel`), waiting
-  // on the "Frame cleared" card's own Continue tap before its reveal shows —
-  // see the Continue button below, which is what turns this into the same
-  // `cannonUnlock` celebration a Shop purchase gets. Ownership itself is
-  // already granted the moment WIN lands (`unlockCostume` below); this is
-  // purely "there is a reveal owed".
+  // A skin this exact WIN just made eligible (`costumeUnlockedByLevel`),
+  // waiting on the "Frame cleared" card's own Continue tap before
+  // `skinTryPrompt` (below) asks whether to go try it — ownership itself is
+  // NOT granted yet at this point, only `hasClearedLevel` for its own
+  // `unlockLevel` (which is what actually flips the Skin screen's card from
+  // "Progression" to a live "Unlock" button).
   const [pendingLevelUnlock, setPendingLevelUnlock] = useState<CostumeId | null>(null);
+  // The "you unlocked X — want to try it now?" prompt that now sits between
+  // Continue and the actual reveal (on request — the old flow auto-equipped
+  // and celebrated with no way to decline). "Equip" sends the player to the
+  // Skin screen to finish the unlock themselves (`unlockProgressionSkin`);
+  // "No" just continues on, leaving the skin earned-but-not-yet-unlocked.
+  const [skinTryPrompt, setSkinTryPrompt] = useState<CostumeId | null>(null);
   if (state.result !== lastHandledResult) {
     // Zen Mode pays nothing at all — no gold, no reward-track credit
     // (`recordLevelPlayed`), no first-clear bookkeeping (`markLevelCleared`),
@@ -2555,12 +2578,15 @@ export default function SandGame() {
         setPendingHomeReward((sum) => sum + granted);
         setWonGold(granted);
         // A progression skin tied to this level (`hero-cannon`/level 20 today)
-        // is granted right here, on the very win that clears it — same beat as
-        // the gold above. The player just does not see it until they tap
-        // Continue on the card that is about to show — see `cannonUnlock`.
+        // is NOT granted yet here — only the "you're eligible" flag is (this
+        // level's own `hasClearedLevel` just went true, which is all
+        // `previewUnlockRequirementMet` needs). Ownership itself only happens
+        // once the player actually taps Unlock on the Skin screen
+        // (`unlockProgressionSkin`), on request: the old flow auto-equipped
+        // and celebrated immediately on Continue, with no way to say "not
+        // now" — see `skinTryPrompt` for the prompt that replaces it.
         const unlockedCostume = costumeUnlockedByLevel(raw.id);
         if (unlockedCostume && !isCostumeOwned(unlockedCostume)) {
-          unlockCostume(unlockedCostume);
           setPendingLevelUnlock(unlockedCostume);
         }
         // Hearts unlock right here, on the very win that clears level
@@ -2682,6 +2708,13 @@ export default function SandGame() {
   // comment), so every place that would otherwise show `previewPrice` checks
   // this first instead.
   const previewUnlockLevel = COSTUMES[previewCostume].unlockLevel;
+  // Whether a `unlockLevel` skin's own level has actually been cleared yet —
+  // the line between the disabled "Progression" label (not earned yet) and a
+  // live "Unlock" button (earned, just waiting on the player's own tap). A
+  // plain `hasClearedLevel` read, same as `previewOwned`/`previewPrice`
+  // above: recomputed every render so `unlockProgressionSkin` writing it
+  // shows up immediately everywhere this is read.
+  const previewUnlockRequirementMet = previewUnlockLevel !== undefined && hasClearedLevel(previewUnlockLevel);
   // Every skin the wallet's current Blue Emerald covers, is not yet owned,
   // and has not already had its dot dismissed (`markSkinBadgeSeen`) — drives
   // both the Skin tab's own dot (non-empty) and which card(s) in the picker
@@ -3165,21 +3198,13 @@ export default function SandGame() {
                   sẽ hiện coin currency hud") so a player who runs a booster
                   out mid-match can see whether they can afford the "buy 1
                   now" price right next to it, without leaving the level. */}
-              <div className="booster-hud-gold" role="status" aria-label={s.boosterTrayGoldAria(wallet.gold)}>
-                <CoinIcon />
-                <strong>{wallet.gold}</strong>
-              </div>
-              {/* Nothing to show yet on a level whose one lesson is "aim and
-                  shoot" (`ftueGesture`) or that explicitly asks to hide the
-                  tray's buttons (`hideBoosterHud`, e.g. level 2, boosters
-                  aren't taught until level 3) — the dock itself still
-                  renders (see the comment above), just with no buttons in
-                  it. Only for the FIRST time through, though (on request,
-                  same as `onboardingLockLifted`'s own doc comment): once
-                  level 3 has been cleared once, a Gallery replay of level
-                  1/2 shows the real buttons same as any other level. */}
+              {showBoosterButtons && (
+                <div className="booster-hud-gold" role="status" aria-label={s.boosterTrayGoldAria(wallet.gold)}>
+                  <CoinIcon />
+                  <strong>{wallet.gold}</strong>
+                </div>
+              )}
               {(() => {
-                const showBoosterButtons = (!level.ftueGesture && !level.hideBoosterHud) || onboardingLockLifted;
                 if (!showBoosterButtons) return null;
                 // Chain Sort withheld until level 5 — its own tutorial level
                 // (`CHAIN_SORT_UNLOCK_LEVEL_ID`'s own comment) — not just
@@ -3589,28 +3614,50 @@ export default function SandGame() {
                 onClick={() => { if (cannonUnlockTapReady) dismissCannonUnlock(); }}
                 aria-label={`${s.youUnlocked(s.costumeName(cannonUnlock))}${cannonUnlockTapReady ? ` ${s.tapToContinue}.` : ""}`}
               >
-                <p className="cannon-unlock-text" aria-hidden="true">{s.youUnlocked(s.costumeName(cannonUnlock))}</p>
+                {/* Two lines on purpose (on request: "'You unlocked' xuống
+                    dòng 'X cannon'") — the verb on its own line, the skin's
+                    own name on the next. `youUnlockedPrefix` carries only the
+                    first; the full one-line sentence still lives in
+                    `youUnlocked` for the banner's own aria-label above. */}
+                <p className="cannon-unlock-text" aria-hidden="true">
+                  {s.youUnlockedPrefix}
+                  <br />
+                  {s.costumeName(cannonUnlock)}!
+                </p>
                 {cannonUnlockTapReady && (
                   <p className="cannon-unlock-tap" aria-hidden="true">{s.tapToContinue}</p>
                 )}
               </div>
             )}
 
-            {/* One button, three jobs, in the order a player meets them: Buy
-                (locked), Select (owned but not worn), Selected (worn). Buying
-                equips in the same step (`buySkin`), so the Buy state never
-                hands back to a Select the player then has to tap again. A
-                wallet that cannot afford it still gets a live button — the
-                confirm dialog is where "not enough" is said, rather than a
-                dead control with no explanation on it. */}
+            {/* One button, up to four jobs, in the order a player meets them:
+                Progression (locked, level not cleared yet), Unlock (level
+                cleared, on request — replaces the old auto-equip-on-Continue
+                flow), Buy (locked, priced), Select/Selected (owned). Buying
+                and Unlocking both equip in the same step (`buySkin`/
+                `unlockProgressionSkin`), so neither state hands back to a
+                Select the player then has to tap again. A wallet that cannot
+                afford Buy still gets a live button — the confirm dialog is
+                where "not enough" is said, rather than a dead control with
+                no explanation on it. */}
             {cannonUnlock ? null : !previewOwned && previewUnlockLevel !== undefined ? (
-              // Not for sale at any price — no Buy action, just the same
-              // "Progression" word the grid card's own price pill shows for
-              // this skin, so the two spots on this screen where a price
-              // would normally appear agree with each other.
-              <div className="skin-equip is-progression" aria-disabled="true">
-                <span className="skin-equip-label">{s.progressionLabel}</span>
-              </div>
+              previewUnlockRequirementMet ? (
+                <button
+                  className="skin-equip is-unlock"
+                  type="button"
+                  onClick={() => unlockProgressionSkin(previewCostume)}
+                >
+                  <span className="skin-equip-label">{s.unlockLabel}</span>
+                </button>
+              ) : (
+                // Not for sale at any price — no Buy action, just the same
+                // "Progression" word the grid card's own price pill shows for
+                // this skin, so the two spots on this screen where a price
+                // would normally appear agree with each other.
+                <div className="skin-equip is-progression" aria-disabled="true">
+                  <span className="skin-equip-label">{s.progressionLabel}</span>
+                </div>
+              )
             ) : !previewOwned ? (
               <button
                 className="skin-equip is-buy"
@@ -3648,6 +3695,11 @@ export default function SandGame() {
                   // level clears it rather than a price it was never for sale
                   // at — see `previewUnlockLevel`'s own comment above.
                   const unlockLevel = def.unlockLevel;
+                  // Same requirement-met check `previewUnlockRequirementMet`
+                  // runs for the previewed skin, but per-card here — the grid
+                  // has to show every card's own true state at once, not just
+                  // whichever one happens to be previewed right now.
+                  const unlockRequirementMet = unlockLevel !== undefined && hasClearedLevel(unlockLevel);
                   return (
                     <button
                       key={id}
@@ -3659,7 +3711,9 @@ export default function SandGame() {
                         owned
                           ? (costume === id ? s.equippedSuffix : "")
                           : unlockLevel !== undefined
-                            ? s.progressionLockedSuffix(unlockLevel)
+                            ? unlockRequirementMet
+                              ? `, ${s.unlockLabel}`
+                              : s.progressionLockedSuffix(unlockLevel)
                             : s.lockedSuffix(costumePrice(id))
                       }${unseenSkins.includes(id) ? s.affordableSuffix : ""}`}
                     >
@@ -3686,8 +3740,8 @@ export default function SandGame() {
                       {owned
                         ? costume === id && <span className="skin-card-tick" aria-hidden="true">✓</span>
                         : unlockLevel !== undefined ? (
-                          <span className="skin-card-price is-progression" aria-hidden="true">
-                            {s.progressionLabel}
+                          <span className={`skin-card-price is-progression${unlockRequirementMet ? " is-unlock" : ""}`} aria-hidden="true">
+                            {unlockRequirementMet ? s.unlockLabel : s.progressionLabel}
                           </span>
                         ) : (
                           <span className="skin-card-price" aria-hidden="true">
@@ -4634,6 +4688,33 @@ export default function SandGame() {
                   <a href="/editor" className="settings-devlink">
                     <Glyph name="pencil" /> Level editor
                   </a>
+                  {/* Paired with "Level editor" above (2026-09g ask,
+                      "unlock all map nên ngang hàng với level editor") —
+                      both are ways to get straight at every level, one by
+                      building, one by unlocking. Clears every level in
+                      `playables`, front to back, so the gallery's own
+                      sequential-unlock check
+                      (`hasClearedLevel(playables[index-1].level.id)` above)
+                      reads every card as open at once — for eyeballing the
+                      whole gallery grid without playing up to it level by
+                      level. Marks first-clear (and its gold payout) for each
+                      one, same as actually winning it would; that is the
+                      simplest way to make `hasClearedLevel` true. Reloads
+                      immediately after, same as `resetEntireGame`/
+                      `applyDevDateOffset` above: `hasClearedLevel` is read
+                      straight from localStorage in the gallery's render, not
+                      from React state, so nothing here would otherwise
+                      trigger a re-render that shows it. */}
+                  <button
+                    type="button"
+                    className="settings-devlink"
+                    onClick={() => {
+                      for (const entry of playables) markLevelCleared(entry.level.id);
+                      window.location.reload();
+                    }}
+                  >
+                    <Glyph name="target" className="icon-glyph" /> Unlock all maps
+                  </button>
                   <button type="button" className="settings-devlink" onClick={() => addGold(500)}>
                     <CoinIcon /> +500 gold
                   </button>
@@ -4667,29 +4748,6 @@ export default function SandGame() {
                   </button>
                   <button type="button" className="settings-devlink" onClick={() => resetRewardTrack()}>
                     <EmeraldIcon /> Reset reward track
-                  </button>
-                  {/* Clears every level in `playables`, front to back, so the
-                      gallery's own sequential-unlock check
-                      (`hasClearedLevel(playables[index-1].level.id)` above)
-                      reads every card as open at once — for eyeballing the
-                      whole gallery grid without playing up to it level by
-                      level. Marks first-clear (and its gold payout) for each
-                      one, same as actually winning it would; that is the
-                      simplest way to make `hasClearedLevel` true. Reloads
-                      immediately after, same as `resetEntireGame`/
-                      `applyDevDateOffset` above: `hasClearedLevel` is read
-                      straight from localStorage in the gallery's render, not
-                      from React state, so nothing here would otherwise
-                      trigger a re-render that shows it. */}
-                  <button
-                    type="button"
-                    className="settings-devlink"
-                    onClick={() => {
-                      for (const entry of playables) markLevelCleared(entry.level.id);
-                      window.location.reload();
-                    }}
-                  >
-                    <Glyph name="target" className="icon-glyph" /> Unlock all maps
                   </button>
                   {/* Mirror of "Relock skins" below: owns every skin in
                       `COSTUME_ORDER` instead of putting them back behind
@@ -4770,6 +4828,32 @@ export default function SandGame() {
                     Apply
                   </button>
                 </div>
+                {/* One tap that grants everything at once, instead of
+                    working through the grid above row by row: every level
+                    (same as "Unlock all maps"), every skin (same as
+                    "Acquire all skins"), and a generous stack of every
+                    booster charge. Marking every level cleared includes
+                    `HEARTS_UNLOCK_LEVEL_ID`, so hearts (and every heart-gated
+                    Bundle/Special Offer row in the Shop) come unlocked too
+                    as a side effect — nothing else here needs to touch that
+                    flag directly. Kept out of the "one tap, no typing" grid
+                    above and given the accent colour (`.is-highlight`),
+                    positioned right before "Reset entire game" (2026-09g
+                    ask: "all content nên phía reset entire game") since the
+                    two rows are each other's opposite — grant everything vs.
+                    wipe everything — and reads clearest sitting together. */}
+                <button
+                  type="button"
+                  className="settings-devlink is-highlight"
+                  onClick={() => {
+                    for (const entry of playables) markLevelCleared(entry.level.id);
+                    for (const id of COSTUME_ORDER) unlockCostume(id);
+                    for (const type of BOOSTER_TYPES) addBoosterCharges(type, 50);
+                    window.location.reload();
+                  }}
+                >
+                  <ChestIcon /> Unlock all content
+                </button>
                 {/* The whole-game factory reset — every persisted piece of
                     progress this section's other buttons reset one at a
                     time, in one tap, plus the date tool above (see
@@ -4795,7 +4879,7 @@ export default function SandGame() {
             it always was (Play again / Home). Reward money and its fly-to-
             badge animation never appear here either way — see
             `pendingHomeReward`'s own comment for why that waits for Home. */}
-        {state.result?.kind === "WIN" && !winReveal && (
+        {state.result?.kind === "WIN" && !winReveal && !skinTryPrompt && (
           <div className="result-screen is-win" role="dialog" aria-modal="true">
             {/* Purely ambient — behind the card (`.result-card.is-win` keeps
                 its own `z-index: 1`), so it never competes with the card for
@@ -4873,30 +4957,23 @@ export default function SandGame() {
                   )}
                   {hasNextLevel && (
                     <div className="result-actions">
-                      {/* A win that just unlocked a progression skin
+                      {/* A win that just made a progression skin eligible
                           (`pendingLevelUnlock`) holds Continue back one more
-                          tap — instead of moving on immediately, it equips
-                          the new cannon and hands off to the same
-                          `cannonUnlock` spin-and-glow reveal a Shop purchase
-                          plays (on request — the two are meant to match),
-                          with `cannonUnlockAdvanceTo` set so dismissing it is
-                          what actually calls `openLevel`. Every other win
-                          continues the same way it always has. Either path
-                          runs `triggerLevelFtue` for the level about to
-                          open — a report that level 3's booster tutorial
-                          never showed when reached via Continue (only via
-                          Home's Play tap) traced back to this exact button
-                          never running that check at all; see the function's
-                          own comment. */}
+                          tap — instead of moving on immediately (or the old
+                          flow's auto-equip-and-celebrate), it opens
+                          `skinTryPrompt` and lets the player answer for
+                          themselves. Every other win continues the same way
+                          it always has, running `triggerLevelFtue` for the
+                          level about to open — a report that level 3's
+                          booster tutorial never showed when reached via
+                          Continue (only via Home's Play tap) traced back to
+                          this exact button never running that check at all;
+                          see the function's own comment. */}
                       <button
                         type="button"
                         onClick={() => {
                           if (pendingLevelUnlock) {
-                            setSelectedCostume(pendingLevelUnlock);
-                            setCostume(pendingLevelUnlock);
-                            setCannonUnlock(pendingLevelUnlock);
-                            setCannonUnlockAdvanceTo(levelIndex + 1);
-                            engine?.playUnlockCelebration();
+                            setSkinTryPrompt(pendingLevelUnlock);
                             setPendingLevelUnlock(null);
                             return;
                           }
@@ -4908,6 +4985,57 @@ export default function SandGame() {
                       </button>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The "you unlocked X — want to try it now?" prompt (on request —
+            replaces the old flow's immediate auto-equip-and-celebrate on
+            Continue, which never gave the player a "not now"). "No" just
+            continues into the next level exactly like an ordinary win, same
+            as `hasNextLevel`'s Continue button above — the skin stays owned
+            but earned-rather-than-unlocked (its Skin screen card now shows a
+            live Unlock button instead of the disabled Progression label,
+            since its own level just cleared). "Equip" leaves the level
+            entirely via `goHome()` and lands on the Skin screen with this
+            skin already previewed, so the player finishes the unlock
+            themselves (`unlockProgressionSkin`) and gets the same
+            spin-and-glow reveal a Shop purchase gets. */}
+        {state.result?.kind === "WIN" && !winReveal && skinTryPrompt && (
+          <div className="result-screen is-win" role="dialog" aria-modal="true" aria-label={s.skinTryQuestion(s.costumeName(skinTryPrompt))}>
+            <div className="win-frame">
+              <div className="result-card is-win">
+                <div className="result-card-header">
+                  <h2>{s.skinTryQuestion(s.costumeName(skinTryPrompt))}</h2>
+                </div>
+                <div className="result-card-body">
+                  <div className="result-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = skinTryPrompt;
+                        setSkinTryPrompt(null);
+                        setPreviewCostume(id);
+                        goHome();
+                        setTab("skin");
+                      }}
+                    >
+                      {s.equipLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className="is-quiet"
+                      onClick={() => {
+                        setSkinTryPrompt(null);
+                        openLevel(levelIndex + 1);
+                        triggerLevelFtue(expandLevelForPixelBoard(playables[levelIndex + 1].level));
+                      }}
+                    >
+                      {s.noLabel}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4927,40 +5055,6 @@ export default function SandGame() {
                   {s.home}
                 </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* The level-20-style progression reveal — shown once the player has
-            tapped Continue on the "Frame cleared" card that just unlocked a
-            skin (`pendingLevelUnlock`, set there). On request, this is now
-            the SAME spin-and-glow `cannon-unlock-banner` reveal a Shop
-            purchase gets (`buySkin`'s own block further down, inside
-            `.skin-screen`), not a plain equip/decline dialog — the Continue
-            button already equipped the cannon and started
-            `playUnlockCelebration()` before setting `cannonUnlock`, so all
-            this has to do is show the same banner over the level's own
-            scene instead of the skin screen's. `cannonUnlockAdvanceTo` being
-            non-null is what distinguishes this trigger from `buySkin`'s (see
-            `dismissCannonUnlock`'s own comment) — `playing` on top of that
-            just guards against ever rendering both this and the skin
-            screen's own copy at once, which should not be reachable anyway
-            since the skin screen only mounts on the hub. */}
-        {playing && cannonUnlock && cannonUnlockAdvanceTo !== null && (
-          <div className="result-screen">
-            <div
-              className="cannon-unlock-banner"
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                if (cannonUnlockTapReady) dismissCannonUnlock();
-              }}
-              aria-label={`${s.youUnlocked(s.costumeName(cannonUnlock))}${cannonUnlockTapReady ? ` ${s.tapToContinue}.` : ""}`}
-            >
-              <p className="cannon-unlock-text" aria-hidden="true">{s.youUnlocked(s.costumeName(cannonUnlock))}</p>
-              {cannonUnlockTapReady && (
-                <p className="cannon-unlock-tap" aria-hidden="true">{s.tapToContinue}</p>
-              )}
             </div>
           </div>
         )}
@@ -4997,14 +5091,15 @@ export default function SandGame() {
             relying on that ordering.
             Now a real calendar grid for the current month (`getDailyLoginCalendar`)
             instead of a 7-chip streak strip — every cell IS a real date, so
-            "tomorrow" in the grid is actually tomorrow. Monday/Tuesday/
-            Wednesday read as the "great value" tier (gold tag + a free
-            booster charge), Saturday/Sunday as the weekend tier (highest
-            gold) — everything else is a plain cell. `.is-past`/`.is-today`/
-            `.is-claimed` carry all the status a line of text used to repeat
-            in words. No "Later"/"Close" text button: the corner
-            `.result-close-btn` is the one dismiss action, same as the WIN
-            card's own X. */}
+            "tomorrow" in the grid is actually tomorrow. Monday-Friday are
+            plain cells (all worth the same flat gold, no amount shown any
+            more — see `DAILY_LOGIN_REWARDS` in economy.ts), Saturday/Sunday
+            are the one special (gold-washed) tier but pay NO gold at all —
+            only the free booster charge, shown as its own icon.
+            `.is-past`/`.is-today`/`.is-claimed` carry all the status a line
+            of text used to repeat in words. No "Later"/"Close" text button:
+            the corner `.result-close-btn` is the one dismiss action, same as
+            the WIN card's own X. */}
         {!playing && !chest && dailyLogin && (
           <div
             className="result-screen"
@@ -5056,20 +5151,31 @@ export default function SandGame() {
                       down to see further days instead of everything being
                       squeezed to fit unscrolled. 5 cells a row now, not 7 —
                       no weekday header any more ("không đánh Mon->Sun, chỉ
-                      đánh dấu ngày"): each cell's own day-of-month number is
-                      the only date label, and with 5 columns instead of 7 in
-                      the same card width each cell is visibly bigger. */}
+                      đánh dấu ngày"): each cell's own day-of-month, as an
+                      ordinal ("1st"/"2nd"/"13th" — `ordinalDay`), is the only
+                      date label, and with 5 columns instead of 7 in the same
+                      card width each cell is visibly bigger. No coin amount
+                      is shown any more either — every weekday pays the same
+                      flat gold and the weekend pays none at all, so a
+                      per-cell number would not say anything worth reading. */}
                   <div className="daily-login-calendar-scroll">
                     <div className="daily-login-calendar">
                       {dailyCalendar.map((cell) => {
-                        // Mon-Fri are plain now — no perk, just the rising
-                        // gold amount. The weekend (Sat/Sun) carries the
-                        // gold cell wash — that alone marks it as the
-                        // special tier, no "WEEKEND" text label needed on
-                        // top — plus the free Prism Shot perk
-                        // (`DAILY_LOGIN_BOOSTER_PERK`), shown as the
-                        // booster's own icon rather than its name spelled
-                        // out, so the cell stays a glance, not a read.
+                        // Mon-Fri are plain now — no perk, no amount shown
+                        // (every weekday pays the same flat gold, so there is
+                        // nothing worth calling out per cell). The weekend
+                        // (Sat/Sun) carries the gold cell wash — that alone
+                        // marks it as the special tier, no "WEEKEND" text
+                        // label needed on top — plus a free booster charge
+                        // (`dailyLoginBoosterPerk`: Saturday grants Radius
+                        // Overcharge, Sunday grants Prism Shot, taking turns
+                        // across the weekend instead of both days handing out
+                        // the same one). The month's 13th is its own "lucky
+                        // day" on top of that split: it grants Chain Sort
+                        // regardless of weekday. Either way the perk is shown
+                        // as the booster's own icon, large and centred (no
+                        // coin glyph to share the cell with any more), rather
+                        // than its name spelled out.
                         const isWeekend = cell.weekday >= 5;
                         const className = [
                           "daily-login-cell",
@@ -5080,22 +5186,20 @@ export default function SandGame() {
                           isWeekend && "is-weekend",
                         ].filter(Boolean).join(" ");
                         return (
-                          <div key={cell.date} className={className}>
-                            <span className="daily-login-cell-day">{cell.dayOfMonth}</span>
+                          <div
+                            key={cell.date}
+                            className={className}
+                            // The coin-flight animation's launch point
+                            // (`claimDailyLoginWithFlight`) — on the cell
+                            // itself rather than the coin glyph below, since
+                            // a booster-perk cell has no coin glyph to anchor
+                            // to at all.
+                            ref={cell.isToday ? todayCoinRef : undefined}
+                          >
+                            <span className="daily-login-cell-day">{ordinalDay(cell.dayOfMonth)}</span>
                             {cell.isClaimed ? (
                               <span className="daily-login-cell-check" aria-hidden="true">✓</span>
-                            ) : (
-                              <>
-                                <span
-                                  className="daily-login-cell-coin"
-                                  ref={cell.isToday ? todayCoinRef : undefined}
-                                >
-                                  <CoinIcon />
-                                </span>
-                                <strong>{cell.reward}</strong>
-                              </>
-                            )}
-                            {cell.boosterPerk && !cell.isClaimed && (
+                            ) : cell.boosterPerk ? (
                               <span
                                 className="daily-login-perk-icon"
                                 aria-label={s.dailyLoginPerkTag(s.boosterName(cell.boosterPerk))}
@@ -5103,6 +5207,17 @@ export default function SandGame() {
                               >
                                 <BoosterIcon type={cell.boosterPerk} />
                               </span>
+                            ) : (
+                              cell.reward > 0 && (
+                                // The coin glyph alone, no amount printed
+                                // under/next to it any more (per the
+                                // 2026-09e ask) — every weekday pays the
+                                // same flat gold, so the icon alone is
+                                // enough to say "this day pays coins".
+                                <span className="daily-login-cell-coin" aria-hidden="true">
+                                  <CoinIcon />
+                                </span>
+                              )
                             )}
                           </div>
                         );
@@ -5119,7 +5234,12 @@ export default function SandGame() {
                   {!dailyLogin.claimedToday && (
                     <div className="result-actions">
                       <button type="button" onClick={claimDailyLoginWithFlight}>
-                        {s.claimCoins(dailyLogin.reward)}
+                        {/* Weekend: no gold at all (`dailyLogin.reward` is 0),
+                            the booster is the entire reward, so the button
+                            names that instead of "Claim 0 coins". */}
+                        {dailyLogin.reward > 0
+                          ? s.claimCoins(dailyLogin.reward)
+                          : s.claimBooster(s.boosterName(dailyLogin.boosterPerk ?? "prismShot"))}
                       </button>
                     </div>
                   )}

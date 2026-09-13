@@ -189,9 +189,30 @@ Open Decision với số thứ tự khớp brief gốc ở
 | `SHOT_COOLDOWN_MS` | 400 ms | Khoảng nghỉ tối thiểu giữa hai phát |
 | `PROJECTILE_RADIUS` | 0.15 | Dung sai va chạm: nếu tâm ngắm rơi vào pixel trống, dò pixel có cát gần nhất trong bán kính này |
 | `JOYSTICK_RADIUS` | 64 px | Tầm di chuyển của **núm** joystick ảo (khoá ở rìa pad) |
-| `JOYSTICK_RESPONSE_RADIUS` | 256 px | Khoảng kéo thật để đáp ứng ngắm đạt 100% — rộng hơn hẳn `JOYSTICK_RADIUS` để một pad nhỏ, dễ nhìn vẫn ánh xạ đủ mượt sang toàn dải ngắm |
+| `JOYSTICK_RESPONSE_RADIUS` | 256 px, hạ trần theo `JOYSTICK_RESPONSE_RADIUS_SCREEN_FRACTION` (0.42 × cạnh ngắn hơn của `.scene-host`) | Khoảng kéo thật để đáp ứng ngắm đạt 100% mỗi TRỤC (xem ghi chú dưới) |
 | `AIM_OUTSIDE_ZONE_CANCEL_MS` | 1700 ms | Grace period: kéo lệch ra ngoài `.aim-zone` không huỷ phát bắn ngay, chỉ huỷ nếu ở ngoài liên tục quá thời gian này |
 | Control sensitivity | 0.5 – 2.0 (`MIN/MAX_CONTROL_SENSITIVITY`) | Slider trong Settings, scale trực tiếp phản ứng ngắm |
+
+**Sửa joystick không bao giờ chạm được góc tranh, đặc biệt tranh lớn/gần vuông như 80×90 (2026-09).**
+Trên request ("người chơi không thể drag joystick kéo radius tới toàn bộ màn hình được, luôn bị giới
+hạn"). Hai lỗi riêng biệt, cả hai đều trong `SandCannonEngine.ts`:
+
+- **Tầm với của cursor tính theo tỉ lệ cố định của viewport** (`AIM_CURSOR_HORIZONTAL/UP/DOWN_RATIO`),
+  không theo kích thước thật của khung tranh trên màn hình — với tranh gần vuông lấp gần hết cả
+  `FIT_WIDTH` lẫn `FIT_HEIGHT` cùng lúc (80×90 là ví dụ điển hình), mép tranh vượt xa tầm cursor được
+  phép tới. Sửa: `cursorForCurrentStick()` giờ chiếu 4 mép khung thật ra toạ độ màn hình
+  (`screenPointForWorld`/`worldPointForGrid`) mỗi lần cập nhật, tầm với luôn khớp đúng khung đang hiển
+  thị bất kể size/aspect ratio nào.
+- **Lỗi gốc, nghiêm trọng hơn:** `aimStick` cũ là một vector đơn (hướng kéo × độ mạnh, độ dài ≤ 1) rồi
+  mới nhân riêng theo trục ngang/dọc — nghĩa là vùng cursor có thể tới chỉ là một HÌNH ELLIPSE nội tiếp
+  trong khung chữ nhật, 4 góc thật của khung nằm ngoài ellipse đó và **không bao giờ với tới được dù kéo
+  bao xa**. Sửa: tách hẳn phản hồi theo từng trục (`axisResponse()`, tính riêng từ độ lệch có dấu của
+  từng trục thay vì độ lớn vector chung) — kéo đủ xa CẢ HAI trục cùng lúc (thẳng về phía góc) giờ cho cả
+  hai trục đạt ±1 cùng lúc, cursor chạm đúng góc khung.
+
+Test: verify sống trên viewport mobile 375×812, level 80×90 — kéo chéo ~155-160px từ điểm chạm chạm
+đúng góc trên-trái khung (khớp pixel với toạ độ tính tay), `is-target-valid` bật đúng, bắn thật dọn cát
+đúng góc đó.
 
 ### 4.2. Board & simulation
 
@@ -545,23 +566,43 @@ vòng tiếp tục — **không loop về đầu**, cycle sau luôn trả nhiề
 500 (cycle 1) được neo đúng bằng giá Rune Cannon (mục 11) — 5 màn thắng = đủ tiền skin đầu tiên, số
 đọc thành "một chu kỳ" thay vì một con số người chơi phải tự làm phép tính.
 
+**Đá emerald đứng yên thật sự sau khi rơi, không "chốt" lại một nhịp nữa (2026-09h):** màn mở chest 3D
+(`chest-model.ts`) tung 8 viên đá bay ra, nảy rồi dừng theo vật lý thật. Trước đây, ngay khi một viên đủ
+chậm để dừng, nó đứng tạm ở độ cao/góc xoay giữa chừng rồi một bước riêng sau đó mới lerp/slerp về đúng
+độ cao và tư thế nghỉ cuối — viên đá trông như đã rơi xong, đứng yên, rồi bỗng tự dịch chuyển thêm một
+nhịp để "chốt" vào chỗ cuối, đọc như một lỗi hoạt hình hơn là một viên đá thật sự dừng lại. Giờ gộp làm
+một bước: đủ chậm để dừng là chốt thẳng vào vị trí/tư thế nghỉ cuối cùng ngay lập tức, không còn giai
+đoạn "đứng tạm rồi chỉnh tiếp".
+
 ### 10.6. Daily Login
 
 Gắn liền với **lịch thật** (2026-09 rework), không còn là chu kỳ 7 ngày tự lặp không quan tâm hôm nay
 là thứ mấy: thưởng của **hôm nay** tính thẳng từ thứ thật trong tuần (Thứ Hai → Chủ Nhật, theo đồng
-hồ máy người chơi), và modal hiển thị nguyên một **lưới lịch tháng hiện tại** — Thứ Hai ở đầu mỗi
-hàng, mỗi ô là một ngày thật, ✓ chỉ hiện trên đúng ngày đã claim thật (không suy luận từ "trước hôm
-nay").
+hồ máy người chơi), và modal hiển thị nguyên một **lưới lịch tháng hiện tại** — mỗi ô là một ngày
+thật, số ngày hiện dạng ordinal ("1st"/"2nd"/"13th"), ✓ chỉ hiện trên đúng ngày đã claim thật (không
+suy luận từ "trước hôm nay").
+
+**Vàng cố định T2-T6, T7/CN không còn vàng — chỉ booster (2026-09e/f):**
 
 | Thứ | T2 | T3 | T4 | T5 | T6 | T7 | CN |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Vàng | 10 | 12 | 15 | 18 | 20 | 30 | 40 |
-| Ưu đãi thêm | — | — | — | — | — | +1 Prism Shot | +1 Prism Shot |
+| Vàng | 10 | 10 | 10 | 10 | 10 | 0 | 0 |
+| Ưu đãi thêm | — | — | — | — | — | +1 Radius Overcharge | +1 Prism Shot |
 
-5 ngày đầu tuần (T2–T6) bình thường — chỉ có vàng, tăng dần nhẹ, không có tag hay ưu đãi gì thêm. 2
-ngày cuối tuần (T7, Chủ Nhật) là tier đặc biệt duy nhất: trả vàng cao nhất tuần **và** kèm 1 lượt
-Prism Shot miễn phí. Tổng vẫn cố tình nhỏ hơn thưởng một level dễ tới trung bình: đây là bonus vì ghé
-qua, bảng level mới là cách kiếm vàng chính.
+5 ngày đầu tuần (T2–T6) trả CÙNG một mức vàng cố định (10 — một phần thưởng của `levelGoldReward(50)`,
+level khó trung bình), không còn tăng dần theo ngày như bản trước. T7/CN (cuối tuần) KHÔNG trả vàng gì
+cả (`DAILY_LOGIN_REWARDS[5]`/`[6]` = 0) — phần thưởng duy nhất của 2 ngày này là 1 lượt booster miễn
+phí, và hai ngày lấy phiên NHAU thay vì cùng một loại: Thứ Bảy tặng Radius Overcharge, Chủ Nhật tặng
+Prism Shot (`WEEKEND_BOOSTER_PERK`, `economy.ts`).
+
+**Ngày 13 hàng tháng — "ngày may mắn" tặng Chain Sort:** bất kể rơi vào thứ nào, ngày 13 dương lịch mỗi
+tháng luôn tặng thêm 1 lượt Chain Sort (`CHAIN_SORT_BONUS_DAY_OF_MONTH`, hàm `dailyLoginBoosterPerk` —
+`economy.ts`) — thắng cả luật cuối tuần (ngày 13 trùng T7/CN vẫn ra Chain Sort thay vì Radius/Prism), và
+cộng thêm vào vàng bình thường nếu ngày 13 rơi vào ngày thường.
+
+**Hình thức lưới (2026-09e/f):** không còn số vàng in trên ô nào — icon coin (không kèm số) chỉ hiện ở
+ô ngày thường không có booster, vì mọi ngày thường giờ trả cùng một mức nên con số không nói lên gì
+thêm. Icon booster (khi có) to và nằm giữa ô, không còn là badge nhỏ ở góc.
 
 Streak (chuỗi ngày liên tiếp claim, hiển thị dưới lưới khi ≥ 2) vỡ khi bỏ lỡ ≥ 2 ngày thì **reset về
 0** — cố ý, để streak có ý nghĩa thật; giữ nguyên nếu claim liên tục hoặc gap tới hôm nay ≤ 1 ngày.
@@ -602,17 +643,59 @@ Không có control nào ở đây nối payment processor thật — mọi nút 
 
 ## 11. Cosmetic / Skin súng
 
-4 skin cho khẩu súng cát — **không bao giờ đổi ballistics/aim** (pillar #1, mục 1): rig chỉ trang trí
+7 skin cho khẩu súng cát — **không bao giờ đổi ballistics/aim** (pillar #1, mục 1): rig chỉ trang trí
 quanh `muzzleAnchor`, mọi phát bắn của mọi skin bay đúng cùng một quỹ đạo.
 
-| Skin | Tagline | Flavor VFX | Cách mở | Giá |
-| --- | --- | --- | --- | --- |
-| **Field Cannon** | "Load. Aim. Boom." | `classic` — chỉ khói/tung cát nền | Mặc định, mọi người chơi có sẵn | Miễn phí |
-| **Rune Cannon** | "Charge. Sparkle. Repeat." | `magic` — lấp lánh + overlay rune quanh bán kính | Mua bằng Blue Emerald | 500 💎 |
-| **Hero Cannon** | "Quest. Aim. Onward." | `classic` | Thưởng miễn phí khi clear **Level 20** lần đầu | — (progression) |
-| **Frost Cannon** | "Chill. Aim. Shatter." | `frost` — lấp lánh trắng-cyan riêng | Thưởng miễn phí khi clear **Level 40** lần đầu | — (progression) |
+Bảng dưới liệt kê đúng thứ tự hiện trong khay Skin screen (`COSTUME_ORDER`, `costumes.ts`) — trên
+request ("luôn cho progression skin gần skin mặc định, còn skin mua bằng blue emerald sẽ sắp xếp
+sau"): skin mặc định dẫn đầu, 2 skin progression (mở bằng cách chơi, không mua được) bám ngay sau nó,
+rồi mới tới các skin mua thật bằng Blue Emerald, xếp theo giá tăng dần.
 
-**Vì sao 2/4 skin gắn với mốc level thay vì mua:** Hero Cannon (L20) và Frost Cannon (L40) trùng đúng
+| # | Skin | Tagline | Flavor VFX | Cách mở | Giá |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **Field Cannon** | "Load. Aim. Boom." | `classic` — chỉ khói/tung cát nền | Mặc định, mọi người chơi có sẵn | Miễn phí |
+| 2 | **Hero Cannon** | "Quest. Aim. Onward." | `classic` | Thưởng miễn phí khi clear **Level 20** lần đầu | — (progression) |
+| 3 | **Frost Cannon** | "Chill. Aim. Shatter." | `frost` — lấp lánh trắng-cyan riêng | Thưởng miễn phí khi clear **Level 40** lần đầu | — (progression) |
+| 4 | **Rune Cannon** | "Charge. Sparkle. Repeat." | `magic` — lấp lánh + overlay rune quanh bán kính | Mua bằng Blue Emerald | 500 💎 |
+| 5 | **Web-Slinger Cannon** | "Sling. Aim. Web 'em up." | `classic` + bling riêng (đỏ/bạc, qua `sparkleBlingColors` theo id) | Mua bằng Blue Emerald | 1000 💎 |
+| 6 | **Viking Cannon** | "Raid. Aim. Plunder." | `classic` + bling riêng (đồng/vàng, qua `sparkleBlingColors` theo id) | Mua bằng Blue Emerald | 1300 💎 |
+| 7 | **Cat Cannon** | "Pounce. Aim. Purr." | `classic` + bling riêng (pastel hồng/cam/kem, qua `sparkleBlingColors` theo id) | Mua bằng Blue Emerald | 1800 💎 |
+
+**Web-Slinger Cannon: thiết kế nhện gốc, không phải nhân vật có bản quyền (2026-09).** Chủ đề nhện/mạng
+nhện gợi hứng từ "spiderman" theo yêu cầu, nhưng KHÔNG dùng tên, logo hay bộ đồ của bất kỳ nhân vật nào
+có bản quyền — tránh rủi ro vi phạm IP cho một món hàng bán thật bằng Blue Emerald. `buildSpiderCannon`
+(`costumes.ts`) tự thiết kế hình khối riêng thay vì chỉ đổi màu: 6 chân nhện gập khớp (2 đoạn mỗi chân,
+có "đầu gối") vòng quanh bệ thay cho vành trơn; một mạng nhện dạng nan hoa (ring + 8 spoke) thay cho
+vành trim mượt các skin khác dùng; một cặp mắt kính trắng cỡ lớn gắn trên housing — chi tiết duy nhất
+gợi "nhện" ngay từ cái nhìn đầu mà không sao chép mặt nạ của nhân vật cụ thể nào; và hai răng nanh cong
+kẹp hai bên đầu nòng thay vành trim thường. Giá 1000 💎.
+
+**Viking Cannon: bệ dạng thùng gỗ (LatheGeometry), không chỉ đổi màu (2026-09).** Chủ đề Viking/châu Âu
+trung cổ, dùng mô-típ chung (sừng, xích, đầu rồng, khiên) chứ không gắn với một biểu tượng văn hoá cụ
+thể nào có bản quyền. `buildVikingCannon` (`costumes.ts`): bệ đổi hẳn từ hình trụ sang dáng thùng rượu
+phình giữa, thắt hai đầu, dựng bằng `LatheGeometry` (kỹ thuật hình khối duy nhất dùng profile-xoay,
+chưa skin nào khác dùng) kèm đai sắt + đinh tán quanh vành; một cặp sừng cong thon 3 đoạn gắn trên
+housing (phụ kiện riêng, cùng vai trò chân nhện của Web-Slinger); một khiên tròn (đĩa sơn đỏ + viền
+đồng + núm giữa) gắn mặt trước housing; một dải đinh tán xoắn ốc quấn quanh nòng thay vành trim thẳng;
+và đầu nòng tạo hình đầu rồng cách điệu (mõm gỗ + sừng tai + mắt) ôm quanh lỗ nòng — lỗ nòng chính là
+"miệng rồng" chứ không phải hình khối riêng che khuất đường đạn. Giá 1300 💎.
+
+**Cat Cannon: housing trở thành khuôn mặt mèo thật, bảng màu pastel tự chọn (2026-09).** Chủ đề mèo dễ
+thương theo yêu cầu, màu pastel hồng/trắng/cam tự thiết kế — không gắn với giống mèo hay nhân vật cụ thể
+nào. `buildCatCannon` (`costumes.ts`): housing (quả cầu turret) đổi hẳn thành khuôn mặt — hai tai tam
+giác (cone 3 cạnh) có tai trong hồng lồng bên trong, hai mắt tròn to kèm đốm sáng (chi tiết "dễ thương"
+dễ nhận nhất), mũi hồng nhỏ, và 6 sợi ria (3 mỗi bên); một cái đuôi cong vút lên từ bệ súng theo 4 đốt
+thon dần (phụ kiện riêng, cùng vai trò sừng Viking/chân Web-Slinger), có khoang kem ở chóp và 2 vòng sọc
+tabby; bệ súng viền quanh bằng 6 cụm dấu chân mèo (đệm chính + 3 ngón) thay vành trơn; và đầu nòng tạo
+hình một bàn chân mèo thật (đệm chân + 4 ngón chân) ôm quanh lỗ nòng thay vành trim thường. Giá 1800 💎
+— đắt nhất hiện có.
+
+**Cat Cannon: bỏ màu xám khỏi bảng màu (2026-09).** Trên request ("tui muốn ụ súng màu khác ngoài
+xám") — nòng súng và 2 vòng sọc trên đuôi (trước dùng pastel xám `0xcfcdd6`) đổi sang một tông hồng đậm
+hơn (`rose`, `0xffaed0`), khác với hồng tươi (`pink`, `0xffb9d6`) dùng cho tai trong/mũi/đệm chân — để cả
+bộ chỉ còn hồng/cam/kem, không còn mảng màu trung tính nào.
+
+**Vì sao 2/7 skin gắn với mốc level thay vì mua:** Hero Cannon (L20) và Frost Cannon (L40) trùng đúng
 ranh giới arc "Wall Obstacle → Lock & Key" và "Freeze Map → Tổng hợp" (mục 7) — skin đọc như một huy
 hiệu "đã qua chặng này", không phải một món hàng, nên card của nó trong Gallery hiện badge
 Progression thay vì nút Buy. Nguồn: `costumes.ts` (registry rig + giá), `SandGame.tsx` (màn Skin,
@@ -733,6 +816,8 @@ lưới Gallery nhiều cột.
 | Ammo badge | Số đạn/màu đạn hiện tại | Luôn hiện kể cả level ẩn mọi UI khác (`ftueGesture`) |
 | `.shots-upcoming` | Dải chấm màu xem trước `nextPreviewCount` (mặc định 3) viên kế tiếp | Ẩn hoàn toàn trên Level 1 (`nextPreviewCount: 0`) — level 1 toàn một màu, dải chấm chỉ dạy "không dạy gì" |
 | Nút booster | Chỉ icon, **không chữ** | Tái dùng hệ màu gameplay, tránh HUD rối chữ; khi armed có ring overlay quay/nhấp nháy liên tục quanh buồng đạn + đầu nòng, để trạng thái armed không bao giờ trông "đứng yên/dễ quên" |
+| `.booster-hud-gold` — chip vàng góc trái-trên khay booster (2026-09) | Icon coin + số vàng hiện có, chỉ để đọc (không phải nút mua) | Trên request ("Góc trái bên cùng của tray sẽ hiện coin currency hud") — người chơi hết charge giữa màn nhìn thấy ngay có đủ vàng "mua 1 ngay" hay không mà không cần rời màn chơi |
+| Badge giá trên nút booster hết charge (`.booster-badge.is-price`) | Nằm DƯỚI icon booster (không phải trên như badge đếm charge bình thường), kèm icon coin nhỏ cạnh số giá | Trên request ("giá tiền sẽ để phía dưới biểu tượng booster thay vì ở trên... nên có biểu tượng coinIcon kế bên nó") — để badge giá không bị đọc nhầm thành số charge còn lại |
 | Freeze bar | Thanh đếm ngược N lượt khi Freeze Map đang active | Chỉ hiện khi level có trigger `@` |
 | `.aim-zone` + `.aim-joystick` | Joystick ảo kéo-thả, span toàn bộ scene (không chỉ một góc màn hình) | Cho phép chạm/kéo bắt đầu ở bất kỳ đâu trên tranh, không ép người chơi nhắm đúng một điểm cố định mới bắt đầu kéo được |
 | `.settle-badge` — 3 chấm nhấp nháy, giữa khung tranh và ụ súng (2026-09i) | Trong lúc đạn bay/đang resolve/cát settle, 3 chấm nhấp nháy (`settle-dot-grow`, mỗi chấm lệch pha 0.15s) hiện đúng ở dải trời trống giữa mép dưới khung tranh và ụ súng — cùng toạ độ `top: 56%` mà `.ftue-gesture` (mục 13.6/level 1) đã dùng cho đúng dải này, không phải một trị số pixel mới. Khung tranh không đổi màu/opacity gì nữa — giữ nguyên màu gốc trong mọi trạng thái | Đưa 3 chấm trở lại sau một chuỗi thử nghiệm khác trên chính khung tranh (mix sang màu bầu trời, "kính trắng" có lưới kiểu Minecraft glass pane, rồi phủ trắng đều ở opacity thấp — tất cả đã revert); vị trí mới (giữa khung và súng) thay cho vị trí cũ (phía trên khung, `top: 70px`) |
@@ -794,6 +879,13 @@ Song ngữ **Anh/Việt** (`app/i18n.ts`), Anh là mặc định. Toàn bộ cop
 thiếu ở một trong hai ngôn ngữ, nên không có chuyện một màn hình bị lệch ngôn ngữ do quên dịch. Text
 riêng cho dev/QA (menu Settings → GameDevOption: link editor, +500 vàng debug, nhảy thẳng tới level)
 cố tình **không** nằm trong hệ thống dịch này — không phải copy người chơi thật sẽ thấy.
+
+**"Unlock all content" — cấp phát toàn bộ trong 1 tap (2026-09g).** Thêm vào GameDevOption, đặt full-
+width ngay trên "Reset entire game" (một nút CẤP, một nút XOÁ, cố tình đứng cạnh nhau): mở hết mọi
+level trong Gallery, mở hết mọi skin cannon, và cấp 50 lượt mỗi loại booster, rồi reload. Mở hết level
+kéo theo mở luôn Hearts + mọi Bundle/Special Offer có bán hearts (vì level mốc mở Hearts nằm trong số
+đó) mà không cần chạm gì thêm. "Unlock all maps" dời lên ngang hàng với "Level editor" (hàng đầu của
+lưới nút) — hai cách khác nhau để có ngay mọi level: build hoặc mở khoá.
 
 ### 13.6. Onboarding khoá cứng — level 1-3, mở game lần đầu (2026-09e)
 

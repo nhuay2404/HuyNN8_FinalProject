@@ -29,7 +29,9 @@ import {
   spendEmeralds,
   dailyLoginReward,
   DAILY_LOGIN_REWARDS,
-  DAILY_LOGIN_BOOSTER_PERK,
+  WEEKEND_BOOSTER_PERK,
+  dailyLoginBoosterPerk,
+  CHAIN_SORT_BONUS_DAY_OF_MONTH,
   getBoosterCount,
   getGold,
   levelGoldReward,
@@ -166,7 +168,7 @@ test("no record yet: today's real weekday, unclaimed, no streak", () => {
     weekday: 5,
     date: "2026-08-29",
     reward: DAILY_LOGIN_REWARDS[5],
-    boosterPerk: "prismShot",
+    boosterPerk: "radiusOvercharge",
     claimedToday: false,
     streak: 0,
   });
@@ -194,25 +196,23 @@ test("a gap of 2+ days resets the streak to 0", () => {
   assert.equal(state.streak, 0);
 });
 
-test("weekday reward table: Mon-Fri are plain and rise gently, Sat-Sun pay the most (+perk)", () => {
+test("weekday reward table: Mon-Fri all pay one flat modest amount, Sat-Sun pay no gold at all (booster only)", () => {
   assert.equal(DAILY_LOGIN_REWARDS.length, 7);
+  assert.equal(DAILY_LOGIN_REWARDS[0], 10, "the flat weekday amount is 10 gold");
   for (let i = 1; i < 5; i += 1) {
-    assert.ok(DAILY_LOGIN_REWARDS[i] >= DAILY_LOGIN_REWARDS[i - 1], "Mon..Fri should not pay less than the day before");
+    assert.equal(DAILY_LOGIN_REWARDS[i], DAILY_LOGIN_REWARDS[0], "Mon..Fri should all pay the same flat amount");
   }
-  assert.ok(DAILY_LOGIN_REWARDS[5] > DAILY_LOGIN_REWARDS[4], "Saturday should pay more than Friday");
-  assert.ok(DAILY_LOGIN_REWARDS[6] > DAILY_LOGIN_REWARDS[5], "Sunday should pay more than Saturday");
-  assert.deepEqual(Object.keys(DAILY_LOGIN_BOOSTER_PERK).map(Number).sort(), [5, 6], "only the weekend (Sat/Sun) grants a booster perk");
-  assert.ok(Object.values(DAILY_LOGIN_BOOSTER_PERK).every((type) => type === "prismShot"), "the weekend perk is Prism Shot on both days");
-  const weeklyTotal = DAILY_LOGIN_REWARDS.reduce((sum, value) => sum + value, 0);
-  // The week-long average sits in the same ballpark as a mid-difficulty
-  // level's one-off reward rather than dwarfing it — a bonus for showing up,
-  // paid at most once a day, not a replacement for playing levels (Sunday's
-  // own single best day is allowed to run a bit ahead of that, same as the
-  // old cycle's own day-7 "hero" reward always did).
-  assert.ok(weeklyTotal / 7 <= levelGoldReward(50) * 1.1, "the average daily bonus should stay close to a mid-difficulty level's reward, not dwarf it");
+  assert.equal(DAILY_LOGIN_REWARDS[5], 0, "Saturday should pay no gold");
+  assert.equal(DAILY_LOGIN_REWARDS[6], 0, "Sunday should pay no gold");
+  assert.deepEqual(Object.keys(WEEKEND_BOOSTER_PERK).map(Number).sort(), [5, 6], "only the weekend (Sat/Sun) grants a booster perk");
+  assert.equal(WEEKEND_BOOSTER_PERK[5], "radiusOvercharge", "Saturday's perk is Radius Overcharge");
+  assert.equal(WEEKEND_BOOSTER_PERK[6], "prismShot", "Sunday's perk is Prism Shot");
+  // The flat weekday amount should read as a modest top-up, not
+  // dwarf or trivialise a mid-difficulty level's own one-off reward.
+  assert.ok(DAILY_LOGIN_REWARDS[0] <= levelGoldReward(50), "the flat weekday amount should stay well under a mid-difficulty level's reward, not dwarf it");
 });
 
-test("computeDailyLoginState's boosterPerk is null Mon-Fri, and Prism Shot on the weekend", () => {
+test("computeDailyLoginState's boosterPerk is null Mon-Fri, and takes turns (Radius/Prism) on the weekend, with no gold either day", () => {
   const monday = computeDailyLoginState(null, new Date("2026-08-31T09:00:00"));
   assert.equal(monday.weekday, 0);
   assert.equal(monday.boosterPerk, null);
@@ -221,10 +221,31 @@ test("computeDailyLoginState's boosterPerk is null Mon-Fri, and Prism Shot on th
   assert.equal(friday.boosterPerk, null);
   const saturday = computeDailyLoginState(null, new Date("2026-08-29T09:00:00"));
   assert.equal(saturday.weekday, 5);
-  assert.equal(saturday.boosterPerk, "prismShot");
+  assert.equal(saturday.boosterPerk, "radiusOvercharge");
+  assert.equal(saturday.reward, 0);
   const sunday = computeDailyLoginState(null, new Date("2026-08-30T09:00:00"));
   assert.equal(sunday.weekday, 6);
   assert.equal(sunday.boosterPerk, "prismShot");
+  assert.equal(sunday.reward, 0);
+});
+
+test("dailyLoginBoosterPerk: the month's 13th always grants Chain Sort, even on a weekday or a weekend day that would otherwise grant something else", () => {
+  assert.equal(CHAIN_SORT_BONUS_DAY_OF_MONTH, 13);
+  // 2026-09-13 is a real-world Sunday — Chain Sort should still win over the
+  // weekend's own Prism Shot for that weekday.
+  const weekendThirteenth = computeDailyLoginState(null, new Date("2026-09-13T09:00:00"));
+  assert.equal(weekendThirteenth.weekday, 6);
+  assert.equal(weekendThirteenth.boosterPerk, "chainSort");
+  assert.equal(weekendThirteenth.reward, 0, "still no gold — the 13th does not change the weekend's own zero payout");
+  // 2026-08-13 is a real-world Thursday — an ordinary weekday should still
+  // pick up the Chain Sort bonus purely from the date, on top of its normal gold.
+  const weekdayThirteenth = computeDailyLoginState(null, new Date("2026-08-13T09:00:00"));
+  assert.equal(weekdayThirteenth.weekday, 3);
+  assert.equal(weekdayThirteenth.boosterPerk, "chainSort");
+  assert.equal(weekdayThirteenth.reward, DAILY_LOGIN_REWARDS[3]);
+  // Every non-13th day still falls back to the plain weekday/weekend rule.
+  assert.equal(dailyLoginBoosterPerk(14, 3), null);
+  assert.equal(dailyLoginBoosterPerk(13, 3), "chainSort");
 });
 
 // ---- daily login: getDailyLoginCalendar --------------------------------------

@@ -13,9 +13,12 @@
 # boosterPriceChainSort            | gia 1 vien Chain Sort o Shop
 # dailyLoginDay1..dailyLoginDay7   | vang thuong Daily Login theo THU THAT trong tuan: Day1=Thu Hai (T2),
 #                                  | Day2=Thu Ba (T3), Day3=Thu Tu (T4), Day4=Thu Nam (T5), Day5=Thu Sau (T6),
-#                                  | Day6=Thu Bay (T7), Day7=Chu Nhat (CN). T2-T6 binh thuong, chi co T7-CN la
-#                                  | cao nhat va kem 1 luot Prism Shot mien phi (xem DAILY_LOGIN_BOOSTER_PERK
-#                                  | trong economy.ts).
+#                                  | Day6=Thu Bay (T7), Day7=Chu Nhat (CN). T2-T6 tra CUNG mot muc vang co
+#                                  | dinh (10). T7-CN KHONG tra
+#                                  | vang (gia tri 0) - T7 tang 1 luot Radius Overcharge, CN tang 1 luot
+#                                  | Prism Shot (WEEKEND_BOOSTER_PERK trong economy.ts). Rieng ngay 13 hang
+#                                  | thang luon tang 1 luot Chain Sort, du roi vao thu nao
+#                                  | (CHAIN_SORT_BONUS_DAY_OF_MONTH trong economy.ts).
 # rewardTrackCycle1..5             | Blue Emerald cua tung ruong tren thanh Reward Track o man Home
 #                                  | (moi 1 level thang = day 1 moc; day du 5 moc = 5 level thi mo duoc
 #                                  |  ruong). Ruong tu chu ky 6 tro di tu dong tang 25%/chu ky.
@@ -23,6 +26,9 @@
 #                                  | cac level moc hang chuc 10/20/30/40/50 - tang dan qua tung moc, roi vao
 #                                  | khoang 2/3 - 3/4 gia 1 booster (xem GDD.md muc 10.4)
 # costumePrice_rune-cannon         | gia skin Rune Cannon, tinh bang Blue Emerald
+# costumePrice_spider-cannon       | gia skin Web-Slinger Cannon, tinh bang Blue Emerald
+# costumePrice_viking-cannon       | gia skin Viking Cannon, tinh bang Blue Emerald
+# costumePrice_cat-cannon          | gia skin Cat Cannon, tinh bang Blue Emerald
 key,value
 starterGold,100
 starterBoosterRadiusOvercharge,1
@@ -32,12 +38,12 @@ boosterPriceRadiusOvercharge,100
 boosterPricePrismShot,100
 boosterPriceChainSort,150
 dailyLoginDay1,10
-dailyLoginDay2,12
-dailyLoginDay3,15
-dailyLoginDay4,18
-dailyLoginDay5,20
-dailyLoginDay6,30
-dailyLoginDay7,40
+dailyLoginDay2,10
+dailyLoginDay3,10
+dailyLoginDay4,10
+dailyLoginDay5,10
+dailyLoginDay6,0
+dailyLoginDay7,0
 rewardTrackCycle1,500
 rewardTrackCycle2,600
 rewardTrackCycle3,750
@@ -49,3 +55,6 @@ levelMilestoneBonus30,90
 levelMilestoneBonus40,100
 levelMilestoneBonus50,115
 costumePrice_rune-cannon,500
+costumePrice_spider-cannon,1000
+costumePrice_viking-cannon,1300
+costumePrice_cat-cannon,1800
