@@ -129,7 +129,7 @@ từng hạt, vì sao bỏ cohesion) ở
 
 Level nào cũng có thể vẽ bằng **editor** ở `/editor` — đó là cách nhanh nhất. Nội dung level (không
 phải engine) nằm ở [`design/levels/`](design/levels/), tách khỏi `app/game`. Format đầy đủ để viết
-tay một level (bức tranh `rows`, bảng mã 10 màu, `ammoQueue`, `wind`, lock&key, `pixelScale`) ở
+tay một level (bức tranh `rows`, bảng mã 10 màu, `ammoQueue`, lock&key, `pixelScale`) ở
 [docs/features/level-format.md](docs/features/level-format.md).
 
 `BUILT_IN_LEVELS` hiện ship 50 level ("Level 1" tới "Level 50", xem cấu trúc arc ở mục
