@@ -221,12 +221,25 @@ const RECOIL_TRAVEL = 0.23;
  * barrel's recoil. `frameRecoil` decays at this rate per second (same shape
  * as `recoil` above); `FRAME_RECOIL_TILT` is the peak tilt in radians, and
  * `FRAME_RECOIL_PUSH` the peak backward nudge along Z, both scaled by how far
- * off-centre the hit landed — a dead-centre hit still nudges straight back,
- * an edge hit rocks the frame toward that edge as well.
+ * off-centre the hit landed — an edge hit rocks the frame toward that edge;
+ * see `FRAME_RECOIL_MIN_LEAN` just below for what a dead-centre hit does.
  */
 const FRAME_RECOIL_DECAY_PER_SECOND = 7.5;
 const FRAME_RECOIL_TILT = 0.05;
 const FRAME_RECOIL_PUSH = 0.05;
+/**
+ * A floor under `frameRecoilOffsetX/Y`'s own magnitude (2026-09g, on
+ * request — "khi tôi bắn vị trí giữa, tôi muốn nó cũng rung"): a shot dead
+ * on the frame's centre used to compute an offset of exactly 0 on both
+ * axes, which zeroed out BOTH tilt terms in `step` below and left only the
+ * straight-back `FRAME_RECOIL_PUSH` — a real nudge, but not the visible
+ * "rung" (shake) an off-centre hit already gets from its rotation. Every
+ * offset below this magnitude is pulled up to it (sign preserved; an exact
+ * 0 falls back to `frameRecoilCenterLeanSign`, alternated per shot — see
+ * that field's own comment) so a centre hit still rocks the frame instead
+ * of just pushing it straight back, while an edge hit (already at or past
+ * this magnitude) is completely unaffected. */
+const FRAME_RECOIL_MIN_LEAN = 0.35;
 /**
  * Radius Overcharge's own screen shake, layered on top of `frameRecoil`
  * above rather than replacing it — see `radiusShakeAmplitude`'s own field
@@ -1179,6 +1192,14 @@ export class SandCannonEngine {
   private frameRecoil = 0;
   private frameRecoilOffsetX = 0;
   private frameRecoilOffsetY = 0;
+  /**
+   * Which way a perfectly dead-centre hit leans (`FRAME_RECOIL_MIN_LEAN`'s
+   * own comment) — flips every time it is used (`triggerFrameRecoil`) so a
+   * run of centre shots rocks left-right-left rather than kicking the exact
+   * same corner every single time, which read as a stuck/repeating twitch
+   * rather than a shake.
+   */
+  private frameRecoilCenterLeanSign = 1;
   /**
    * Radius Overcharge's own screen shake (on request: "tranh rung mạnh
    * hơn... rung có tốc độ giảm dần đến khi dừng") — an oscillation layered
@@ -4066,13 +4087,25 @@ export class SandCannonEngine {
   private triggerFrameRecoil(point: THREE.Vector3) {
     const halfWidth = (this.level.frame.width * this.cell) / 2;
     const halfHeight = (this.level.frame.height * this.cell) / 2;
-    this.frameRecoilOffsetX = halfWidth > 0
-      ? THREE.MathUtils.clamp((point.x - this.frameRoot.position.x) / halfWidth, -1, 1)
-      : 0;
-    this.frameRecoilOffsetY = halfHeight > 0
-      ? THREE.MathUtils.clamp((point.y - this.frameRoot.position.y) / halfHeight, -1, 1)
-      : 0;
+    const rawX = halfWidth > 0 ? THREE.MathUtils.clamp((point.x - this.frameRoot.position.x) / halfWidth, -1, 1) : 0;
+    const rawY = halfHeight > 0 ? THREE.MathUtils.clamp((point.y - this.frameRoot.position.y) / halfHeight, -1, 1) : 0;
+    this.frameRecoilOffsetX = this.applyMinLean(rawX);
+    this.frameRecoilOffsetY = this.applyMinLean(rawY);
     this.frameRecoil = 1;
+  }
+
+  /** `FRAME_RECOIL_MIN_LEAN`'s own floor: keeps `raw`'s sign and magnitude
+   * whenever it is already strong enough, only pulling weak/zero offsets up
+   * to the floor (falling back to `frameRecoilCenterLeanSign`, then flipping
+   * it, on an exact 0) — see that constant's own comment for why. */
+  private applyMinLean(raw: number): number {
+    if (raw === 0) {
+      const sign = this.frameRecoilCenterLeanSign;
+      this.frameRecoilCenterLeanSign = -sign;
+      return sign * FRAME_RECOIL_MIN_LEAN;
+    }
+    const sign = Math.sign(raw);
+    return sign * Math.max(Math.abs(raw), FRAME_RECOIL_MIN_LEAN);
   }
 
   private handleMiss(hitFrame: boolean) {

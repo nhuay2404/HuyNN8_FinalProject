@@ -482,7 +482,12 @@ button {
    `z-index` keeps it drawn over the pill's own edge instead of getting
    tucked behind it. */
 .hub-gold-wrap .coin-icon {
-  width: 44px; height: 44px; z-index: 1; margin-right: -42px;
+  width: 44px; height: 44px; z-index: 1;
+  /* Was -42px; tightened to -44 alongside `.hub-gold-badge`'s own
+     padding-left (48px -> 44px) — same visual overlap, several px less
+     total chip width, part of fitting three currency chips + the settings
+     gear on the game frame's own real (sub-430px) widths (2026-09q). */
+  margin-right: -44px;
 }
 .hub-gold-badge {
   display: flex; align-items: center; gap: 8px; height: 44px;
@@ -492,14 +497,18 @@ button {
      `padding-left` is pushed out past the coin's own far edge (deeper than
      the visual overlap above) so the balance never sits under the coin —
      the pill reads as longer now to make room for that, on purpose. */
-  padding: 0 6px 0 48px; border: 0; border-radius: var(--r-pill);
+  padding: 0 6px 0 44px; border: 0; border-radius: var(--r-pill);
   /* Pale yellow, not the plain cream every other chip in this file uses —
      gold's own currency colour, just light enough to still read as "cozy
      paper" rather than a saturated coin. */
   background: #fde59c;
 }
 .hub-gold-badge strong {
-  font-size: 17px; font-weight: 800; letter-spacing: -.01em;
+  /* 16px — matches `.hub-emerald-badge strong`/`.hub-heart-badge small`
+     exactly (2026-09o ask: "size font chữ của heart currency và 2 hud còn
+     lại phải bằng nhau"); was 17px, the one HUD number that stood a pixel
+     taller than the other two. */
+  font-size: 16px; font-weight: 800; letter-spacing: -.01em;
   font-variant-numeric: tabular-nums; color: var(--ink);
   display: inline-block;
   /* Remounted (via a React `key`) the instant a daily-login claim's coins
@@ -1764,8 +1773,16 @@ button.settings-devtoggle {
    grid lines rather than empty space. */
 .daily-login-calendar-scroll {
   max-height: 190px; overflow-y: auto; overflow-x: hidden;
-  margin: 0 0 8px; padding: 8px;
-  border-radius: var(--r-md);
+  margin: 0 0 8px;
+  /* The outermost "grid line" — this padding is what shows as dark border
+     all around the outside of the cells, same colour as the 1px gap between
+     them. Thinned from 8px down to 1px (2026-09k), then nudged back up a
+     touch (2026-09l: "mỏng, dày thêm xíu nữa") since flush-with-the-inner-
+     gap read as no border at all rather than a thin one. */
+  padding: 3px;
+  /* Plain rectangle, no rounded corners (2026-09i ask: "shape lịch là hình
+     chữ nhật... không còn bo góc"). */
+  border-radius: 0;
   background: #100c08;
   scrollbar-width: thin;
   scrollbar-color: #55493a #100c08;
@@ -1775,15 +1792,18 @@ button.settings-devtoggle {
 .daily-login-calendar-scroll::-webkit-scrollbar-thumb { background: #55493a; border-radius: 3px; }
 /* The grid itself: square cells (`aspect-ratio: 1`), 5 to a row (was 7 —
    dropping two columns in the same card width is most of "phóng to ô") on a
-   4px `gap`, which against the scroller's dark background is what draws the
-   black grid lines between them — no per-cell border needed. */
+   1px `gap`, which against the scroller's dark background is what draws the
+   black grid lines between them — no per-cell border needed. Thinned from
+   4px (2026-09j ask: "grid mỏng hơn"). Cells themselves are square corners
+   now, not rounded (same ask, "ô vuông ko còn bo góc") — a real grid of
+   flush tiles rather than a row of separate rounded chips. */
 .daily-login-calendar {
-  display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px;
 }
 .daily-login-cell {
   position: relative; aspect-ratio: 1;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  border-radius: 6px; background: var(--locked);
+  background: var(--locked);
 }
 .daily-login-cell-day {
   position: absolute; top: 4px; left: 5px;
@@ -2245,10 +2265,24 @@ button.settings-devtoggle {
 }
 .offer-card.is-teal { background: var(--iap-accent-deep); color: #eafcff; }
 .offer-card.is-green { background: var(--accent); color: var(--accent-ink); }
+/* `offer-tag` (why this offer exists) on the left, `offer-value-badge` (why
+   buy it) on the right — the two ride the same row so the anchoring number
+   reads as a peer of the "limited-time" hook, not a buried footnote. */
+.offer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .offer-tag {
   align-self: flex-start; padding: 4px 10px; border-radius: var(--r-pill);
   background: var(--danger); color: var(--danger-ink);
   font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+}
+/* The anchoring badge (2026-09f, "offer nên có [...] giá trị lợi ích để hook
+   người chơi") — a warm gold pill, deliberately a different hue from
+   `.offer-tag`'s red so the two never read as one repeated shape, and bright
+   enough against both card backgrounds (`is-teal`/`is-green`) to be the
+   first thing the eye catches after the price. */
+.offer-value-badge {
+  flex: none; padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--shop-sun); color: var(--shop-brown);
+  font-size: 10.5px; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
 }
 .offer-card h4 { margin: 0; font-size: 17px; font-weight: 800; }
 .offer-contents { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
@@ -3286,7 +3320,17 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   top: max(var(--hud-inset), env(safe-area-inset-top));
   left: max(14px, env(safe-area-inset-left));
   right: 66px;
-  display: flex; align-items: center; gap: 10px;
+  /* Was 10px, widened to 16px (2026-09n, "chật cứng khó thở") for more
+     breathing room between chips, then pulled back in steps (2026-09q,
+     2026-09r, 2026-09s, 2026-09t) down to 2px: at the game frame's own real
+     widths (its `max-width` is well under the desktop preview this was
+     tuned on), 16px plus every chip's full content genuinely did not fit
+     before the settings gear — the widened gap was part of what pushed the
+     heart chip into overlapping its neighbours. Every chip got its own
+     padding/overlap trimmed too (see each one's own comment, especially
+     `.hub-heart-icon-wrap`'s), so the gap itself did not have to carry the
+     whole fix alone. */
+  display: flex; align-items: center; gap: 2px;
   pointer-events: none;
 }
 .hub-currency-row > * { pointer-events: auto; }
@@ -3298,17 +3342,33 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    exactly one source (the reward track) and nothing to sell. Not a button
    either, for the same reason. */
 .hub-emerald-wrap {
-  height: 44px; display: flex; align-items: center;
-  min-width: 0;
+  height: 44px; flex: none; display: flex; align-items: center;
+  /* Was `min-width: 0` (shrinkable) with no `flex: none` — on a narrow
+     `.hub-currency-row` that would let flexbox squeeze this chip below its
+     own content's width, and since nothing here actually shrinks (the pill's
+     padding/text stay fixed size), the squeezed-out overflow painted past
+     this chip's own box and over the next chip in the row — "HUD heart đè
+     lên Blue emerald" (2026-09q). `flex: none`, same as `.hub-gold-wrap`,
+     keeps this chip at its natural size always, so it can never be forced
+     smaller than what it actually draws. */
 }
 /* Same overlap trick `.hub-gold-wrap .coin-icon` uses: the stone's own circle
    covers the pill's rounded end-cap rather than sitting inside it. */
 .hub-emerald-wrap .emerald-icon {
-  width: 44px; height: 44px; z-index: 1; margin-right: -36px;
+  width: 44px; height: 44px; z-index: 1;
+  /* Was -36px; tightened to -40 alongside `.hub-emerald-badge`'s own
+     padding-left (42px -> 38px) — see `.hub-gold-wrap .coin-icon`'s own
+     comment (2026-09q), same reasoning, applied to this chip too. */
+  margin-right: -40px;
 }
 .hub-emerald-badge {
   display: flex; align-items: center; height: 44px;
-  padding: 0 16px 0 42px; border-radius: var(--r-pill);
+  /* Right padding: 16px originally, matched down to 6px to help the row
+     fit (2026-09q) — too tight ("nhìn ko bị kẹp"), nudged back out to 12px
+     (2026-09s) now that the row has other room to give. Left padding
+     trimmed 4px alongside the icon's own tighter overlap above, unrelated
+     to this and still in effect. */
+  padding: 0 12px 0 38px; border-radius: var(--r-pill);
   /* Pale blue — emerald's own currency colour, held to the same "cozy paper"
      lightness `.hub-gold-badge`'s yellow sits at. */
   background: #cfe8ff;
@@ -3331,11 +3391,49 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    overlaps a pill's rounded end-cap) — but the COUNT sits ON the icon as
    its own small badge (on request: "số lượng icon sẽ nằm trên icon
    HeartIcon luôn"), not inside the pill the way gold/emerald's numbers
-   are. The pill itself is left to hold only the regen countdown, and is
-   simply absent (not an empty pill) once the tank is full — see the JSX
-   comment at the call site. */
-.hub-heart-wrap { height: 44px; display: flex; align-items: center; min-width: 0; }
-.hub-heart-icon-wrap { position: relative; width: 44px; height: 44px; z-index: 1; flex: none; margin-right: -36px; }
+   are. The pill itself holds the regen countdown when the tank is short a
+   heart, and always holds the green plus mark (`.hub-heart-plus` below) —
+   see the JSX comment at the call site. A real button now (bare reset,
+   same treatment `.hub-gold-wrap` gets), not a `role="status"` div: tapping
+   it opens the Shop's Hearts section (`openHeartPacks`, 2026-09p ask). */
+.hub-heart-wrap {
+  height: 44px; flex: none;
+  display: flex; align-items: center;
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; transition: transform .16s;
+  /* 2026-09g, on request ("heart currency bị quá sát với khoảng cách blue
+     emerald... đồng nhất khoảng cách"): the box-model gap to every neighbour
+     in `.hub-currency-row` is already an equal 2px (flex `gap`), but the
+     three currency PNGs are not equally padded inside their own square —
+     measured by reading each icon's real opaque pixels: `HeartIcon` fills
+     ~91% of its box edge-to-edge, `CoinIcon` ~87%, `EmeraldIcon` only ~80%
+     (more transparent margin baked into the art). Emerald's icon sits at
+     THIS chip's left edge (same overlap convention gold/emerald both use —
+     see `.hub-heart-icon-wrap` below), so its extra transparent margin ate
+     into the gap on that side too, on top of the 2px flex gap — the emerald
+     stone's drawn edge is a few px further from its own box edge than the
+     heart's drawn edge is from ITS box edge, so the two read as uneven even
+     though the boxes themselves are spaced identically. This margin makes
+     up that difference so the drawn artwork — not just the invisible CSS
+     box — reads as evenly spaced from gold→emerald as from emerald→heart. */
+  margin-left: 6px;
+}
+.hub-heart-wrap:active { transform: translateY(2px); }
+/* The icon itself shrunk from 44px (same as gold/emerald) down to 28px
+   (2026-09s/t) to buy back the room `.hub-heart-plus` needed to grow back
+   to its full 22px size — unlike the padding-left/margin-right PAIR below
+   (which can move together without changing this chip's total width, as
+   long as they stay equal — see `.hub-heart-badge`'s own comment), the
+   icon's own box size adds to the total directly, so this is the one real
+   lever left once text/font-size/gap were already at their floor.
+   Overlap -28px: `.hub-heart-badge`'s own padding-left is 4px MORE than
+   this (32px, not 28px) on purpose now — an exact match (as this pair
+   followed since 2026-09r) puts the countdown text flush against the
+   icon's own bounding box, which measured as zero overlap here but still
+   read as the icon covering the text on a real device ("icon heart che
+   số", 2026-09t) — font/PNG rendering is not pixel-identical everywhere,
+   so a real few-px gap is worth the width more than an exact-flush fit is. */
+.hub-heart-icon-wrap { position: relative; width: 28px; height: 28px; z-index: 1; flex: none; margin-right: -28px; }
 .hub-heart-icon-wrap .heart-icon { width: 100%; height: 100%; object-fit: contain; display: block; }
 .hub-heart-count {
   position: absolute; right: -3px; bottom: -3px;
@@ -3352,15 +3450,40 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
    short a heart. The one HUD chip whose text changes every second on its
    own (`SandGame.tsx`'s 1-second timer). */
 .hub-heart-badge {
-  display: flex; align-items: center; height: 44px;
-  padding: 0 14px 0 42px; border-radius: var(--r-pill);
+  display: flex; align-items: center; gap: 1px; height: 44px;
+  /* Right padding down to 0. Left padding is 32px — 4px MORE than
+     `.hub-heart-icon-wrap`'s own 28px overlap, a deliberate real gap rather
+     than an exact flush match (see that rule's own comment, 2026-09t: a
+     zero-gap fit still read as the icon covering the countdown text on a
+     real device). Part of fitting three currency chips + the settings gear
+     on the game frame's own real (sub-430px) widths. */
+  padding: 0 0 0 32px; border-radius: var(--r-pill);
   /* Pale pink — hearts' own currency colour, same "cozy paper" lightness
      gold's yellow/emerald's blue both sit at. */
   background: #ffd7de;
 }
 .hub-heart-badge small {
-  font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums;
+  /* 16px — matches `.hub-gold-badge strong`/`.hub-emerald-badge strong`
+     exactly (2026-09o ask: "size font chữ của heart currency và 2 hud còn
+     lại phải bằng nhau"); was 11px, visibly smaller than the other two
+     currency numbers sitting right next to it in the same row. */
+  font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums;
   color: #7a2634; white-space: nowrap;
+}
+/* The "buy more" mark — same bare treatment as `.hub-gold-plus` (real
+   artwork already carrying its own filled green circle, just a 22px hit
+   target sizing/positioning it). Always present once hearts are unlocked,
+   not just while the tank is short one, so there is always a way to jump
+   to the Shop's Hearts section straight from the HUD (2026-09p ask). */
+.hub-heart-plus {
+  /* 22px — matched to `.hub-gold-plus` exactly (2026-09s ask: "cho size
+     dấu cộng xanh ở heart currency bằng với size của coin"). Was shrunk
+     down as far as 14px through 2026-09q/r purely to help this chip fit;
+     the room for that got clawed back from elsewhere instead (see this
+     chip's other rules' own comments) so the mark could grow back to its
+     rightful size. */
+  width: 22px; height: 22px; flex: none;
+  display: grid; place-items: center;
 }
 
 /* ---- Home screen: the reward track -------------------------------------- */

@@ -8751,3 +8751,214 @@ trí luôn chứ không tự nhiên snap rồi có fixed position trông rất k
 (dev tool "Full reward track"), chụp màn hình cách nhau vài giây sau khi các viên đá đã rơi xong — vị
 trí/góc xoay giữ nguyên y hệt giữa các lần chụp, không còn dịch chuyển thêm sau khi đã trông như đã
 dừng.
+
+## 225. Daily Login: lịch thành hình chữ nhật, bỏ bo góc, lưới mỏng hơn (13/09)
+
+**Yêu cầu, 4 lượt liên tiếp:** "tôi muốn shape lịch là hình chữ nhật, cái shape màu nâu tổng ấy, không
+còn bo góc nữa" → "tôi muốn các grid mỏng hơn và các ô vuông ko còn bo góc nữa" → "tôi muốn độ dày grid
+ngoài cùng phải mỏng hơn nữa" → "mỏng, dày thêm xíu nữa".
+
+- **`.daily-login-calendar-scroll`** (`globals.css`): `border-radius: var(--r-md)` → `0` (khối nền
+  đen/nâu bao lưới giờ là hình chữ nhật vuông vức); `padding` (viền ngoài cùng) đi qua 3 nấc
+  `8px → 1px → 3px` — mỏng hẳn nhưng vẫn đủ để phân biệt với đường lưới bên trong, không bằng-0 tới mức
+  trông như mất viền.
+- **`.daily-login-calendar`**: `gap` (đường lưới giữa các ô) `4px → 1px`.
+- **`.daily-login-cell`**: bỏ hẳn `border-radius: 6px` — ô vuông giờ vuông thật, không bo góc.
+
+**Test:** `tsc --noEmit` sạch. Verify sống qua từng bước bằng screenshot Daily Login modal — xác nhận
+đúng thứ tự: hình chữ nhật vuông góc → lưới mỏng + ô vuông → viền ngoài mỏng gần bằng lưới trong → viền
+ngoài dày lại một chút theo yêu cầu cuối.
+
+## 226. Chơi lại level đã clear từ Gallery (hoặc Play again/Restart) không tốn tim (13/09)
+
+**Yêu cầu:** "Khi người chơi chơi lại màn từ gallery, sẽ không tốn tim."
+
+- **`tryStartAttempt`** (`SandGame.tsx`) — gate dùng chung cho mọi lượt Play/Restart: thêm điều kiện
+  `hasClearedLevel(raw.id)` bên cạnh `!heartsUnlocked`/`playingZen` đã có — level nào đã từng clear ít
+  nhất 1 lần (bất kể chọn lại từ Gallery, bấm "Play again", hay Restart) thì lượt chơi lại **không trừ
+  tim**; chỉ level thật sự mới (chưa từng thắng) mới tốn tim.
+- Phải dời khai báo `tryStartAttempt` xuống SAU `const raw = ...` (thay vì vị trí cũ nằm trước) — `raw.id`
+  cần là dependency thật của `useCallback`, và TypeScript chặn tham chiếu biến `const` trước khi khai báo
+  trong cùng scope (`used before its declaration`) nếu để nguyên vị trí cũ.
+
+**Test:** `tsc --noEmit` sạch, `npm test` không đổi kết quả (174/175, 1 fail pre-existing không liên
+quan). Verify sống: replay Level 1 (đã clear trước đó) từ Home — số tim giữ nguyên, chỉ giảm theo đồng
+hồ hồi tim tự nhiên, không giảm thêm 1 khi bấm Play.
+
+## 227. HUD currency row: giãn cách các chip đỡ "chật cứng", đồng bộ cỡ chữ 3 currency (13/09)
+
+**Yêu cầu:** "Sắp lại UI, nó đang bị 'chật cứng' khó thở" → "tôi muốn size font chữ của heart currency
+và 2 hud còn lại phải bằng nhau".
+
+- **`.hub-currency-row`** (`globals.css`): `gap` giữa 3 chip (coin/emerald/heart) `10px → 16px` — mỗi
+  chip đứng tách biệt rõ ràng thay vì dính sát nhau như một dải liền (giá trị này còn bị chỉnh lại nhiều
+  lần ở #228 bên dưới khi hàng HUD không đủ chỗ chứa các thay đổi khác).
+- **Đồng bộ font-size 3 số HUD tiền tệ về 16px**: `.hub-gold-badge strong` (17px→16px), `.hub-heart-badge
+  small` (11px→16px, thay đổi rõ nhất — số đếm ngược tim trước đó nhỏ hơn hẳn "100"/"2750" đứng cạnh).
+  `.hub-emerald-badge strong` đã sẵn 16px, dùng làm chuẩn.
+
+**Test:** `tsc --noEmit` sạch. Verify sống: 3 chip có khoảng cách rõ ràng, "100"/"2750"/"19:19" (countdown
+tim) cùng một cỡ chữ.
+
+## 228. Heart currency: thêm nút dấu cộng mở thẳng Shop→Hearts (giống coin); dọn hàng loạt lỗi chồng lấn/che chữ phát sinh theo (13/09)
+
+**Yêu cầu, nhiều lượt:** "Tôi muốn thêm icon dấu cộng nền xanh lá vào heart currency, giống như coin
+currency, khi nhấn vào sẽ chuyển đến khu vực mua heart ở trong shop UI" → "HUD heart đè lên Blue
+emerald" → "text trên heart lại bị biểu tượng HeartIcon che" → "khoảng giữ text tới rìa Hud ở currency
+blue emerald nên xa hơn tí... cho size dấu cộng xanh ở heart currency bằng với size của coin" → "Giờ
+icon heart che số".
+
+**Tính năng chính** (`SandGame.tsx`): `openHeartPacks` (mới, cùng khuôn `openCoinPacks`) +
+`heartPackSectionRef` gắn vào section Hearts trong Shop. `.hub-heart-wrap` đổi từ `<div role="status">`
+sang `<button onClick={openHeartPacks}>`; pill (`.hub-heart-badge`) giờ LUÔN hiện (không chỉ khi tim
+chưa đầy) vì nó là nơi chứa dấu `+` (`.hub-heart-plus`, dùng chung artwork `PlusIcon` với coin) — tim
+đầy thì pill chỉ còn mỗi dấu `+`, không hiện đếm ngược.
+
+**Chuỗi sự cố layout phát sinh, do hàng HUD (coin+emerald+heart+gear Settings) vốn đã sát giới hạn chiều
+rộng thật của `.game-frame` (`max-width: 430px`, và trên điện thoại thật thường hẹp hơn — 375px là phổ
+biến) — thêm dấu `+` cho heart đẩy nó vượt ngưỡng:**
+
+1. **Đè lên Blue Emerald** — nguyên nhân gốc: `.hub-emerald-wrap` thiếu `flex: none`, bị flexbox ép co
+   nhỏ hơn nội dung thật khi thiếu chỗ, phần pill tràn ra ngoài đè lên chip kế bên. Sửa: thêm
+   `flex: none` (giống `.hub-gold-wrap` đã có sẵn) — chip không bao giờ bị ép nhỏ hơn nội dung thật.
+2. Sau khi hết đè emerald, việc chip heart không co được lại lộ ra bài toán "đủ chỗ" thật: tổng bề rộng
+   3 chip + gear vượt quá không gian thật ở 375-430px. Trừ lại bằng: `.hub-currency-row`'s `gap`
+   16px→2px (qua nhiều nấc), padding-phải thừa của emerald 16px→6px (không có tác dụng gì), siết
+   overlap icon/padding-trái của cả 3 chip (nguyên tắc: `padding-left` badge phải khớp đúng độ âm của
+   `margin-right` icon để chữ luôn bắt đầu sát mép icon), và icon `+` của heart tạm nhỏ hơn coin.
+3. **Icon heart che chữ đếm ngược** — khi siết `margin-right` của icon heart sâu hơn `padding-left` của
+   pill (lệch nhau tới 10px ở một bước), chữ bị icon đè lên. Sửa bằng cách khớp lại đúng hai giá trị này
+   (nguyên tắc ở trên), đồng thời **thu nhỏ riêng icon heart** (44px, bằng coin/emerald, xuống còn 28px)
+   — đây là đòn bẩy duy nhất giảm bề rộng chip mà không đụng chữ/icon `+`/gap đã ở mức sàn.
+4. **Emerald "xa hơn tí" + dấu `+` heart bằng size coin** — 2 yêu cầu tăng bề rộng ngược lại: padding-phải
+   emerald 6px→12px, `.hub-heart-plus` 14px→22px (bằng `.hub-gold-plus`). Bù chỗ bằng cách siết `gap`
+   hàng xuống 2px và các padding nội bộ của pill heart xuống mức tối thiểu.
+5. **Icon heart vẫn che chữ trên thiết bị thật dù đo bounding-box bằng 0** — font/PNG rendering không
+   tuyệt đối giống nhau mọi nơi, nên "khớp chính xác 0px" (padding-left = |margin-right| đúng công thức)
+   vẫn có thể đọc như bị che trên máy thật. Sửa cuối: `padding-left` của pill heart để **dư hẳn 4px**
+   so với độ âm overlap của icon (32px vs 28px) — một khoảng trống thật, không còn vừa khít tới mức dễ
+   vỡ theo từng thiết bị.
+
+**Kết quả cuối** (đo bằng `getBoundingClientRect` qua JS ở cả 375px và 430px): mọi khoảng cách giữa 3
+chip và giữa heart–gear đều dương (2–4px), text đếm ngược cách icon đúng 4px, `.hub-heart-plus` = 22px =
+`.hub-gold-plus`.
+
+**Test:** `tsc --noEmit` sạch, `npm test` không đổi kết quả (174/175, 1 fail pre-existing không liên
+quan) sau mỗi bước. Verify sống bằng cả screenshot lẫn đo toạ độ JS thực (`getBoundingClientRect`) ở
+375px/430px, và giả lập trạng thái tim chưa đầy qua `localStorage` để test chữ đếm ngược.
+
+## 229. Shop: re-anchor mỏ neo coin từ $0.99 = 1000 coins xuống $0.99 = 200 coins (13/09)
+
+**Vấn đề:** $0.99 đổi được 1000 coins — mua ngay ~10 charge Radius Overcharge/Prism Shot
+(`BOOSTER_PRICE` = 100 gold, `economy.ts`) chỉ với chưa tới 1 đô, biến IAP rẻ nhất thành một cách bỏ
+qua gần như toàn bộ vòng lặp "chơi để kiếm gold, dùng gold mua booster" mà game được thiết kế quanh
+(xem slide kinh tế học game — "mỏ neo (anchoring)" và "co giãn theo giá": một mỏ neo quá hào phóng kéo
+lệch cảm nhận giá trị của mọi mức giá cao hơn nó).
+
+**Sửa:** Đặt lại mỏ neo `c1` (`COIN_PACKS`, `SandGame.tsx`) thành 200 coins cho $0.99 — ~2 charge thay
+vì 10. Giữ nguyên toàn bộ mức giá chuẩn của App Store/Play Store ($0.99/$1.99/$4.99/$9.99/$19.99/
+$49.99/$99.99 — không phải số một game có thể tự đặt tuỳ ý) và % bonus mỗi bậc (đã tăng dần sẵn:
++10/+20/+30/+45/+60%) — chỉ nhân số coin ở MỌI bậc, MỌI bảng (`COIN_PACKS`, `BUNDLES`,
+`SPECIAL_OFFERS`) với đúng 0,2 (= 200 / 1000, tỉ lệ neo mới so với neo cũ), rồi làm tròn cho đẹp. Vì
+mọi số cũ đều nhân cùng một hằng số, đường cong "gói to hơn = giá/coin tốt hơn" và tỉ lệ tương đối giữa
+coin-pack thuần và bundle nhiều tiền tệ (hearts/emeralds đi kèm) giữ nguyên y hệt thiết kế cũ — chỉ có
+mỏ neo dưới cùng dịch xuống.
+
+| Bảng | Trước | Sau |
+|---|---|---|
+| `COIN_PACKS` c1..c7 | 1.000 / 2.200 / 6.000 / 13.000 / 28.000 / 80.000 / 180.000 | 200 / 440 / 1.200 / 2.600 / 5.600 / 16.000 / 36.000 |
+| `BUNDLES` b1..b5 (coins) | 400 / 2.500 / 6.000 / 13.000 / 35.000 | 80 / 500 / 1.200 / 2.600 / 7.000 |
+| `SPECIAL_OFFERS` starter | 1.200 coins | 240 coins |
+
+Hearts/emeralds trong bundle và offer giữ nguyên — yêu cầu chỉ nói tới "giá tiền và số lượng coin".
+
+**Test:** `tsc --noEmit` sạch (3 lỗi còn lại ở `db/index.ts`/`worker/index.ts` có từ trước, không liên
+quan tới thay đổi này — thiếu type Cloudflare Workers).
+
+## 230. Special Offers: bơm coins để hời hơn ~99% so với mua lẻ (13/09)
+
+**Vấn đề (do #229 gây ra):** Sau khi hạ mỏ neo coin xuống 200/$0.99, phần coins+hearts của
+`SPECIAL_OFFERS` (`SandGame.tsx`) tính theo giá bán lẻ tương ứng còn RẺ HƠN giá của chính offer đó —
+Islander's Starter Pack (240 coins + 3 hearts, $4.99) mua lẻ chỉ hết ~$3.18; Weekend Heart Rush (5
+hearts + 300 emeralds, $9.99) phần hearts mua lẻ chỉ hết $2.99. Một "Special Offer" gắn mác "First
+purchase"/"Weekend only" mà rẻ ngang hoặc đắt hơn mua lẻ thì mất hết tác dụng "mỏ neo" (anchoring) —
+đúng cái slide kinh tế học nói: deal phải "quá hời" để co giãn giá thấp, không phải hoà vốn.
+
+**Sửa:** Bơm coins ở cả 2 offer tới mức: (coins + hearts, định giá theo đúng mốc `COIN_PACKS`/
+`HEART_PACKS` tương ứng) mua lẻ tốn **~99% nhiều tiền hơn** giá bán của offer — Blue Emerald tính là
+phần thưởng cộng thêm thuần túy (không có gói bán lẻ nào để so sánh giá).
+
+| Offer | Trước (#229) | Sau | Mua lẻ tương đương |
+|---|---|---|---|
+| Islander's Starter Pack ($4.99) | 240 coins + 3 hearts | **1.900 coins** + 3 hearts | ~$9.89 (+98%) |
+| Weekend Heart Rush ($9.99) | 5 hearts, KHÔNG coins | 5 hearts + **4.400 coins** (mới) | ~$19.90 (+99%) |
+
+Weekend Heart Rush lần đầu có coins — phá vỡ chủ đích thiết kế cũ ("không coins, chỉ hearts/emerald,
+để dành cho người đã dư vàng") vì hearts một mình (trần `MAX_HEARTS`) không đủ để tạo khoảng cách 99%
+mà không có một loại tiền tệ định giá được khác đi kèm.
+
+`BUNDLES`/`COIN_PACKS` (thang giá đứng, không phải ưu đãi giới hạn thời gian) giữ nguyên — bonus % của
+riêng chúng đã đủ để đọc như một thang "gói to hơn = lời hơn", không cần vượt mặt cả Shop kiểu mỏ neo.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229 đã ghi, không liên quan).
+Verify sống trên dev server: Shop → Special Offers hiện đúng 1.900/4.400 coins.
+
+## 231. Special Offers: badge "+X% giá trị" hiện rõ mức hời để hook người chơi (13/09)
+
+**Yêu cầu:** "offer nên có [...] + giá trị lợi ích để hook người chơi" — mức hời ~99% tính ở #230 đang
+NẰM ẨN trong số coin/heart, người chơi phải tự tính mới thấy. Đúng kỹ thuật "Mỏ neo (Anchoring)" slide
+đã nói: muốn hiệu ứng tâm lý thật thì phải cho người chơi THẤY con số, không phải giấu nó trong toán.
+
+**Sửa:** Thêm badge vàng `+98% giá trị` / `+99% giá trị` (`offer-value-badge`, `SandGame.tsx`) ở góc
+phải mỗi Special Offer card, đối xứng với `offer-tag` (nhãn đỏ "Mua lần đầu"/"Chỉ cuối tuần") ở góc
+trái — hai badge cùng hàng (`offer-head`), không cái nào lấn cái nào. Số % lấy đúng từ phần tính ở
+#230 (coins+hearts mua lẻ đắt hơn giá offer bao nhiêu %), làm tròn XUỐNG (98%, 99%) để badge không bao
+giờ nói quá những gì offer thực sự đưa ra.
+
+Thêm `Strings.offerValueBadge(percent)` (`i18n.ts`) — `+98% value` (EN) / `+98% giá trị` (VI) — theo
+đúng khuôn các hàm nhận tham số động khác đã có (`dailyLoginStreak`, `dayLabel`).
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan). Verify
+sống trên dev server ở cả 2 ngôn ngữ (English/Tiếng Việt) — badge hiện đúng vị trí, đúng chữ.
+
+## 232. HUD: đồng nhất khoảng cách thị giác Coin↔Emerald↔Heart (13/09)
+
+**Vấn đề:** "HUD heart currency bị quá sát với khoảng cách blue emerald" — dù `.hub-currency-row` đã
+có `gap: 2px` bằng nhau tuyệt đối giữa cả 3 chip (đo bằng `getBoundingClientRect`: đúng 2px cả hai
+cặp), khoảng cách NHÌN THẤY giữa Emerald↔Heart vẫn hẹp hơn Coin↔Emerald.
+
+**Nguyên nhân (đo bằng cách đọc pixel alpha thật của từng icon lên canvas):** icon Heart được vẽ sát
+mép khung hơn hẳn — chỉ ~9% viền trong suốt quanh hình, trong khi Coin ~13% và **Emerald ~20%** (viên
+đá có margin trong suốt lớn nhất). Icon Emerald nằm ở MÉP TRÁI của chip nó (cùng kiểu "icon đè lên
+pill" mà gold/heart cũng dùng) — margin trong suốt lớn của nó "ăn" luôn vào khoảng trống trước chip kế
+tiếp, nên dù hộp CSS cách đều, hình vẽ thật lại không cách đều.
+
+**Sửa:** Thêm `margin-left: 6px` cho `.hub-heart-wrap` (`globals.css`) — bù đúng phần chênh lệch margin
+trong suốt giữa 2 icon, để khoảng cách giữa NÉT VẼ thật (không phải hộp vô hình) đọc đều nhau ở cả hai
+cặp chip.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan). Verify
+bằng `getBoundingClientRect` ở cả 375px và 390px — gap hộp Coin↔Emerald giữ nguyên 2px, gap hộp
+Emerald↔Heart tăng lên 8px (2px gốc + 6px bù), heart chip vẫn cách gear icon 6-23px tuỳ bề rộng, không
+đè lên nhau. Verify sống bằng screenshot ở cả hai bề rộng.
+
+## 233. Khung tranh: bắn trúng CHÍNH GIỮA giờ cũng rung, không chỉ đẩy thẳng ra sau (13/09)
+
+**Vấn đề:** "Chỉnh anim rung của khung tranh, khi tôi bắn vị trí giữa, tôi muốn nó cũng rung" —
+`triggerFrameRecoil()` (`SandCannonEngine.ts`) tính `frameRecoilOffsetX/Y` là vị trí va chạm so với
+tâm khung, -1..1. Một phát bắn trúng ĐÚNG TÂM cho offset X = Y = 0, mà `step()` nhân TOÀN BỘ góc
+nghiêng (rotation.x/z) với offset đó — 0 nhân gì cũng ra 0, nên khung KHÔNG nghiêng chút nào, chỉ có
+`frameRecoil * FRAME_RECOIL_PUSH` đẩy thẳng ra sau (một chuyển động tịnh tiến rất nhỏ, gần như không
+nhận ra). Đúng như comment cũ đã ghi: "a dead-centre hit still nudges straight back" — im re đã là chủ
+đích thiết kế cũ (bắn rìa mới nghiêng, bắn giữa chỉ đẩy thẳng), nhưng người chơi muốn CẢ HAI đều rung.
+
+**Sửa:** Thêm `FRAME_RECOIL_MIN_LEAN = 0.35` — một sàn (floor) cho độ lớn của offset: bắn rìa (offset
+đã ≥ 0.35) không đổi gì; bắn gần/đúng tâm (offset < 0.35, kể cả đúng 0) được kéo lên sàn 0.35, giữ
+nguyên dấu. Với offset đúng 0 (bắn trúng tâm tuyệt đối), dùng `frameRecoilCenterLeanSign` — một dấu
+LUÔN ĐẢO CHIỀU mỗi lần dùng — để khung nghiêng trái/phải/trái xen kẽ qua các phát bắn giữa liên tiếp,
+tránh lặp lại đúng một hướng nhìn như bị kẹt.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan — không
+có test nào động tới `frameRecoil`/`triggerFrameRecoil`). Hiệu ứng chỉ kéo dài theo
+`FRAME_RECOIL_DECAY_PER_SECOND` (~130ms) nên khó bắt bằng screenshot tĩnh — đã xác nhận bằng cách đọc
+lại toàn bộ luồng tính toán trong `step()`; khuyến khích thử trực tiếp trong game để cảm nhận.

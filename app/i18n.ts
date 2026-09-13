@@ -260,6 +260,14 @@ export interface Strings {
    * for anything not recognised (a percentage on its own, or a flag added
    * later this map has not caught up with yet). */
   offerFlag: (raw: string) => string;
+  /** The value-anchoring badge on each `SpecialOffer` card (2026-09f, on
+   * request — "offer nên có [...] giá trị lợi ích để hook người chơi"): "buy
+   * this offer's coins/hearts separately and it would cost `percent`% MORE"
+   * — the classic anchoring play the slide deck's "Mỏ neo" section
+   * describes, made visible instead of only baked into the numbers. See
+   * `SpecialOffer.valuePercent`'s own comment in `SandGame.tsx` for how
+   * `percent` is computed. */
+  offerValueBadge: (percent: number) => string;
   iapComingSoon: string;
   buyBoosterAria: (name: string, price: number, owned: number) => string;
   buyBoosterQuestion: (name: string) => string;
@@ -513,6 +521,7 @@ const EN: Strings = {
   offerName: (id) => (id === "starter" ? "Islander's Starter Pack" : "Weekend Heart Rush"),
   offerTag: (id) => (id === "starter" ? "First purchase" : "Weekend only"),
   offerFlag: (raw) => raw,
+  offerValueBadge: (percent) => `+${percent}% value`,
   iapComingSoon: "Real-money purchases aren't live in this build yet.",
   buyBoosterAria: (name, price, owned) => `Buy ${name} for ${price} coins${owned > 0 ? `, ${owned} owned` : ""}`,
   buyBoosterQuestion: (name) => `Buy ${name}?`,
@@ -713,6 +722,7 @@ const VI: Strings = {
   offerName: (id) => (id === "starter" ? "Gói Khởi Đầu Islander" : "Gói Tim Cuối Tuần"),
   offerTag: (id) => (id === "starter" ? "Mua lần đầu" : "Chỉ cuối tuần"),
   offerFlag: (raw) => VI_OFFER_FLAG[raw] ?? raw,
+  offerValueBadge: (percent) => `+${percent}% giá trị`,
   iapComingSoon: "Giao dịch tiền thật chưa hoạt động trong bản build này.",
   buyBoosterAria: (name, price, owned) => `Mua ${name} với ${price} xu${owned > 0 ? `, đang có ${owned}` : ""}`,
   buyBoosterQuestion: (name) => `Mua ${name}?`,

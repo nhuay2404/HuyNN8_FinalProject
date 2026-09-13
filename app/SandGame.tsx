@@ -137,43 +137,99 @@ function numHex(value: number) {
  * capped at `MAX_HEARTS`), and a SMALL Blue Emerald top-up (skins) — the
  * reward track stays the only FREE source of emerald, this is just a taste
  * of it for players who would rather pay than grind toward one.
+ *
+ * Coin amounts across every table below (2026-09e, on request — "$0.99 mà
+ * được 1000 coins là quá nhiều, tương đương 10 booster") are re-anchored to
+ * $0.99 = 200 gold: ~2 charges of Radius Overcharge/Prism Shot
+ * (`BOOSTER_PRICE`, economy.ts) rather than 10 — spending real money still
+ * buys a head start, not a shortcut past the shop's whole point. Every other
+ * price point's coin amount is that same $0.99-per-200-gold rate (a flat 5×
+ * cut off every old number, since $0.99 = 1000 gold is exactly 5× the new
+ * anchor) carried across the STANDARD store price tiers
+ * ($0.99/$1.99/$4.99/$9.99/$19.99/$49.99/$99.99 — the App Store/Play
+ * Store's own fixed ladder, not something a game can set arbitrarily), each
+ * tier keeping the bonus percentage it already had so the "bigger pack =
+ * better $/coin deal" curve mobile IAP ladders always use is untouched —
+ * only the anchor under it moved. See CHANGELOG-prototype.md.
  */
-type SpecialOffer = { id: string; name: string; tag: string; coins?: number; hearts?: number; emeralds?: number; bonus?: string; price: string };
+type SpecialOffer = { id: string; name: string; tag: string; coins?: number; hearts?: number; emeralds?: number; bonus?: string; valuePercent: number; price: string };
+/**
+ * Both rows below are priced so their COINS + HEARTS alone — priced at the
+ * matching `COIN_PACKS`/`HEART_PACKS` tier, the market rate a player could
+ * get the same currencies for elsewhere in the Shop — total ~99% MORE than
+ * the offer's own price (2026-09f, on request: "special offer nên hời hơn
+ * nhiều so với mua lẻ"), Blue Emerald counted as pure bonus on top since it
+ * is sold nowhere else to price against. This is the anchoring play the
+ * slide deck's "Mỏ neo" section describes: a "First purchase"/limited-time
+ * offer needs to read as obviously too good to pass up, not as a
+ * break-even bundle with some free emerald on the side — the flat coin
+ * scale-down in 2026-09e (see this section's header) had quietly erased
+ * that gap (Starter Pack's coins+hearts used to cost MORE bought
+ * separately; Weekend Heart Rush's still would).
+ *
+ * `starter`: 1,900 coins (`COIN_PACKS`' $4.99 tier, `c3`, rate 1200/4.99)
+ * + 3 hearts (`HEART_PACKS`' `h2`, $1.99 flat) ≈ $9.89 of separate
+ * purchases for a $4.99 offer.
+ * `weekend`: 4,400 coins (`COIN_PACKS`' $9.99 tier, `c4`, rate 2600/9.99)
+ * + 5 hearts (`HEART_PACKS`' `h3`, $2.99 flat) ≈ $19.90 of separate
+ * purchases for a $9.99 offer — this DOES give the weekend offer coins for
+ * the first time (it used to be hearts/emerald only, "on purpose," per the
+ * design note this replaces); there is no other priceable good in it
+ * (hearts alone, capped at `MAX_HEARTS`, cannot carry a 99% gap by
+ * themselves) to hit the same target without one.
+ *
+ * `valuePercent` (2026-09f, on request — "offer nên có [...] giá trị lợi
+ * ích để hook người chơi") is that same gap made VISIBLE on the card
+ * (`s.offerValueBadge`, i18n.ts) instead of only living in this comment —
+ * the whole point of an anchor is that the player sees it, not that the
+ * designer did the math. Rounded down from the exact ratio above (98.25%,
+ * 99.19%) so the badge never overstates what the offer actually delivers.
+ */
 const SPECIAL_OFFERS: readonly SpecialOffer[] = [
-  { id: "starter", name: "Islander's Starter Pack", tag: "First purchase", coins: 1200, hearts: 3, emeralds: 150, price: "$4.99" },
-  // No coins on the weekend offer, on purpose — it reads as a hearts/emerald
-  // top-up for someone who already has plenty of gold, the one asymmetry
-  // the old "Weekend Gem Rush" (gems only, no coins) also had.
-  { id: "weekend", name: "Weekend Heart Rush", tag: "Weekend only", hearts: MAX_HEARTS, emeralds: 300, bonus: "+35% extra", price: "$9.99" },
+  { id: "starter", name: "Islander's Starter Pack", tag: "First purchase", coins: 1_900, hearts: 3, emeralds: 150, valuePercent: 98, price: "$4.99" },
+  { id: "weekend", name: "Weekend Heart Rush", tag: "Weekend only", coins: 4_400, hearts: MAX_HEARTS, emeralds: 300, bonus: "+35% extra", valuePercent: 99, price: "$9.99" },
 ];
 
 /** Each bundle sells all three currencies together, per the ask ("Bundles
- * giờ sẽ là Coins + heart + 1 ít blue emerald") — coins carried over
- * unchanged from the old gems+coins bundles (same five price points/coin
- * amounts), hearts capped at `MAX_HEARTS` (a bundle cannot sell more hearts
- * than the tank can ever hold at once), emerald a small top-up scaling with
- * price — never enough alone to buy a skin outright at the cheap end
- * (Rune Cannon is 500, `costumes.ts`), a real head start at the top. */
+ * giờ sẽ là Coins + heart + 1 ít blue emerald") — hearts capped at
+ * `MAX_HEARTS` (a bundle cannot sell more hearts than the tank can ever hold
+ * at once), emerald a small top-up scaling with price — never enough alone
+ * to buy a skin outright at the cheap end (Rune Cannon is 500,
+ * `costumes.ts`), a real head start at the top. Coin amounts re-anchored to
+ * the Shop's $0.99 = 200 gold rate (2026-09e) — same ratio to the matching
+ * `COIN_PACKS` tier the old gold-heavy numbers already had (a bundle spends
+ * part of its price on hearts/emeralds, so it was never meant to match a
+ * coin-only pack coin for coin), just off the new anchor.
+ *
+ * Unlike `SPECIAL_OFFERS` above, these are NOT re-priced for a "hời" gap
+ * against buying separately (2026-09f) — a standing, always-available
+ * ladder reads as a graduated set of options (its own `bonus` tags already
+ * say "better than the last tier"), not a limited-time hook that needs to
+ * out-anchor the rest of the Shop the way "First purchase"/"Weekend only"
+ * do. */
 type Bundle = { id: string; coins: number; hearts: number; emeralds: number; bonus?: string; flag?: string; price: string };
 const BUNDLES: readonly Bundle[] = [
-  { id: "b1", coins: 400, hearts: 1, emeralds: 50, price: "$0.99" },
-  { id: "b2", coins: 2_500, hearts: 2, emeralds: 120, bonus: "+10%", price: "$4.99" },
-  { id: "b3", coins: 6_000, hearts: 3, emeralds: 250, bonus: "+20%", flag: "Most popular", price: "$9.99" },
-  { id: "b4", coins: 13_000, hearts: MAX_HEARTS, emeralds: 400, bonus: "+35%", price: "$19.99" },
-  { id: "b5", coins: 35_000, hearts: MAX_HEARTS, emeralds: 800, bonus: "+50%", flag: "Best value", price: "$49.99" },
+  { id: "b1", coins: 80, hearts: 1, emeralds: 50, price: "$0.99" },
+  { id: "b2", coins: 500, hearts: 2, emeralds: 120, bonus: "+10%", price: "$4.99" },
+  { id: "b3", coins: 1_200, hearts: 3, emeralds: 250, bonus: "+20%", flag: "Most popular", price: "$9.99" },
+  { id: "b4", coins: 2_600, hearts: MAX_HEARTS, emeralds: 400, bonus: "+35%", price: "$19.99" },
+  { id: "b5", coins: 7_000, hearts: MAX_HEARTS, emeralds: 800, bonus: "+50%", flag: "Best value", price: "$49.99" },
 ];
 
 /** Coin-only packs, priced the way mobile-game coin ladders usually are:
- * $0.99 up to $99.99, each tier's bonus a little steeper than the last. */
+ * $0.99 up to $99.99, each tier's bonus a little steeper than the last.
+ * `c1` IS the anchor (`COIN_ANCHOR_RATE`, 200 gold at $0.99, no bonus); every
+ * row after it is that same rate carried to its own price tier and then
+ * bumped by its own bonus% (2026-09e — see this section's header comment). */
 type CoinPack = { id: string; coins: number; bonus?: string; flag?: string; price: string };
 const COIN_PACKS: readonly CoinPack[] = [
-  { id: "c1", coins: 1_000, price: "$0.99" },
-  { id: "c2", coins: 2_200, price: "$1.99" },
-  { id: "c3", coins: 6_000, bonus: "+10%", price: "$4.99" },
-  { id: "c4", coins: 13_000, bonus: "+20%", price: "$9.99" },
-  { id: "c5", coins: 28_000, bonus: "+30%", flag: "Popular", price: "$19.99" },
-  { id: "c6", coins: 80_000, bonus: "+45%", price: "$49.99" },
-  { id: "c7", coins: 180_000, bonus: "+60%", flag: "Best value", price: "$99.99" },
+  { id: "c1", coins: 200, price: "$0.99" },
+  { id: "c2", coins: 440, price: "$1.99" },
+  { id: "c3", coins: 1_200, bonus: "+10%", price: "$4.99" },
+  { id: "c4", coins: 2_600, bonus: "+20%", price: "$9.99" },
+  { id: "c5", coins: 5_600, bonus: "+30%", flag: "Popular", price: "$19.99" },
+  { id: "c6", coins: 16_000, bonus: "+45%", price: "$49.99" },
+  { id: "c7", coins: 36_000, bonus: "+60%", flag: "Best value", price: "$99.99" },
 ];
 
 /** Hearts sold directly, alongside Coins rather than folded into it — on
@@ -1083,25 +1139,6 @@ export default function SandGame() {
     return () => window.clearInterval(interval);
   }, [heartsUnlocked, heartsStoreVersion]);
 
-  /**
-   * The Play/Restart entry points' one shared gate — spends a heart and
-   * returns `true` (go ahead and start playing) when there was one to spend,
-   * or shows the "out of hearts" toast and returns `false` (the caller must
-   * NOT start play) when the tank was empty. A no-op that always returns
-   * `true` before hearts unlock or while playing Zen — see `economy.ts`'s
-   * own header for why Zen never touches this at all.
-   */
-  const tryStartAttempt = useCallback((): boolean => {
-    if (!heartsUnlocked || playingZen) return true;
-    if (spendHeart(devNow().getTime())) {
-      setHearts(getHeartsState(devNow().getTime()));
-      return true;
-    }
-    const state = getHeartsState(devNow().getTime());
-    pushToast(s.outOfHearts(formatHeartCountdown(state.msUntilNext ?? 0)), "warn");
-    return false;
-  }, [heartsUnlocked, playingZen]);
-
   const [runId, setRunId] = useState(0);
   // Whether the tutorial overlay is open. Opened by `startPlaying` the first
   // time a level with unread `tutorial` content starts play.
@@ -1251,6 +1288,36 @@ export default function SandGame() {
     ? (zenPlayables[Math.min(zenLevelIndex, zenPlayables.length - 1)]?.level ?? BUILT_IN_ZEN_LEVELS[0])
     : (playables[Math.min(levelIndex, playables.length - 1)]?.level ?? BUILT_IN_LEVELS[0]);
   const level = useMemo(() => expandLevelForPixelBoard(raw), [raw]);
+
+  /**
+   * The Play/Restart entry points' one shared gate — spends a heart and
+   * returns `true` (go ahead and start playing) when there was one to spend,
+   * or shows the "out of hearts" toast and returns `false` (the caller must
+   * NOT start play) when the tank was empty. A no-op that always returns
+   * `true` before hearts unlock or while playing Zen — see `economy.ts`'s
+   * own header for why Zen never touches this at all — and also a no-op
+   * once `raw` (the level about to be (re)played) has already been cleared
+   * at least once: a replay from the Gallery (or "Play again"/Restart on a
+   * level beaten before) does not cost a heart, only a genuinely new
+   * attempt does (on request, 2026-09m: "Khi người chơi chơi lại màn từ
+   * gallery, sẽ không tốn tim"). Declared here, after `raw`, rather than up
+   * with the rest of the hearts state above — `raw.id` needs to be a real
+   * dependency (so this recreates whenever the selected/played level
+   * changes, not just when hearts state does), and `raw` is not assigned
+   * yet at that earlier point in this component. Zen levels never reach
+   * `hasClearedLevel` either way since the `playingZen` check above already
+   * returns first.
+   */
+  const tryStartAttempt = useCallback((): boolean => {
+    if (!heartsUnlocked || playingZen || hasClearedLevel(raw.id)) return true;
+    if (spendHeart(devNow().getTime())) {
+      setHearts(getHeartsState(devNow().getTime()));
+      return true;
+    }
+    const state = getHeartsState(devNow().getTime());
+    pushToast(s.outOfHearts(formatHeartCountdown(state.msUntilNext ?? 0)), "warn");
+    return false;
+  }, [heartsUnlocked, playingZen, raw.id]);
 
   /**
    * Whether the level 1-3 onboarding lock (Settings gear hidden mid-play,
@@ -1691,6 +1758,23 @@ export default function SandGame() {
     boostersSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     setScrollToBoosters(false);
   }, [scrollToBoosters, tab]);
+
+  // Same shortcut shape as `openCoinPacks` above, now for the heart HUD
+  // chip's own green plus mark (2026-09p ask: "thêm icon dấu cộng nền xanh
+  // lá vào heart currency, giống như coin currency... chuyển đến khu vực
+  // mua heart ở trong shop") — jumps straight to the Shop's "buy Hearts
+  // directly" section instead of just opening the Shop at its top.
+  const heartPackSectionRef = useRef<HTMLDivElement | null>(null);
+  const [scrollToHeartPacks, setScrollToHeartPacks] = useState(false);
+  const openHeartPacks = useCallback(() => {
+    setTab("shop");
+    setScrollToHeartPacks(true);
+  }, []);
+  useEffect(() => {
+    if (!scrollToHeartPacks || tab !== "shop") return;
+    heartPackSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScrollToHeartPacks(false);
+  }, [scrollToHeartPacks, tab]);
   /**
    * Pays out `pendingHomeReward` (see its own comment) the moment its badge
    * is actually on screen to fly into — `!playing && tab === "home"`, the
@@ -3014,26 +3098,39 @@ export default function SandGame() {
                 đồng nhất... icon đè lên cái tray"), but the COUNT itself
                 sits ON the icon as its own small badge (on request: "số
                 lượng icon sẽ nằm trên icon HeartIcon luôn"), not inside the
-                pill the way gold/emerald's numbers are — the pill is left
-                to hold only the regen countdown, shown while the tank is
-                not full (and simply absent, no empty pill, once it is —
-                the icon and its count badge alone are enough then). Bare
-                `m:ss` in that pill, no "+1 in"/"+1 sau" wording (on
-                request: "bỏ chữ in đi, countdown thôi") — `formatHeartCountdown`
-                straight, not wrapped in an i18n sentence any more. Only
-                rendered once unlocked (level 10 cleared — `heartsUnlocked`). */}
+                pill the way gold/emerald's numbers are. Bare `m:ss` in that
+                pill when the tank is short a heart, no "+1 in"/"+1 sau"
+                wording (on request: "bỏ chữ in đi, countdown thôi") —
+                `formatHeartCountdown` straight, not wrapped in an i18n
+                sentence any more. Only rendered once unlocked (level 10
+                cleared — `heartsUnlocked`).
+                Now a real `<button>` (`openHeartPacks`), same shortcut shape
+                as `.hub-gold-wrap`: tapping it jumps to the Shop's "buy
+                Hearts directly" section. The pill itself is always shown
+                now — not just while short a heart — since it is what holds
+                the green plus mark (`.hub-heart-plus`, the same `PlusIcon`
+                artwork `.hub-gold-plus` uses), on request: "thêm icon dấu
+                cộng nền xanh lá vào heart currency, giống như coin
+                currency". A full tank still shows no countdown text, just
+                the plus, rather than an empty pill. */}
             {heartsUnlocked && (
-              <div className="hub-heart-wrap" role="status" aria-label={s.heartsAria(hearts.hearts, MAX_HEARTS)}>
+              <button
+                type="button"
+                className="hub-heart-wrap"
+                onClick={openHeartPacks}
+                aria-label={s.heartsAria(hearts.hearts, MAX_HEARTS)}
+              >
                 <span className="hub-heart-icon-wrap">
                   <HeartIcon />
                   <strong className="hub-heart-count">{hearts.hearts}</strong>
                 </span>
-                {hearts.msUntilNext !== null && (
-                  <span className="hub-heart-badge">
-                    <small>{formatHeartCountdown(hearts.msUntilNext)}</small>
+                <span className="hub-heart-badge">
+                  {hearts.msUntilNext !== null && <small>{formatHeartCountdown(hearts.msUntilNext)}</small>}
+                  <span className="hub-heart-plus" aria-hidden="true">
+                    <PlusIcon />
                   </span>
-                )}
-              </div>
+                </span>
+              </button>
             )}
           </div>
         )}
@@ -4069,7 +4166,15 @@ export default function SandGame() {
                 <div className="offer-stack">
                   {visibleOffers.map((offer) => (
                     <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
-                      <span className="offer-tag">{s.offerTag(offer.id)}</span>
+                      {/* `offer-tag` (left, "First purchase"/"Weekend only") answers
+                          "why is this here"; `offer-value-badge` (right, 2026-09f)
+                          answers "why should I buy it" — the anchoring number made
+                          visible instead of only baked into the coin/heart amounts,
+                          see `SpecialOffer.valuePercent`'s own comment above. */}
+                      <div className="offer-head">
+                        <span className="offer-tag">{s.offerTag(offer.id)}</span>
+                        <span className="offer-value-badge">{s.offerValueBadge(offer.valuePercent)}</span>
+                      </div>
                       <h4>{s.offerName(offer.id)}</h4>
                       <div className="offer-contents">
                         {offer.coins != null && (
@@ -4164,7 +4269,7 @@ export default function SandGame() {
                   currency the player cannot even see or use yet would just
                   be confusing, not tempting. */}
               {heartsUnlocked && (
-              <div className="shop-section">
+              <div className="shop-section" ref={heartPackSectionRef}>
                 <div className="shop-section-head">
                   <h3>{s.heartsTitle}</h3>
                   <p>{s.buyHeartsDirectly}</p>

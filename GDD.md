@@ -604,6 +604,13 @@ cộng thêm vào vàng bình thường nếu ngày 13 rơi vào ngày thường
 ô ngày thường không có booster, vì mọi ngày thường giờ trả cùng một mức nên con số không nói lên gì
 thêm. Icon booster (khi có) to và nằm giữa ô, không còn là badge nhỏ ở góc.
 
+**Khối lịch là hình chữ nhật vuông vức, lưới mỏng (13/09).** Trên request ("shape lịch là hình chữ
+nhật... không còn bo góc", rồi "grid mỏng hơn và các ô vuông ko còn bo góc", rồi "độ dày grid ngoài
+cùng phải mỏng hơn nữa", rồi "mỏng, dày thêm xíu nữa"): khối nền đen/nâu bao cả lưới bỏ hẳn bo góc; viền
+ngoài cùng của khối đó (trước là padding dày 8px) mỏng lại còn 3px sau vài lượt chỉnh; đường lưới giữa
+các ô mỏng từ 4px xuống 1px; từng ô vuông bỏ luôn bo góc riêng — một lưới ô vuông liền mạch thay vì dãy
+chip bo tròn.
+
 Streak (chuỗi ngày liên tiếp claim, hiển thị dưới lưới khi ≥ 2) vỡ khi bỏ lỡ ≥ 2 ngày thì **reset về
 0** — cố ý, để streak có ý nghĩa thật; giữ nguyên nếu claim liên tục hoặc gap tới hôm nay ≤ 1 ngày.
 Tính theo ngày local của máy người chơi, không phải UTC.
@@ -1009,12 +1016,35 @@ cho chi tiết đầy đủ. Tóm tắt:
 | Mở khoá | Thắng level 10 lần đầu (trước đó không tồn tại — không HUD, không tốn gì) |
 | Tối đa | 5 tim |
 | Hồi | 1 tim / 30 phút |
-| Tốn 1 tim | Bấm Play (Home), "Play again" (FAIL), Restart (Settings) |
-| KHÔNG tốn | Continue sang level kế sau WIN, `restart()` do FTUE tự chạy, mọi thứ trong Zen Mode |
+| Tốn 1 tim | Bấm Play (Home), "Play again" (FAIL), Restart (Settings) — CHỈ khi level đó chưa từng clear |
+| KHÔNG tốn | Continue sang level kế sau WIN, `restart()` do FTUE tự chạy, mọi thứ trong Zen Mode, chơi lại một level ĐÃ TỪNG clear (13/09) |
+
+**Chơi lại level đã clear không tốn tim (13/09).** Trên request ("Khi người chơi chơi lại màn từ
+gallery, sẽ không tốn tim"): `tryStartAttempt` (gate dùng chung cho Play/Restart, `SandGame.tsx`) thêm
+điều kiện `hasClearedLevel(raw.id)` — level nào đã clear ít nhất 1 lần thì Play/Restart trên chính level
+đó (dù chọn lại từ Gallery, bấm "Play again", hay Restart) không trừ tim nữa; chỉ level thật sự CHƯA
+từng thắng mới tốn tim. Hearts giờ chỉ là rào cản cho các lượt thử MỚI, không phạt việc quay lại chơi
+cho vui một level đã qua.
 
 HUD: chip tim cùng hàng với vàng/Blue Emerald, số tim hiện dạng badge đè lên icon, đếm ngược `m:ss`
 tới tim kế tiếp hiện cạnh bên khi chưa đầy. Hết tim thì Play/Restart bị chặn, hiện toast đếm ngược
 thay vì cho vào chơi.
+
+**Chip tim cũng là lối tắt mua thêm, giống hệt vàng (13/09).** Trên request ("thêm icon dấu cộng nền
+xanh lá vào heart currency, giống như coin currency, khi nhấn vào sẽ chuyển đến khu vực mua heart ở
+trong shop UI"): chip tim đổi từ khối tĩnh sang một `<button>` thật (`openHeartPacks`, cùng khuôn
+`openCoinPacks` của chip vàng) — bấm vào nhảy thẳng tới section "Hearts" trong Shop (10.7). Pill cạnh
+icon giờ LUÔN hiện (không chỉ lúc thiếu tim) vì nó là chỗ đặt dấu `+` xanh lá dùng chung artwork với
+chip vàng; tim đầy thì pill chỉ còn mỗi dấu `+`, không đếm ngược.
+
+Việc thêm dấu `+` khiến hàng HUD (vàng + Blue Emerald + tim + nút Settings) — vốn đã sát giới hạn chiều
+rộng thật của khung game (`max-width: 430px`, điện thoại thật thường hẹp hơn, 375px phổ biến) — tràn
+ra ngoài, kéo theo một chuỗi sửa layout: chip Blue Emerald từng bị đè lên (thiếu `flex: none` nên bị ép
+co nhỏ hơn nội dung thật khi hết chỗ), icon tim từng che luôn số đếm ngược cạnh nó (độ chồng icon lên
+pill lệch với khoảng chừa chỗ chữ). Xử lý bằng cách siết khoảng cách/padding từng chip về mức tối thiểu,
+thu nhỏ riêng icon tim (44px xuống 28px — chip tim mang nhiều nội dung nhất trong hàng: icon+badge số,
+chữ đếm ngược, VÀ dấu `+`), và cố tình để dư 4px thật giữa icon tim và chữ (thay vì khớp đúng 0px theo
+lý thuyết) vì render font/PNG không giống nhau tuyệt đối trên mọi thiết bị.
 
 **Shop ẩn hẳn mọi mục liên quan Hearts trước khi mở khoá (2026-09e):** biến `visibleOffers` lọc khỏi
 Special Offers (10.7) bất kỳ offer nào bán hearts trong khi `!heartsUnlocked`; mục Bundles (mọi bundle
