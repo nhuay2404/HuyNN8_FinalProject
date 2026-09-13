@@ -293,8 +293,8 @@ export interface Strings {
   closeSettings: string;
   homeAction: string;
   restartAction: string;
-  sound: string;
-  soundAria: (on: boolean) => string;
+  musicVolume: string;
+  sfxVolume: string;
   vibration: string;
   vibrationAria: (on: boolean) => string;
   language: string;
@@ -545,8 +545,8 @@ const EN: Strings = {
   closeSettings: "Close settings",
   homeAction: "Home",
   restartAction: "Restart",
-  sound: "Sound",
-  soundAria: (on) => `Sound ${on ? "on" : "off"}`,
+  musicVolume: "Music",
+  sfxVolume: "Sound Effects",
   vibration: "Vibration",
   vibrationAria: (on) => `Vibration ${on ? "on" : "off"}`,
   language: "Language",
@@ -746,8 +746,8 @@ const VI: Strings = {
   closeSettings: "Đóng cài đặt",
   homeAction: "Trang chủ",
   restartAction: "Chơi lại",
-  sound: "Âm thanh",
-  soundAria: (on) => `Âm thanh ${on ? "bật" : "tắt"}`,
+  musicVolume: "Nhạc nền",
+  sfxVolume: "Hiệu ứng âm thanh",
   vibration: "Rung",
   vibrationAria: (on) => `Rung ${on ? "bật" : "tắt"}`,
   language: "Ngôn ngữ",

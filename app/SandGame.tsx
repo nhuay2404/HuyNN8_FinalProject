@@ -86,7 +86,51 @@ import {
   SAND_COLOR_BY_LETTER,
   WALL_LETTER,
 } from "./game/sand-rules";
-import { isSoundEnabled, resumeSound, setSoundEnabled, soundSupported, suspendSound } from "./game/sound";
+import {
+  getMusicVolume,
+  getSfxVolume,
+  getSourceGain,
+  MAX_SOURCE_GAIN,
+  resetSourceGains,
+  resumeSound,
+  setMusicVolume,
+  setSfxVolume,
+  setSourceGain,
+  sound,
+  soundButtonClick,
+  soundSupported,
+  SOUND_SOURCE_IDS,
+  stopChestOpen,
+  type SoundSourceId,
+  suspendSound,
+} from "./game/sound";
+
+/** Row labels for GameDevOption's Sound Editor — dev-only, so plain English
+ * rather than routed through `i18n.ts` like the player-facing Settings rows
+ * above it. One row per `SoundSourceId`, same order `SOUND_SOURCE_IDS` is
+ * declared in. */
+const SOUND_SOURCE_LABELS: Record<SoundSourceId, string> = {
+  impact: "Impact",
+  wrongColor: "Wrong color",
+  // Still the `"bodyCleared"` id in sound.ts/haptics.ts (the UNLOCK step —
+  // thawing an ice-locked region — genuinely is a body clearing) but the
+  // label here follows its *other* trigger, moved on request (2026-09l) from
+  // every sorted shot to a shot that hits the picture frame instead.
+  bodyCleared: "Frame hit",
+  win: "Win",
+  lose: "Lose",
+  sandLanded: "Sand landing ticks",
+  sandPour: "Sand pour",
+  // Still the `"ambience"` id (its own volume knob predates this and other
+  // sources reuse the same shape) but the thing it now controls is the
+  // Freeze BGM loop specifically — the old always-on drone it used to scale
+  // is gone, see `startFreezeAmbience`'s own comment in sound.ts.
+  ambience: "Freeze BGM",
+  buttonClick: "Button click (hub nav)",
+  uiClick: "Button click (everything else)",
+  purchase: "Purchase (kaching)",
+  chestOpen: "Chest open",
+};
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
 import { getAimSensitivity, setAimSensitivity } from "./game/aim-sensitivity";
 import { BOOSTER_TYPES, type BoosterType, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
@@ -211,7 +255,7 @@ type Bundle = { id: string; coins: number; hearts: number; emeralds: number; bon
 const BUNDLES: readonly Bundle[] = [
   { id: "b1", coins: 80, hearts: 1, emeralds: 50, price: "$0.99" },
   { id: "b2", coins: 500, hearts: 2, emeralds: 120, bonus: "+10%", price: "$4.99" },
-  { id: "b3", coins: 1_200, hearts: 3, emeralds: 250, bonus: "+20%", flag: "Most popular", price: "$9.99" },
+  { id: "b3", coins: 1_200, hearts: 3, emeralds: 250, bonus: "+20%", price: "$9.99" },
   { id: "b4", coins: 2_600, hearts: MAX_HEARTS, emeralds: 400, bonus: "+35%", price: "$19.99" },
   { id: "b5", coins: 7_000, hearts: MAX_HEARTS, emeralds: 800, bonus: "+50%", flag: "Best value", price: "$49.99" },
 ];
@@ -224,13 +268,70 @@ const BUNDLES: readonly Bundle[] = [
 type CoinPack = { id: string; coins: number; bonus?: string; flag?: string; price: string };
 const COIN_PACKS: readonly CoinPack[] = [
   { id: "c1", coins: 200, price: "$0.99" },
-  { id: "c2", coins: 440, price: "$1.99" },
   { id: "c3", coins: 1_200, bonus: "+10%", price: "$4.99" },
   { id: "c4", coins: 2_600, bonus: "+20%", price: "$9.99" },
-  { id: "c5", coins: 5_600, bonus: "+30%", flag: "Popular", price: "$19.99" },
+  { id: "c5", coins: 5_600, bonus: "+30%", price: "$19.99" },
   { id: "c6", coins: 16_000, bonus: "+45%", price: "$49.99" },
   { id: "c7", coins: 36_000, bonus: "+60%", flag: "Best value", price: "$99.99" },
 ];
+
+/**
+ * The Coins section's own illustration per pack (2026-09k, on request — "thay
+ * hình coins có trong shop thành hình minh họa các coins tôi để trong file")
+ * — a bigger/fuller pile of the same coin art for every price tier up,
+ * ending in an overflowing treasure chest at `c7`'s $99.99, rather than the
+ * plain flat `CoinIcon` every other coin badge in the Shop still uses. The
+ * seven files in `/public/shop` are literally named after the price they
+ * illustrate (`coins099.png` .. `coins9999.png`) — stripping `$` and `.` off
+ * `CoinPack.price` reproduces that suffix exactly (`"$0.99"` → `"099"`,
+ * `"$99.99"` → `"9999"`), so this reads the filename straight off the pack's
+ * own price instead of a second id→file lookup table that could drift out of
+ * sync with it. */
+function coinPackIllustrationSrc(pack: CoinPack): string {
+  return `/shop/coins${pack.price.replace(/[$.]/g, "")}.png`;
+}
+
+/** Same idea as `coinPackIllustrationSrc` above, for the two other sets of
+ * illustrations added alongside it (2026-09m, on request — "gắn toàn bộ ảnh
+ * minh họa vào shop"): `HEART_PACKS`' three files are ALSO named after their
+ * own price (`heart099.png` .. `heart299.png`), so the same price→filename
+ * trick applies unchanged. */
+function heartPackIllustrationSrc(pack: HeartPack): string {
+  return `/shop/heart${pack.price.replace(/[$.]/g, "")}.png`;
+}
+
+/** `SPECIAL_OFFERS`' two files, same price-named convention as coins/hearts
+ * (`offer499.png` for the $4.99 Starter Pack, `offer999.png` for the $9.99
+ * Weekend Heart Rush). */
+function specialOfferIllustrationSrc(offer: SpecialOffer): string {
+  return `/shop/offer${offer.price.replace(/[$.]/g, "")}.png`;
+}
+
+/** `BUNDLES`' five files are named by POSITION instead (`bundle1.png` ..
+ * `bundle5.png`), not by price like every other set above — there is no
+ * `$`/`.`-stripping trick that reproduces "1".."5" out of `"$0.99"`..`"$49.99"`,
+ * so this reads straight off the row's own place in the ladder (`.map`'s
+ * `index`, 0-based) instead. Relies on `BUNDLES` staying in ascending price
+ * order, same as it already has to for the ladder itself to make sense. */
+function bundleIllustrationSrc(index: number): string {
+  return `/shop/bundle${index + 1}.png`;
+}
+
+/**
+ * How strong the rotating sunburst behind a pack's illustration should be
+ * (2026-09q ask: "sau mỗi hình minh họa các gói đều có các đường ánh sáng
+ * chuyển động hình tròn xung quanh... Gói có giá tiền càng lớn thì ánh sáng
+ * càng mạnh"). `--ray` in globals.css reads this straight off each list's own
+ * position rather than parsing `price` back out of `"$0.99"`..`"$99.99"` —
+ * every one of `COIN_PACKS`/`HEART_PACKS`/`visibleOffers`/`BUNDLES` is
+ * already in ascending price order (an invariant `bundleIllustrationSrc`
+ * above already relies on too), so position IS price rank. Floored at 0.3
+ * rather than 0 so even the cheapest tier still visibly has a burst — a
+ * fully dark ring at one end would read as broken, not "weakest". */
+function rayIntensity(index: number, total: number): number {
+  if (total <= 1) return 1;
+  return 0.3 + (index / (total - 1)) * 0.7;
+}
 
 /** Hearts sold directly, alongside Coins rather than folded into it — on
  * request: "Ngoài coins ra giờ sẽ có mục mua riêng". Every tier is capped at
@@ -239,7 +340,6 @@ const COIN_PACKS: readonly CoinPack[] = [
 type HeartPack = { id: string; hearts: number; flag?: string; price: string };
 const HEART_PACKS: readonly HeartPack[] = [
   { id: "h1", hearts: 1, price: "$0.99" },
-  { id: "h2", hearts: 3, price: "$1.99" },
   { id: "h3", hearts: MAX_HEARTS, flag: "Full refill", price: "$2.99" },
 ];
 
@@ -628,20 +728,69 @@ function ChestIcon() {
  * blueprint is what the picture IS, and expanding it first would render
  * hundreds of cells per thumbnail to show the same image.
  */
+/** Direct RGB channels for `color` (`palette` override, if any) — `hex()`
+ * above returns a CSS string for style props; `PixelThumb`'s canvas draw
+ * writes straight into `ImageData` bytes instead, so it needs the actual
+ * channel numbers rather than a hex string it would just have to re-parse. */
+function sandColorRgb(color: SandColor, palette?: Partial<Record<SandColor, number>>): readonly [number, number, number] {
+  const value = palette?.[color] ?? SAND_COLOR_HEX[color];
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+/**
+ * A level's thumbnail — one real pixel per authored cell. Used to be one DOM
+ * `<i>` box per cell (a plain CSS grid) — fine for a handful of small levels
+ * on screen at once, but the Gallery renders every UNLOCKED card's thumbnail
+ * simultaneously, and the Settings screen's "Unlock all content"
+ * (GameDevOption) unlocks all 50 in one go: 50 grids' worth of DOM nodes (one
+ * of the bigger hand-authored levels alone is thousands of cells) all
+ * mounting in the same frame is what made switching to the Gallery tab
+ * visibly lag (2026-09l, on request — "unlock hết level thì lúc chuyển tab
+ * qua gallery rất là lag").
+ *
+ * A `<canvas>` draws the exact same picture with one `putImageData` call
+ * instead of thousands of elements — real pixel dimensions
+ * (`level.frame.width/height`, both the canvas's own buffer size and its
+ * starting DOM attributes so the very first paint is already the right
+ * shape, no post-mount resize flash) blown up by CSS alone, with
+ * `image-rendering: pixelated` (`.pixel-thumb`, globals.css) keeping the
+ * same hard pixel edges the old per-cell boxes gave for free. Drawn once per
+ * mount/level change (`useEffect`) rather than on every render — nothing
+ * about an already-drawn thumbnail ever needs to change again.
+ */
 function PixelThumb({ level }: { level: SandLevelConfig }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const { width, height } = level.frame;
+    const image = ctx.createImageData(width, height);
+    const data = image.data;
+    for (let y = 0; y < height; y += 1) {
+      const row = level.rows[y] ?? "";
+      for (let x = 0; x < width; x += 1) {
+        const color = SAND_COLOR_BY_LETTER[row[x]?.toUpperCase()];
+        if (!color) continue; // `createImageData` zero-fills alpha too — stays fully transparent.
+        const index = (y * width + x) * 4;
+        const [r, g, b] = sandColorRgb(color, level.customPalette);
+        data[index] = r;
+        data[index + 1] = g;
+        data[index + 2] = b;
+        data[index + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+  }, [level]);
   return (
-    <span
+    <canvas
+      ref={canvasRef}
       className="pixel-thumb"
-      style={{ "--cols": level.frame.width, "--rows": level.frame.height } as React.CSSProperties}
+      width={level.frame.width}
+      height={level.frame.height}
+      style={{ aspectRatio: `${level.frame.width} / ${level.frame.height}` } as React.CSSProperties}
       aria-hidden="true"
-    >
-      {level.rows.flatMap((row, y) =>
-        [...row].map((letter, x) => {
-          const color = SAND_COLOR_BY_LETTER[letter.toUpperCase()];
-          return <i key={`${x}-${y}`} style={color ? { background: hex(color, level.customPalette) } : undefined} />;
-        }),
-      )}
-    </span>
+    />
   );
 }
 
@@ -1061,6 +1210,47 @@ const WIN_CONFETTI = [
   { left: 93, delay: 0.7, duration: 7.1, drift: -12, size: 9, color: "var(--danger)" },
   { left: 98, delay: 2.2, duration: 7.9, drift: 10, size: 7, color: "var(--sky)" },
 ] as const;
+
+/**
+ * Keeps a conditionally-rendered overlay mounted for `durationMs` after the
+ * state that owns it closes, so it can fade out instead of vanishing on the
+ * spot (2026-09ae ask: "với những hành động tắt UI (nhấn nút cancel,...) thì
+ * UI tắt nên có anim fade out dần rồi mới tắt, thời gian khoảng 0.4s thay vì
+ * tắt rất chớp nhoáng"). React unmounts a conditionally-rendered element the
+ * instant its condition goes false — there is no window left for a CSS
+ * transition to run in — so this holds onto the LAST non-null value for one
+ * more `durationMs` beat (returned as `value`, still the real data the JSX
+ * needs — the confirm dialogs read `buyConfirm`'s own fields mid-fade, not
+ * just a boolean) with `closing: true` for the caller to add a fade-out CSS
+ * class from. Every existing close handler (Cancel, No, X, tap-outside, Yes
+ * that also happens to close) is untouched — none of them know this exists,
+ * they just flip the same state to `null`/`false` they always did, and
+ * whichever one fires gets the fade for free.
+ */
+function useFadeOutClose<T>(value: T | null, durationMs = 400): { value: T | null; closing: boolean } {
+  const [displayed, setDisplayed] = useState<T | null>(value);
+  const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    if (value !== null) {
+      setDisplayed(value);
+      setClosing(false);
+      return;
+    }
+    if (displayed === null) return;
+    setClosing(true);
+    const timer = window.setTimeout(() => {
+      setDisplayed(null);
+      setClosing(false);
+    }, durationMs);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `displayed` is
+    // read only to guard against a redundant timer on repeated nulls, not to
+    // react to it; including it would refire this same branch harmlessly,
+    // but keeping the dependency list to what actually needs a fresh timer
+    // schedule (`value`, `durationMs`) is clearer about what this watches.
+  }, [value, durationMs]);
+  return { value: displayed, closing };
+}
 
 
 export default function SandGame() {
@@ -1491,6 +1681,26 @@ export default function SandGame() {
   const [missFlashBump, setMissFlashBump] = useState(0);
   const hudAmmoClusterRef = useRef<HTMLDivElement | null>(null);
   const hudSettingsRef = useRef<HTMLDivElement | null>(null);
+  const shotsBadgeRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * The width `.settle-badge.is-under-ammo` (below) is pinned to while
+   * `SETTLING` — measured off `.shots-badge` itself rather than copied from
+   * CSS, since that badge's own width is not a fixed number (it grows with
+   * however many upcoming rounds `.shots-upcoming` is showing). Re-read every
+   * time settling actually starts (on request: "kích thước, chiều dài sao
+   * cho ngang với HUD số lượng đạn" — the dots row should span the exact
+   * same length as the ammo badge above it), not continuously, since the ammo
+   * badge cannot change shape while input is locked mid-settle — nothing a
+   * running observer would ever have to catch mid-flight. `null` renders the
+   * dots row at its own natural (small) width instead of a wrong/stale one
+   * on the very first paint, before this has had a chance to measure anything.
+   */
+  const [settleBadgeWidth, setSettleBadgeWidth] = useState<number | null>(null);
+  useEffect(() => {
+    if (state.phase === "SETTLING" && shotsBadgeRef.current) {
+      setSettleBadgeWidth(shotsBadgeRef.current.getBoundingClientRect().width);
+    }
+  }, [state.phase]);
   // Replays `.hud-radius-shake` on both HUD clusters every time
   // `radiusShakeBump` changes — toggling the class off then on (with a
   // forced reflow between the two) restarts the CSS animation without
@@ -1818,8 +2028,8 @@ export default function SandGame() {
       tweenGoldTo(wallet.gold);
     }, 720);
   }, [playing, tab, pendingHomeReward, wallet.gold, tweenGoldTo]);
-  // Read once, the same `useState(() => ...)` shape `soundOn` uses just below
-  // — `getSelectedCostume()` is a plain localStorage read, and `selectCostume`
+  // Read once, the same `useState(() => ...)` shape `musicVolume`/`sfxVolume`
+  // use just below — `getSelectedCostume()` is a plain localStorage read, and `selectCostume`
   // (the skin screen's Select button) is the only place in the UI that writes
   // it, so nothing else can go stale.
   const [costume, setCostume] = useState<CostumeId>(() => getSelectedCostume());
@@ -1845,18 +2055,28 @@ export default function SandGame() {
   // needs the engine's own renderer and there is no reason to pay for it
   // before a player has ever looked at the tray.
   const [costumeThumbnails, setCostumeThumbnails] = useState<Partial<Record<CostumeId, string>>>({});
-  // Read once: `isSoundEnabled()` is a plain module variable, and this is the
-  // only place in the UI that ever writes it, so nothing else can go stale.
-  const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
-  // Same one-place-writes-it reasoning as `soundOn` above, for the haptics
-  // module's own stored preference.
+  // Read once, the same `useState(() => ...)` shape as `vibrationOn` below —
+  // `getMusicVolume`/`getSfxVolume` are plain module variables, and the two
+  // sliders in Settings are the only place in the UI that ever write them.
+  const [musicVolume, setMusicVolumeState] = useState(() => getMusicVolume());
+  const [sfxVolume, setSfxVolumeState] = useState(() => getSfxVolume());
+  // GameDevOption's Sound Editor — one multiplier per distinct sound source,
+  // read once the same way, since `setSourceGain`/`resetSourceGains` (in the
+  // editor's own rows below) are the only writers.
+  const [sourceGains, setSourceGainsState] = useState<Record<SoundSourceId, number>>(() => {
+    const initial = {} as Record<SoundSourceId, number>;
+    for (const id of SOUND_SOURCE_IDS) initial[id] = getSourceGain(id);
+    return initial;
+  });
+  // Same one-place-writes-it reasoning as `musicVolume`/`sfxVolume` above,
+  // for the haptics module's own stored preference.
   const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
   // Same one-place-writes-it reasoning again, for the aim-sensitivity module.
   // Applying it to the engine is a separate effect below — `aim-sensitivity.ts`
   // only owns storing the number, `SandCannonEngine.setControlSensitivity` is
   // what actually changes how the joystick responds.
   const [aimSensitivity, setAimSensitivityState] = useState(() => getAimSensitivity());
-  // Unlike `soundOn`/`vibrationOn` above, this can't be a plain `useState(()
+  // Unlike `musicVolume`/`sfxVolume`/`vibrationOn` above, this can't be a plain `useState(()
   // => getLanguage())`: that reads real client storage on the very first
   // client render, while the server pass (which never sees localStorage)
   // rendered "en" — a text mismatch `useSyncExternalStore` exists to
@@ -1994,6 +2214,10 @@ export default function SandGame() {
         // opening that somehow got through gets `null` here and shows 0
         // rather than paying twice.
         const paid = claimRewardTrack() ?? 0;
+        // 2026-09u ask: "Thêm âm thanh vào progression chest khi chest được
+        // mở ra" — right as the lid starts to move, same moment the payout
+        // above is actually claimed.
+        sound("chestOpen");
         setChest({ phase: "opening", amount: paid });
       }, 1500);
       return () => window.clearTimeout(timer);
@@ -2231,6 +2455,35 @@ export default function SandGame() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [engine, playing]);
+
+  // Every plain `<button>` in this file (2026-09n ask: "nút level 2, nút
+  // progression chest, ... button khác thì đều có sound kiểu 'cạch'") gets a
+  // click sound — one delegated listener here instead of threading a call
+  // into 62 separate `onClick`s (and every one still to be added later).
+  // `click` rather than `pointerdown` so keyboard activation (Enter/Space on
+  // a focused button) triggers it too, not just a pointer tap; a disabled
+  // button never dispatches `click` at all, so those are naturally excluded
+  // already. The hub nav is excluded here (2026-09o: "là sound tự tạo khác
+  // chứ không phải là nút ở thanh tác vụ" — a different sound, not the
+  // bottom nav's own) since it keeps its own explicit `soundButtonClick()`
+  // call playing the `button-click-menuhub.mp3` recording.
+  // `data-sound="purchase"` (2026-09p: "nút có liên quan đến việc mua, giao
+  // dịch, trao đổi... thì có sound 'kaching' nhanh") opts a button into the
+  // kaching instead of the plain click — set directly on every buy/spend
+  // button below rather than guessed at here from its class or label, since
+  // those vary (`.buy-btn`, `.pack-price`, `.bundle-price`, `.shop-buy-btn`,
+  // and the two confirm dialogs' unstyled "Yes" buttons all mean the same
+  // thing here). Every other button gets `playUiClick`'s synthesised "cạch".
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      const button = (event.target as HTMLElement | null)?.closest("button");
+      if (!button) return;
+      if (button.dataset.sound === "purchase") sound("purchase");
+      else if (!button.closest(".hub-nav")) sound("uiClick");
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
 
   // Opening the in-play Settings card is a pause menu now, not just an
   // overlay: the board underneath must not keep settling/animating while a
@@ -2806,7 +3059,20 @@ export default function SandGame() {
   // above is: a purchase or a dismiss has to show up immediately, not on the
   // next unrelated re-render.
   const unseenSkins = unseenAffordableSkins(wallet.emeralds);
-  const buyConfirmPrice = buyConfirm ? boosterPrice(buyConfirm) : 0;
+  // Fade-out-then-unmount for the three dialogs with a plain Cancel/No/X close
+  // (2026-09ae ask — see `useFadeOutClose`'s own comment). Gated the same way
+  // the JSX below already gates each dialog (`tab === "shop"`/`"skin"` on top
+  // of the state itself) so switching tabs behind an open confirm does not
+  // itself start a fade for a dialog that is about to be gone anyway.
+  const settingsFade = useFadeOutClose(settingsOpen ? true : null);
+  const buyConfirmFade = useFadeOutClose(tab === "shop" ? buyConfirm : null);
+  const skinBuyConfirmFade = useFadeOutClose(tab === "skin" ? skinBuyConfirm : null);
+  // Derived from `buyConfirmFade.value`, not the raw `buyConfirm` state —
+  // `buyConfirm` itself is already back to `null` for the whole fade-out
+  // window (that is what "closed" means), so the JSX below reads these (and
+  // every other `buyConfirm`-shaped field) off the held fade value instead,
+  // the same way it already has to for `s.boosterName(buyConfirmFade.value)`.
+  const buyConfirmPrice = buyConfirmFade.value ? boosterPrice(buyConfirmFade.value) : 0;
   const buyQtyCap = buyConfirmPrice > 0 ? Math.min(99, Math.floor(wallet.gold / buyConfirmPrice)) : 99;
 
   // The WIN screen's own "Continue" button needs to know whether there is
@@ -2894,6 +3160,7 @@ export default function SandGame() {
                 widens to fit however many rounds `nextAmmo` hands back. */}
             <div
               className="shots-badge"
+              ref={shotsBadgeRef}
               role="status"
               aria-label={
                 loadedAmmo
@@ -2966,6 +3233,32 @@ export default function SandGame() {
               </div>
             )}
           </header>
+
+          {/* §24's "still moving" sign, moved down here and reshaped
+              specifically for `"SETTLING"` (2026-09i, on request — "di
+              chuyển anim 3 chấm ở dưới phần HUD số lượng đạn, kích thước,
+              chiều dài sao cho ngang với HUD số lượng đạn"): a flex sibling
+              of `.hud-top` inside this same `.hud-top-left` column, so it
+              inherits this corner's own position for free (left-aligned,
+              `gap: 8px` below the ammo row) instead of needing a second copy
+              of `.hud-top-left`'s own top/left math. `settleBadgeWidth`
+              pins its length to `.shots-badge`'s own measured width — see
+              that state's own comment. Every OTHER busy phase (a shot in
+              flight, a match resolving, chips merging) still gets the
+              original centred badge below (`.settle-badge` with no
+              `is-under-ammo`), unchanged. */}
+          {busy && !winReveal && state.phase === "SETTLING" && (
+            <div
+              className="settle-badge is-under-ammo"
+              role="status"
+              aria-label={s.sandSettling}
+              style={settleBadgeWidth != null ? { width: settleBadgeWidth } : undefined}
+            >
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
         </div>
 
         {/* Same top-right corner and the same gear either way now. The old
@@ -3378,25 +3671,15 @@ export default function SandGame() {
             </div>
           )}
 
-          {/* §24's "a visible sign that firing is locked while sand is
-              moving" — brought back on request after a stretch of trying the
-              frame's own colour/opacity instead (that whole detour has been
-              reverted; the frame now always keeps its authored colour). Sits
-              in the open band between the picture and the cannon (see the
-              comment on `.scene-wrap`), same spot `.ftue-gesture` already
-              anchors to, rather than the old page-level position above the
-              frame. */}
-          {busy && !winReveal && (
-            <div
-              className="settle-badge"
-              role="status"
-              aria-label={state.phase === "PROJECTILE_FLYING" ? s.shotInFlight : s.sandSettling}
-            >
-              <i />
-              <i />
-              <i />
-            </div>
-          )}
+          {/* The "a visible sign that firing is locked while sand is moving"
+              badge that used to sit here, in the open band between the
+              picture and the cannon, is gone on request (2026-09j: "xóa anim
+              3 chấm ở giữa cannon và bức tranh") — every busy phase other
+              than `"SETTLING"` (a shot in flight, a match resolving, chips
+              merging) now has no on-screen indicator of its own; the
+              repositioned copy of this same badge for `"SETTLING"` itself,
+              right under the ammo HUD (the `.is-under-ammo` block inside
+              `.hud-top-left` above), is unchanged. */}
 
           {toast && !winReveal && (
             <div key={toast.id} className={`sand-toast is-${toast.tone}`} role="status">
@@ -3885,8 +4168,14 @@ export default function SandGame() {
                 // actually pay out (same lookup `raw`'s own reward uses
                 // above: a designer's CSV override or the difficulty
                 // formula, PLUS the decade bonus `levelMilestoneBonus` adds
-                // on top). Shown even before it unlocks, as a teaser.
-                const isMilestone = entry.level.id % 10 === 0;
+                // on top). Shown even before it unlocks, as a teaser — but
+                // NOT once the level has already been cleared (2026-09l, on
+                // request: "nếu nhận phần thưởng rồi thì xóa UI phần thưởng
+                // đi"): the reward pays out exactly once, on first clear
+                // (`markLevelCleared`), so a card still advertising "+X"
+                // after that gold has already landed in the wallet would be
+                // promising something the player already has.
+                const isMilestone = entry.level.id % 10 === 0 && !hasClearedLevel(entry.level.id);
                 const milestoneReward = isMilestone
                   ? (getLevelRewardOverride(entry.level.id) ?? levelGoldReward(computeLevelDifficulty(entry.level).score)) +
                     levelMilestoneBonus(entry.level.id)
@@ -4164,7 +4453,7 @@ export default function SandGame() {
                     offer is visible without a swipe, the same "no hidden
                     shelf" reasoning the Bundles list below already follows. */}
                 <div className="offer-stack">
-                  {visibleOffers.map((offer) => (
+                  {visibleOffers.map((offer, index) => (
                     <div key={offer.id} className={`offer-card is-${offer.id === "starter" ? "teal" : "green"}`}>
                       {/* `offer-tag` (left, "First purchase"/"Weekend only") answers
                           "why is this here"; `offer-value-badge` (right, 2026-09f)
@@ -4175,28 +4464,46 @@ export default function SandGame() {
                         <span className="offer-tag">{s.offerTag(offer.id)}</span>
                         <span className="offer-value-badge">{s.offerValueBadge(offer.valuePercent)}</span>
                       </div>
-                      <h4>{s.offerName(offer.id)}</h4>
-                      <div className="offer-contents">
-                        {offer.coins != null && (
-                          <>
-                            <CoinIcon /> {offer.coins.toLocaleString("en-US")}
-                          </>
-                        )}
-                        {offer.hearts != null && (
-                          <>
-                            {offer.coins != null && <span className="offer-plus">+</span>}
-                            <HeartIcon /> {offer.hearts.toLocaleString("en-US")}
-                          </>
-                        )}
-                        {offer.emeralds != null && (
-                          <>
-                            {(offer.coins != null || offer.hearts != null) && <span className="offer-plus">+</span>}
-                            <EmeraldIcon /> {offer.emeralds.toLocaleString("en-US")}
-                          </>
-                        )}
-                        {offer.bonus && <span className="offer-plus">{s.offerFlag(offer.bonus)}</span>}
+                      {/* The offer's own hero illustration (2026-09m, on
+                          request — "gắn toàn bộ ảnh minh họa vào shop") — a
+                          full scene (treasure chest, hearts, emeralds, coins,
+                          sparkles) rather than a per-currency inline glyph,
+                          so it sits beside the name/contents as one piece of
+                          art instead of replacing the existing coin/heart/
+                          emerald breakdown, which still says exactly what the
+                          offer contains. */}
+                      <div className="offer-body">
+                        <div
+                          className="shop-illustration offer-illustration"
+                          style={{ ["--ray" as string]: rayIntensity(index, visibleOffers.length) }}
+                        >
+                          <img src={specialOfferIllustrationSrc(offer)} alt="" aria-hidden="true" />
+                        </div>
+                        <div className="offer-text">
+                          <h4>{s.offerName(offer.id)}</h4>
+                          <div className="offer-contents">
+                            {offer.coins != null && (
+                              <>
+                                <CoinIcon /> {offer.coins.toLocaleString("en-US")}
+                              </>
+                            )}
+                            {offer.hearts != null && (
+                              <>
+                                {offer.coins != null && <span className="offer-plus">+</span>}
+                                <HeartIcon /> {offer.hearts.toLocaleString("en-US")}
+                              </>
+                            )}
+                            {offer.emeralds != null && (
+                              <>
+                                {(offer.coins != null || offer.hearts != null) && <span className="offer-plus">+</span>}
+                                <EmeraldIcon /> {offer.emeralds.toLocaleString("en-US")}
+                              </>
+                            )}
+                            {offer.bonus && <span className="offer-plus">{s.offerFlag(offer.bonus)}</span>}
+                          </div>
+                        </div>
                       </div>
-                      <button type="button" className="buy-btn" onClick={notifyIapComingSoon}>
+                      <button type="button" className="buy-btn" data-sound="purchase" onClick={notifyIapComingSoon}>
                         {offer.price}
                       </button>
                     </div>
@@ -4217,9 +4524,18 @@ export default function SandGame() {
                   <p>{s.bundleContents}</p>
                 </div>
                 <div className="bundle-list">
-                  {BUNDLES.map((bundle) => (
+                  {BUNDLES.map((bundle, index) => (
                     <div key={bundle.id} className={`bundle-row${bundle.flag ? " is-best" : ""}`}>
-                      <div className="bundle-icon"><CoinIcon /></div>
+                      {/* A crate illustration (2026-09m) — matched by POSITION,
+                          not price, since `bundle1.png`..`bundle5.png` are named
+                          that way (see `bundleIllustrationSrc`'s own comment) —
+                          in place of the plain circle+CoinIcon this used to be. */}
+                      <div
+                        className="shop-illustration bundle-icon"
+                        style={{ ["--ray" as string]: rayIntensity(index, BUNDLES.length) }}
+                      >
+                        <img src={bundleIllustrationSrc(index)} alt="" aria-hidden="true" />
+                      </div>
                       <div className="bundle-mid">
                         {bundle.flag && <div className="bundle-flag">{s.offerFlag(bundle.flag)}</div>}
                         <div className="bundle-amount">
@@ -4230,7 +4546,7 @@ export default function SandGame() {
                           <HeartIcon /> {bundle.hearts} {s.heartsSuffix} · <EmeraldIcon /> {bundle.emeralds.toLocaleString("en-US")} {s.emeraldSuffix}
                         </div>
                       </div>
-                      <button type="button" className="bundle-price" onClick={notifyIapComingSoon}>
+                      <button type="button" className="bundle-price" data-sound="purchase" onClick={notifyIapComingSoon}>
                         {bundle.price}
                       </button>
                     </div>
@@ -4245,14 +4561,19 @@ export default function SandGame() {
                   <p>{s.buyCoinsDirectly}</p>
                 </div>
                 <div className="pack-grid">
-                  {COIN_PACKS.map((pack) => (
+                  {COIN_PACKS.map((pack, index) => (
                     <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
-                      <CoinIcon />
+                      <div
+                        className="shop-illustration pack-coin-illustration"
+                        style={{ ["--ray" as string]: rayIntensity(index, COIN_PACKS.length) }}
+                      >
+                        <img src={coinPackIllustrationSrc(pack)} alt="" aria-hidden="true" />
+                      </div>
                       <div className="pack-amount">
                         {pack.coins.toLocaleString("en-US")}
                         {pack.bonus && <span className="pack-bonus">{pack.bonus}</span>}
                       </div>
-                      <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
+                      <button type="button" className="pack-price" data-sound="purchase" onClick={notifyIapComingSoon}>
                         {pack.price}
                       </button>
                     </div>
@@ -4275,11 +4596,16 @@ export default function SandGame() {
                   <p>{s.buyHeartsDirectly}</p>
                 </div>
                 <div className="pack-grid">
-                  {HEART_PACKS.map((pack) => (
+                  {HEART_PACKS.map((pack, index) => (
                     <div key={pack.id} className={`pack-card${pack.flag ? " is-flag" : ""}`} data-flag={pack.flag && s.offerFlag(pack.flag)}>
-                      <HeartIcon />
+                      <div
+                        className="shop-illustration pack-heart-illustration"
+                        style={{ ["--ray" as string]: rayIntensity(index, HEART_PACKS.length) }}
+                      >
+                        <img src={heartPackIllustrationSrc(pack)} alt="" aria-hidden="true" />
+                      </div>
                       <div className="pack-amount">{pack.hearts.toLocaleString("en-US")}</div>
-                      <button type="button" className="pack-price" onClick={notifyIapComingSoon}>
+                      <button type="button" className="pack-price" data-sound="purchase" onClick={notifyIapComingSoon}>
                         {pack.price}
                       </button>
                     </div>
@@ -4384,14 +4710,14 @@ export default function SandGame() {
             Gated on `tab === "shop"` too, not just `buyConfirm`, so a stale
             confirm from before a tab switch can never reappear over a
             different screen — see the effect that clears it on tab change. */}
-        {tab === "shop" && buyConfirm && (
-          <div className="result-screen" role="dialog" aria-modal="true" aria-label={s.buyBoosterQuestion(s.boosterName(buyConfirm))}>
-            <div className="result-card confirm-card">
-              <h2>{s.buyBoosterQuestion(s.boosterName(buyConfirm))}</h2>
+        {tab === "shop" && buyConfirmFade.value && (
+          <div className={`result-screen${buyConfirmFade.closing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-label={s.buyBoosterQuestion(s.boosterName(buyConfirmFade.value))}>
+            <div className={`result-card confirm-card${buyConfirmFade.closing ? " is-closing" : ""}`}>
+              <h2>{s.buyBoosterQuestion(s.boosterName(buyConfirmFade.value))}</h2>
               <div className="confirm-info">
                 <div className="confirm-info-row">
                   <span>{s.currentlyOwn}</span>
-                  <strong>{wallet.boosters[buyConfirm]}</strong>
+                  <strong>{wallet.boosters[buyConfirmFade.value]}</strong>
                 </div>
                 <div className="confirm-info-row">
                   <span>{s.buying}</span>
@@ -4433,9 +4759,11 @@ export default function SandGame() {
               <div className="result-actions is-row">
                 <button
                   type="button"
+                  data-sound="purchase"
                   disabled={buyQty <= 0}
                   onClick={() => {
-                    const type = buyConfirm;
+                    const type = buyConfirmFade.value;
+                    if (!type) return;
                     const qty = buyQty;
                     const owned = wallet.boosters[type];
                     // The wallet notifies its own subscribers on a
@@ -4467,14 +4795,14 @@ export default function SandGame() {
             is scarcer than gold. Gated on `tab === "skin"` as well as on the
             state itself, same as the Shop's dialog: a confirm left open
             behind a tab switch must not reappear on the way back. */}
-        {tab === "skin" && skinBuyConfirm && (
-          <div className="result-screen" role="dialog" aria-modal="true" aria-label={s.buySkinQuestion(s.costumeName(skinBuyConfirm))}>
-            <div className="result-card confirm-card">
-              <h2>{s.buySkinQuestion(s.costumeName(skinBuyConfirm))}</h2>
+        {tab === "skin" && skinBuyConfirmFade.value && (
+          <div className={`result-screen${skinBuyConfirmFade.closing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-label={s.buySkinQuestion(s.costumeName(skinBuyConfirmFade.value))}>
+            <div className={`result-card confirm-card${skinBuyConfirmFade.closing ? " is-closing" : ""}`}>
+              <h2>{s.buySkinQuestion(s.costumeName(skinBuyConfirmFade.value))}</h2>
               <div className="confirm-info">
                 <div className="confirm-info-row">
                   <span>{s.price}</span>
-                  <strong><EmeraldIcon /> {costumePrice(skinBuyConfirm)}</strong>
+                  <strong><EmeraldIcon /> {costumePrice(skinBuyConfirmFade.value)}</strong>
                 </div>
                 <div className="confirm-info-row">
                   <span>{s.youHave}</span>
@@ -4484,8 +4812,9 @@ export default function SandGame() {
               <div className="result-actions is-row">
                 <button
                   type="button"
-                  disabled={wallet.emeralds < costumePrice(skinBuyConfirm)}
-                  onClick={() => buySkin(skinBuyConfirm)}
+                  data-sound="purchase"
+                  disabled={wallet.emeralds < costumePrice(skinBuyConfirmFade.value)}
+                  onClick={() => { if (skinBuyConfirmFade.value) buySkin(skinBuyConfirmFade.value); }}
                 >
                   {s.yesBuy}
                 </button>
@@ -4520,7 +4849,20 @@ export default function SandGame() {
                 <p className="reward-amount">
                   <EmeraldIcon /> {chest.amount}
                 </p>
-                <button type="button" className="reward-collect" onClick={() => setChest(null)}>
+                <button
+                  type="button"
+                  className="reward-collect"
+                  onClick={() => {
+                    // 2026-09ab ask: "Khi thoát khỏi chest progression thì
+                    // lập tức tắt sound" — the opening recording can still
+                    // be well into its own long reverb tail (up to 16s) when
+                    // this is tapped; leaving it running behind a screen
+                    // that no longer shows the chest at all would read as a
+                    // stray, unexplained sound.
+                    stopChestOpen();
+                    setChest(null);
+                  }}
+                >
                   {s.collect}
                 </button>
               </>
@@ -4544,6 +4886,15 @@ export default function SandGame() {
                 className={entry === tab ? "is-active" : ""}
                 data-tab={entry}
                 onClick={() => {
+                  // 2026-09m ask: "âm thanh khi người chơi nhấn vào thanh
+                  // tác vụ dưới đáy" — the recorded click, not the delegated
+                  // listener's synthesised `uiClick` (2026-09n/o above the
+                  // JSX return excludes `.hub-nav` specifically so this stays
+                  // the one place that plays it). Every tap on this bar,
+                  // including one that lands on the tab already active
+                  // (still a real press, not a no-op from the player's side
+                  // even though nothing else below this line changes for it).
+                  soundButtonClick();
                   // Force-close the daily-login modal the instant the player
                   // taps away to a different hub tab (on request — it used
                   // to just sit there, un-gated on `tab`, so it kept
@@ -4618,9 +4969,9 @@ export default function SandGame() {
             place. Opening it mid-play also pauses the engine (see the
             `settingsOpen`/`playing` effect above `restart`) — the old
             in-play menu doubled as a pause screen and this replaces it. */}
-        {settingsOpen && (
+        {settingsFade.value && (
           <div
-            className="settings-screen"
+            className={`settings-screen${settingsFade.closing ? " is-closing" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-title"
@@ -4632,7 +4983,7 @@ export default function SandGame() {
               if (event.target === event.currentTarget) setSettingsOpen(false);
             }}
           >
-            <div className="settings-card">
+            <div className={`settings-card${settingsFade.closing ? " is-closing" : ""}`}>
               <div className="settings-card-header">
                 <h2 id="settings-title">{s.settingsTitle}</h2>
                 <button
@@ -4671,25 +5022,91 @@ export default function SandGame() {
                 </div>
               )}
               <div className="settings-body">
+                {/* Two independent volume sliders rather than one on/off
+                    switch — BGM and SFX are separate audio buses in
+                    sound.ts (`musicBus`/`sfxBus`), each with its own gain
+                    node downstream, so nothing stops a player wanting the
+                    ambience quiet while shots and clears stay loud, or the
+                    other way round. Same slider shape as `aimSensitivity`
+                    below: 0-100%, step 5, persisted through sound.ts the
+                    moment it moves. */}
                 {soundSupported() && (
-                  <div className="settings-row">
-                    <span className="settings-row-label">
-                      <Glyph name={soundOn ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.sound}
-                    </span>
-                    <button
-                      type="button"
-                      className={`settings-toggle${soundOn ? " is-on" : ""}`}
-                      role="switch"
-                      aria-checked={soundOn}
-                      aria-label={s.soundAria(soundOn)}
-                      onClick={() => {
-                        const next = !soundOn;
-                        setSoundEnabled(next);
-                        setSoundOn(next);
-                      }}
-                    />
-                  </div>
+                  <>
+                    <div className="settings-row settings-row--slider">
+                      <span className="settings-row-label">
+                        <Glyph name={musicVolume > 0 ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.musicVolume}
+                        <span className="settings-row-value">{Math.round(musicVolume * 100)}%</span>
+                      </span>
+                      <input
+                        type="range"
+                        className="settings-slider"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={Math.round(musicVolume * 100)}
+                        aria-label={s.musicVolume}
+                        onChange={(event) => {
+                          const next = Number(event.target.value) / 100;
+                          setMusicVolume(next);
+                          setMusicVolumeState(next);
+                        }}
+                      />
+                    </div>
+                    <div className="settings-row settings-row--slider">
+                      <span className="settings-row-label">
+                        <Glyph name={sfxVolume > 0 ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.sfxVolume}
+                        <span className="settings-row-value">{Math.round(sfxVolume * 100)}%</span>
+                      </span>
+                      <input
+                        type="range"
+                        className="settings-slider"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={Math.round(sfxVolume * 100)}
+                        aria-label={s.sfxVolume}
+                        onChange={(event) => {
+                          const next = Number(event.target.value) / 100;
+                          setSfxVolume(next);
+                          setSfxVolumeState(next);
+                        }}
+                      />
+                    </div>
+                  </>
                 )}
+                {/* Aim sensitivity moved up here, right after the two volume
+                    sliders (2026-09ad ask: "Những phần có thể chỉnh sửa bằng
+                    cách drag trái phải sẽ dồn phía trên, sau đó tới haptics
+                    rồi sau đó là ngôn ngữ") — every drag-left-right slider
+                    grouped first, then Vibration, then Language. A
+                    continuous value, not a toggle, so this is the one row
+                    that wraps to a second line for a full-width slider
+                    rather than fitting a control beside the label.
+                    Persisted through aim-sensitivity.ts the same way
+                    Sound/Vibration persist through their own modules;
+                    applied to the live engine by the effect next to
+                    `setIdle` above, since a fresh engine (every level
+                    start/restart) forgets it otherwise. */}
+                <div className="settings-row settings-row--slider">
+                  <span className="settings-row-label">
+                    <Glyph name="target" className="icon-glyph settings-row-icon" /> {s.aimSensitivity}
+                    <span className="settings-row-value">{aimSensitivity.toFixed(1)}x</span>
+                  </span>
+                  <input
+                    type="range"
+                    className="settings-slider"
+                    min={MIN_CONTROL_SENSITIVITY}
+                    max={MAX_CONTROL_SENSITIVITY}
+                    step={0.1}
+                    value={aimSensitivity}
+                    aria-label={s.aimSensitivity}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setAimSensitivity(next);
+                      setAimSensitivityState(next);
+                    }}
+                  />
+                </div>
                 {hapticsSupported() && (
                   <div className="settings-row">
                     <span className="settings-row-label">
@@ -4735,34 +5152,6 @@ export default function SandGame() {
                   >
                     {LANGUAGE_NAME[language]}
                   </button>
-                </div>
-
-                {/* A continuous value, not a toggle, so this is the one row
-                    that wraps to a second line for a full-width slider rather
-                    than fitting a control beside the label. Persisted through
-                    aim-sensitivity.ts the same way Sound/Vibration persist
-                    through their own modules; applied to the live engine by
-                    the effect next to `setIdle` above, since a fresh engine
-                    (every level start/restart) forgets it otherwise. */}
-                <div className="settings-row settings-row--slider">
-                  <span className="settings-row-label">
-                    <Glyph name="target" className="icon-glyph settings-row-icon" /> {s.aimSensitivity}
-                    <span className="settings-row-value">{aimSensitivity.toFixed(1)}x</span>
-                  </span>
-                  <input
-                    type="range"
-                    className="settings-slider"
-                    min={MIN_CONTROL_SENSITIVITY}
-                    max={MAX_CONTROL_SENSITIVITY}
-                    step={0.1}
-                    value={aimSensitivity}
-                    aria-label={s.aimSensitivity}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      setAimSensitivity(next);
-                      setAimSensitivityState(next);
-                    }}
-                  />
                 </div>
 
                 {/* Collapsed behind one button by default — the dev-tools
@@ -4933,6 +5322,51 @@ export default function SandGame() {
                     Apply
                   </button>
                 </div>
+                {/* Sound Editor — a slider per `SoundSourceId` (sound.ts),
+                    each an independent multiplier on top of the Music/SFX
+                    sliders above. Exists because "make the pour louder" (the
+                    ask that started this) isn't a one-off — the next source
+                    that reads too quiet or too loud shouldn't need a code
+                    change and a rebuild to fix. `sourceGains` here is a
+                    plain mirror of sound.ts's own module state, the same
+                    one-place-writes-it shape as `musicVolume`/`sfxVolume`. */}
+                <div className="settings-section-title settings-sound-editor-header">
+                  Sound Editor
+                  <button
+                    type="button"
+                    className="settings-devlink-go"
+                    onClick={() => {
+                      resetSourceGains();
+                      const reset = {} as Record<SoundSourceId, number>;
+                      for (const id of SOUND_SOURCE_IDS) reset[id] = getSourceGain(id);
+                      setSourceGainsState(reset);
+                    }}
+                  >
+                    Reset
+                  </button>
+                </div>
+                {SOUND_SOURCE_IDS.map((id) => (
+                  <div key={id} className="settings-row settings-row--slider">
+                    <span className="settings-row-label">
+                      {SOUND_SOURCE_LABELS[id]}
+                      <span className="settings-row-value">{Math.round(sourceGains[id] * 100)}%</span>
+                    </span>
+                    <input
+                      type="range"
+                      className="settings-slider"
+                      min={0}
+                      max={MAX_SOURCE_GAIN * 100}
+                      step={5}
+                      value={Math.round(sourceGains[id] * 100)}
+                      aria-label={SOUND_SOURCE_LABELS[id]}
+                      onChange={(event) => {
+                        const next = Number(event.target.value) / 100;
+                        setSourceGain(id, next);
+                        setSourceGainsState((prev) => ({ ...prev, [id]: next }));
+                      }}
+                    />
+                  </div>
+                ))}
                 {/* One tap that grants everything at once, instead of
                     working through the grid above row by row: every level
                     (same as "Unlock all maps"), every skin (same as

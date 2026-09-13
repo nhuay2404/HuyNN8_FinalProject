@@ -637,9 +637,13 @@ tab** — thứ tự từ trên xuống:
 2. **Bundles** — 5 mốc giá ($0.99 → $49.99), mỗi mốc bán CẢ BA: Coins (giữ nguyên số cũ), Hearts
    (tăng dần theo giá, tối đa `MAX_HEARTS` — không mốc nào bán quá số tim bể chứa có thể giữ), một ít
    Blue Emerald (không đủ mua nguyên 1 skin ở mốc rẻ, đáng kể ở mốc đắt).
-3. **Coins** — mua xu trực tiếp, y nguyên 7 mốc cũ.
-4. **Hearts** — mục mua riêng MỚI, y hệt layout Coins, 3 mốc (1 / 3 / 5 tim, mốc cao nhất "Full
-   refill").
+3. **Coins** — mua xu trực tiếp, **6 mốc** ($0.99, $4.99, $9.99, $19.99, $49.99, $99.99 — bỏ mốc
+   $1.99/440 xu, 2026-09ad: "loại bỏ gói 1.99 trong shop").
+4. **Hearts** — mục mua riêng, y hệt layout Coins, **2 mốc** (1 tim $0.99, 5 tim "Full refill" $2.99 —
+   cùng đợt bỏ mốc $1.99/3 tim).
+
+Layout Coins/Hearts: **3 gói/dòng** (2026-09ad, trước đó 2/dòng) — `.pack-grid` `grid-template-
+columns: repeat(3, 1fr)`.
 5. **Boosters** — chuyển xuống **cuối cùng** (trước đây là tab "Coins" riêng) — đây là luồng mua duy
    nhất thật sự tiêu tiền chơi được (vàng), tách biệt hẳn với mọi thứ real-money bán ở trên.
 
@@ -792,6 +796,20 @@ màu đạn sẽ phát khi khoá mở.
   Shot tạm thời — mọi booster khác Radius Overcharge tự động rơi vào nhánh art "Prism" trong
   `BoosterIcon`, nên thêm asset icon riêng cho Chain Sort không cần sửa code, chỉ cần thay điều kiện.
 
+### 12.6. Shop — tia sáng xoay sau mỗi hình minh họa, mạnh theo giá tiền (2026-09)
+
+Mỗi hình minh hoạ gói mua (Coins/Hearts/Offers/Bundles) có một vòng tia sáng xoay (`repeating-conic-
+gradient` + `mask-image` radial để tia mờ dần ra ngoài, `@keyframes shop-ray-spin` xoay chậm 14s/vòng),
+**9 tia** (chu kỳ 40°: 14° sáng + 26° tối), ôm sát hình chứ không tràn ra ngoài card. Độ đậm/độ vươn xa
+của tia tăng dần theo **vị trí trong danh sách giá** (không phải số tiền tuyệt đối):
+
+```
+intensity(index, total) = 0.3 + (index / (total-1)) × 0.7      // 30%..100%
+```
+
+Đúng mọi danh sách vì cả 4 (`COIN_PACKS`, `HEART_PACKS`, `visibleOffers`, `BUNDLES`) đều đã sắp theo giá
+tăng dần — không cần parse `"$X.XX"` ngược lại thành số.
+
 ---
 
 ## 13. UI/UX
@@ -834,6 +852,13 @@ lưới Gallery nhiều cột.
 - Kéo để ngắm, thả để bắn — một cử chỉ, không nút bắn riêng.
 - Grace period 1.7s khi kéo lệch ra ngoài `.aim-zone` (mục 4.1) — tay trượt ra mép màn hình khi đang
   kéo không bị tính là huỷ ngay.
+- **Rìa khung tranh có luật riêng, tách khỏi luật `.aim-zone` ở trên (2026-09ac).** Kéo tới vị trí NGOÀI
+  khung tranh (nhưng vẫn còn trong `.aim-zone`) thì: (1) **không thể bắn được** — thả joystick ở đó chỉ
+  huỷ, không còn ra một phát miss như trước; (2) giữ nguyên ở đó không thả trong **2.5s** cũng tự huỷ
+  (`AIM_INVALID_TARGET_CANCEL_MS`, riêng với timer 1.7s ở trên). Quay lại vào trong khung trước khi hết
+  giờ thì huỷ luôn bộ đếm, không chỉ reset. Cùng cờ `is-target-valid` crosshair đã dùng để tô màu
+  (`solved?.grid` khác null + đã armed) — giờ cờ đó còn quyết định luôn có bắn được hay không, không chỉ
+  đổi màu.
 - `AIM_TOUCHED` phát **ngay khi chạm**, trước khi khoá con trỏ — để FTUE gesture (13.4) tắt đúng lúc
   người chơi vừa chạm, không phải sau khi bắn xong.
 - Slider sensitivity 0.5–2.0 trong Settings, scale trực tiếp phản ứng ngắm — không có "aim assist"
@@ -915,6 +940,110 @@ lưới nút) — hai cách khác nhau để có ngay mọi level: build hoặc 
   Level 2 tăng 3 → 3.5 (vẫn thấp hơn Level 1 vì đã có 3 màu thay vì 1) — xem Phụ lục A.
 - Chuỗi onboarding này bao trọn tutorial booster thật của level 3 (mục 13.4) — tới lúc nút ✕ mở lại ở
   level 4, người chơi chắc chắn đã tự bắn thử cả Radius Overcharge lẫn Prism Shot.
+
+### 13.7. Âm thanh & Haptics (2026-09)
+
+Toàn bộ hệ thống dựng lại trong một chuỗi request liên tiếp — xem CHANGELOG-prototype.md #241 trở đi
+cho từng bước. Đây là **luật ổn định sau cùng**, không phải nhật ký từng đợt sửa.
+
+**Kiến trúc chung (`app/game/sound.ts`, `app/game/haptics.ts`):**
+
+- Phần lớn hiệu ứng vẫn tổng hợp bằng oscillator/noise sống (`tone()`/`noiseHit()`), không phải audio
+  file — giữ nguyên lý do gốc (không phụ thuộc binary asset). Ngoại lệ là **6 bản ghi âm thật** trong
+  `public/sounds/`, mỗi file chỉ vì "một bản ghi thật không synth nào giả được": `sand-pour.mp3` (cát
+  đổ), `bullet-on-sand.mp3` (bóng chạm cát), `button-click-menuhub.mp3` (bấm thanh tác vụ dưới đáy),
+  `miss-shot.mp3` (bắn miss/không sort được gì), `treasure-chest-open.mp3` (mở progression chest),
+  `bgm-freeze-orb.mp3` (nhạc nền lúc Freeze, loop).
+- **Web Vibration API không có điều khiển biên độ** — chỉ có thời lượng xung (`navigator.vibrate`
+  nhận số ms, không nhận "mạnh nhẹ"). Mọi chỗ "haptic mạnh/nhẹ" trong game đều biểu diễn bằng cách co
+  giãn **độ dài xung**, sàn tối thiểu 8ms (`HAPTIC_MIN_PULSE_MS`) để không rơi dưới ngưỡng Android còn
+  nhận ra được.
+- **3 lớp âm lượng độc lập, nhân dồn vào nhau** (Settings → GameDevOption):
+  1. `Music`/`SFX` slider (màn Settings chính) — cân bằng tổng thể nhạc nền vs. mọi hiệu ứng khác.
+  2. `Sound Editor` (GameDevOption, dev-only) — mixer riêng cho **từng nguồn** (impact, wrongColor,
+     bodyCleared, win, lose, sandLanded, sandPour, ambience/Freeze BGM, buttonClick, uiClick, purchase,
+     chestOpen), scale 0–300%, mặc định 100% trừ `sandPour`/`sandLanded` (180%/160% — bản ghi tự nhiên
+     đọc nhỏ hơn hẳn các tiếng tổng hợp cùng mức gain).
+  3. Envelope riêng của từng tiếng (peak gain trong code).
+
+**Quy tắc "một khoảnh khắc, một tiếng chính" — không chồng 2 nguồn cho cùng một sự kiện:** một phát bắn
+không sort được gì (`NO_MATCH`) chỉ phát `miss-shot.mp3`, KHÔNG còn phát kèm tiếng chạm cát
+(`bullet-on-sand.mp3`) như bản đầu — `SandCannonEngine.handleImpact` tính `resolveShot` xong mới quyết
+định phát nhánh nào, không phát tiếng chạm chung chung trước khi biết kết quả nữa.
+
+**Bắn trúng cát vs. bắn trúng khung tranh vs. bắn miss hoàn toàn — 3 tiếng khác nhau:**
+
+| Kết quả | Tiếng | Ghi chú |
+|---|---|---|
+| Sort được (dù ít hay nhiều) | `impact` — sub-bass synth + `bullet-on-sand.mp3` | Cường độ scale theo mục dưới |
+| Không sort được gì nhưng có chạm cát/ô trống trong khung (`NO_MATCH`) | `wrongColor` = `miss-shot.mp3` | Cắt đúng đoạn có tiếng thật trong file gốc (silence 2 đầu bị bỏ) |
+| Trúng khung gỗ / sượt khung (`MISS`, `hitFrame`) | `bodyCleared` (nốt trầm G3/B3) | Đổi ý nghĩa so với tên gọi cũ — xem chú thích trong code |
+| Bắn miss hoàn toàn, không chạm gì cả | Im lặng | Chưa có tiếng riêng, chưa ai yêu cầu |
+
+**Cường độ impact (sound + haptic) scale theo lượng cát sort được — công thức chuẩn hoá theo % diện
+tích vùng quét, KHÔNG dùng số ô tuyệt đối:**
+
+```
+disc_area  = π × sortRadius²          (radius của chính phát bắn đó, kể cả booster)
+t          = min(1, số_ô_sort_được / disc_area)
+intensity  = floor + t × (1 - floor)
+```
+
+Lý do bắt buộc dùng tỉ lệ % thay vì đếm ô tuyệt đối: board trong game dao động 10×10 đến 80×90 (chênh
+lệch 70 lần diện tích), một hằng số ô cố định sẽ luôn bão hoà 100% ở board lớn và luôn kẹt sàn ở board
+nhỏ. `sortRadius` mỗi level vốn đã được thiết kế tỉ lệ với board đó nên công thức tự thích ứng.
+Áp dụng ĐỒNG THỜI cho cả tiếng (`sound("impact", scale)`) và haptic (`haptic("impact", scale)`) —
+haptic co ngắn xung theo `scale`, không đổi khoảng nghỉ giữa các xung. `floor` **không giống nhau** giữa
+2 loại (2026-09ac follow-up: "sound cát bắn tôi muốn range từ 50% tới 100%" — chỉ sound đổi, haptic
+không ai yêu cầu nên giữ nguyên):
+
+| | Floor | Trần |
+|---|---|---|
+| `sound("impact", scale)` | **50%** | 100% |
+| `haptic("impact", scale)` | 10% | 100% |
+
+**Freeze có nhạc nền riêng, KHÔNG còn nhạc nền chung cho mọi màn:** bản đầu có một drone tổng hợp
+(2 oscillator + pad note ngẫu nhiên) phát suốt mọi level — bị bỏ hẳn ("nghe rất ù và chói tai").
+`bgm-freeze-orb.mp3` (loop) giờ CHỈ phát khi `state.freezeShotsRemaining > 0`, bật/tắt đúng lúc
+`SandCannonEngine.syncFreezeVisuals()` phát hiện trạng thái đông/tan băng đổi (cùng thời điểm frame đổi
+màu ripple) — không phát lại mỗi lượt bắn trong khi vẫn đang đông.
+
+**Progression chest — tiếng phải khớp khung hình đầu tiên của animation nắp mở, và phải tắt được ngay
+khi thoát:** `treasure-chest-open.mp3` (16s, có đuôi reverb dài) kích hoạt đúng lúc
+`ChestStage.setPhase("opening")` reset đồng hồ animation nắp (0.55s), không sớm/muộn hơn. Vì file dài
+hơn nhiều so với animation, có `stopChestOpen()` fade tắt trong ~100ms — gọi ngay khi bấm "Collect" để
+rời màn hình, tránh tiếng đuôi reverb còn vang sau khi người chơi đã thoát.
+
+**Nút bấm — 3 loại tiếng "cạch" khác nhau tuỳ ngữ cảnh, một listener `click` duy nhất phân loại (không
+thread riêng vào từng `onClick`):**
+
+| Loại nút | Tiếng | Vì sao |
+|---|---|---|
+| Thanh tác vụ (hub-nav) dưới đáy | `button-click-menuhub.mp3` | Yêu cầu riêng dùng đúng file này |
+| Nút liên quan mua/giao dịch (`data-sound="purchase"`) | `purchase` — "kaching" 2 nốt nhanh | Đánh dấu trực tiếp bằng `data-sound` trên từng nút Buy/Yes-buy, không đoán qua class |
+| Mọi nút khác | `uiClick` — tiếng "tách" giòn tổng hợp | Mặc định khi không khớp 2 loại trên |
+
+### 13.8. Đóng dialog fade out ~0.4s, không tắt chớp nhoáng (2026-09ae)
+
+**Luật:** mọi dialog đóng bằng Cancel/No/X (không phải chuyển màn/điều hướng) phải fade-out ~0.4s trước
+khi biến mất, không được unmount ngay lập tức. Áp dụng cho 3 dialog có kiểu đóng "Cancel/No/X" thuần:
+Settings, xác nhận mua booster, xác nhận mua skin.
+
+**Cơ chế (`useFadeOutClose` trong `SandGame.tsx`):** React unmount phần tử điều kiện NGAY lúc state về
+`null`/`false` — không có khung thời gian nào để CSS transition kịp chạy. Hook này giữ lại giá trị
+non-null CUỐI CÙNG thêm `durationMs` (mặc định 400ms) nữa, trả về `{ value, closing }`:
+- `value` — dữ liệu thật để JSX vẫn đọc được field trong lúc đang fade (vd. dialog xác nhận mua vẫn cần
+  đọc tên/giá booster dù state gốc đã về `null`).
+- `closing` — `true` suốt khung fade, dùng thêm class `is-closing` để CSS đổi từ animation vào
+  (`overlay-in`/`result-pop`) sang animation ra (`overlay-out`/`result-pop-out`).
+
+**Không cần sửa handler đóng nào cả** — mọi nút Cancel/No/X/tap-outside hiện có vẫn chỉ `setXxx(null)`
+như cũ, hook tự bắt state đó đổi và tự thêm fade, "miễn phí" cho bất kỳ đường đóng nào đang có.
+
+**Field nào đọc từ state gốc để tính toán (không chỉ hiển thị) phải đổi nguồn sang `.value` của hook**
+— ví dụ `buyConfirmPrice`/`buyQtyCap` (giá & giới hạn số lượng của dialog mua booster) tính từ
+`buyConfirmFade.value` chứ không phải `buyConfirm` gốc, nếu không sẽ hiện sai (giá về 0) ngay khi bắt
+đầu fade vì state gốc đã `null` từ trước đó.
 
 ---
 

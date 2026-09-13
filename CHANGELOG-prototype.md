@@ -8962,3 +8962,422 @@ tránh lặp lại đúng một hướng nhìn như bị kẹt.
 có test nào động tới `frameRecoil`/`triggerFrameRecoil`). Hiệu ứng chỉ kéo dài theo
 `FRAME_RECOIL_DECAY_PER_SECOND` (~130ms) nên khó bắt bằng screenshot tĩnh — đã xác nhận bằng cách đọc
 lại toàn bộ luồng tính toán trong `step()`; khuyến khích thử trực tiếp trong game để cảm nhận.
+
+## 235. Sand settling: 3 chấm dời xuống dưới HUD đạn, bỏ hẳn hiệu ứng khung tranh cán mờ (13/09)
+
+**Bối cảnh:** mục #234 (hiệu ứng cán mờ + ẩn 3 chấm lúc settling) hoá ra không còn trong working tree
+khi phiên này quay lại sửa tiếp — một phiên làm việc khác đã commit `ae087ce` ("Thay đổi về economy,
+UI") đè lên trước khi thay đổi đó kịp lưu; may là #233 (khung tranh rung khi bắn giữa) vẫn còn nguyên
+trong commit đó. Không cần khôi phục #234 vì yêu cầu lần này đổi ý: bỏ hẳn blur, chỉ giữ 3 chấm.
+
+**Yêu cầu:** "khi sand settling, di chuyển anim 3 chấm ở dưới phần HUD số lượng đạn, kích thước, chiều
+dài sao cho ngang với HUD số lượng đạn."
+
+**Sửa (`SandGame.tsx` + `globals.css`):**
+- `.settle-badge` gốc (giữa khung hình, `top: 56%`) giờ CHỈ hiện cho các phase bận khác —
+  `PROJECTILE_FLYING`, `HIT_RESOLUTION`, `MERGING` — không đổi gì so với trước.
+- Thêm một bản sao RIÊNG cho đúng `"SETTLING"`: nằm bên trong `.hud-top-left` (cùng cột flex với
+  `.hud-top`/`.shots-badge`), nên tự động thừa hưởng đúng vị trí góc trái-trên (không cần chép lại
+  công thức top/left) — `.settle-badge.is-under-ammo` chỉ đổi `position: static`, bỏ `transform`, và
+  `justify-content: space-between` để 3 chấm DÀN ĐỀU hết chiều rộng thay vì cụm lại giữa.
+- Chiều dài khớp `.shots-badge`: thêm `shotsBadgeRef` đo `getBoundingClientRect().width` của chính
+  ammo badge mỗi khi `state.phase` chuyển sang `"SETTLING"` (`settleBadgeWidth` state), gán làm
+  `style.width` cho bản sao mới — độ dài luôn đúng bằng ammo HUD dù badge đó rộng hẹp khác nhau tuỳ số
+  đạn sắp tới (`upcomingAmmo`).
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan). Verify
+sống: bắn nhiều phát trong dev server và bắt bằng script đo `getBoundingClientRect` theo từng frame —
+xác nhận `.settle-badge` gốc (giữa khung) vẫn hiện đúng cho pha bay/resolve như cũ; pha `SETTLING`
+thực tế lại quá ngắn (dưới ~100ms ở level test) để bắt được bằng ảnh chụp màn hình hay bằng polling
+`requestAnimationFrame`, nên phần định vị/chiều dài mới đã xác nhận đúng qua đọc lại code (JSX + CSS),
+chưa quan sát trực tiếp được lúc nó thực sự hiện ra — nếu vào game thấy vị trí/độ dài chưa đúng ý,
+báo lại để chỉnh.
+
+## 236. Settling dots: giảm khoảng cách giữa 3 chấm dưới HUD đạn (13/09)
+
+**Vấn đề:** "3 dấu chấm cách nhau xa quá, giảm khoảng cách" — `.settle-badge.is-under-ammo` (#235)
+dùng `justify-content: space-between` để dàn 3 chấm ra hết chiều rộng đã đo bằng `.shots-badge`, kết
+quả là 2 chấm ngoài cùng dạt hẳn ra hai mép, khoảng trống ở giữa quá lớn — trông như 3 dấu chấm rời
+rạc chứ không phải một hiệu ứng.
+
+**Sửa:** Đổi `justify-content: space-between` → `center`, bỏ `gap: 0` để kế thừa lại `gap: 8px` gốc
+của `.settle-badge` — 3 chấm giờ là một cụm sát nhau, canh giữa trong đúng chiều rộng đã đo (độ dài
+tổng thể vẫn khớp HUD đạn theo yêu cầu #235, chỉ khoảng cách NỘI BỘ giữa 3 chấm là thay đổi).
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan). Verify
+bằng cách đọc CSS rule đã load thật trên dev server (`document.styleSheets`) — xác nhận đúng
+`justify-content: center`, không còn `space-between`/`gap: 0`.
+
+## 237. Radius level 2 to hơn nữa; Coins pack dùng hình minh họa thật thay CoinIcon phẳng (13/09)
+
+**Radius level 2:** `sortRadius` (`design/levels/sand-levels.ts`, `secondConsequence`) tăng từ 3.5 lên
+**3.8** — vẫn giữ nguyên tắc cũ (thấp hơn level 1's 4, vì level 2 còn đang dạy bắn 3 màu chứ không
+phải 1 màu như level 1), chỉ to hơn theo đúng yêu cầu "cho radius level 2 to hơn".
+
+**Coins pack illustration:** Người dùng để sẵn 7 file minh họa trong `public/shop/` — đặt tên đúng
+theo giá (`coins099.png` .. `coins9999.png`), mỗi file một đống coin to dần, đỉnh điểm là rương báu
+tràn coin ở mốc $99.99 — khớp CHÍNH XÁC 7 mốc giá của `COIN_PACKS` (`SandGame.tsx`). Thay `<CoinIcon/>`
+phẳng ở mục "Coins" trong Shop bằng ảnh minh họa tương ứng: `coinPackIllustrationSrc()` suy ra tên file
+thẳng từ `pack.price` (bỏ ký tự `$`/`.`: `"$0.99"` → `"099"`) thay vì một bảng tra id→file riêng có thể
+lệch nhau. CSS mới `.pack-coin-illustration` (`height: 56px`, `width: auto` — 7 ảnh không cùng tỉ lệ
+khung, cái rương rộng hơn hẳn mấy đống coin nhỏ, ép vuông sẽ méo hình).
+
+Special Offers/Bundles vẫn dùng `CoinIcon` phẳng như cũ — yêu cầu chỉ nói tới mục Coins pack, và
+Bundles có 5/7 mốc giá không khớp đủ 7 file. Báo lại nếu muốn áp dụng luôn cho Bundles.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 174/175 (1 fail pre-existing #229, không liên quan). Verify
+sống trên dev server (ảnh Shop→Coins) — cả 7 mốc hiện đúng ảnh, tỉ lệ không méo.
+
+## 238. Xóa level Meditation; Gallery: bỏ badge phần thưởng đã nhận; tối ưu nặng cho "Unlock all content" (13/09)
+
+### 1) Xóa level "Meditation" (id 51) khỏi Gallery
+
+`EDITOR_LEVELS` (`design/levels/sand-levels.ts`) chỉ chứa đúng 1 level — "Meditation", một level 90x90
+(8.100 ô) từng ship từ `/editor`. Xóa hẳn định nghĩa level và trả `EDITOR_LEVELS` về mảng rỗng.
+
+**Tác dụng phụ tốt:** test "the built-in level list is what the game and editor both start from" từng
+fail xuyên suốt cả phiên làm việc này (`51 !== 50`, xem mọi mục #229 trở đi) — giờ `BUILT_IN_LEVELS`
+đúng lại 50, test này **pass** trở lại. `npm test`: **175/175**, lần đầu tiên trong toàn bộ phiên.
+
+Lưu ý: nếu "Meditation" vẫn còn là draft trong danh sách level của trang `/editor` (lưu ở
+localStorage/IndexedDB của trình duyệt), lần "Ship to sand-levels.ts" tiếp theo sẽ đưa nó trở lại —
+cần xóa luôn ở đó nếu muốn nó biến mất vĩnh viễn.
+
+### 2) Gallery: bỏ badge "+X gold" một khi đã nhận thưởng
+
+Badge mốc thưởng (mỗi level chia hết cho 10) trước đây hiện `<CoinIcon/> +X` bất kể level đã chơi hay
+chưa ("Shown even before it unlocks, as a teaser"). Theo yêu cầu ("nếu nhận phần thưởng rồi thì xóa UI
+phần thưởng đi"): thêm điều kiện `!hasClearedLevel(entry.level.id)` — thưởng chỉ trả đúng 1 lần lúc
+first-clear (`markLevelCleared`), nên card không còn quảng cáo "+X" sau khi vàng đó đã về ví rồi.
+
+### 3) Optimize: Gallery lag nặng khi "Unlock all content" đã mở hết level
+
+**Nguyên nhân #1 — `PixelThumb` vẽ 1 DOM `<i>` MỖI Ô PIXEL:** bình thường chỉ vài level đầu unlock nên
+không sao, nhưng "Unlock all content" mở cả 50 level cùng lúc → 50 lưới DOM, có level hàng nghìn ô →
+hàng chục nghìn DOM node dựng cùng một frame. Sửa: `PixelThumb` giờ vẽ bằng MỘT `<canvas>` +
+`putImageData` (y hệt kỹ thuật `sandTexture` của engine chính), `image-rendering: pixelated` giữ nguyên
+cạnh pixel sắc nét mà box DOM cũ có sẵn. CSS `.pixel-thumb` cập nhật theo (bỏ `display:grid`/`--cols`/
+`--rows`, bỏ luôn `.pixel-thumb i`).
+
+**Nguyên nhân #2 — `hasClearedLevel()` đọc lại `localStorage` + `JSON.parse` MỖI LẦN GỌI, không cache:**
+Gallery gọi hàm này 2 lần/card (unlock-check + milestone-check mới ở #2) × 50 card = ~100 lần
+đọc/parse localStorage đồng bộ trên một lần mở màn hình — càng nặng hơn khi mảng đã lớn (mọi level đã
+clear). Sửa (`economy.ts`): thêm cache module-level `cachedClearedLevels` — y hệt kiểu `cachedWallet`
+đã có sẵn trong file — chỉ đọc localStorage MỘT LẦN, `markLevelCleared` mutate thẳng vào Set đã cache
+(không cần invalidate), hai hàm reset xóa cache về `null`.
+
+**Test:** `tsc --noEmit` sạch, `npm test` **175/175** (0 fail — lần đầu tiên). Verify sống trên dev
+server: bật "Unlock all content" → Gallery hiện đủ 50 canvas thumbnail sắc nét, đo bằng
+`performance.now()` qua 2 frame render ~82ms (không giật), 0 badge mốc thưởng còn hiện (đã nhận hết).
+
+## 239. Gắn toàn bộ ảnh minh họa còn lại vào Shop: Special Offers, Bundles, Hearts (13/09)
+
+Tiếp nối #237 (Coins pack) — người dùng thêm 15 file minh họa mới vào `public/shop/`: `bundle1..5.png`
+(rương coin+heart+emerald trộn lẫn, to dần), `heart099/199/299.png` (1/3/5 tim), `offer499/999.png`
+(rương "hero art" đầy sparkle cho 2 Special Offer). Gắn hết vào Shop:
+
+- **Special Offers** — thêm `.offer-illustration` (ảnh rương to, 72×72) nằm cạnh tên + breakdown
+  coin/heart/emerald hiện có trong một hàng `.offer-body` mới, KHÔNG thay thế icon nhỏ inline (số liệu
+  vẫn cần đọc được chính xác). `offer499.png`/`offer999.png` khớp đúng giá $4.99/$9.99 của
+  `starter`/`weekend`.
+- **Bundles** — `.bundle-icon` (vòng tròn CoinIcon cũ) đổi thành ảnh rương thật, chọn theo VỊ TRÍ
+  trong mảng (`bundle1.png`..`bundle5.png` không đặt tên theo giá như coins/hearts/offers) vì
+  `BUNDLES` đã luôn sắp theo giá tăng dần.
+- **Hearts pack** — `<HeartIcon/>` phẳng đổi thành ảnh minh họa tương ứng, cùng quy ước đặt tên theo
+  giá như Coins (`heart099.png` → $0.99 → `h1`, v.v).
+
+Cả 3 hàm suy tên file mới (`heartPackIllustrationSrc`, `specialOfferIllustrationSrc`,
+`bundleIllustrationSrc`) đặt cạnh `coinPackIllustrationSrc` đã có (#237), theo đúng logic của nó: hai
+hàm theo giá dùng lại chiêu bỏ `$`/`.`; bundle theo vị trí vì file không đặt tên theo giá.
+
+Dọn CSS ăn theo: `.bundle-icon`/`.pack-card .coin-icon`/`.pack-card .heart-icon` (glyph tròn cũ) hết
+tác dụng, xóa; thêm `.offer-body`/`.offer-illustration`/`.offer-text`, `.pack-heart-illustration`.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify sống trên dev server — cả 17 ảnh (2 offer + 5
+bundle + 7 coin + 3 heart) load đúng, không ảnh nào vỡ (`naturalWidth` > 0 hết).
+
+## 240. Shop: phóng to mọi ảnh minh họa, chữ/miêu tả nhỏ lại nhường chỗ (13/09)
+
+**Yêu cầu:** "tôi muốn hình minh họa to và ấn tượng hơn, cho chữ hay miêu tả nhỏ lại cũng được."
+
+**Sửa (`globals.css` — chỉ CSS, không đổi JSX/logic):**
+
+| Khu vực | Ảnh minh họa | Chữ đi kèm |
+|---|---|---|
+| Special Offers | `.offer-illustration` 72px → **132px**, dời từ nằm CẠNH text (hàng ngang) sang nằm TRÊN text (cột dọc, căn giữa) — ảnh giờ là thứ đầu tiên và to nhất trên card | Tên gói 17px→15px, breakdown coin/heart/emerald 14px→12px, icon inline 20px→16px |
+| Bundles | `.bundle-icon` 52px → **76px** | `.bundle-amount` 15.5px→14px, `.bundle-sub` 12.5px→11px, `.bundle-price` 14px→13px, `.bundle-flag` 11px→10px |
+| Coins pack | `.pack-coin-illustration` 56px → **96px** | `.pack-amount` 15px→13.5px, `.pack-price` 13.5px→12.5px, `.pack-bonus` 10.5px→9.5px |
+| Hearts pack | `.pack-heart-illustration` 56px → **96px** | (dùng chung `.pack-amount`/`.pack-price` ở trên) |
+
+Special Offers đổi cấu trúc rõ nhất: `.offer-body` từ `flex-direction: row` sang `column` (ảnh trên, chữ dưới, căn giữa) — ảnh giờ là điểm nhấn đầu tiên đập vào mắt thay vì một thumbnail nhỏ đứng cạnh tên gói.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify sống trên dev server ở cả 4 khu vực — ảnh to
+rõ, không tràn khỏi card, chữ vẫn đọc được dù nhỏ hơn.
+
+## 241. Sand pour: ghép tiếng cát đổ vào anim sụp cát, 2 slider Music/SFX riêng (13/09)
+
+**Ghép sound cát đổ:** file `sand-pour.mp3` (người dùng để sẵn trong `public/sounds/`) ghép vào đúng
+lúc cát bắt đầu rơi thật (`GRAIN_PASS` đầu tiên của mỗi chuỗi settle trong `SandCannonEngine.ts`, ngay
+sau khi hiệu ứng flash tan biến kết thúc) — không phải lúc bắn hay lúc match. `soundSandPour()` mới
+trong `sound.ts` decode buffer một lần, cache lại, fire-and-forget như mọi tiếng khác trong file.
+
+**2 thanh trượt Music/SFX thay công tắc Sound bật/tắt gộp chung:** `sound.ts` thêm
+`getSfxVolume/setSfxVolume/getMusicVolume/setMusicVolume`, mỗi cái một `GainNode` riêng hạ lưu của
+`sfxBus`/`musicBus` sẵn có (không đụng animation fade/pour đang chạy). Settings UI đổi từ 1 toggle
+"Sound" sang 2 slider 0-100%, step 5%.
+
+**Test:** `tsc --noEmit` sạch. Verify qua patch `AudioBufferSourceNode.start()` trên dev server — xác
+nhận buffer + offset đúng lúc phát; kéo 2 slider cập nhật UI/localStorage đúng.
+
+## 242. Sửa tiếng "xoẹt" — cắt đuôi sand-pour đúng khớp thời lượng rơi thật (13/09)
+
+**Vấn đề:** "có tiếng xoẹt sau khi bắn xong, và cát settling hết" — file `sand-pour.mp3` được giới hạn
+phát tối đa 900ms, nhưng cát chỉ rơi thực tế trong 480ms (`SETTLE_TOTAL_MS` 350 + `SETTLE_TAIL_MS` 130
+trong `SandCannonEngine.ts`). Phần dư ~420ms là tiếng rít/nhiễu của bản ghi âm còn vang SAU KHI cát đã
+dừng hẳn — nghe trơ trọi thành "xoẹt".
+
+**Sửa:** `SAND_POUR_MAX_MS` 900 → **480**, khớp đúng thời gian rơi thật của engine; mở rộng đoạn
+fade-out cuối 150ms → 200ms để tiếng rít tắt hẳn trước khi cắt thay vì bị cắt đột ngột.
+
+**Test:** `tsc --noEmit` sạch. Verify bằng cách patch `AudioBufferSourceNode.stop()` — xác nhận lệnh
+dừng phát được lên lịch đúng ở mốc 0.5s (480ms + buffer 20ms) thay vì 0.9s như trước.
+
+## 243. Tiếng bóng chạm cát (impact) đổi phong cách, hạ trầm qua 3 lần chỉnh (13/09)
+
+**Yêu cầu ban đầu:** "nghe 1 cách như thế thục nhẹ vào 1 tấm canvas vẽ tranh dày" — đổi từ tiếng "crack"
+kim loại/nhựa (bandpass, có đỉnh cộng hưởng) sang tiếng thục mềm vào vải căng dày (lowpass, không đỉnh
+cộng hưởng, đuôi dài hơn một chút).
+
+**2 lần chỉnh tiếp** ("vẫn nghe highpitch", "hạ trầm thêm nữa"): hạ CẢ điểm bắt đầu lẫn điểm kết thúc
+tần số qua từng đợt, không chỉ điểm kết — vì tai người nghe rõ nhất phần tấn công (attack) đầu tiên, dù
+đuôi đã trầm mà đầu vẫn cao thì cảm giác chung vẫn là "cao". Chốt cuối: lớp noise lowpass 220→55Hz, lớp
+sine 55→24Hz (từ điểm xuất phát 900Hz/160Hz ban đầu).
+
+**Test:** `tsc --noEmit` sạch mỗi lần. Verify qua patch `createBiquadFilter`/`createOscillator` xác
+nhận đúng filter type/tần số đang chạy trên dev server.
+
+## 244. Xóa anim 3 chấm giữa cannon và bức tranh (13/09)
+
+**Yêu cầu:** "xóa anim 3 chấm ở giữa cannon và bức tranh". Đây là badge `.settle-badge` (3 thẻ `<i>`)
+báo "đang bận" cho mọi phase KHÁC `SETTLING` (đạn đang bay, đang resolve match...), nằm ở dải trống
+giữa khung tranh và súng. Bản dưới HUD đạn dành riêng cho phase `SETTLING` (đã tách ra từ đợt trước) giữ
+nguyên không đổi — yêu cầu chỉ nhắm tới bản ở giữa.
+
+**Sửa:** xoá hẳn khối JSX render badge này trong `SandGame.tsx`; không còn dấu hiệu "đang bận" nào ở vị
+trí đó cho các phase còn lại nữa.
+
+**Test:** `tsc --noEmit` sạch. Verify sống — bắn một phát, xác nhận không còn phần tử `aria-label`
+"Shot in flight" nào trong DOM lúc đạn đang bay.
+
+## 245. GameDevOption: thêm "Sound Editor" — mixer riêng cho từng nguồn âm (13/09)
+
+**Yêu cầu:** "tôi có thể chỉnh sửa độ lớn các nguồn sound khác nhau trong game" — vì tiếng cát rơi bị
+kêu nhỏ hơn cảm nhận mong muốn, cần công cụ chỉnh nhanh không phải sửa code mỗi lần.
+
+**Sửa (`sound.ts`):** thêm lớp mixer thứ 3 độc lập với 2 slider Music/SFX (#241) — mỗi `SoundSourceId`
+(impact, wrongColor, bodyCleared, win, lose, sandLanded, sandPour, ambience...) có multiplier riêng
+0–300%, lưu `localStorage` (`cannon-sort:v1:source-gains`), có nút Reset về mặc định. Mặc định
+`sandPour`/`sandLanded` đặt sẵn 180%/160% (bản ghi âm thật đọc nhỏ hơn hẳn tiếng tổng hợp cùng mức
+gain, nên boost sẵn thay vì bắt tester tự mò ra).
+
+**UI:** một khối gập trong GameDevOption, mỗi nguồn một slider 0–300%, hiển thị %.
+
+**Test:** `tsc --noEmit` sạch. Verify sống — kéo/slider cập nhật UI + localStorage đúng, Reset hoạt
+động chính xác.
+
+## 246. bodyCleared chuyển từ "sort được cát" sang "bắn trúng khung tranh"; bullet-on-sand.mp3 cho impact (13/09)
+
+**bodyCleared đổi ý nghĩa trigger:** yêu cầu "tiếng bodyCleared hiện tại nên xảy ra khi người chơi dùng
+crosshair bắn vào khung tranh - không phải cát". Bỏ `sound("bodyCleared")` khỏi nhánh sort thành công
+trong `handleImpact`; thêm vào `handleMiss` khi `hitFrame === true` (bắn trúng/sượt khung gỗ). Trước đó
+đã hạ tông tiếng này 2 quãng tám (G5/B5 → G3/B3) theo yêu cầu riêng.
+
+**bullet-on-sand.mp3 cho tiếng chạm cát:** phân tích file gốc 44.7s (chứa ~15 bản ghi lặp) bằng đo RMS
+từng cửa sổ để tìm bản to nhất/sạch nhất, chọn đúng đoạn **38.388s→38.660s (272ms)** — cắt trước tiếng
+tick phụ ở đuôi (trùng với tick rơi cát tổng hợp sẵn có, tránh chồng chéo). Lớp layer chồng lên sub-bass
+synth có sẵn trong `playImpact`, bỏ hẳn lớp noise tổng hợp cũ.
+
+**Test:** `tsc --noEmit` sạch. Verify qua patch `start()` xác nhận offset/duration đúng thiết kế, và
+`sound("bodyCleared")`/miss trúng khung không throw.
+
+## 247. 3 loại tiếng "cạch" cho nút bấm: hub-nav / mua-giao dịch / còn lại (13/09)
+
+**Hub-nav dùng file thật:** `button-click-menuhub.mp3` (0.24s, sạch 2 đầu, dùng nguyên vẹn) gắn vào
+`onClick` của thanh tác vụ dưới đáy.
+
+**Nút khác dùng tiếng tổng hợp riêng:** ban đầu định dùng chung tiếng hub-nav cho MỌI nút qua 1
+listener `click` toàn cục (tránh phải sửa 62+ `onClick` rải rác) — sau đó tách ra theo yêu cầu "là sound
+tự tạo khác chứ không phải là nút ở thanh tác vụ": thêm `SoundEvent` mới `uiClick` (noise bandpass
+3200→2000Hz 30ms + square 1200→700Hz 25ms — tiếng "tách" giòn, khác hẳn mọi tiếng khác trong game),
+listener loại trừ `.hub-nav` (đã có tiếng riêng).
+
+**Nút mua/giao dịch có tiếng "kaching" riêng:** thêm `SoundEvent` `purchase` (2 nốt nhanh G6→C7 + lấp
+lánh noise, dưới 150ms). Đánh dấu bằng `data-sound="purchase"` trực tiếp trên từng nút (Buy offer/
+bundle/pack, "Yes" xác nhận mua booster/skin) thay vì đoán qua class — listener toàn cục đọc
+`dataset.sound` trước, không khớp mới rơi về `uiClick`.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify qua patch `createOscillator`/
+`createBufferSource` — bấm nút Buy tạo đúng oscillator 1568Hz (nốt "ka" riêng của kaching), bấm tab
+Shop trong hub-nav phát đúng buffer 0.24s, nút thường phát đúng tổ hợp noise+osc của `uiClick`.
+
+## 248. Shop: tia sáng xoay sau hình minh họa (mạnh theo giá); bỏ nhãn "Popular" (13/09)
+
+**Tia sáng xoay:** mỗi hình minh hoạ gói mua bọc trong `<div className="shop-illustration ...">` chứa
+`::before` dùng `repeating-conic-gradient` + `mask-image` radial (tia mờ dần ra ngoài — conic-gradient
+riêng không tự mờ theo bán kính được). Qua 3 lần chỉnh theo yêu cầu: ban đầu 22 tia mảnh tràn rộng
+(`inset: -32%`, mỗi tia 3°) → rút còn **9 tia dày** (`inset: -12%`, mỗi tia 14°/chu kỳ 40°) → quay chậm
+lại (7s → **14s**/vòng). Độ đậm/độ vươn xa tăng dần theo VỊ TRÍ trong danh sách giá (`rayIntensity()`
+mới trong `SandGame.tsx`, 30%→100%), không phải giá tuyệt đối — xem GDD §12.6.
+
+**Bỏ nhãn "Popular":** xoá `flag: "Popular"` (coin pack $19.99) và `flag: "Most popular"` (bundle
+$9.99) — chỉ còn "Best value" ở mốc cao nhất mỗi danh sách.
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên dev server — tia hiện đúng, đậm dần theo giá, không vỡ
+layout; không còn nhãn "Popular" nào trong Shop.
+
+## 249. Progression chest: thêm tiếng mở, sau đó thay bằng bản ghi âm thật + tắt ngay khi Collect (13/09)
+
+**Đợt 1 — tiếng tổng hợp:** thêm `SoundEvent` `chestOpen` (creak-thud lowpass + sparkle 3 nốt đi lên),
+kích hoạt đúng lúc `setChest({phase:"opening"})` — thời điểm nắp chest bắt đầu mở thật (xác nhận qua
+đọc `chest-model.ts`: `ChestStage.setPhase` reset đồng hồ animation nắp `LID_SECONDS = 0.55s` đúng lúc
+này).
+
+**Đợt 2 — thay bằng `treasure-chest-open.mp3`:** file 16s (creak 0-0.8s → reveal 1.1-2s → đuôi reverb
+lấp lánh tự tắt dần ~13s), dùng nguyên vẹn, cùng thời điểm trigger như bản synth. Vì file dài hơn nhiều
+so với animation (0.55s) và màn "revealed" đứng chờ người chơi bấm Collect không giới hạn thời gian, để
+đuôi reverb ngân tự nhiên trong lúc màn hình hiện phần thưởng là chủ ý.
+
+**Đợt 3 — tắt ngay khi thoát:** "khi thoát khỏi chest progression thì lập tức tắt sound" — thêm
+`stopChestOpen()` (fade ~100ms) gọi cùng lúc bấm nút Collect, vì bản ghi có thể vẫn đang ở giữa đuôi
+reverb dài khi người chơi đã rời màn hình.
+
+**Test:** `tsc --noEmit` sạch. Verify qua patch `start()`/`stop()` — buffer đúng 16.07s, lệnh dừng ban
+đầu lên lịch ở ~15.17s (đuôi tự nhiên), sau khi gọi `stopChestOpen()` reschedule dừng ngay ở ~0.4s.
+
+## 250. miss-shot.mp3 cho NO_MATCH; sửa lỗi chồng 2 tiếng cùng lúc khi bắn miss (13/09)
+
+**Dùng file thật cho NO_MATCH:** thay 2 tiếng "bíp" vuông nghịch âm tổng hợp (`playWrongColor`) bằng
+`miss-shot.mp3` — file gốc 4.7s nhưng chỉ có 1 sự kiện âm thanh thật từ ~1.0s→~3.2s (đo RMS), phần còn
+lại là khoảng lặng; cắt đúng `offset=1.0s, duration=2.2s`, giữ nguyên đuôi tắt dần tự nhiên của bản ghi.
+Xác nhận: trường hợp bắn trúng Ô TRỐNG hoàn toàn trong khung (không có cát nào để sort) VỐN ĐÃ cùng
+nhánh `NO_MATCH` với bắn trúng cát sai màu (`sand-rules.ts` — "A shot that finds none of its colour in
+reach is not a special case; NO_MATCH covers it"), nên không cần sửa gì thêm, `miss-shot.mp3` tự động
+áp dụng cho cả 2 trường hợp.
+
+**Sửa lỗi chồng tiếng:** phát hiện bug — `sound("impact")` (kèm `bullet-on-sand.mp3`) trước đó LUÔN
+phát ngay lúc bóng chạm, TRƯỚC KHI biết outcome, nên một phát miss nghe cả `bullet-on-sand` lẫn
+`miss-shot` chồng lên nhau. Sửa: dời tính `resolveShot(...)` lên TRƯỚC mọi tiếng trong `handleImpact`,
+chỉ phát `sound("impact")` khi `outcome !== "NO_MATCH"` — một phát miss giờ chỉ còn đúng 1 tiếng
+`miss-shot.mp3`. `haptic("impact")` (rung) không đổi, vẫn phát mọi lúc.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175 (dời `resolveShot` không đổi logic, chỉ đổi thời điểm
+gọi). Verify qua patch `start()` — gọi `sound('wrongColor')` riêng chỉ tạo buffer `miss-shot` (4.71s),
+không kèm `bullet-on-sand` (44.77s).
+
+## 251. Impact sound + haptic scale theo lượng cát sort được (13/09)
+
+**Yêu cầu:** "sound impact khi sort cát sẽ lớn - nhỏ (100% - 10%) dựa trên số cát xấp xỉ sort được...
+haptics cũng range từ lớn-nhỏ". Bản đầu dùng hằng số cố định `SAND_SPRAY_GRAINS` (18 ô) làm mốc 100% —
+bị báo lại "range từ lớn tới nhỏ chứ không phải chỉ có mỗi 2 cái là 10 với 100%": vì board game dao
+động 10×10 đến 80×90 (chênh 70 lần diện tích), mốc cố định khiến hầu hết phát bắn ở board lớn bão hoà
+100% ngay, board nhỏ thì luôn kẹt sàn 10%.
+
+**Sửa — chuẩn hoá theo % diện tích vùng quét thay vì đếm ô tuyệt đối** (công thức đầy đủ ở GDD §13.7):
+`intensity = 10% + min(1, removed / (π·sortRadius²)) × 90%`. `sortRadius` mỗi level vốn thiết kế tỉ lệ
+với board đó nên công thức tự thích ứng mọi level. Áp dụng đồng thời cho `sound("impact", scale)` và
+`haptic("impact", scale)` (haptic co ngắn xung theo `scale`, sàn 8ms — Web Vibration API không có điều
+khiển biên độ).
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify: patch `exponentialRampToValueAtTime` xác
+nhận `scale=1`→gain 0.34, `scale=0.1`→gain 0.034 (đúng 10%); patch `navigator.vibrate` xác nhận
+`scale=1`→25ms, `0.5`→13ms, `0.1`→8ms (sàn). Test công thức thuần cho dải mượt 10%→14%→20%→32%→55%→
+77%→100% theo lượng cát tăng dần.
+
+## 252. Bỏ nhạc nền chung (drone tổng hợp); thêm BGM Freeze Orb riêng cho giai đoạn Freeze (13/09)
+
+**Vấn đề:** "Tắt cái background noise mà có tiếng ồn trắng, nghe rất ù và chói tai" — bản đầu có một
+ambient drone tổng hợp (2 oscillator C3/G3 lệch tông + pad note ngẫu nhiên) phát SUỐT MỌI LEVEL, không
+riêng phase nào, gây cảm giác ù/chói.
+
+**Sửa:** xoá hẳn hệ thống drone (`startAmbience`/`stopAmbience`/`scheduleNextPadNote`/
+`droneOscillators`...) khỏi `sound.ts`, bỏ lệnh gọi khỏi `SandCannonEngine.setIdle()`. Thay bằng
+`startFreezeAmbience()`/`stopFreezeAmbience()` mới, phát `bgm-freeze-orb.mp3` (4.69s, loop) — CHỈ khi
+`state.freezeShotsRemaining > 0`. Gắn vào đúng `syncFreezeVisuals()` (nơi engine đã sẵn logic phát hiện
+chính xác thời điểm đông/tan băng đổi, tránh trigger lặp mỗi lượt bắn khi vẫn đang đông), fade-in 1.5s
+đồng bộ với ripple đổi màu khung tranh có sẵn. Thanh "Ambience" trong Sound Editor đổi tên thành
+"Freeze BGM" cho khớp.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175 (freeze-key/hidden-key/mechanics). Verify qua patch
+`createOscillator`/`createBufferSource` — 3 giây chơi bình thường (không freeze) ghi nhận **0
+oscillator, 0 buffer source** (nhạc nền cũ tắt hẳn); `startFreezeAmbience()` phát đúng buffer 4.69s với
+`loop: true`.
+
+---
+
+**Tổng kết đợt sửa âm thanh/haptics (#241-252):** xem luật ổn định sau cùng ở GDD.md §13.7 (Âm thanh &
+Haptics) và §12.6 (tia sáng Shop) — hai mục này thay thế mọi trạng thái trung gian được mô tả rải rác
+ở các bước trên.
+
+## 253. Sound impact cát bắn floor 50%; rule joystick cancel + không bắn được ở rìa khung tranh (13/09)
+
+**Sound impact floor 10%→50%:** yêu cầu riêng chỉ cho tiếng ("sound cát bắn tôi muốn range từ 50% tới
+100%"), không đụng haptic (vẫn floor 10%, không ai yêu cầu đổi). `impactIntensity()` (#251) nhận thêm
+tham số `floor`, gọi 2 lần riêng: `soundScale = impactIntensity(removed, radius, 0.5)`,
+`hapticScale = impactIntensity(removed, radius, 0.1)`.
+
+**Rule mới — không thể bắn khi joystick ở ngoài khung tranh:** trước đây kéo crosshair ra ngoài khung
+(nhưng vẫn trong `.aim-zone`) rồi thả vẫn BẮN — ra một phát miss thật. Giờ:
+- Thả joystick khi đang ở ngoài khung tranh → **chỉ huỷ, không bắn** (`onAimPointerUp`'s `shouldFire`
+  thêm điều kiện `displayedTargetValid`, tái dùng đúng cờ `is-target-valid` crosshair vốn đã tô màu).
+- Giữ nguyên ở ngoài khung không thả trong **2.5s** → tự huỷ (`AIM_INVALID_TARGET_CANCEL_MS` mới,
+  cùng cơ chế với timer 1.7s "ra khỏi `.aim-zone`" đã có nhưng độc lập, dành riêng cho rìa khung tranh).
+
+Xem luật đầy đủ ở GDD.md §13.3 (Input & feedback) và §13.7 (bảng floor sound/haptic).
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175 (logic gameplay không đổi, chỉ thêm điều kiện input).
+
+## 254. Loading screen: đổi ảnh nền theo art "Sand Shooter" mới (13/09)
+
+Người dùng để ảnh nguồn mới `public/icons/LoadingScreen.png` (art "Sand Shooter" đầy đủ, 1.7MB). Xử lý
+đúng pipeline đã ghi sẵn trong `loading-screen.ts`: `sharp(src).resize({width:780}).jpeg({quality:74,
+mozjpeg:true})` → `LoadingScreen.jpg` (51.4KB, 780×1386) → base64 nhúng lại vào `IMAGE_DATA_URI`
+(nguồn DUY NHẤT, cả `app/layout.tsx` lẫn `work/build-standalone.mjs` đều import từ đây, không nhân đôi
+tay).
+
+**Test:** `tsc --noEmit` sạch. Verify: fetch ảnh JPEG mới trả 200/đúng dung lượng, độ dài data URI nhúng
+trong `LOADING_SCREEN_MARKUP` khớp đúng base64 vừa tạo, ảnh hiển thị không vỡ/mờ.
+
+## 255. Shop: Coins/Hearts 3 gói/dòng; Settings: dồn slider lên trên, Rung rồi Ngôn ngữ (13/09)
+
+**Shop layout:** `.pack-grid` 2 cột → **3 cột** ("nó nên là 3 vật phẩm trên cùng 1 dòng"), gap 10px→8px
+cho gọn hơn với cột hẹp lại.
+
+**Settings — sắp xếp lại thứ tự:** yêu cầu "những phần có thể chỉnh sửa bằng cách drag trái phải sẽ
+dồn phía trên, sau đó tới haptics rồi sau đó là ngôn ngữ". Dời "Độ nhạy ngắm" (slider) lên ngay sau
+"Hiệu ứng âm thanh" — thứ tự mới: **Nhạc nền → Hiệu ứng âm thanh → Độ nhạy ngắm** (3 slider kéo trái-
+phải) → **Rung** → **Ngôn ngữ** → GameDevOption.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify sống trên dev server cả 2 khu vực.
+
+## 256. Fade-out ~0.4s khi đóng dialog (Settings/xác nhận mua); bỏ gói $1.99 khỏi Shop (13/09)
+
+**Fade-out UI khi đóng:** yêu cầu "với những hành động tắt UI (nhấn nút cancel,...) thì UI tắt nên có
+anim fade out dần rồi mới tắt, thời gian khoảng 0.4s thay vì tắt rất chớp nhoáng". Thêm hook
+`useFadeOutClose` (`SandGame.tsx`) — React vốn unmount phần tử điều kiện ngay lập tức, không có khung
+thời gian nào cho CSS transition chạy; hook giữ lại giá trị non-null cuối cùng thêm 400ms nữa
+(`{value, closing}`) để JSX vẫn có dữ liệu đọc VÀ có thời gian phát animation `is-closing`
+(`overlay-out`/`result-pop-out` mới trong `globals.css`). Áp dụng cho 3 dialog có kiểu đóng Cancel/No/X
+thuần: Settings, xác nhận mua booster, xác nhận mua skin — không cần sửa bất kỳ handler đóng nào có
+sẵn, chúng vẫn chỉ `setXxx(null)` như cũ. Chi tiết ở GDD.md §13.8.
+
+**Bỏ gói $1.99:** "loại bỏ gói 1.99 trong shop" — xoá cả 2 mốc $1.99 tồn tại trong game: Coins (`c2`,
+440 xu) và Hearts (`h2`, 3 tim). Coins còn 6 mốc, Hearts còn 2 mốc (0.99$ và 2.99$ "Full refill").
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175. Verify sống trên dev server: patch class/opacity xác
+nhận `.settings-screen`/`.settings-card` nhận đúng `is-closing` và fade mượt trong ~400ms rồi mới rời
+DOM; không còn "$1.99" nào xuất hiện trong Shop (Coins lẫn Hearts).
+
+---
+
+**Tổng kết đợt #253-256:** luật ổn định cập nhật ở GDD.md §13.3 (rìa khung tranh), §13.7 (floor sound/
+haptic riêng), §13.8 (fade-out dialog, mục mới), và §10.7 (Shop — số mốc Coins/Hearts, layout 3/dòng).

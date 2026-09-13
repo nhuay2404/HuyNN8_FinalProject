@@ -93,8 +93,30 @@ function fire(pattern: number | number[]) {
   }
 }
 
-export function haptic(event: HapticEvent) {
-  fire(HAPTIC_PATTERNS[event]);
+/**
+ * `scale` (default 1 — every existing call site keeps its authored pattern
+ * exactly) shortens every pulse in the pattern by that fraction, floored at
+ * `HAPTIC_MIN_PULSE_MS` so a heavily-scaled-down pulse never drops below
+ * what Android reliably renders at all (2026-09y ask: "haptics cũng range
+ * từ lớn-nhỏ dựa trên số cát xấp xỉ sort được" — the web Vibration API has
+ * no amplitude control at all, per this file's own header comment, so
+ * duration is the only knob "how strong" can turn). A gap between pulses is
+ * left at its authored length — scaling those too would just squeeze the
+ * whole pattern into less real time rather than making it feel weaker.
+ */
+const HAPTIC_MIN_PULSE_MS = 8;
+
+function scalePattern(pattern: number | number[], scale: number): number | number[] {
+  if (scale >= 1) return pattern;
+  const shrink = (ms: number, isGap: boolean) => (isGap ? ms : Math.max(HAPTIC_MIN_PULSE_MS, Math.round(ms * scale)));
+  if (typeof pattern === "number") return shrink(pattern, false);
+  // Vibration patterns alternate pulse, gap, pulse, gap, ... starting with a
+  // pulse at index 0 — even indices are pulses, odd ones are gaps.
+  return pattern.map((ms, index) => shrink(ms, index % 2 === 1));
+}
+
+export function haptic(event: HapticEvent, scale = 1) {
+  fire(scalePattern(HAPTIC_PATTERNS[event], scale));
 }
 
 export function hapticSandLanded(order: number) {

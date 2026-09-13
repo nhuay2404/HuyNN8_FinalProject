@@ -13,7 +13,7 @@ import {
 } from "./costumes";
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
-import { sound, soundSandLanded, startAmbience, stopAmbience } from "./sound";
+import { sound, soundSandLanded, soundSandPour, startFreezeAmbience, stopFreezeAmbience } from "./sound";
 import {
   SAND_LIGHTNESS_JITTER,
   SAND_SATURATION_JITTER,
@@ -194,6 +194,16 @@ const JOYSTICK_ARM_RADIUS = 18;
  * nothing.
  */
 const AIM_OUTSIDE_ZONE_CANCEL_MS = 1700;
+/**
+ * Grace period for a drag aimed OUTSIDE the picture frame itself — past its
+ * edge, but still inside `host` (`AIM_OUTSIDE_ZONE_CANCEL_MS` above is for
+ * leaving `host` entirely). 2026-09ac ask: "khi người chơi drag đến rìa bức
+ * tranh và để yên trong 2,5s thì joystick sẽ bị cancel". Same "a brief
+ * overshoot costs nothing, only staying reads as letting go" shape as that
+ * other grace period — re-entering the frame before this fires cancels the
+ * timer outright, not just resets it.
+ */
+const AIM_INVALID_TARGET_CANCEL_MS = 2500;
 // Exported so the Settings HUD's own sensitivity slider clamps and scales
 // against exactly the same range `setControlSensitivity` enforces, rather
 // than a second copy of these numbers drifting out of sync with it.
@@ -1233,6 +1243,11 @@ export class SandCannonEngine {
   private aimArmed = false;
   private displayedAimArmed = false;
   private displayedLaunch: BallisticSolution | null = null;
+  /** Mirrors `.aim-crosshair`'s own `is-target-valid` class — set once per
+   * `updateAimPreview` call, the same place that class is toggled, and read
+   * by `onAimPointerUp` to decide `shouldFire` (2026-09ac: "Khi drag vào rìa
+   * khung tranh thì không thể shot được" — see that handler's own comment). */
+  private displayedTargetValid = false;
   private aimPreviewDirty = false;
   /** Centre/radius/colour-rule of the shot the crosshair currently reaches,
    * or null whenever the player is not actively aiming at a valid target —
@@ -1250,6 +1265,12 @@ export class SandCannonEngine {
    * `AIM_OUTSIDE_ZONE_CANCEL_MS`. Cleared the instant the pointer comes back
    * inside, or the gesture ends any other way. */
   private aimOutsideTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Non-null while the crosshair is currently aimed outside the picture
+   * frame mid-drag (but still inside `.aim-zone` — `aimOutsideTimer` above
+   * is the "left the zone entirely" case). See `AIM_INVALID_TARGET_CANCEL_MS`.
+   * Cleared the instant the aim point comes back inside the frame, or the
+   * gesture ends any other way. */
+  private aimInvalidTargetTimer: ReturnType<typeof setTimeout> | null = null;
 
   private frameId = 0;
   private accumulator = 0;
@@ -1640,12 +1661,19 @@ export class SandCannonEngine {
    * `beginFreezeVisualsTransition`) exactly when frozen-vs-not actually
    * flips, and does nothing the other `freezeShotsRemaining - 1`-per-shot
    * ticks while already frozen (there is nothing to re-animate: the frame is
-   * already fully in its frozen colours).
+   * already fully in its frozen colours). Same flip is also exactly when the
+   * Freeze BGM should start/stop (2026-09aa ask: "Thêm BGM freeze orb vào,
+   * sound này sẽ được mở khi người chơi trong giai đoạn freeze") — this is
+   * the one place that already isolates that edge from the "still frozen,
+   * one more shot ticked the count down" case, so it is reused rather than
+   * duplicating the same `frozen === this.freezeVisualsIsFrozen` check.
    */
   private syncFreezeVisuals() {
     const frozen = this.state.freezeShotsRemaining > 0;
     if (frozen === this.freezeVisualsIsFrozen) return;
     this.beginFreezeVisualsTransition(frozen);
+    if (frozen) startFreezeAmbience();
+    else stopFreezeAmbience();
   }
 
   /**
@@ -3305,6 +3333,7 @@ export class SandCannonEngine {
     this.aimArmed = false;
     this.aimStick.set(0, 0);
     this.clearAimOutsideTimer();
+    this.clearAimInvalidTargetTimer();
     const bounds = this.aimZone.getBoundingClientRect();
     this.aimZone.style.setProperty("--joystick-x", `${event.clientX - bounds.left}px`);
     this.aimZone.style.setProperty("--joystick-y", `${event.clientY - bounds.top}px`);
@@ -3419,6 +3448,34 @@ export class SandCannonEngine {
     this.aimZone.classList.remove("is-out-of-bounds");
   }
 
+  /**
+   * Arms or disarms `AIM_INVALID_TARGET_CANCEL_MS`'s own grace timer, from
+   * whether the aim point resolved inside the picture frame this pass —
+   * called from `updateAimPreview`, the one place that already computes
+   * that (`solved?.grid`). Same shape as `updateAimOutsideZone` just above,
+   * for the frame's own edge instead of `host`'s.
+   */
+  private updateAimInvalidTargetTimer(insideFrame: boolean) {
+    if (insideFrame) {
+      this.clearAimInvalidTargetTimer();
+      return;
+    }
+    if (this.aimInvalidTargetTimer !== null) return;
+    this.aimInvalidTargetTimer = setTimeout(() => {
+      this.aimInvalidTargetTimer = null;
+      if (this.aimPointer === null) return;
+      this.clearAimGesture();
+      this.updateAimPreview();
+    }, AIM_INVALID_TARGET_CANCEL_MS);
+  }
+
+  private clearAimInvalidTargetTimer() {
+    if (this.aimInvalidTargetTimer !== null) {
+      clearTimeout(this.aimInvalidTargetTimer);
+      this.aimInvalidTargetTimer = null;
+    }
+  }
+
   private onAimPointerMove = (event: PointerEvent) => {
     if (event.pointerId !== this.aimPointer) return;
     this.updateAimGesture(event.clientX, event.clientY);
@@ -3428,10 +3485,18 @@ export class SandCannonEngine {
     if (event.pointerId !== this.aimPointer) return;
     // Letting go near the centre no longer cancels by itself — `aimArmed` is
     // sticky (see `updateAimGesture`), so once the drag has crossed the arm
-    // radius at any point, releasing anywhere still fires.
+    // radius at any point, releasing anywhere still fires — anywhere INSIDE
+    // the picture frame, that is: `displayedTargetValid` (2026-09ac ask:
+    // "Khi drag vào rìa khung tranh thì không thể shot được, nếu nhả
+    // joystick ra thì sẽ cancel joystick") now also has to hold. Letting go
+    // past the frame's own edge used to still fire — a real shot that would
+    // go on to resolve as a miss — and now just cancels instead, the same
+    // "no shot, cannon resets" outcome `AIM_INVALID_TARGET_CANCEL_MS`'s own
+    // timeout already gives a drag that stays out there without releasing.
     const shouldFire = this.canInteract()
       && this.aimArmed
       && this.displayedAimArmed
+      && this.displayedTargetValid
       && this.displayedLaunch !== null
       && this.projectile === null
       && performance.now() >= this.nextShotAt;
@@ -3459,9 +3524,11 @@ export class SandCannonEngine {
       // Already released with the pointer itself.
     }
     this.clearAimOutsideTimer();
+    this.clearAimInvalidTargetTimer();
     this.aimZone.classList.remove("is-aiming", "is-cancelled");
     this.aimArmed = false;
     this.displayedAimArmed = false;
+    this.displayedTargetValid = false;
     this.aimStick.set(0, 0);
     this.displayedLaunch = null;
     this.aimPreviewDirty = false;
@@ -3846,12 +3913,23 @@ export class SandCannonEngine {
         : null;
     this.displayedLaunch = solved?.solution ?? null;
     this.displayedAimArmed = this.aimArmed;
+    // 2026-09ac: the frame's own edge gets the same "stays outside long
+    // enough, cancel" grace period `updateAimOutsideZone` already gives
+    // `host`'s edge — armed regardless of `aimArmed` (dragging straight for
+    // the edge without ever crossing the arm radius first should not dodge
+    // it). `displayedTargetValid` below (which DOES factor `aimArmed` in,
+    // matching `is-target-valid`) is the separate gate `onAimPointerUp`
+    // reads to decide whether releasing here can fire at all.
+    this.updateAimInvalidTargetTimer(Boolean(solved?.grid));
+    this.displayedTargetValid = Boolean(solved?.grid) && this.aimArmed;
     this.crosshair.style.left = `${THREE.MathUtils.clamp(cursor.x, AIM_CURSOR_EDGE_MARGIN, Math.max(AIM_CURSOR_EDGE_MARGIN, this.host.clientWidth - AIM_CURSOR_EDGE_MARGIN))}px`;
     this.crosshair.style.top = `${THREE.MathUtils.clamp(cursor.y, AIM_CURSOR_EDGE_MARGIN, Math.max(AIM_CURSOR_EDGE_MARGIN, this.host.clientHeight - AIM_CURSOR_EDGE_MARGIN))}px`;
     this.crosshair.classList.add("is-visible", "is-engaged", "is-aiming");
     // Valid means "inside the frame", not "on sand": aiming at the gap above
     // the pile is a shot the player is allowed to take and one that resolves.
-    this.crosshair.classList.toggle("is-target-valid", Boolean(solved?.grid) && this.aimArmed);
+    // Outside the frame is now also where `onAimPointerUp` refuses to fire —
+    // see `displayedTargetValid`'s own comment above.
+    this.crosshair.classList.toggle("is-target-valid", this.displayedTargetValid);
     // Tints the sight with whatever sand it is over. It reports what is under
     // the crosshair, never whether that is the right answer — the player still
     // has to read the ammo colour against it.
@@ -4115,6 +4193,12 @@ export class SandCannonEngine {
     const booster = this.projectile?.booster ?? null;
     this.clearProjectile();
     if (booster) this.refundBoosterCharge(booster);
+    // The beep that used to play on every SAND_SORTED clear moved here
+    // instead (2026-09l ask — see the comment where it used to fire, above
+    // in `handleImpact`): the frame actually getting hit (or grazed — see
+    // `hitFrameStructure`'s own comment) is what it announces now, a shot
+    // that missed the sand entirely rather than one that sorted it.
+    if (hitFrame) sound("bodyCleared");
     this.callbacks.onEvent?.({ type: "MISS", hitFrame });
     this.setPhase("READY");
     this.callbacks.onState(this.cloneState());
@@ -4123,6 +4207,35 @@ export class SandCannonEngine {
   private clearProjectile() {
     if (this.projectile) this.projectile.mesh.visible = false;
     this.projectile = null;
+  }
+
+  /**
+   * How loud/strong the impact sound and haptic should read for a shot that
+   * cleared `removed` cells out of `radius`'s own reach (2026-09y ask:
+   * "sound impact khi sort cát sẽ lớn - nhỏ (100% - 10%) dựa trên số cát
+   * xấp xỉ sort được... haptics cũng range từ lớn-nhỏ"; follow-up, 2026-09z:
+   * "range từ lớn tới nhỏ chứ không phải chỉ có mỗi 2 cái là 10 với 100%" —
+   * a fixed cell-count reference (the first pass used `SAND_SPRAY_GRAINS`,
+   * 18) saturates to 100% almost immediately on the game's bigger boards
+   * and never leaves the floor on its smallest ones, since
+   * `design/levels/sand-levels.ts` frames run from 10x10 up to 80x90 — a
+   * 70x spread no single absolute number sits well across. Normalising by
+   * the disc's own area instead (`removed / (π·radius²)`, "what fraction of
+   * what this shot could reach did it actually clear") scales itself with
+   * whatever `sortRadius` that level was authored with, since a level's own
+   * radius is already sized relative to its own board.
+   *
+   * `floor` is passed in rather than fixed, since the sound and haptic
+   * floors are no longer the same number (2026-09ac: "sound cát bắn tôi
+   * muốn range từ 50% tới 100%" — the sound's own floor came up from 10% to
+   * 50% on its own, haptic's stayed at 10% since nobody asked to change it).
+   * Never all the way to silent — even a one-grain clear (or a `NO_MATCH`'s
+   * `removed.length` of 0) still has to read as SOMETHING landed.
+   */
+  private impactIntensity(removed: number, radius: number, floor: number): number {
+    const discArea = Math.PI * radius * radius;
+    const t = discArea > 0 ? Math.min(1, removed / discArea) : 0;
+    return floor + t * (1 - floor);
   }
 
   private handleImpact(cell: PixelCell | null, grid: CellCoord, contact: THREE.Vector3) {
@@ -4144,14 +4257,11 @@ export class SandCannonEngine {
         this.radiusShakeTime = 0;
       }
     }
-    haptic("impact");
-    sound("impact");
-    const impactBling = this.sparkleBlingColors();
-    if (impactBling) this.spawnSparkleImpactBurst(contact, impactBling);
-
     // Sand under the impact centres the disc on that grain; empty air centres it
     // on the square the shot came down in. Either way the disc has a centre and
-    // sorts from it.
+    // sorts from it. Resolved before any sound plays (moved up from below the
+    // old unconditional `sound("impact")`) specifically so that call can be
+    // conditioned on the outcome — see the comment there.
     const center = cell ? { x: cell.x, y: cell.y } : grid;
     const resolution = resolveShot(
       this.level,
@@ -4159,13 +4269,38 @@ export class SandCannonEngine {
       { bodyId: cell?.bodyId ?? null, x: center.x, y: center.y },
       booster,
     );
+
     // Sized to what this specific shot actually reached — the flash for a
     // Radius Overcharge hit has to be the bigger disc, not the level's base
-    // one. Chain Sort has no disc at all (see `updateAimPreview`'s own
-    // comment), so it skips the ring flash entirely rather than draw one at
-    // a size that means nothing — the clear-flash on every grain it actually
-    // took is its own tell.
+    // one. Moved up from below the ring-flash/spray code that reads it, so
+    // `impactIntensity` (right below) can use the same number rather than
+    // recomputing it a second time.
     const radiusUsed = effectiveSortRadius(this.level, booster);
+
+    // 2026-09y/z/ac: both the felt thump and the audible one scale by how
+    // much of this shot's own reach it actually cleared — see
+    // `impactIntensity`'s own comment for why each has its own floor.
+    const hapticScale = this.impactIntensity(resolution.removed.length, radiusUsed, 0.1);
+    const soundScale = this.impactIntensity(resolution.removed.length, radiusUsed, 0.5);
+    haptic("impact", hapticScale);
+    // A shot that finds nothing to sort now plays ONLY `miss-shot.mp3`
+    // (2026-09x ask: "tôi muốn dùng sound miss-shot cơ chứ khi tôi chơi vẫn
+    // nghe tiếng bullet-on-sand mà??" — both used to play back to back on
+    // every NO_MATCH, reading as two competing sounds for one shot). The
+    // felt thump (`haptic("impact")` above) still fires regardless — a
+    // physical "something happened" is true either way — but the AUDIBLE
+    // impact (`playImpact`'s sub-bass punch layered with the
+    // `bullet-on-sand.mp3` texture) is now exclusive to a shot that actually
+    // found something to do; `NO_MATCH`'s own branch below plays
+    // `sound("wrongColor")` (`miss-shot.mp3`) on its own instead.
+    if (resolution.outcome !== "NO_MATCH") sound("impact", soundScale);
+    const impactBling = this.sparkleBlingColors();
+    if (impactBling) this.spawnSparkleImpactBurst(contact, impactBling);
+
+    // Chain Sort has no disc at all (see `updateAimPreview`'s own comment),
+    // so it skips the ring flash entirely rather than draw one at a size
+    // that means nothing — the clear-flash on every grain it actually took
+    // is its own tell.
     if (booster !== "chainSort") this.spawnSortRing(center.x, center.y, this.boosterRadiusScale(booster));
     // How much this shot actually kicked loose, not just whether the crosshair
     // itself sat on a grain — aiming at the gap above the pile still sorts
@@ -4244,8 +4379,13 @@ export class SandCannonEngine {
       return;
     }
 
+    // `sound("bodyCleared")` used to fire here too — on request (2026-09l:
+    // "Cái tiếng bodyCleared hiện tại nên xảy ra khi người chơi dùng
+    // crosshair bắn vào khung tranh - không phải cát") that beep now belongs
+    // to `handleMiss`'s `hitFrame` branch below instead, so a sorted shot
+    // only carries `playImpact`'s own sand-landing sound (haptics are
+    // unaffected — this still flinches the same way).
     haptic("bodyCleared");
-    sound("bodyCleared");
     this.callbacks.onEvent?.({
       type: "SAND_SORTED",
       color: ammo,
@@ -4421,6 +4561,10 @@ export class SandCannonEngine {
         cell.y = move.to.y;
         this.cells.set(cellKey(cell.x, cell.y), cell);
       }
+      // The very first grain-pass of a settle sequence is when falling
+      // actually starts (the CLEAR beat before it is only a dissolve flash),
+      // so that's the one moment to start the pour recording.
+      if (this.settleLandings === 0) soundSandPour();
       this.settleLandings += 1;
       if (this.settleLandings % 2 === 1) {
         const order = Math.floor(this.settleLandings / 2);
@@ -4758,7 +4902,10 @@ export class SandCannonEngine {
       this.lastInputAt = performance.now();
       this.cannonRoot.visible = true;
       this.startCannonEntrance();
-      startAmbience();
+      // No generic ambience starts here any more (2026-09aa: "Tắt cái
+      // background noise mà có tiếng ồn trắng, nghe rất ù và chói tai") —
+      // music now only ever plays for Freeze specifically, started/stopped
+      // from `syncFreezeVisuals` exactly when that state flips.
       // Ease the picture back to its authored orientation first; `resume()`
       // fires once that finishes, from `updateFrameSpin`. Staying paused for
       // that stretch keeps a shot from landing before the aim math (which
@@ -4780,7 +4927,11 @@ export class SandCannonEngine {
     // screen or the hub nav is what just fired this.
     this.frameRoot.scale.setScalar(HUB_FRAME_SCALE);
     this.pause();
-    stopAmbience();
+    // Safety net for leaving mid-Freeze — `syncFreezeVisuals` already stops
+    // this the instant `freezeShotsRemaining` reaches 0, but a player
+    // backing out to the hub while still frozen would otherwise leave the
+    // Freeze BGM playing behind a screen that no longer shows Freeze at all.
+    stopFreezeAmbience();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
   }
 
@@ -4869,9 +5020,10 @@ export class SandCannonEngine {
     this.disposed = true;
     // Immediate, not the usual fade: this instance is gone, so there is
     // nothing left for a fade-out to play against.
-    stopAmbience(true);
+    stopFreezeAmbience(true);
     cancelAnimationFrame(this.frameId);
     this.clearAimOutsideTimer();
+    this.clearAimInvalidTargetTimer();
     this.resizeObserver.disconnect();
     this.aimZone.removeEventListener("pointerdown", this.onAimPointerDown);
     this.aimZone.removeEventListener("pointermove", this.onAimPointerMove);

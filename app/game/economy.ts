@@ -482,15 +482,36 @@ export function __resetWalletForTests(overrides?: Partial<Wallet>) {
 // `SandGame.tsx` — same shape of question ("has id X already happened on
 // this browser?"), same small-Set-as-JSON-array storage.
 
+/**
+ * In-memory cache of `loadClearedLevels`'s own read — same shape as
+ * `cachedWallet` above (a module-level cache a fresh localStorage read only
+ * ever fills once, mutated in place from then on). Without this, every one
+ * of `hasClearedLevel`'s many call sites — the Gallery's own per-card unlock/
+ * milestone checks (`SandGame.tsx`) chief among them, one `hasClearedLevel`
+ * call PER CARD, up to 50 of them — did its own fresh `localStorage.getItem`
+ * + `JSON.parse` + `Set` build, every single render. Harmless for a couple of
+ * calls; with 50 Gallery cards (worse once "Unlock all content" has grown the
+ * stored array to every level) that was dozens of redundant synchronous
+ * localStorage round-trips on one screen open — part of what made switching
+ * to the Gallery tab visibly lag (2026-09l, on request: "unlock hết level
+ * thì lúc chuyển tab qua gallery rất là lag"). `markLevelCleared` below
+ * mutates this same cached `Set` in place (`cleared.add(id)`), so a write
+ * never needs to invalidate it — only the two reset functions, which erase
+ * storage without going through `markLevelCleared`, clear the cache instead.
+ */
+let cachedClearedLevels: Set<number> | null = null;
+
 function loadClearedLevels(): Set<number> {
+  if (cachedClearedLevels) return cachedClearedLevels;
   if (typeof window === "undefined") return new Set();
   try {
     const raw = window.localStorage.getItem(CLEARED_KEY);
     const ids = raw ? (JSON.parse(raw) as unknown) : [];
-    return new Set(Array.isArray(ids) ? ids.filter((id): id is number => typeof id === "number") : []);
+    cachedClearedLevels = new Set(Array.isArray(ids) ? ids.filter((id): id is number => typeof id === "number") : []);
   } catch {
-    return new Set();
+    cachedClearedLevels = new Set();
   }
+  return cachedClearedLevels;
 }
 
 export function hasClearedLevel(id: number): boolean {
@@ -515,6 +536,7 @@ export function markLevelCleared(id: number): boolean {
 }
 
 export function __resetClearedLevelsForTests() {
+  cachedClearedLevels = null;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(CLEARED_KEY);
@@ -529,6 +551,7 @@ export function __resetClearedLevelsForTests() {
  * kept as a separate, non-test-prefixed entry point since that one is a test
  * seam ("never called from game code") and this one is meant to be. */
 export function resetClearedLevels() {
+  cachedClearedLevels = null;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(CLEARED_KEY);

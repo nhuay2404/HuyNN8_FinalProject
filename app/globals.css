@@ -699,6 +699,10 @@ button.settings-devtoggle {
   transition: transform .18s;
 }
 .settings-devtoggle-chevron.is-open { transform: rotate(180deg); }
+/* Sound Editor's own heading — same look as `.settings-section-title`
+   (inherited) plus its "Reset" button pinned to the far right. */
+.settings-sound-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-sound-editor-header .settings-devlink-go { padding: 5px 12px; font-size: 11px; }
 /* Where the level editor and any future build-only tooling live, kept
    visually apart (its own heading, a quieter card each) from the player
    rows above rather than folded into the same list. */
@@ -1183,6 +1187,24 @@ button.settings-devtoggle {
 }
 .settle-badge i:nth-child(2) { animation-delay: .15s; }
 .settle-badge i:nth-child(3) { animation-delay: .3s; }
+
+/* The `"SETTLING"`-only copy of `.settle-badge` (2026-09i, on request: "di
+   chuyển anim 3 chấm ở dưới phần HUD số lượng đạn, kích thước, chiều dài sao
+   cho ngang với HUD số lượng đạn") — a flex sibling of `.hud-top` inside
+   `.hud-top-left` (see the JSX comment at its call site) rather than the
+   base rule's own absolute/centred placement, so it inherits that corner's
+   position for free. The inline `width` `SandGame.tsx` sets on it
+   (`settleBadgeWidth`, measured off `.shots-badge` itself) is what makes
+   this row read as "the same length as the ammo badge above" — the dots
+   themselves stay a tight, centred cluster inside that width (base rule's
+   own `gap: 8px`, unchanged) rather than spread edge to edge across it:
+   `justify-content: space-between` was tried first and put the two outer
+   dots right at the badge's own corners with a lot of dead space between
+   them, which read as "spaced too far apart" (2026-09j, on request — "3
+   dấu chấm cách nhau xa quá, giảm khoảng cách"), not as one animation. */
+.settle-badge.is-under-ammo {
+  position: static; transform: none; justify-content: center;
+}
 
 /* Generic "visually hidden but still announced" utility — clipped to
    nothing, not `display: none`/`visibility: hidden`, which would pull a
@@ -2284,12 +2306,76 @@ button.settings-devtoggle {
   background: var(--shop-sun); color: var(--shop-brown);
   font-size: 10.5px; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
 }
-.offer-card h4 { margin: 0; font-size: 17px; font-weight: 800; }
-.offer-contents { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
-.offer-contents .coin-icon, .offer-contents .heart-icon, .offer-contents .emerald-icon {
-  width: 20px; height: 20px; color: currentColor;
+/* ---- Shop illustrations: a rotating sunburst behind every pack's own art ----
+   2026-09q ask: "sau mỗi hình minh họa các gói đều có các đường ánh sáng
+   chuyển động hình tròn xung quanh (Như ảnh minh họa). Gói có giá tiền càng
+   lớn thì ánh sáng càng mạnh". One wrapping `<div>` per illustration — the
+   `<img>` itself cannot carry a `::before`, generated content does not
+   render on replaced elements — holding a `repeating-conic-gradient` ring
+   that spins behind the art. `--ray` (0.3..1, set inline per item from
+   `rayIntensity` in SandGame.tsx, off that list's own ascending-price
+   position) drives both how bright the burst is and how far it reaches past
+   the art, so the priciest tier in every ladder (Offers/Bundles/Coin packs/
+   Heart packs) reads as the most dazzling one without four separate copies
+   of this rule. Applied alongside each context's own sizing class
+   (`.offer-illustration`, `.bundle-icon`, `.pack-coin-illustration`,
+   `.pack-heart-illustration`), which is what still governs the wrapper's
+   width/height and its `img`'s own `object-fit`. */
+@keyframes shop-ray-spin {
+  from { transform: rotate(0deg) scale(calc(0.7 + var(--ray, 0.5) * 0.35)); }
+  to { transform: rotate(360deg) scale(calc(0.7 + var(--ray, 0.5) * 0.35)); }
 }
-.offer-plus { opacity: .75; font-size: 13px; }
+.shop-illustration { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.shop-illustration::before {
+  /* Shorter reach, thicker strokes (2026-09r follow-up: "ray ánh sáng ngắn
+     lại và dày hơn") — a tighter `inset` pulls the ring in closer around the
+     art instead of flaring out past the card. 9 rays total (2026-09s
+     follow-up: "chỉ có trung bình 8-10 ray" — one 40deg period, 360/40 = 9),
+     each lit arc widened again (2026-09t follow-up: "ray dày hơn", 8deg to
+     14deg — the 40deg period itself is unchanged, so the gap between rays
+     just shrank to make room) for a noticeably chunkier, more distinct
+     spoke than the two passes before this one. The `mask-image` radial
+     gradient is what gives each ray its own fade — `repeating-conic-
+     gradient` alone only varies by angle, never by distance from the
+     centre, so without this every ray would be a flat bar of colour all the
+     way out to its own hard edge instead of glowing brightest near the art
+     and dissolving outward (2026-09s: "gradient opacity giảm dần khi hướng
+     ra ngoài"). `animation` duration slowed 7s → 14s (2026-09t: "quay chậm
+     hơn") — same rotation, just a lazier drift instead of a visible spin. */
+  content: ""; position: absolute; inset: -12%; z-index: 0;
+  border-radius: 50%; pointer-events: none;
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(255, 211, 92, calc(0.15 + var(--ray, 0.5) * 0.55)) 0deg 14deg,
+    transparent 14deg 40deg
+  );
+  -webkit-mask-image: radial-gradient(circle, #000 15%, transparent 100%);
+  mask-image: radial-gradient(circle, #000 15%, transparent 100%);
+  filter: blur(.5px);
+  animation: shop-ray-spin 14s linear infinite;
+}
+.shop-illustration > img { position: relative; z-index: 1; }
+
+/* The offer's own hero illustration (2026-09m) — stacked ABOVE the name/
+   contents and blown up big (2026-09n, on request: "hình minh họa to và ấn
+   tượng hơn, cho chữ hay miêu tả nhỏ lại cũng được") rather than a small
+   thumbnail riding beside the text: the art is the thing that sells a
+   limited-time offer, so it gets to be the first, biggest thing on the card,
+   with the name/contents as a compact caption underneath rather than a peer
+   sharing the row with it. `.offer-text` centred under the image instead of
+   left-aligned beside it, font sizes trimmed a step (17px→15px title, 14px→
+   12px contents) to keep the card's overall height in check now that the
+   illustration itself takes much more of it. */
+.offer-body { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.offer-illustration { flex: none; width: 132px; height: 132px; }
+.offer-illustration > img { width: 100%; height: 100%; object-fit: contain; }
+.offer-text { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.offer-card h4 { margin: 0; font-size: 15px; font-weight: 800; }
+.offer-contents { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 800; font-size: 12px; flex-wrap: wrap; }
+.offer-contents .coin-icon, .offer-contents .heart-icon, .offer-contents .emerald-icon {
+  width: 16px; height: 16px; color: currentColor;
+}
+.offer-plus { opacity: .75; font-size: 11px; }
 .buy-btn {
   margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 10px 0;
   font-weight: 800; font-size: 15px; cursor: pointer;
@@ -2304,57 +2390,82 @@ button.settings-devtoggle {
   background: var(--shop-cream); border-radius: var(--r-md); padding: 10px 12px;
 }
 .bundle-row.is-best { background: var(--shop-cream-deep); }
-/* Coins now, not gems — coins are every bundle's headline number
-   (`.bundle-amount`), so the icon leading the row is its own. */
-.bundle-icon {
-  flex: none; width: 44px; height: 44px; border-radius: 50%;
-  background: var(--iap-accent); color: var(--iap-accent-ink); display: grid; place-items: center;
-}
-.bundle-icon .coin-icon { width: 24px; height: 24px; color: currentColor; }
+/* A real crate illustration now (2026-09m, `bundle1.png`..`bundle5.png`,
+   matched by position — see `bundleIllustrationSrc`'s own comment), not the
+   plain circle-plus-CoinIcon glyph this used to be — no background/
+   border-radius any more since the art already carries its own shape and
+   colour, `object-fit: contain` so the row's fixed box never crops or
+   distorts it. Sized up from 52px to 76px (2026-09n, on request: "hình minh
+   họa to và ấn tượng hơn, cho chữ hay miêu tả nhỏ lại cũng được") — the text
+   beside it trimmed a step in return (`.bundle-amount`/`.bundle-sub` below)
+   so the row's overall height does not just grow along with the art. */
+.bundle-icon { flex: none; width: 76px; height: 76px; }
+.bundle-icon > img { width: 100%; height: 100%; object-fit: contain; }
 .bundle-mid { flex: 1; min-width: 0; }
 .bundle-flag {
-  font-size: 11px; font-weight: 800; color: var(--iap-accent-deep);
+  font-size: 10px; font-weight: 800; color: var(--iap-accent-deep);
   text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px;
 }
 .bundle-row.is-best .bundle-flag { color: var(--shop-honey); }
-.bundle-amount { font-weight: 800; font-size: 15.5px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
+.bundle-amount { font-weight: 800; font-size: 14px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
 .bundle-bonus {
   display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: var(--r-pill);
-  background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 800;
+  background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 800;
 }
 /* The hearts + emerald top-up, the smaller "and a bit of these too" line
    under the headline coin amount. */
 .bundle-sub {
   display: flex; align-items: center; gap: 4px; margin-top: 2px;
-  font-size: 12.5px; font-weight: 700; color: var(--shop-brown-soft);
+  font-size: 11px; font-weight: 700; color: var(--shop-brown-soft);
 }
-.bundle-sub .heart-icon { width: 13px; height: 13px; }
-.bundle-sub .emerald-icon { width: 13px; height: 13px; }
+.bundle-sub .heart-icon { width: 12px; height: 12px; }
+.bundle-sub .emerald-icon { width: 12px; height: 12px; }
 .bundle-price {
-  flex: none; border: 0; border-radius: var(--r-pill); padding: 9px 16px;
-  font-weight: 800; font-size: 14px; cursor: pointer;
+  flex: none; border: 0; border-radius: var(--r-pill); padding: 9px 14px;
+  font-weight: 800; font-size: 13px; cursor: pointer;
   background: var(--iap-accent); color: var(--iap-accent-ink); font-variant-numeric: tabular-nums;
 }
 .bundle-row.is-best .bundle-price { background: var(--shop-sun); color: var(--shop-brown); }
 .bundle-price:active { opacity: .85; }
 
 /* ---- Coin/Heart packs — same card shape for both direct-buy sections ---- */
-.pack-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* 3 per row on request (2026-09ad: "nó nên là 3 vật phẩm trên cùng 1 dòng") —
+   was 2. `gap` trimmed a touch (10px→8px) since 3 columns leaves each card
+   noticeably narrower than before. */
+.pack-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pack-card {
   position: relative;
   background: var(--shop-cream); border-radius: var(--r-md); padding: 14px 10px;
   display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
 }
-.pack-card .coin-icon { width: 32px; height: 32px; }
-.pack-card .heart-icon { width: 32px; height: 32px; }
-.pack-amount { font-weight: 800; font-size: 15px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
+/* The Coins section's own per-pack illustration (2026-09k) — a real piece of
+   art, not `.coin-icon`'s flat glyph, so it gets real room instead of that
+   rule's 32px: `height` fixed and `width: auto` (rather than a fixed square)
+   because the seven files are not all the same aspect ratio (the smallest
+   pile is close to square, the biggest — an overflowing treasure chest —
+   noticeably wider), and stretching every one to a forced square would
+   distort the wider ones. `max-width: 100%` keeps that auto width from ever
+   overflowing the card on the narrowest tiers' own real width. Sized up from
+   56px to 96px (2026-09n, on request: "hình minh họa to và ấn tượng hơn, cho
+   chữ hay miêu tả nhỏ lại cũng được") — `.pack-amount`/`.pack-price`/
+   `.pack-bonus` below trimmed a step in return. */
+.pack-coin-illustration { height: 96px; max-width: 100%; }
+.pack-coin-illustration > img { height: 100%; width: auto; max-width: 100%; object-fit: contain; }
+/* The Hearts section's own per-pack illustration (2026-09m,
+   `heart099.png`/`heart199.png`/`heart299.png`) — same treatment as
+   `.pack-coin-illustration` just above, for the same reason (the three files
+   are not all the same aspect ratio: a single heart vs. three vs. five
+   clustered together). */
+.pack-heart-illustration { height: 96px; max-width: 100%; }
+.pack-heart-illustration > img { height: 100%; width: auto; max-width: 100%; object-fit: contain; }
+.pack-amount { font-weight: 800; font-size: 13.5px; color: var(--shop-brown); font-variant-numeric: tabular-nums; }
 .pack-bonus {
-  margin-left: 4px; font-size: 10.5px; font-weight: 800; color: var(--accent-ink);
-  background: var(--accent); padding: 2px 8px; border-radius: var(--r-pill);
+  margin-left: 4px; font-size: 9.5px; font-weight: 800; color: var(--accent-ink);
+  background: var(--accent); padding: 2px 7px; border-radius: var(--r-pill);
 }
 .pack-price {
-  margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 8px 18px;
-  font-weight: 800; font-size: 13.5px; cursor: pointer;
+  margin-top: 2px; border: 0; border-radius: var(--r-pill); padding: 7px 16px;
+  font-weight: 800; font-size: 12.5px; cursor: pointer;
   background: var(--shop-sun);
   color: var(--shop-brown); width: 100%; font-variant-numeric: tabular-nums;
 }
@@ -2784,21 +2895,24 @@ button.settings-devtoggle {
   background: var(--danger); box-shadow: 0 0 0 2px #ffffff;
 }
 
-/* The picture itself, one grid cell per authored cell. `image-rendering` is not
-   involved: these are real boxes, so they stay square at any size.
-   `--rows` has to travel with `--cols` here: a fixed 14 read fine for the
-   small built-in fixtures it was written against, but an editor-authored
-   level can be far taller (a drafted picture is painted at full board
-   resolution, not a small blueprint) — a wrong ratio squeezes the grid into
-   a box shaped for the wrong picture and `overflow: hidden` crops the rest
-   away, down to a sliver of the top rows. */
+/* The picture itself — a `<canvas>` now (2026-09l), not one DOM box per
+   authored cell (see `PixelThumb`'s own comment in SandGame.tsx for why: a
+   grid of boxes does not scale to 50 thumbnails on screen at once).
+   `image-rendering: pixelated` is what keeps the same hard pixel edges the
+   old per-cell boxes gave for free, now that the picture is a small bitmap
+   blown up by CSS alone — the standard, cross-browser property name;
+   `crisp-edges` is the older/Firefox-specific spelling kept alongside it as
+   a fallback for engines that do not know the newer one. `aspect-ratio` is
+   set inline per level now (`PixelThumb`'s own `style`) rather than a fixed
+   pair of custom properties here — same reasoning as the old `--cols`/
+   `--rows` comment this replaces: an editor-authored level can be far
+   taller than the small built-in fixtures this was first written against. */
 .pixel-thumb {
-  display: grid; grid-template-columns: repeat(var(--cols, 12), 1fr);
-  width: 100%; aspect-ratio: var(--cols, 12) / var(--rows, 14);
+  display: block; width: 100%; height: auto;
   border-radius: 12px; overflow: hidden;
   background: var(--bg);
+  image-rendering: pixelated; image-rendering: crisp-edges;
 }
-.pixel-thumb i { display: block; aspect-ratio: 1; }
 
 /* ---- Home screen: the bottom bar --------------------------------------- */
 /* Five tiles that fully tile the bar — no padding, no gap, no divider —
@@ -2973,6 +3087,22 @@ button.settings-devtoggle {
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
 @keyframes overlay-in { from { opacity: 0; } }
 @keyframes result-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
+/* The reverse of `overlay-in`/`result-pop`, for a plain-Cancel/No/X close
+   (2026-09ae ask: "với những hành động tắt UI... UI tắt nên có anim fade out
+   dần rồi mới tắt, thời gian khoảng 0.4s thay vì tắt rất chớp nhoáng") —
+   `useFadeOutClose` (SandGame.tsx) is what keeps the dialog mounted for this
+   long instead of the instant unmount a conditional render would otherwise
+   give it zero time to play in. `.is-closing` overrides whichever entrance
+   animation the overlay/card already had (`animation-fill-mode: both` on
+   both keyframes below holds the 0% state before the class is added and the
+   100% state once it finishes, so there is no flash of the un-animated
+   resting style at either end). */
+@keyframes overlay-out { to { opacity: 0; } }
+@keyframes result-pop-out { to { opacity: 0; transform: translateY(14px) scale(.94); } }
+.result-screen.is-closing,
+.settings-screen.is-closing { animation: overlay-out .4s ease-in both; }
+.result-card.is-closing,
+.settings-card.is-closing { animation: result-pop-out .4s cubic-bezier(.4, 0, .2, 1) both; }
 @keyframes booster-armed-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
 
 /* ---- Level editor ------------------------------------------------------ */
