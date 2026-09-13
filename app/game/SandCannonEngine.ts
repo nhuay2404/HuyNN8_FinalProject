@@ -13,7 +13,7 @@ import {
 } from "./costumes";
 import { haptic, hapticSandLanded } from "./haptics";
 import { acquireRenderer, releaseRenderer } from "./renderer-pool";
-import { sound, soundSandLanded, soundSandPour, startFreezeAmbience, stopFreezeAmbience } from "./sound";
+import { sound, soundSandLanded, soundSandPour } from "./sound";
 import {
   SAND_LIGHTNESS_JITTER,
   SAND_SATURATION_JITTER,
@@ -305,30 +305,6 @@ const IDLE_HIGHLIGHT_HZ = 0.37;
  * stays visible as a calm, ever-present glow rather than blinking off. */
 const IDLE_HIGHLIGHT_FLOOR = 0.3;
 const IDLE_HIGHLIGHT_CEILING = 1;
-/** On request ("hạt cát có cụm ít, từ 1-4 grain… không có phần cát cùng màu
- * kế bên… cho 1 màu glow xung quanh nó theo màu của nó, glow hiện có breath
- * effect") — a small, colour-isolated cluster of sand glows in its own
- * colour, in a slow breathing pulse, so it reads as an easy/lonely target
- * rather than getting lost against a busier board. See `redrawSand`'s own
- * cluster-glow pass. Same breathing idiom as `IDLE_HIGHLIGHT_HZ` above, its
- * own independent cycle (always running, not gated on idle time the way the
- * "shoot here" outline is — every qualifying cluster glows continuously). */
-const CLUSTER_GLOW_MAX_SIZE = 4;
-/** One full dim-bright-dim breath roughly every 2s — a touch faster than the
- * idle outline's ~2.7s, since this has no separate "shake" beat competing
- * for attention the way the idle cycle does. */
-const CLUSTER_GLOW_HZ = 0.5;
-const CLUSTER_GLOW_CYCLE_SECONDS = 1 / CLUSTER_GLOW_HZ;
-const CLUSTER_GLOW_FLOOR = 0.35;
-const CLUSTER_GLOW_CEILING = 1;
-/** Peak alpha (0-255) of the halo's inner ring (the 8 cells touching the
- * cluster) and its outer ring (one cell further out) — a soft two-step
- * falloff standing in for a real gaussian blur, which a `NearestFilter`
- * canvas texture (see `sandTexture`'s own setup) could never render smoothly
- * anyway; a blocky two-ring aura reads as "glow" in this game's own pixel-art
- * idiom instead. */
-const CLUSTER_GLOW_INNER_ALPHA = 150;
-const CLUSTER_GLOW_OUTER_ALPHA = 60;
 /** Orthogonal only — matches `adjacencyMode: "ORTHOGONAL_4"`, so a border pixel here is a border of the same body the solver reasons about, not a diagonal artifact. */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [1, 0],
@@ -1261,13 +1237,6 @@ export class SandCannonEngine {
   private idleHighlightStrength = 0;
   /** Whatever `currentAmmo` was the instant the hint last turned on — stashed so `redrawSand` does not have to re-derive it. */
   private idleHighlightColor: SandColor | null = null;
-  /** Seconds into the small-cluster glow's own breathing cycle — unlike
-   * `idleHintElapsed`, always advancing (see `CLUSTER_GLOW_HZ`'s own
-   * comment): there is no idle gate on this one. */
-  private clusterGlowElapsed = 0;
-  /** `CLUSTER_GLOW_FLOOR`-`CLUSTER_GLOW_CEILING`, updated once per fixed
-   * step. Read by `redrawSand`'s cluster-glow pass. */
-  private clusterGlowStrength = CLUSTER_GLOW_FLOOR;
   private nextShotAt = 0;
   private aimPointer: number | null = null;
   private readonly aimStart = new THREE.Vector2();
@@ -1710,19 +1679,12 @@ export class SandCannonEngine {
    * `beginFreezeVisualsTransition`) exactly when frozen-vs-not actually
    * flips, and does nothing the other `freezeShotsRemaining - 1`-per-shot
    * ticks while already frozen (there is nothing to re-animate: the frame is
-   * already fully in its frozen colours). Same flip is also exactly when the
-   * Freeze BGM should start/stop (2026-09aa ask: "Thêm BGM freeze orb vào,
-   * sound này sẽ được mở khi người chơi trong giai đoạn freeze") — this is
-   * the one place that already isolates that edge from the "still frozen,
-   * one more shot ticked the count down" case, so it is reused rather than
-   * duplicating the same `frozen === this.freezeVisualsIsFrozen` check.
+   * already fully in its frozen colours).
    */
   private syncFreezeVisuals() {
     const frozen = this.state.freezeShotsRemaining > 0;
     if (frozen === this.freezeVisualsIsFrozen) return;
     this.beginFreezeVisualsTransition(frozen);
-    if (frozen) startFreezeAmbience();
-    else stopFreezeAmbience();
   }
 
   /**
@@ -2046,74 +2008,6 @@ export class SandCannonEngine {
       // Row 0 of the canvas is the top of the image; grid y counts up from the
       // floor, so the row a pixel lands on is the mirror of its grid y.
       writePixel(cell.x + offset, height - 1 - cell.y, r, g, b, 255);
-    }
-
-    // Small colour-isolated clusters (1-4 grains, no same-colour grain
-    // touching them) glow in their own colour, breathing — see
-    // `CLUSTER_GLOW_HZ`'s own doc comment. Found with a plain flood fill
-    // over `this.cells` by colour + orthogonal adjacency (`NEIGHBOR_OFFSETS`,
-    // the same 4-neighbour rule the solver's own bodies use) — deliberately
-    // NOT `cell.bodyId`, which only reconciles on the next `REINDEX` settle
-    // step and can be transiently stale while sand is actively falling; a
-    // fresh flood fill is correct every single frame instead, at the same
-    // O(cells) cost `redrawSand` already pays for every other pass here.
-    {
-      const visited = new Set<string>();
-      const glowCells: PixelCell[] = [];
-      for (const cell of this.cells.values()) {
-        const startKey = cellKey(cell.x, cell.y);
-        if (visited.has(startKey)) continue;
-        visited.add(startKey);
-        const cluster: PixelCell[] = [cell];
-        const stack: PixelCell[] = [cell];
-        while (stack.length) {
-          const current = stack.pop()!;
-          for (const [dx, dy] of NEIGHBOR_OFFSETS) {
-            const neighborKey = cellKey(current.x + dx, current.y + dy);
-            if (visited.has(neighborKey)) continue;
-            const neighbor = this.cells.get(neighborKey);
-            if (!neighbor || neighbor.color !== current.color) continue;
-            visited.add(neighborKey);
-            cluster.push(neighbor);
-            stack.push(neighbor);
-          }
-        }
-        if (cluster.length <= CLUSTER_GLOW_MAX_SIZE) glowCells.push(...cluster);
-      }
-      if (glowCells.length) {
-        // The halo: every empty cell within a Chebyshev distance of 2 from any
-        // glowing grain, tagged with the nearest such grain's own colour and
-        // ring (1 = touching, 2 = one further out — `CLUSTER_GLOW_INNER_ALPHA`/
-        // `CLUSTER_GLOW_OUTER_ALPHA`'s own comment). Skips any cell already
-        // spoken for — real sand (any colour/cluster), a Wall Obstacle, or a
-        // Freeze Map trigger (both drawn as opaque base layers above, lines
-        // ~1955-1989) — so the glow only ever appears in genuinely open frame
-        // space around the cluster, never painted translucently over
-        // something else's opaque pixel. A key/lock icon drawn later in this
-        // same function naturally wins any remaining overlap, since those
-        // passes run after this one.
-        const halo = new Map<string, { x: number; y: number; rgb: readonly [number, number, number]; ring: number }>();
-        for (const cell of glowCells) {
-          for (let dy = -2; dy <= 2; dy += 1) {
-            for (let dx = -2; dx <= 2; dx += 1) {
-              const ring = Math.max(Math.abs(dx), Math.abs(dy));
-              if (ring === 0 || ring > 2) continue;
-              const hx = cell.x + dx;
-              const hy = cell.y + dy;
-              const haloKey = cellKey(hx, hy);
-              if (this.cells.has(haloKey) || this.wallSet.has(haloKey) || this.freezeTriggerSet.has(haloKey)) continue;
-              const existing = halo.get(haloKey);
-              if (!existing || existing.ring > ring) halo.set(haloKey, { x: hx, y: hy, rgb: cell.rgb, ring });
-            }
-          }
-        }
-        for (const { x, y, rgb, ring } of halo.values()) {
-          const peakAlpha = ring === 1 ? CLUSTER_GLOW_INNER_ALPHA : CLUSTER_GLOW_OUTER_ALPHA;
-          const alpha = Math.round(peakAlpha * this.clusterGlowStrength);
-          if (alpha <= 0) continue;
-          writePixel(x, height - 1 - y, rgb[0], rgb[1], rgb[2], alpha);
-        }
-      }
     }
 
     for (const cell of this.dying) {
@@ -4738,9 +4632,6 @@ export class SandCannonEngine {
     // push back is the same for every hit regardless of where it landed.
     this.frameRecoil = Math.max(0, this.frameRecoil - FIXED_STEP * FRAME_RECOIL_DECAY_PER_SECOND);
     const idleShakeZ = this.updateIdleHint(deltaMs);
-    this.clusterGlowElapsed = (this.clusterGlowElapsed + deltaMs / 1000) % CLUSTER_GLOW_CYCLE_SECONDS;
-    const clusterGlowBreathe = 0.5 + 0.5 * Math.sin(this.clusterGlowElapsed * CLUSTER_GLOW_HZ * Math.PI * 2);
-    this.clusterGlowStrength = CLUSTER_GLOW_FLOOR + (CLUSTER_GLOW_CEILING - CLUSTER_GLOW_FLOOR) * clusterGlowBreathe;
     // Radius Overcharge's own shake — see `radiusShakeAmplitude`'s own field
     // comment for why this decays exponentially (a real slow-down) rather
     // than linearly (a shake at constant strength that just switches off).
@@ -4966,11 +4857,6 @@ export class SandCannonEngine {
     // screen or the hub nav is what just fired this.
     this.frameRoot.scale.setScalar(HUB_FRAME_SCALE);
     this.pause();
-    // Safety net for leaving mid-Freeze — `syncFreezeVisuals` already stops
-    // this the instant `freezeShotsRemaining` reaches 0, but a player
-    // backing out to the hub while still frozen would otherwise leave the
-    // Freeze BGM playing behind a screen that no longer shows Freeze at all.
-    stopFreezeAmbience();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");
   }
 
@@ -5057,9 +4943,6 @@ export class SandCannonEngine {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    // Immediate, not the usual fade: this instance is gone, so there is
-    // nothing left for a fade-out to play against.
-    stopFreezeAmbience(true);
     cancelAnimationFrame(this.frameId);
     this.clearAimOutsideTimer();
     this.clearAimInvalidTargetTimer();

@@ -87,21 +87,19 @@ import {
   WALL_LETTER,
 } from "./game/sand-rules";
 import {
-  getMusicVolume,
   getSfxVolume,
   getSourceGain,
   MAX_SOURCE_GAIN,
   resetSourceGains,
   resumeSound,
-  setMusicVolume,
   setSfxVolume,
   setSourceGain,
   sound,
   soundButtonClick,
   soundSupported,
   SOUND_SOURCE_IDS,
-  startHubAmbience,
   stopChestOpen,
+  type SoundEvent,
   type SoundSourceId,
   suspendSound,
 } from "./game/sound";
@@ -119,24 +117,33 @@ const SOUND_SOURCE_LABELS: Record<SoundSourceId, string> = {
   // every sorted shot to a shot that hits the picture frame instead.
   bodyCleared: "Frame hit",
   win: "Win",
+  frameCleared: "Frame cleared fanfare",
   lose: "Lose",
   sandLanded: "Sand landing ticks",
   sandPour: "Sand pour",
-  // Still the `"ambience"` id (its own volume knob predates this and other
-  // sources reuse the same shape) but the thing it now controls is the
-  // Freeze BGM loop specifically — the old always-on drone it used to scale
-  // is gone, see `startFreezeAmbience`'s own comment in sound.ts.
-  ambience: "Freeze BGM",
   buttonClick: "Button click (hub nav)",
   uiClick: "Button click (everything else)",
   purchase: "Purchase (kaching)",
   chestOpen: "Chest open",
+  boosterRadius: "Booster: Radius Overcharge",
+  boosterPrism: "Booster: Prism Shot",
+  boosterChain: "Booster: Chain Sort",
 };
 import { hapticsSupported, isHapticsEnabled, setHapticsEnabled } from "./game/haptics";
 import { getAimSensitivity, setAimSensitivity } from "./game/aim-sensitivity";
+import { resolvePublicAssetUrl } from "./game/public-asset-url";
 import { BOOSTER_TYPES, type BoosterType, type SandColor, type SandGameState, type SandLevelConfig } from "./game/sand-types";
 import { advanceLoading, finishLoading } from "./loading-screen";
 import { getLanguage, LANGUAGES, LANGUAGE_NAME, setLanguage, subscribeLanguage, t, type Strings } from "./i18n";
+
+/** Which of `sound.ts`'s three distinct booster cues each `BoosterType`'s
+ * own tray button plays on tap (2026-09ae ask — see the delegated click
+ * listener's own comment for the `data-sound` wiring this feeds). */
+const BOOSTER_SOUND_EVENT: Record<BoosterType, SoundEvent> = {
+  radiusOvercharge: "boosterRadius",
+  prismShot: "boosterPrism",
+  chainSort: "boosterChain",
+};
 
 /** `palette` is a level's own `customPalette` (see `SandLevelConfig`'s doc
  * comment) — passed by every call site that has a level in scope, so a Zen
@@ -289,7 +296,7 @@ const COIN_PACKS: readonly CoinPack[] = [
  * own price instead of a second id→file lookup table that could drift out of
  * sync with it. */
 function coinPackIllustrationSrc(pack: CoinPack): string {
-  return `/shop/coins${pack.price.replace(/[$.]/g, "")}.png`;
+  return resolvePublicAssetUrl(`/shop/coins${pack.price.replace(/[$.]/g, "")}.png`);
 }
 
 /** Same idea as `coinPackIllustrationSrc` above, for the two other sets of
@@ -298,14 +305,14 @@ function coinPackIllustrationSrc(pack: CoinPack): string {
  * own price (`heart099.png` .. `heart299.png`), so the same price→filename
  * trick applies unchanged. */
 function heartPackIllustrationSrc(pack: HeartPack): string {
-  return `/shop/heart${pack.price.replace(/[$.]/g, "")}.png`;
+  return resolvePublicAssetUrl(`/shop/heart${pack.price.replace(/[$.]/g, "")}.png`);
 }
 
 /** `SPECIAL_OFFERS`' two files, same price-named convention as coins/hearts
  * (`offer499.png` for the $4.99 Starter Pack, `offer999.png` for the $9.99
  * Weekend Heart Rush). */
 function specialOfferIllustrationSrc(offer: SpecialOffer): string {
-  return `/shop/offer${offer.price.replace(/[$.]/g, "")}.png`;
+  return resolvePublicAssetUrl(`/shop/offer${offer.price.replace(/[$.]/g, "")}.png`);
 }
 
 /** `BUNDLES`' five files are named by POSITION instead (`bundle1.png` ..
@@ -315,7 +322,7 @@ function specialOfferIllustrationSrc(offer: SpecialOffer): string {
  * `index`, 0-based) instead. Relies on `BUNDLES` staying in ascending price
  * order, same as it already has to for the ladder itself to make sense. */
 function bundleIllustrationSrc(index: number): string {
-  return `/shop/bundle${index + 1}.png`;
+  return resolvePublicAssetUrl(`/shop/bundle${index + 1}.png`);
 }
 
 /**
@@ -2050,8 +2057,8 @@ export default function SandGame() {
       tweenGoldTo(wallet.gold);
     }, 720);
   }, [playing, tab, pendingHomeReward, wallet.gold, tweenGoldTo]);
-  // Read once, the same `useState(() => ...)` shape `musicVolume`/`sfxVolume`
-  // use just below — `getSelectedCostume()` is a plain localStorage read, and `selectCostume`
+  // Read once, the same `useState(() => ...)` shape `sfxVolume` uses just
+  // below — `getSelectedCostume()` is a plain localStorage read, and `selectCostume`
   // (the skin screen's Select button) is the only place in the UI that writes
   // it, so nothing else can go stale.
   const [costume, setCostume] = useState<CostumeId>(() => getSelectedCostume());
@@ -2078,9 +2085,8 @@ export default function SandGame() {
   // before a player has ever looked at the tray.
   const [costumeThumbnails, setCostumeThumbnails] = useState<Partial<Record<CostumeId, string>>>({});
   // Read once, the same `useState(() => ...)` shape as `vibrationOn` below —
-  // `getMusicVolume`/`getSfxVolume` are plain module variables, and the two
-  // sliders in Settings are the only place in the UI that ever write them.
-  const [musicVolume, setMusicVolumeState] = useState(() => getMusicVolume());
+  // `getSfxVolume` is a plain module variable, and the SFX slider in Settings
+  // is the only place in the UI that ever writes it.
   const [sfxVolume, setSfxVolumeState] = useState(() => getSfxVolume());
   // GameDevOption's Sound Editor — one multiplier per distinct sound source,
   // read once the same way, since `setSourceGain`/`resetSourceGains` (in the
@@ -2090,15 +2096,15 @@ export default function SandGame() {
     for (const id of SOUND_SOURCE_IDS) initial[id] = getSourceGain(id);
     return initial;
   });
-  // Same one-place-writes-it reasoning as `musicVolume`/`sfxVolume` above,
-  // for the haptics module's own stored preference.
+  // Same one-place-writes-it reasoning as `sfxVolume` above, for the haptics
+  // module's own stored preference.
   const [vibrationOn, setVibrationOn] = useState(() => isHapticsEnabled());
   // Same one-place-writes-it reasoning again, for the aim-sensitivity module.
   // Applying it to the engine is a separate effect below — `aim-sensitivity.ts`
   // only owns storing the number, `SandCannonEngine.setControlSensitivity` is
   // what actually changes how the joystick responds.
   const [aimSensitivity, setAimSensitivityState] = useState(() => getAimSensitivity());
-  // Unlike `musicVolume`/`sfxVolume`/`vibrationOn` above, this can't be a plain `useState(()
+  // Unlike `sfxVolume`/`vibrationOn` above, this can't be a plain `useState(()
   // => getLanguage())`: that reads real client storage on the very first
   // client render, while the server pass (which never sees localStorage)
   // rendered "en" — a text mismatch `useSyncExternalStore` exists to
@@ -2469,21 +2475,10 @@ export default function SandGame() {
     engine?.setControlSensitivity({ aim: aimSensitivity });
   }, [engine, aimSensitivity]);
 
-  // The game's own continuous BGM (on request: "Thêm BGM, tôi muốn có một
-  // bgm phải Zen, thư giãn, và dễ chịu") — started once for the whole
-  // session, not per level/`runId`: `startHubAmbience` itself is what
-  // remembers to actually begin playing once the AudioContext exists and
-  // the first tap has unlocked it (see its own doc comment), so calling it
-  // this early is safe even though nothing audible happens until then.
-  useEffect(() => {
-    startHubAmbience();
-  }, []);
-
   useEffect(() => {
     const onVisibility = () => {
-      // A background tab must not keep ambience playing (or drifting out of
-      // its own schedule) behind the player's back, regardless of whether a
-      // level is even open yet.
+      // A background tab must not keep a still-decaying one-shot ringing on
+      // (or drifting out of its own schedule) behind the player's back.
       if (document.hidden) suspendSound();
       else resumeSound();
       if (!engine) return;
@@ -2512,12 +2507,17 @@ export default function SandGame() {
   // button below rather than guessed at here from its class or label, since
   // those vary (`.buy-btn`, `.pack-price`, `.bundle-price`, `.shop-buy-btn`,
   // and the two confirm dialogs' unstyled "Yes" buttons all mean the same
-  // thing here). Every other button gets `playUiClick`'s synthesised "cạch".
+  // thing here). `data-sound="boosterRadius"/"boosterPrism"/"boosterChain"`
+  // (2026-09ae ask: "Thêm SFX khi nhấn vào 3 booster, mỗi booster có SFX
+  // khác nhau") opts each booster's own button into its own cue the same
+  // way — set on the three booster buttons below, next to `BoosterIcon`.
+  // Every other button gets `playUiClick`'s synthesised "cạch".
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
       const button = (event.target as HTMLElement | null)?.closest("button");
       if (!button) return;
-      if (button.dataset.sound === "purchase") sound("purchase");
+      const dataSound = button.dataset.sound as SoundEvent | undefined;
+      if (dataSound) sound(dataSound);
       else if (!button.closest(".hub-nav")) sound("uiClick");
     };
     document.addEventListener("click", onClick);
@@ -2999,7 +2999,14 @@ export default function SandGame() {
       return;
     }
     setWinReveal(true);
-    const timer = window.setTimeout(() => setWinReveal(false), WIN_REVEAL_HOLD_MS);
+    const timer = window.setTimeout(() => {
+      setWinReveal(false);
+      // `playWin` (SandCannonEngine.ts) already fired the instant the WIN
+      // result came back, but that is well before this — the "Frame
+      // cleared" card — actually appears, so without its own cue the card
+      // lands in silence. See `playFrameCleared`'s own comment.
+      sound("frameCleared");
+    }, WIN_REVEAL_HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [state.result]);
 
@@ -3665,6 +3672,7 @@ export default function SandGame() {
                     key={type}
                     type="button"
                     data-booster={type}
+                    data-sound={canBuyHere ? "purchase" : BOOSTER_SOUND_EVENT[type]}
                     className={`booster-btn is-${type === "radiusOvercharge" ? "radius" : "prism"}${armedBooster === type ? " is-armed" : ""}${canBuyHere ? " is-buy" : ""}`}
                     onClick={() => {
                       if (canBuyHere) {
@@ -5043,57 +5051,31 @@ export default function SandGame() {
                 </div>
               )}
               <div className="settings-body">
-                {/* Two independent volume sliders rather than one on/off
-                    switch — BGM and SFX are separate audio buses in
-                    sound.ts (`musicBus`/`sfxBus`), each with its own gain
-                    node downstream, so nothing stops a player wanting the
-                    ambience quiet while shots and clears stay loud, or the
-                    other way round. Same slider shape as `aimSensitivity`
-                    below: 0-100%, step 5, persisted through sound.ts the
-                    moment it moves. */}
+                {/* One volume slider — there is no BGM any more (2026-09ae:
+                    "Xóa BGM luôn"), so SFX is the only bus left to control.
+                    Same slider shape as `aimSensitivity` below: 0-100%,
+                    step 5, persisted through sound.ts the moment it moves. */}
                 {soundSupported() && (
-                  <>
-                    <div className="settings-row settings-row--slider">
-                      <span className="settings-row-label">
-                        <Glyph name={musicVolume > 0 ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.musicVolume}
-                        <span className="settings-row-value">{Math.round(musicVolume * 100)}%</span>
-                      </span>
-                      <input
-                        type="range"
-                        className="settings-slider"
-                        min={0}
-                        max={100}
-                        step={5}
-                        value={Math.round(musicVolume * 100)}
-                        aria-label={s.musicVolume}
-                        onChange={(event) => {
-                          const next = Number(event.target.value) / 100;
-                          setMusicVolume(next);
-                          setMusicVolumeState(next);
-                        }}
-                      />
-                    </div>
-                    <div className="settings-row settings-row--slider">
-                      <span className="settings-row-label">
-                        <Glyph name={sfxVolume > 0 ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.sfxVolume}
-                        <span className="settings-row-value">{Math.round(sfxVolume * 100)}%</span>
-                      </span>
-                      <input
-                        type="range"
-                        className="settings-slider"
-                        min={0}
-                        max={100}
-                        step={5}
-                        value={Math.round(sfxVolume * 100)}
-                        aria-label={s.sfxVolume}
-                        onChange={(event) => {
-                          const next = Number(event.target.value) / 100;
-                          setSfxVolume(next);
-                          setSfxVolumeState(next);
-                        }}
-                      />
-                    </div>
-                  </>
+                  <div className="settings-row settings-row--slider">
+                    <span className="settings-row-label">
+                      <Glyph name={sfxVolume > 0 ? "sound-on" : "sound-off"} className="icon-glyph settings-row-icon" /> {s.sfxVolume}
+                      <span className="settings-row-value">{Math.round(sfxVolume * 100)}%</span>
+                    </span>
+                    <input
+                      type="range"
+                      className="settings-slider"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={Math.round(sfxVolume * 100)}
+                      aria-label={s.sfxVolume}
+                      onChange={(event) => {
+                        const next = Number(event.target.value) / 100;
+                        setSfxVolume(next);
+                        setSfxVolumeState(next);
+                      }}
+                    />
+                  </div>
                 )}
                 {/* Aim sensitivity moved up here, right after the two volume
                     sliders (2026-09ad ask: "Những phần có thể chỉnh sửa bằng
@@ -5350,7 +5332,7 @@ export default function SandGame() {
                     that reads too quiet or too loud shouldn't need a code
                     change and a rebuild to fix. `sourceGains` here is a
                     plain mirror of sound.ts's own module state, the same
-                    one-place-writes-it shape as `musicVolume`/`sfxVolume`. */}
+                    one-place-writes-it shape as `sfxVolume`. */}
                 <div className="settings-section-title settings-sound-editor-header">
                   Sound Editor
                   <button

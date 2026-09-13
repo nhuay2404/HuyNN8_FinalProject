@@ -9461,3 +9461,56 @@ Xem luật đầy đủ ở GDD.md §12.7.
 **Test:** `tsc --noEmit` sạch, `npm test` 175/175 (thuần render, không đụng `sand-rules.ts`). Verify
 sống trên dev server bằng hook debug tạm: cụm nhỏ + số ô halo khớp kỳ vọng trên level 20 (mưa/mây rải
 rác), breathing dao động đúng 0.35 → 1.0 → 0.35 qua nhiều lần lấy mẫu.
+
+## 259. Xóa hẳn BGM; 3 booster có SFX riêng (13/09)
+
+Trên request: "Xóa BGM luôn" + "Thêm SFX khi nhấn vào 3 booster, mỗi booster có SFX khác nhau".
+
+**1. Xóa BGM hoàn toàn.** Gỡ cả hai track nền — `bgm-hub.mp3` (loop xuyên suốt mọi màn hình, thêm ở
+đợt #257) và `bgm-freeze-orb.mp3` (loop riêng lúc Freeze active) — cùng toàn bộ hạ tầng phát nhạc nền
+trong `sound.ts`: `startHubAmbience`/`stopHubAmbience`/`setHubAmbienceDucked`, `startFreezeAmbience`/
+`stopFreezeAmbience`, `musicBus`/`musicVolumeGain`, `getMusicVolume`/`setMusicVolume`, và
+`MUSIC_VOLUME_KEY`. Xoá luôn 2 file mp3 khỏi `public/sounds/` (không còn nơi nào tham chiếu). Settings
+giờ chỉ còn 1 slider "Sound Effects" — bỏ hẳn slider "Music". Sound Editor (GameDevOption) bỏ dòng
+"Freeze BGM" (`ambience` source id). `SandCannonEngine.ts` bỏ 3 lệnh gọi Freeze BGM (`syncFreezeVisuals`,
+`returnToHub`, `dispose`) cùng import tương ứng.
+
+**2. Thêm SFX riêng cho 3 nút booster trong tray.** Trước đó cả 3 nút chỉ phát `uiClick` — tiếng "tách"
+tổng hợp chung với mọi nút khác trong app, không phân biệt được đang bấm booster nào. Thêm 3
+`SoundEvent` mới trong `sound.ts` — `boosterRadius`/`boosterPrism`/`boosterChain`, mỗi cái một mixer
+riêng trong Sound Editor — mỗi cái một chất liệu âm khác hẳn nhau thay vì chỉ đổi cao độ:
+
+- **Radius Overcharge** (`playBoosterRadius`): sawtooth quét từ 140Hz lên 420Hz + noise mở filter từ
+  500Hz lên 2400Hz cùng lúc — đọc như một thứ đang "phình to", khớp hiệu ứng nới bán kính sort.
+- **Prism Shot** (`playBoosterPrism`): 3 nốt triangle sáng (C6-E6-G6) dồn dập cách nhau 50ms + lấp lánh
+  noise dải cao cuối cùng — một chuỗi "sparkle" ngắn, khớp phát bắn đổi màu cầu vồng.
+- **Chain Sort** (`playBoosterChain`): 4 tick noise nhanh cách nhau 45ms (như mắt xích va lách cách)
+  rồi chốt một nốt square trầm dần — đọc như "xích siết lại".
+
+Nối vào nút thật qua cùng cơ chế `data-sound` có sẵn cho `purchase` (delegated click listener trong
+`SandGame.tsx`) — mỗi nút booster set `data-sound="boosterRadius"/"boosterPrism"/"boosterChain"` khi
+còn charge để arm/cancel, đổi sang `"purchase"` khi hết charge và nút chuyển thành "mua ngay" (đã có
+kaching riêng, không đổi). Phát ở MỌI lần chạm nút — cả arm lẫn cancel — không chỉ lúc arm thành công.
+
+Xem luật đầy đủ ở GDD.md §13.7.
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên dev server: Settings chỉ còn 1 slider Sound Effects,
+Sound Editor liệt kê đủ 3 dòng booster (không còn "Freeze BGM"), bấm từng nút Radius/Prism trong màn
+chơi không phát lỗi console.
+
+## 260. Xóa glow + breath effect của cụm cát cô lập nhỏ (13/09)
+
+Trên request: "xóa tính năng hiện glow có breath effect với những hạt cát có grain pixel thấp từ 1-3".
+Gỡ hẳn tính năng thêm ở đợt #258 (GDD §12.7, nay xoá).
+
+Xoá khỏi `SandCannonEngine.ts`: cả pass flood-fill + vẽ halo trong `redrawSand()` (phát hiện cụm ≤4
+hạt cô lập màu, vẽ halo 2 lớp quanh mỗi cụm), hai field trạng thái `clusterGlowElapsed`/
+`clusterGlowStrength` cùng đoạn cập nhật breathing mỗi fixed step, và toàn bộ hằng số
+`CLUSTER_GLOW_*` (`MAX_SIZE`, `HZ`, `CYCLE_SECONDS`, `FLOOR`, `CEILING`, `INNER_ALPHA`,
+`OUTER_ALPHA`). `NEIGHBOR_OFFSETS` (4-hướng orthogonal) vẫn giữ nguyên — dùng chung với pass viền
+"shoot here" (idle hint) khác, không phải riêng cho cluster glow.
+
+Thuần render, không đụng `resolveShot`/settle nào — GDD.md §12.7 xoá hẳn, không còn mục nào tham chiếu
+tới nó.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175.

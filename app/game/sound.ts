@@ -1,17 +1,17 @@
 // Mostly procedural sound effects, synthesised live — same reasoning as
-// `haptics.ts`'s vibration patterns. The exceptions are the six recordings
+// `haptics.ts`'s vibration patterns. The exceptions are the five recordings
 // layered in below (`public/shop` already set the precedent of shipping
 // binary assets): `soundSandPour` under the settle animation,
 // `playBulletOnSand` under `playImpact`, `soundButtonClick` for the bottom
-// hub nav, `playWrongColor` for a shot that sorted nothing, `playChestOpen`
-// for the progression chest's lid, and `startFreezeAmbience`'s own looping
-// track for the Freeze phase — each because a synthesised stand-in never
-// quite sold the real thing the way these do. Ambient background music is
-// not otherwise a thing here any more: the old always-on generative drone
-// was pulled outright (2026-09aa — see `startFreezeAmbience`'s own comment).
+// hub nav, `playWrongColor` for a shot that sorted nothing, and
+// `playChestOpen` for the progression chest's lid — each because a
+// synthesised stand-in never quite sold the real thing the way these do.
+// There is no background music of any kind here (2026-09ae ask: "Xóa BGM
+// luôn" — pulled outright, both the Freeze-phase loop and the always-on hub
+// loop that had replaced the original always-on generative drone; see
+// CHANGELOG-prototype.md).
 
 const SFX_VOLUME_KEY = "cannon-sort:v1:sfx-volume";
-const MUSIC_VOLUME_KEY = "cannon-sort:v1:music-volume";
 const DEFAULT_VOLUME = 1;
 
 export type SoundEvent =
@@ -19,30 +19,37 @@ export type SoundEvent =
   | "wrongColor"
   | "bodyCleared"
   | "win"
+  | "frameCleared"
   | "lose"
   | "uiClick"
   | "purchase"
-  | "chestOpen";
+  | "chestOpen"
+  | "boosterRadius"
+  | "boosterPrism"
+  | "boosterChain";
 
 // ---- per-source mixer (GameDevOption's Sound Editor) -----------------
-// One multiplier per distinct sound source, on top of the player-facing
-// Music/SFX sliders above — those two balance music against everything
-// else, this balances the "everything else" against itself. Dev-only: a
-// tester reaching for "make the pour louder" shouldn't have to touch code.
+// One multiplier per distinct sound source, on top of the player-facing SFX
+// slider above (there is no Music slider any more — no BGM left to balance
+// against it). Dev-only: a tester reaching for "make the pour louder"
+// shouldn't have to touch code.
 
 export const SOUND_SOURCE_IDS = [
   "impact",
   "wrongColor",
   "bodyCleared",
   "win",
+  "frameCleared",
   "lose",
   "sandLanded",
   "sandPour",
-  "ambience",
   "buttonClick",
   "uiClick",
   "purchase",
   "chestOpen",
+  "boosterRadius",
+  "boosterPrism",
+  "boosterChain",
 ] as const;
 
 export type SoundSourceId = (typeof SOUND_SOURCE_IDS)[number];
@@ -133,14 +140,9 @@ function readStoredVolume(key: string) {
 }
 
 let sfxVolume = readStoredVolume(SFX_VOLUME_KEY);
-let musicVolume = readStoredVolume(MUSIC_VOLUME_KEY);
 
 export function getSfxVolume() {
   return sfxVolume;
-}
-
-export function getMusicVolume() {
-  return musicVolume;
 }
 
 export function soundSupported() {
@@ -159,32 +161,6 @@ export function setSfxVolume(next: number) {
   if (sfxVolumeGain) sfxVolumeGain.gain.value = sfxVolume;
 }
 
-export function setMusicVolume(next: number) {
-  musicVolume = clampVolume(next);
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(MUSIC_VOLUME_KEY, String(musicVolume));
-    } catch {
-      // The preference just will not survive a reload.
-    }
-  }
-  if (musicVolumeGain) musicVolumeGain.gain.value = musicVolume;
-  // Dropping to silent stops the Freeze BGM and the hub's own BGM outright
-  // rather than leaving either running at a gain of 0 — no point paying to
-  // keep a buffer source alive nobody can hear. Raising it back up resumes
-  // exactly where `startFreezeAmbience`/`startHubAmbience` always resume
-  // from, but only for whichever was actually running (`freezeBgmWanted`/
-  // `hubBgmWanted`) — the `*Source` teardown (not the outer `stop*`) so
-  // those flags survive the mute for this to check.
-  if (musicVolume <= 0) {
-    stopFreezeAmbienceSource(true);
-    stopHubAmbienceSource(true);
-  } else {
-    if (freezeBgmWanted && !freezeBgmSource) startFreezeAmbience();
-    if (hubBgmWanted && !hubBgmSource) startHubAmbience();
-  }
-}
-
 // ---- the shared audio graph -----------------------------------------------
 // One AudioContext, one master bus, for the whole page — a fresh context per
 // engine instance would each fight to unlock separately and would leak nodes
@@ -198,13 +174,11 @@ function audioContextCtor(): typeof AudioContext | undefined {
 
 let ctx: AudioContext | null = null;
 let sfxBus: GainNode | null = null;
-let musicBus: GainNode | null = null;
-/** The player-facing volume knobs, downstream of `sfxBus`/`musicBus`'s own
- * internal balance/fade gains rather than replacing them, so the settings
- * sliders never fight with `startAmbience`'s fade-in or `soundSandPour`'s
- * fade-out — each just multiplies whatever those already produce. */
+/** The player-facing volume knob, downstream of `sfxBus`'s own internal
+ * balance gain rather than replacing it, so the settings slider never
+ * fights with `soundSandPour`'s own fade-out — it just multiplies whatever
+ * that already produces. */
 let sfxVolumeGain: GainNode | null = null;
-let musicVolumeGain: GainNode | null = null;
 let noiseBufferCache: AudioBuffer | null = null;
 
 function getContext(): AudioContext | null {
@@ -221,19 +195,6 @@ function getContext(): AudioContext | null {
   sfxVolumeGain.gain.value = sfxVolume;
   sfxBus.connect(sfxVolumeGain);
   sfxVolumeGain.connect(master);
-  musicBus = ctx.createGain();
-  // A plain passthrough bus — every BGM voice (Freeze's, the hub's) rides
-  // its own per-source gain node into this, then `musicVolumeGain` below
-  // applies the player's actual Music slider on top. This used to read `0`
-  // (silencing every BGM voice at the bus stage regardless of its own gain
-  // ramp) — a leftover from ripping out the old always-on generative pad
-  // that nothing since caught, since nobody had a second real BGM track to
-  // notice the first one was inaudible past its per-source gain.
-  musicBus.gain.value = 1;
-  musicVolumeGain = ctx.createGain();
-  musicVolumeGain.gain.value = musicVolume;
-  musicBus.connect(musicVolumeGain);
-  musicVolumeGain.connect(master);
   attachUnlockListeners(ctx);
   return ctx;
 }
@@ -529,6 +490,57 @@ function playWin(audio: AudioContext) {
   tone(audio, { type: "sine", freq: notes[2], duration: 0.9, peakGain: 0.1 * g, delay: notes.length * 0.1, bus: sfxBus! });
 }
 
+/**
+ * The "FRAME CLEARED!" card's own fanfare (2026-09ac ask: "UI frame cleared
+ * thiếu sound... sound kiểu hân hoan, kèn vang lên") — `playWin` above
+ * already fires the instant a WIN result comes back, but that is well before
+ * the card itself appears: `SandGame.tsx` holds the card off screen for the
+ * engine's own spin reveal (`playWinReveal`/`WIN_REVEAL_HOLD_MS`), so by the
+ * time the card is on screen `playWin`'s own run has long since finished and
+ * the card lands in silence. This plays instead, timed to that reveal
+ * ending (see the `sound("frameCleared")` call next to `setWinReveal(false)`
+ * in SandGame.tsx) — a short brassy trumpet-style fanfare (sawtooth voices,
+ * not `playWin`'s soft triangle pentatonic) so the moment the card actually
+ * appears gets its own distinct "ta-da" rather than reusing the same run.
+ */
+function playFrameCleared(audio: AudioContext) {
+  const g = getSourceGain("frameCleared");
+  const fanfare = [523.25, 523.25, 659.25, 783.99]; // C5 C5 E5 G5 — a short herald call
+  fanfare.forEach((freq, index) => {
+    tone(audio, {
+      type: "sawtooth",
+      freq,
+      duration: index === fanfare.length - 1 ? 0.5 : 0.11,
+      peakGain: 0.2 * g,
+      delay: index * 0.12,
+      bus: sfxBus!,
+    });
+    // A fifth stacked on top of each herald note for a brassier, chord-like
+    // body instead of a single bare tone — quieter than the root so it reads
+    // as harmonic shimmer, not a second competing melody.
+    tone(audio, {
+      type: "square",
+      freq: freq * 1.5,
+      duration: index === fanfare.length - 1 ? 0.5 : 0.11,
+      peakGain: 0.09 * g,
+      delay: index * 0.12,
+      bus: sfxBus!,
+    });
+  });
+  // A bright noise "shimmer" under the final held note, like a light cymbal
+  // crash landing with the last horn blast.
+  noiseHit(audio, {
+    duration: 0.4,
+    peakGain: 0.1 * g,
+    filterType: "bandpass",
+    filterFreq: 5000,
+    filterFreqEnd: 3000,
+    filterQ: 0.8,
+    delay: (fanfare.length - 1) * 0.12,
+    bus: sfxBus!,
+  });
+}
+
 function playLose(audio: AudioContext) {
   const g = getSourceGain("lose");
   const notes = [392.0, 349.23, 293.66]; // G4 F4 D4 — a short, unhurried fall
@@ -584,6 +596,85 @@ function playPurchase(audio: AudioContext) {
     delay: 0.045,
     bus: sfxBus!,
   });
+}
+
+// ---- the three booster buttons' own tap sounds ---------------------------
+// One distinct cue per booster (2026-09ae ask: "Thêm SFX khi nhấn vào 3
+// booster, mỗi booster có SFX khác nhau") — each shaped after what the
+// booster actually does rather than reusing `playUiClick`'s generic "cạch",
+// so a player can start to recognise which one they just armed by ear alone.
+// Fires on every tap of a booster's own button (arming OR cancelling it —
+// `armBooster` in SandGame.tsx toggles either way), not gated on the arm
+// actually taking effect: same reasoning as `playUiClick`, a button that
+// visibly cannot respond already reads as disabled, so tapping it staying
+// silent (rather than these) is fine — see the `disabled` condition next to
+// the booster buttons themselves.
+
+/**
+ * Radius Overcharge: a rising, widening "power up" sweep — a low sawtooth
+ * gliding up in pitch alongside a noise swell opening its own filter, both
+ * landing together at the top. Reads as something *expanding*, matching the
+ * booster's own bigger-blast-radius effect.
+ */
+function playBoosterRadius(audio: AudioContext) {
+  const g = getSourceGain("boosterRadius");
+  tone(audio, { type: "sawtooth", freq: 140, freqEnd: 420, duration: 0.22, peakGain: 0.22 * g, bus: sfxBus! });
+  noiseHit(audio, {
+    duration: 0.22,
+    peakGain: 0.14 * g,
+    filterType: "bandpass",
+    filterFreq: 500,
+    filterFreqEnd: 2400,
+    filterQ: 1.2,
+    bus: sfxBus!,
+  });
+}
+
+/**
+ * Prism Shot: three quick, bright triangle notes in rapid succession
+ * (rather than `playWin`'s slower stagger) each a little higher than the
+ * last, plus a light high-frequency shimmer — a small "sparkle" run
+ * matching the booster's own rainbow/multi-colour shot.
+ */
+function playBoosterPrism(audio: AudioContext) {
+  const g = getSourceGain("boosterPrism");
+  const notes = [1046.5, 1318.5, 1568.0]; // C6 E6 G6 — a bright rising sparkle
+  notes.forEach((freq, index) => {
+    tone(audio, { type: "triangle", freq, duration: 0.09, peakGain: 0.2 * g, delay: index * 0.05, bus: sfxBus! });
+  });
+  noiseHit(audio, {
+    duration: 0.15,
+    peakGain: 0.08 * g,
+    filterType: "bandpass",
+    filterFreq: 7000,
+    filterFreqEnd: 9000,
+    filterQ: 2,
+    delay: notes.length * 0.05,
+    bus: sfxBus!,
+  });
+}
+
+/**
+ * Chain Sort: a fast, rattling run of short percussive ticks (like links
+ * clacking one after another) that snaps into a single lower, held note —
+ * the "chain" catching and pulling taut — rather than either other
+ * booster's smooth tone-based shape.
+ */
+function playBoosterChain(audio: AudioContext) {
+  const g = getSourceGain("boosterChain");
+  const tickCount = 4;
+  for (let i = 0; i < tickCount; i += 1) {
+    noiseHit(audio, {
+      duration: 0.04,
+      peakGain: 0.16 * g,
+      filterType: "bandpass",
+      filterFreq: 1800,
+      filterQ: 3,
+      delay: i * 0.045,
+      bus: sfxBus!,
+    });
+  }
+  tone(audio, { type: "square", freq: 220, freqEnd: 110, duration: 0.16, peakGain: 0.18 * g, delay: tickCount * 0.045, bus: sfxBus! });
 }
 
 // ---- the fifth recorded sample: a treasure chest opening -----------------
@@ -711,10 +802,14 @@ const SOUND_EFFECTS: Record<SoundEvent, (audio: AudioContext, scale?: number) =>
   wrongColor: playWrongColor,
   bodyCleared: playBodyCleared,
   win: playWin,
+  frameCleared: playFrameCleared,
   lose: playLose,
   chestOpen: playChestOpen,
   uiClick: playUiClick,
   purchase: playPurchase,
+  boosterRadius: playBoosterRadius,
+  boosterPrism: playBoosterPrism,
+  boosterChain: playBoosterChain,
 };
 
 /**
@@ -891,253 +986,9 @@ export function soundButtonClick() {
   });
 }
 
-// ---- Freeze phase's own background music --------------------------------
-// Used to be an always-on generative pad (a two-oscillator drone plus random
-// bell notes) playing through every level regardless of what was happening
-// on screen. Pulled entirely on request (2026-09aa: "Tắt cái background
-// noise mà có tiếng ồn trắng, nghe rất ù và chói tai") and replaced with a
-// real recording that only plays for the one state that actually calls for
-// its own music: Freeze. `startFreezeAmbience`/`stopFreezeAmbience` are
-// called from `SandCannonEngine.ts`'s `syncFreezeVisuals`, exactly when
-// frozen-vs-not flips — see that function's own comment.
-
-const FREEZE_BGM_URL = "/sounds/bgm-freeze-orb.mp3";
-
-let freezeBgmBuffer: AudioBuffer | null = null;
-let freezeBgmLoading: Promise<AudioBuffer | null> | null = null;
-
-function loadFreezeBgmBuffer(audio: AudioContext): Promise<AudioBuffer | null> {
-  if (freezeBgmBuffer) return Promise.resolve(freezeBgmBuffer);
-  if (freezeBgmLoading) return freezeBgmLoading;
-  freezeBgmLoading = fetch(FREEZE_BGM_URL)
-    .then((res) => res.arrayBuffer())
-    .then((data) => audio.decodeAudioData(data))
-    .then((buffer) => {
-      freezeBgmBuffer = buffer;
-      return buffer;
-    })
-    .catch(() => null);
-  return freezeBgmLoading;
-}
-
-let freezeBgmSource: AudioBufferSourceNode | null = null;
-let freezeBgmGain: GainNode | null = null;
-/** Same job `ambienceWanted` used to do for the old drone: remembered so
- * raising Music volume back up from 0 while still frozen resumes this,
- * rather than staying silent until the next freeze. */
-let freezeBgmWanted = false;
-
-/**
- * Starts the Freeze BGM loop, or remembers to once volume/the buffer are
- * available — `setMusicVolume` calls this again once its condition is met.
- * A board that freezes before the very first tap still gets it the moment
- * audio unlocks too: `syncFreezeVisuals` already called this once (setting
- * `freezeBgmWanted`), it just could not create/start any nodes yet without a
- * context; `attachUnlockListeners`' own `resume()` on that first tap is what
- * lets the source node this call already scheduled actually start producing
- * sound, no second call needed.
- */
-export function startFreezeAmbience() {
-  freezeBgmWanted = true;
-  // The hub's own BGM (below) plays continuously otherwise — ducked, not
-  // stopped, for as long as Freeze's own track is meant to be heard instead,
-  // so the two never talk over each other.
-  setHubAmbienceDucked(true);
-  if (musicVolume <= 0 || freezeBgmSource) return;
-  const audio = getContext();
-  if (!audio || !musicBus) return;
-  loadFreezeBgmBuffer(audio).then((buffer) => {
-    // Re-checked after the async load: Freeze could have already ended (or
-    // Music muted again) by the time the buffer arrives.
-    if (!buffer || !freezeBgmWanted || freezeBgmSource || musicVolume <= 0 || !musicBus) return;
-    try {
-      const source = audio.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      const gain = audio.createGain();
-      const start = audio.currentTime;
-      gain.gain.setValueAtTime(0, start);
-      // A slow fade-in rather than a jump-cut into it — Freeze itself starts
-      // with its own frame-colour ripple (`beginFreezeVisualsTransition`),
-      // so the music easing in alongside that reads as one coordinated
-      // event instead of the audio snapping in ahead of the visual.
-      gain.gain.linearRampToValueAtTime(getSourceGain("ambience"), start + 1.5);
-      source.connect(gain);
-      gain.connect(musicBus);
-      source.start(start);
-      freezeBgmSource = source;
-      freezeBgmGain = gain;
-    } catch {
-      // Same reasoning as every other voice here.
-    }
-  });
-}
-
-/** The actual teardown, shared by `stopFreezeAmbience` (Freeze genuinely
- * ending — forgets `freezeBgmWanted`) and `setMusicVolume` (muting to 0 —
- * keeps it, so raising the slider back up mid-Freeze knows to restart). */
-function stopFreezeAmbienceSource(immediate: boolean) {
-  if (!ctx || !freezeBgmSource) return;
-  const audio = ctx;
-  const source = freezeBgmSource;
-  const gain = freezeBgmGain;
-  freezeBgmSource = null;
-  freezeBgmGain = null;
-  const fadeSeconds = immediate ? 0.05 : 1.0;
-  const stopAt = audio.currentTime + fadeSeconds;
-  if (gain) {
-    gain.gain.cancelScheduledValues(audio.currentTime);
-    gain.gain.setValueAtTime(gain.gain.value, audio.currentTime);
-    gain.gain.linearRampToValueAtTime(0.0001, stopAt);
-  }
-  try {
-    source.stop(stopAt + 0.05);
-  } catch {
-    // Already stopped/never started — nothing to do.
-  }
-}
-
-/**
- * Stops the Freeze BGM for good — used when Freeze actually ends.
- * `immediate` skips the fade-out — used when the player mutes sound
- * entirely, where a lingering tail would contradict the toggle they just
- * flipped; Freeze ending normally fades instead.
- */
-export function stopFreezeAmbience(immediate = false) {
-  freezeBgmWanted = false;
-  stopFreezeAmbienceSource(immediate);
-  setHubAmbienceDucked(false);
-}
-
-// ---- The game's own continuous background music --------------------------
-// On request ("Thêm BGM, tôi muốn có một bgm phải Zen, thư giãn, và dễ
-// chịu"): one calm ambient loop playing behind every screen — every level,
-// every menu — for the whole session, not gated to one phase the way
-// Freeze's own track above is. `SandGame.tsx` calls `startHubAmbience` once
-// on mount; nothing ever calls `stopHubAmbience` in the ordinary course of
-// play (there is no "hub phase ends" moment the way Freeze has one) — it
-// only ducks to silence for the span Freeze's own BGM is meant to be heard
-// instead (`setHubAmbienceDucked`, called from `startFreezeAmbience`/
-// `stopFreezeAmbience` above), same buffer-cache/fade-in/fade-out shape as
-// that track otherwise.
-
-const HUB_BGM_URL = "/sounds/bgm-hub.mp3";
-
-let hubBgmBuffer: AudioBuffer | null = null;
-let hubBgmLoading: Promise<AudioBuffer | null> | null = null;
-
-function loadHubBgmBuffer(audio: AudioContext): Promise<AudioBuffer | null> {
-  if (hubBgmBuffer) return Promise.resolve(hubBgmBuffer);
-  if (hubBgmLoading) return hubBgmLoading;
-  hubBgmLoading = fetch(HUB_BGM_URL)
-    .then((res) => res.arrayBuffer())
-    .then((data) => audio.decodeAudioData(data))
-    .then((buffer) => {
-      hubBgmBuffer = buffer;
-      return buffer;
-    })
-    .catch(() => null);
-  return hubBgmLoading;
-}
-
-let hubBgmSource: AudioBufferSourceNode | null = null;
-let hubBgmGain: GainNode | null = null;
-/** Same "remembered so raising Music volume back up resumes it" job
- * `freezeBgmWanted` does for Freeze's own track — set once for the whole
- * session, the first time `startHubAmbience` runs. */
-let hubBgmWanted = false;
-/** True for the span Freeze's own BGM is meant to be the only one audible —
- * see `setHubAmbienceDucked`. */
-let hubBgmDucked = false;
-
-/**
- * Starts the hub's own BGM loop, or remembers to once volume/the buffer are
- * available — same "call again later, it picks up where it left off" shape
- * as `startFreezeAmbience`, and for the same reason (the very first call can
- * land before the AudioContext exists or before the first user gesture has
- * unlocked it).
- */
-export function startHubAmbience() {
-  hubBgmWanted = true;
-  if (musicVolume <= 0 || hubBgmSource) return;
-  const audio = getContext();
-  if (!audio || !musicBus) return;
-  loadHubBgmBuffer(audio).then((buffer) => {
-    // Re-checked after the async load: Music could have been muted, or this
-    // could already be running, by the time the buffer arrives.
-    if (!buffer || !hubBgmWanted || hubBgmSource || musicVolume <= 0 || !musicBus) return;
-    try {
-      const source = audio.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      const gain = audio.createGain();
-      const start = audio.currentTime;
-      gain.gain.setValueAtTime(0, start);
-      // Starts already-ducked if Freeze happened to already be running the
-      // instant this first loads in (an edge case, but a real one — the
-      // buffer fetch is async and Freeze's own start is not gated on it).
-      gain.gain.linearRampToValueAtTime(hubBgmDucked ? 0 : getSourceGain("ambience"), start + 1.5);
-      source.connect(gain);
-      gain.connect(musicBus);
-      source.start(start);
-      hubBgmSource = source;
-      hubBgmGain = gain;
-    } catch {
-      // Same reasoning as every other voice here.
-    }
-  });
-}
-
-/** The actual teardown — same shape as `stopFreezeAmbienceSource`. */
-function stopHubAmbienceSource(immediate: boolean) {
-  if (!ctx || !hubBgmSource) return;
-  const audio = ctx;
-  const source = hubBgmSource;
-  const gain = hubBgmGain;
-  hubBgmSource = null;
-  hubBgmGain = null;
-  const fadeSeconds = immediate ? 0.05 : 1.0;
-  const stopAt = audio.currentTime + fadeSeconds;
-  if (gain) {
-    gain.gain.cancelScheduledValues(audio.currentTime);
-    gain.gain.setValueAtTime(gain.gain.value, audio.currentTime);
-    gain.gain.linearRampToValueAtTime(0.0001, stopAt);
-  }
-  try {
-    source.stop(stopAt + 0.05);
-  } catch {
-    // Already stopped/never started — nothing to do.
-  }
-}
-
-/** Stops the hub's own BGM for good. Nothing in the game calls this today
- * (see this section's own doc comment) — kept for symmetry with
- * `stopFreezeAmbience` and in case a future screen ever wants real silence
- * instead of a duck. */
-export function stopHubAmbience() {
-  hubBgmWanted = false;
-  stopHubAmbienceSource(true);
-}
-
-/** Ducks the hub's own BGM to silence, or restores it, without stopping the
- * source outright — cheaper and smoother than a full stop/restart for a
- * duck that only lasts as long as one Freeze phase. A no-op if the hub BGM
- * hasn't actually started yet (`hubBgmDucked` still records the intent, so
- * whichever start path runs later — `startHubAmbience`'s own buffer-load
- * continuation — picks it up). */
-function setHubAmbienceDucked(ducked: boolean) {
-  hubBgmDucked = ducked;
-  if (!ctx || !hubBgmGain) return;
-  const audio = ctx;
-  const target = ducked ? 0.0001 : getSourceGain("ambience");
-  hubBgmGain.gain.cancelScheduledValues(audio.currentTime);
-  hubBgmGain.gain.setValueAtTime(hubBgmGain.gain.value, audio.currentTime);
-  hubBgmGain.gain.linearRampToValueAtTime(target, audio.currentTime + 1.0);
-}
-
-/** Suspends the whole audio graph — used when the tab goes hidden, so
- * ambience does not keep playing (and drifting out of its own schedule)
- * behind a background tab. */
+/** Suspends the whole audio graph — used when the tab goes hidden, so a
+ * still-decaying one-shot does not keep ringing on (and drifting out of its
+ * own schedule) behind a background tab. */
 export function suspendSound() {
   ctx?.suspend().catch(() => {});
 }

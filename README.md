@@ -1,5 +1,13 @@
 # 3D Sand Cannon Sort — playable prototype
 
+## Bài nộp bắt buộc
+
+- [1. Sand Shooter. HTML.html](1.%20Sand%20Shooter.%20HTML.html) — file HTML playable duy nhất, đủ 50 màn.
+- [2. Beat chart.md](2.%20Beat%20chart.md) — cấu trúc 50 màn.
+- [3. AI_Collaboration_Log.md](3.%20AI_Collaboration_Log.md) — prompt, phản hồi, phương án chọn/sửa.
+- [4. GDD.md](4.%20GDD.md) — tài liệu thiết kế do AI viết.
+- [5. Danh sách nguồn asset.md](5.%20Danh%20sách%20nguồn%20asset.md) — nguồn asset ngoài và nội dung do AI tạo/chỉnh sửa.
+
 Prototype puzzle WebGL 3D theo brief `sand_cannon_concept.md`. Mỗi màn là một **bức tranh cát** vẽ
 sẵn (biểu tượng, phong cảnh, hoa văn...) nằm trong một khung tĩnh; người chơi bắn đạn màu từ một
 khẩu súng cát vào tranh, đạn lấy đi cát cùng màu quanh điểm chạm, cát còn lại rơi xuống theo trọng
@@ -8,7 +16,7 @@ bắn; đạn được nạp từ một **bánh xe màu** xoay vòng cho tới k
 bộ độ khó của một màn nằm ở ngân sách lượt bắn (`shotLimit`), không phải may rủi màu đạn.
 
 **Muốn hiểu thiết kế đầy đủ (vì sao, luật, thông số, beat chart 50 level, đường cong độ khó) chia
-theo từng vai trò (designer/artist/coder/UI-UX/level designer)** — đọc [GDD.md](GDD.md) thay vì
+theo từng vai trò (designer/artist/coder/UI-UX/level designer)** — đọc [4. GDD.md](4.%20GDD.md) thay vì
 README này; README chỉ là tổng quan kiến trúc.
 
 ## Có gì trong bản này
