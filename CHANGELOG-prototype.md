@@ -9381,3 +9381,83 @@ DOM; không còn "$1.99" nào xuất hiện trong Shop (Coins lẫn Hearts).
 
 **Tổng kết đợt #253-256:** luật ổn định cập nhật ở GDD.md §13.3 (rìa khung tranh), §13.7 (floor sound/
 haptic riêng), §13.8 (fade-out dialog, mục mới), và §10.7 (Shop — số mốc Coins/Hearts, layout 3/dòng).
+
+## 257. Khoá joystick trong FTUE; Freeze Orb tutorial dạng tự bắn; BGM Zen xuyên game; Shop khoá kéo ngang; nền Modes nâu nhạt; level editor Zen ra file riêng (13/09)
+
+**1. Khoá joystick khi overlay FTUE đang mở, chỉ cho nhấn nút booster/orb.** Bug cũ: overlay
+`is-noninteractive` (cặp Radius/Prism, Chain Sort) tắt `pointer-events` trên CHÍNH overlay để chạm
+xuyên tới nút thật trong tray — nhưng `pointer-events: none` xuyên qua MỌI toạ độ nó phủ, nên một cú
+kéo ngay trên `.aim-zone` (nằm dưới overlay) vẫn vô tình bắn được, dù ý đồ chỉ là "được nhấn nút, không
+được bắn". Thêm `SandCannonEngine.setAimLocked(boolean)` — cờ riêng `canStartAim()` kiểm tra, bật đúng
+lúc `freezeFtueStep === "intro"` hoặc `boosterFtueStep`/`chainSortFtueStep` ở bước `intro-*`.
+
+**2. Freeze Orb tutorial (level 31) viết lại theo đúng flow 3 booster kia.** Bỏ hẳn bản cũ
+`intro → demo-freeze → explain-thaw → demo-clear → outro` (2 bước tự bắn hộ bằng
+`runScriptedShotSequence`, xoá luôn khỏi `SandCannonEngine.ts` cùng `runScriptedShot`/
+`waitUntilReadyToAim`/`SCRIPTED_AIM_POINTER_ID`). `freezeFtueStep` giờ chỉ còn `intro → shoot → null`:
+`intro` là overlay chặn hẳn + spotlight khoanh ô trigger (tap-to-continue, vì đây là một Ô TRÊN BOARD
+chứ không phải nút UI để chạm xuyên); `shoot` để người chơi tự ngắm/tự bắn. Bắn KHÔNG trúng đúng ô
+trigger → không tính là một phát (`SandCannonEngine.setFtueFreezeAimActive(true)` chặn `handleImpact`
+gọi `resolveShot` thật, phát `FREEZE_FTUE_NUDGE` cho React hiện toast nhắc bắn lại đúng ô, không đụng
+ammo/queue/`shotsUsed`). Bắn trúng → đi qua `resolveShot` như phát thật, tự kích hoạt Freeze, trả lại
+quyền điều khiển sau khi settle 1s, không còn bước "outro".
+
+**3. Thêm BGM Zen xuyên suốt game — `bgm-hub.mp3`.** Trên request "Thêm BGM, tôi muốn có một bgm phải
+Zen, thư giãn, và dễ chịu": tải "Stress Relief" (MarloweMusic, Pixabay Content License, 2:15) về
+`public/sounds/bgm-hub.mp3`. `startHubAmbience()` gọi một lần lúc `SandGame.tsx` mount, phát liên tục ở
+mọi màn hình (không theo level/`runId` như engine). Ducking (không dừng hẳn) trong lúc Freeze's own BGM
+đang chạy — `setHubAmbienceDucked` gọi từ `startFreezeAmbience`/`stopFreezeAmbience`, fade 1s mỗi
+chiều, hai bài không bao giờ chồng tiếng. **Sửa luôn 1 bug có sẵn:** `musicBus` (gain gốc mọi BGM đi
+qua) bị set cứng `gain.value = 0` từ đợt bỏ drone cũ — nghĩa là **`bgm-freeze-orb.mp3` trước giờ chưa
+từng thực sự phát ra tiếng** dù code đã đúng hết, chỉ vì chưa ai có BGM thứ 2 để phát hiện ra. Đổi về
+`1`.
+
+**4. Shop: khoá kéo ngang.** `.shop-scroll` chỉ set `overflow-y: auto`, `overflow-x` rơi về mặc định
+`visible` — theo spec CSS tự tính lại thành `auto`, nên bất kỳ phần tử con lỡ rộng hơn khung vài px
+(glow của offer card, badge tràn nhẹ) cũng kéo ngang được, trên request "trong giao diện shop, người
+chơi có thể kéo left right và tôi không thích điều đó". Thêm thẳng `overflow-x: hidden` +
+`touch-action: pan-y`.
+
+**5. Nền màn Modes đổi nâu nhạt.** `.modes-screen` không dùng chung `--hub-navy` (biến ivory share với
+Gallery) nữa — override riêng `background: #e8d3ae`.
+
+**6. Level editor Zen Mode ship vào file riêng.** Trên request "level editor cho Zen Mode, nó nên lưu
+vào 1 file ts riêng và các level trong zen mode sẽ dựa trên file đó": thêm
+`design/levels/zen-custom-levels.ts` (khối `EDITOR_ZEN_LEVELS` của riêng nó), `zen-levels.ts`'s
+`BUILT_IN_ZEN_LEVELS` spread khối này vào sau 3 tranh hạt giống. `scripts/level-writer.mjs` thêm route
+`POST /ship-zen-levels` ghi riêng vào file này. Nút "Ship all levels to sand-levels.ts" trong editor
+giờ loại trừ hẳn draft `mode: "zen"`; thay bằng nút riêng "Ship all Zen levels to
+zen-custom-levels.ts" cho các draft Zen — trước đây draft Zen lỡ lọt chung vào `EDITOR_LEVELS` của
+`sand-levels.ts` dù chưa từng thực sự hiển thị ở danh sách chính (`collectPlayables` đã lọc), chỉ nằm
+đó như dữ liệu chết sai luật (unlimited shots/booster).
+
+Xem luật đầy đủ ở GDD.md §13.4 (FTUE — cả 4 cơ chế + khoá joystick), §13.7 (BGM xuyên game +
+bug `musicBus`), §10.7 (Shop — khoá kéo ngang), §16.5 (Modes — nền nâu nhạt + Zen editor file riêng).
+
+**Test:** `tsc --noEmit` sạch. Verify sống trên dev server: Shop không còn kéo ngang được
+(`scrollWidth` 396 > `clientWidth` 367 nhưng `overflow-x: hidden` chặn đứng), màn Modes nền nâu nhạt.
+
+## 258. Cụm cát cô lập nhỏ (1-4 hạt) tự glow theo màu, có breath effect (13/09)
+
+Trên request: "Đối với những hạt cát có cụm ít, từ 1-4 grain và không có phần cát cùng màu kế bên HOẶC
+tất cả cát xung quanh nó đều là khác màu, hãy cho 1 màu glow xung quanh nó theo màu của nó, glow hiện
+có breath effect".
+
+**Phát hiện cụm:** `redrawSand()` (`SandCannonEngine.ts`) flood fill sống mỗi frame trên `this.cells`
+theo màu + kề cạnh 4 hướng (`NEIGHBOR_OFFSETS`, cùng rule bevel Wall/Key/Freeze) — cụm ≤4 hạt
+(`CLUSTER_GLOW_MAX_SIZE`) được đánh dấu glow. Cố tình không dùng `cell.bodyId` có sẵn vì field đó chỉ
+đồng bộ lại đúng lúc bước settle `REINDEX` chạy, có thể "cũ" giữa lúc cát đang rơi.
+
+**Vẽ halo 2 lớp** quanh mỗi cụm hợp lệ bằng đúng màu của nó — ring 1 (8 ô sát cạnh) đậm hơn ring 2 (1 ô
+xa thêm), thay cho gaussian blur thật (texture cát dùng `NearestFilter`, không có blur mượt). Chỉ vẽ
+vào ô trống thật sự — bỏ qua cát/Wall/Freeze trigger đã chiếm chỗ, không đè màu lên pixel khác.
+
+**Breath effect độc lập, luôn chạy** (không mượn `idleHighlightStrength` — cơ chế cũ chỉ chạy sau idle
+và chỉ cho màu đạn đang cầm): `clusterGlowElapsed` cộng dồn trong `step()`, sine breathe chu kỳ ~2s,
+biên độ 35%-100% — không bao giờ tắt hẳn, chỉ mờ rồi sáng lại.
+
+Xem luật đầy đủ ở GDD.md §12.7.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175 (thuần render, không đụng `sand-rules.ts`). Verify
+sống trên dev server bằng hook debug tạm: cụm nhỏ + số ô halo khớp kỳ vọng trên level 20 (mưa/mây rải
+rác), breathing dao động đúng 0.35 → 1.0 → 0.35 qua nhiều lần lấy mẫu.

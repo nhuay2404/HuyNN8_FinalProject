@@ -169,14 +169,20 @@ export function setMusicVolume(next: number) {
     }
   }
   if (musicVolumeGain) musicVolumeGain.gain.value = musicVolume;
-  // Dropping to silent stops the Freeze BGM outright rather than leaving it
-  // running at a gain of 0 — no point paying to keep a buffer source alive
-  // nobody can hear. Raising it back up resumes exactly where
-  // `startFreezeAmbience` always resumes from, but only if Freeze is still
-  // actually running (`freezeBgmWanted`) — `stopFreezeAmbienceSource` (not
-  // `stopFreezeAmbience`) so that flag survives the mute for this to check.
-  if (musicVolume <= 0) stopFreezeAmbienceSource(true);
-  else if (freezeBgmWanted && !freezeBgmSource) startFreezeAmbience();
+  // Dropping to silent stops the Freeze BGM and the hub's own BGM outright
+  // rather than leaving either running at a gain of 0 — no point paying to
+  // keep a buffer source alive nobody can hear. Raising it back up resumes
+  // exactly where `startFreezeAmbience`/`startHubAmbience` always resume
+  // from, but only for whichever was actually running (`freezeBgmWanted`/
+  // `hubBgmWanted`) — the `*Source` teardown (not the outer `stop*`) so
+  // those flags survive the mute for this to check.
+  if (musicVolume <= 0) {
+    stopFreezeAmbienceSource(true);
+    stopHubAmbienceSource(true);
+  } else {
+    if (freezeBgmWanted && !freezeBgmSource) startFreezeAmbience();
+    if (hubBgmWanted && !hubBgmSource) startHubAmbience();
+  }
 }
 
 // ---- the shared audio graph -----------------------------------------------
@@ -216,7 +222,14 @@ function getContext(): AudioContext | null {
   sfxBus.connect(sfxVolumeGain);
   sfxVolumeGain.connect(master);
   musicBus = ctx.createGain();
-  musicBus.gain.value = 0;
+  // A plain passthrough bus — every BGM voice (Freeze's, the hub's) rides
+  // its own per-source gain node into this, then `musicVolumeGain` below
+  // applies the player's actual Music slider on top. This used to read `0`
+  // (silencing every BGM voice at the bus stage regardless of its own gain
+  // ramp) — a leftover from ripping out the old always-on generative pad
+  // that nothing since caught, since nobody had a second real BGM track to
+  // notice the first one was inaudible past its per-source gain.
+  musicBus.gain.value = 1;
   musicVolumeGain = ctx.createGain();
   musicVolumeGain.gain.value = musicVolume;
   musicBus.connect(musicVolumeGain);
@@ -926,6 +939,10 @@ let freezeBgmWanted = false;
  */
 export function startFreezeAmbience() {
   freezeBgmWanted = true;
+  // The hub's own BGM (below) plays continuously otherwise — ducked, not
+  // stopped, for as long as Freeze's own track is meant to be heard instead,
+  // so the two never talk over each other.
+  setHubAmbienceDucked(true);
   if (musicVolume <= 0 || freezeBgmSource) return;
   const audio = getContext();
   if (!audio || !musicBus) return;
@@ -989,6 +1006,133 @@ function stopFreezeAmbienceSource(immediate: boolean) {
 export function stopFreezeAmbience(immediate = false) {
   freezeBgmWanted = false;
   stopFreezeAmbienceSource(immediate);
+  setHubAmbienceDucked(false);
+}
+
+// ---- The game's own continuous background music --------------------------
+// On request ("Thêm BGM, tôi muốn có một bgm phải Zen, thư giãn, và dễ
+// chịu"): one calm ambient loop playing behind every screen — every level,
+// every menu — for the whole session, not gated to one phase the way
+// Freeze's own track above is. `SandGame.tsx` calls `startHubAmbience` once
+// on mount; nothing ever calls `stopHubAmbience` in the ordinary course of
+// play (there is no "hub phase ends" moment the way Freeze has one) — it
+// only ducks to silence for the span Freeze's own BGM is meant to be heard
+// instead (`setHubAmbienceDucked`, called from `startFreezeAmbience`/
+// `stopFreezeAmbience` above), same buffer-cache/fade-in/fade-out shape as
+// that track otherwise.
+
+const HUB_BGM_URL = "/sounds/bgm-hub.mp3";
+
+let hubBgmBuffer: AudioBuffer | null = null;
+let hubBgmLoading: Promise<AudioBuffer | null> | null = null;
+
+function loadHubBgmBuffer(audio: AudioContext): Promise<AudioBuffer | null> {
+  if (hubBgmBuffer) return Promise.resolve(hubBgmBuffer);
+  if (hubBgmLoading) return hubBgmLoading;
+  hubBgmLoading = fetch(HUB_BGM_URL)
+    .then((res) => res.arrayBuffer())
+    .then((data) => audio.decodeAudioData(data))
+    .then((buffer) => {
+      hubBgmBuffer = buffer;
+      return buffer;
+    })
+    .catch(() => null);
+  return hubBgmLoading;
+}
+
+let hubBgmSource: AudioBufferSourceNode | null = null;
+let hubBgmGain: GainNode | null = null;
+/** Same "remembered so raising Music volume back up resumes it" job
+ * `freezeBgmWanted` does for Freeze's own track — set once for the whole
+ * session, the first time `startHubAmbience` runs. */
+let hubBgmWanted = false;
+/** True for the span Freeze's own BGM is meant to be the only one audible —
+ * see `setHubAmbienceDucked`. */
+let hubBgmDucked = false;
+
+/**
+ * Starts the hub's own BGM loop, or remembers to once volume/the buffer are
+ * available — same "call again later, it picks up where it left off" shape
+ * as `startFreezeAmbience`, and for the same reason (the very first call can
+ * land before the AudioContext exists or before the first user gesture has
+ * unlocked it).
+ */
+export function startHubAmbience() {
+  hubBgmWanted = true;
+  if (musicVolume <= 0 || hubBgmSource) return;
+  const audio = getContext();
+  if (!audio || !musicBus) return;
+  loadHubBgmBuffer(audio).then((buffer) => {
+    // Re-checked after the async load: Music could have been muted, or this
+    // could already be running, by the time the buffer arrives.
+    if (!buffer || !hubBgmWanted || hubBgmSource || musicVolume <= 0 || !musicBus) return;
+    try {
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const gain = audio.createGain();
+      const start = audio.currentTime;
+      gain.gain.setValueAtTime(0, start);
+      // Starts already-ducked if Freeze happened to already be running the
+      // instant this first loads in (an edge case, but a real one — the
+      // buffer fetch is async and Freeze's own start is not gated on it).
+      gain.gain.linearRampToValueAtTime(hubBgmDucked ? 0 : getSourceGain("ambience"), start + 1.5);
+      source.connect(gain);
+      gain.connect(musicBus);
+      source.start(start);
+      hubBgmSource = source;
+      hubBgmGain = gain;
+    } catch {
+      // Same reasoning as every other voice here.
+    }
+  });
+}
+
+/** The actual teardown — same shape as `stopFreezeAmbienceSource`. */
+function stopHubAmbienceSource(immediate: boolean) {
+  if (!ctx || !hubBgmSource) return;
+  const audio = ctx;
+  const source = hubBgmSource;
+  const gain = hubBgmGain;
+  hubBgmSource = null;
+  hubBgmGain = null;
+  const fadeSeconds = immediate ? 0.05 : 1.0;
+  const stopAt = audio.currentTime + fadeSeconds;
+  if (gain) {
+    gain.gain.cancelScheduledValues(audio.currentTime);
+    gain.gain.setValueAtTime(gain.gain.value, audio.currentTime);
+    gain.gain.linearRampToValueAtTime(0.0001, stopAt);
+  }
+  try {
+    source.stop(stopAt + 0.05);
+  } catch {
+    // Already stopped/never started — nothing to do.
+  }
+}
+
+/** Stops the hub's own BGM for good. Nothing in the game calls this today
+ * (see this section's own doc comment) — kept for symmetry with
+ * `stopFreezeAmbience` and in case a future screen ever wants real silence
+ * instead of a duck. */
+export function stopHubAmbience() {
+  hubBgmWanted = false;
+  stopHubAmbienceSource(true);
+}
+
+/** Ducks the hub's own BGM to silence, or restores it, without stopping the
+ * source outright — cheaper and smoother than a full stop/restart for a
+ * duck that only lasts as long as one Freeze phase. A no-op if the hub BGM
+ * hasn't actually started yet (`hubBgmDucked` still records the intent, so
+ * whichever start path runs later — `startHubAmbience`'s own buffer-load
+ * continuation — picks it up). */
+function setHubAmbienceDucked(ducked: boolean) {
+  hubBgmDucked = ducked;
+  if (!ctx || !hubBgmGain) return;
+  const audio = ctx;
+  const target = ducked ? 0.0001 : getSourceGain("ambience");
+  hubBgmGain.gain.cancelScheduledValues(audio.currentTime);
+  hubBgmGain.gain.setValueAtTime(hubBgmGain.gain.value, audio.currentTime);
+  hubBgmGain.gain.linearRampToValueAtTime(target, audio.currentTime + 1.0);
 }
 
 /** Suspends the whole audio graph — used when the tab goes hidden, so

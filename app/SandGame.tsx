@@ -100,6 +100,7 @@ import {
   soundButtonClick,
   soundSupported,
   SOUND_SOURCE_IDS,
+  startHubAmbience,
   stopChestOpen,
   type SoundSourceId,
   suspendSound,
@@ -1087,8 +1088,8 @@ const CHAIN_SORT_UNLOCK_LEVEL_ID = 5;
 const BOOSTER_TRY_SETTLE_HOLD_MS = 1000;
 
 /**
- * Levels whose scripted freeze demo (`SandLevelConfig.ftueFreezeDemo`) has
- * already auto-played, this browser — same shape as `TUTORIALS_SEEN_KEY`,
+ * Levels whose freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`) has
+ * already played, this browser — same shape as `TUTORIALS_SEEN_KEY`,
  * just its own key/list so the two features don't share bookkeeping.
  */
 const FREEZE_FTUE_SEEN_KEY = "sand-cannon:v1:freeze-ftue-seen";
@@ -1340,51 +1341,50 @@ export default function SandGame() {
   // the real joystick.
   const [ftueGestureOpen, setFtueGestureOpen] = useState(false);
   /**
-   * Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`) — a
-   * beat-by-beat guided walkthrough, not one continuous auto-play, per the
-   * "make it read like a real game tutorial" ask: a callout points at the
-   * orb and waits for a tap, THEN the scripted shot plays out unobstructed,
-   * THEN the next callout explains what just happened, and so on. Null means
-   * the tutorial isn't running (either not started yet, or already finished
-   * and handed back to the player on this same attempt).
+   * Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`) — on
+   * request ("bây giờ flow hướng dẫn freeze orb sẽ giống như hướng dẫn 3
+   * booster trước đó"), taught exactly the same way `boosterFtueStep`/
+   * `chainSortFtueStep` teach their own controls: a spotlight+caption beat,
+   * then the player aims and fires FOR REAL, no scripted stand-in shot. Null
+   * means the tutorial isn't running (either not started yet, or already
+   * finished and handed back to the player on this same attempt).
    *
-   *   intro          — spotlight + caption on the orb, waiting for a tap
-   *   demo-freeze     — (no caption) scripted shot #1: fires at the orb
-   *   explain-thaw    — spotlight + caption again, waiting for a tap
-   *   demo-clear      — (no caption) scripted shots #2-3: clear the mint patch
-   *   outro           — plain caption, waiting for the final tap
+   *   intro — spotlight (dark everywhere else) + caption on the orb, waiting
+   *           for a tap — same blocking overlay as before (`pointer-events:
+   *           auto`), since there is no real button to tap through to here;
+   *           the orb is a spot on the board, not a UI control.
+   *   shoot — the overlay is gone outright; the player aims and fires
+   *           themselves. Unlike every other tutorial's "shoot-*" step, a
+   *           shot that lands anywhere but the orb's own trigger cell is not
+   *           allowed to just count as an ordinary (if pointless) shot: on
+   *           request ("nếu drag và shoot vào chỗ khác sẽ bị nhắc nhở hãy
+   *           bắn vào freeze orb, những cú shoot vào chỗ khác sẽ không được
+   *           tính phát nào khi đang ở trong tutorial"), `setFtueFreezeAimActive`
+   *           has the engine itself discard any such shot before it touches
+   *           ammo/queue/`shotsUsed` and emit `FREEZE_FTUE_NUDGE` instead
+   *           (handled in the `onEvent` switch above) — so only a real hit on
+   *           the orb ever advances `state.shotsUsed`, which is what the
+   *           settle-detection effect below watches for.
    *
-   * The three caption steps are the only ones a tap can be read from — see
-   * `advanceFreezeFtue`; the two "demo-*" steps are driven entirely by the
-   * effect below and advance themselves once their shots are fired.
+   * The two effects that actually drive `shoot` forward (arm-detection has no
+   * equivalent here — there's nothing to "arm", the player is just aiming —
+   * so only the settle-detection half applies) live further down, right
+   * after `state` is in scope, alongside `boosterFtueStep`'s own pair.
    */
-  const [freezeFtueStep, setFreezeFtueStep] = useState<
-    "intro" | "demo-freeze" | "explain-thaw" | "demo-clear" | "outro" | null
-  >(null);
-  // Whether the current caption step can be dismissed yet — a short grace so
-  // the tap that landed the previous step's last shot can't bleed through
-  // and instantly skip the callout that just appeared.
+  const [freezeFtueStep, setFreezeFtueStep] = useState<"intro" | "shoot" | null>(null);
+  // Whether "intro"'s caption can be dismissed yet — a short grace so a tap
+  // that was already in flight when the level opened can't bleed through and
+  // instantly skip the callout that just appeared.
   const [freezeFtueTapReady, setFreezeFtueTapReady] = useState(false);
   useEffect(() => {
-    const captionStep = freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro";
-    if (!captionStep) return;
+    if (freezeFtueStep !== "intro") return;
     setFreezeFtueTapReady(false);
     const timer = window.setTimeout(() => setFreezeFtueTapReady(true), 500);
     return () => window.clearTimeout(timer);
   }, [freezeFtueStep]);
-  // Only "intro" and "explain-thaw" go through here — "outro"'s tap is wired
-  // to `restart` directly at the call site (JSX, further down), since it has
-  // to reset the whole board rather than just move the state machine along;
-  // see that `onClick`'s own comment for why.
   const advanceFreezeFtue = useCallback(() => {
     if (!freezeFtueTapReady) return;
-    setFreezeFtueStep((step) => {
-      switch (step) {
-        case "intro": return "demo-freeze";
-        case "explain-thaw": return "demo-clear";
-        default: return step;
-      }
-    });
+    setFreezeFtueStep((step) => (step === "intro" ? "shoot" : step));
   }, [freezeFtueTapReady]);
 
   /**
@@ -1542,31 +1542,28 @@ export default function SandGame() {
   // dock with no buttons under it.
   const showBoosterButtons = (!level.ftueGesture && !level.hideBoosterHud) || onboardingLockLifted;
 
-  // Drives the two "demo-*" freeze-tutorial steps: fires the scripted
-  // shot(s) for that beat, then moves straight to the next caption once
-  // they land — no tap gates a demo step, the shots landing is what ends
-  // it. `level.ftueFreezeTargets` is `[orb, ...clearShots]` (see its own
-  // doc comment): the orb is its own one-shot beat, everything after it is
-  // the "watch it clear" beat.
+  // Keeps the engine's own aim-gating in lockstep with whichever FTUE
+  // spotlight step (if any) is on screen:
+  //  - `aimLocked` blocks the player's own aim gesture outright, for the
+  //    caption beats whose overlay has `pointer-events: none` (booster pair
+  //    / Chain Sort "intro-*") — without this, a tap meant to fall through to
+  //    the real tray button underneath would just as easily fall through to
+  //    the aim zone sitting behind it too (on request: "người chơi không thể
+  //    drag cái cannon mà chỉ có thể nhấn vào booster thôi"). The freeze
+  //    orb's own "intro" is included too, belt-and-braces, even though its
+  //    overlay already blocks everything itself (`pointer-events: auto`).
+  //  - `ftueFreezeAimActive` is the freeze orb's own "shoot" beat — see
+  //    `freezeFtueStep`'s own doc comment.
   useEffect(() => {
-    if (!engine) return;
-    const targets = level.ftueFreezeTargets;
-    if (!targets?.length) return;
-    if (freezeFtueStep === "demo-freeze") {
-      let cancelled = false;
-      engine.runScriptedShotSequence([targets[0]]).finally(() => {
-        if (!cancelled) setFreezeFtueStep("explain-thaw");
-      });
-      return () => { cancelled = true; };
-    }
-    if (freezeFtueStep === "demo-clear") {
-      let cancelled = false;
-      engine.runScriptedShotSequence(targets.slice(1)).finally(() => {
-        if (!cancelled) setFreezeFtueStep("outro");
-      });
-      return () => { cancelled = true; };
-    }
-  }, [freezeFtueStep, engine, level]);
+    engine?.setAimLocked(
+      freezeFtueStep === "intro"
+      || boosterFtueStep === "intro-radius" || boosterFtueStep === "intro-prism"
+      || chainSortFtueStep === "intro",
+    );
+  }, [engine, freezeFtueStep, boosterFtueStep, chainSortFtueStep]);
+  useEffect(() => {
+    engine?.setFtueFreezeAimActive(freezeFtueStep === "shoot");
+  }, [engine, freezeFtueStep]);
 
   // The Shop tab's "go buy the boosters you just tried" red dot
   // (`BOOSTER_SHOP_HINT_KEY`) — lit the instant a tutorial finishes, so it's
@@ -1662,6 +1659,31 @@ export default function SandGame() {
     }, BOOSTER_TRY_SETTLE_HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [chainSortFtueStep, state.phase, state.shotsUsed]);
+
+  // Level 31's freeze-orb tutorial — no arm-detection half (there is nothing
+  // to arm, the player is just aiming at a spot on the board), so the
+  // baseline is captured the instant "intro"'s tap moves the step to "shoot"
+  // instead of off an `armedBooster` change. `state.shotsUsed` only moves
+  // past this baseline once a REAL shot resolves — a shot that misses the
+  // orb never reaches `resolveShot` at all (see `setFtueFreezeAimActive`'s
+  // own doc comment), so this settle effect only ever fires for an actual
+  // hit, exactly like `boosterFtueStep`/`chainSortFtueStep`'s own pairs.
+  useEffect(() => {
+    if (freezeFtueStep === "shoot") shootStepBaselineShotsRef.current = state.shotsUsed;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the
+    // "intro" -> "shoot" transition itself should (re)capture the baseline,
+    // not every `state.shotsUsed` tick while already in "shoot".
+  }, [freezeFtueStep]);
+  useEffect(() => {
+    if (freezeFtueStep !== "shoot") return;
+    if (state.phase !== "READY" || state.shotsUsed <= shootStepBaselineShotsRef.current) return;
+    const timer = window.setTimeout(() => {
+      setFreezeFtueStep(null);
+      setBoosterShopHint(true);
+      setBoosterShopHintState(true);
+    }, BOOSTER_TRY_SETTLE_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [freezeFtueStep, state.phase, state.shotsUsed]);
 
   // Bumped once per Radius Overcharge impact (`BOOSTER_IMPACT`) — the actual
   // shake is a CSS animation restarted by the effect below keyed on this
@@ -2404,6 +2426,13 @@ export default function SandGame() {
           // event like this.
           if (event.booster === "radiusOvercharge") setRadiusShakeBump((n) => n + 1);
           break;
+        case "FREEZE_FTUE_NUDGE":
+          // The freeze-orb tutorial's "shoot" beat — a shot that landed
+          // anywhere but the orb itself. The engine already discarded it for
+          // free (see `setFtueFreezeAimActive`'s own doc comment); this is
+          // only the reminder telling the player where to actually aim.
+          pushToast(s.ftueFreezeNudge, "warn");
+          break;
         default:
           break;
       }
@@ -2439,6 +2468,16 @@ export default function SandGame() {
   useEffect(() => {
     engine?.setControlSensitivity({ aim: aimSensitivity });
   }, [engine, aimSensitivity]);
+
+  // The game's own continuous BGM (on request: "Thêm BGM, tôi muốn có một
+  // bgm phải Zen, thư giãn, và dễ chịu") — started once for the whole
+  // session, not per level/`runId`: `startHubAmbience` itself is what
+  // remembers to actually begin playing once the AudioContext exists and
+  // the first tap has unlocked it (see its own doc comment), so calling it
+  // this early is safe even though nothing audible happens until then.
+  useEffect(() => {
+    startHubAmbience();
+  }, []);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -3708,18 +3747,21 @@ export default function SandGame() {
             same tier `.miss-flash` sits at) so the whole thing — dimming,
             caption and (where interactive) its own tap target — genuinely
             covers the whole visible frame while a beat is active. */}
-        {/* Level 31's freeze-orb tutorial — the three callout beats
-            (`freezeFtueStep` "intro"/"explain-thaw"/"outro"). Unlike the
-            unlock banner elsewhere in this file, dismissing this never calls
-            `openLevel` or touches `runId`: the whole point is a live board
-            that keeps playing on through and past the tutorial, not one
-            that resets. No background scrim of its own —
+        {/* Level 31's freeze-orb tutorial — on request, now taught exactly
+            the same way as the booster tutorials just below: one spotlight
+            +caption beat (`freezeFtueStep === "intro"`), then the overlay is
+            gone outright and the player aims and fires at the orb
+            themselves (`freezeFtueStep === "shoot"`, nothing rendered here —
+            see `ftueFreezeAimActive`'s own doc comment for how a shot that
+            misses the orb is kept from counting for anything). Unlike the
+            unlock banner elsewhere in this file, dismissing "intro" never
+            calls `openLevel` or touches `runId`: the whole point is a live
+            board that keeps playing on through and past the tutorial, not
+            one that resets. No background scrim of its own —
             `.ftue-freeze-spotlight` dims everything except a ring around
             the orb by itself (an oversized box-shadow with a hole cut where
             the ring sits), so the board stays legible underneath instead of
-            vanishing behind a flat curtain. The "outro" beat (freeze
-            already thawed, nothing left to point at) renders no spotlight,
-            just the caption.
+            vanishing behind a flat curtain.
             `engine.screenPointForGrid` returns coordinates in `.scene-host`'s
             own space (the same `.scene-wrap`-relative space `.aim-crosshair`
             is positioned in) — now that this overlay itself lives at
@@ -3727,32 +3769,15 @@ export default function SandGame() {
             live off `.scene-wrap`'s own position, the gap this overlay used
             to sit flush against) added to its `y` before it lines up with
             the real cell on screen. */}
-        {playing && (freezeFtueStep === "intro" || freezeFtueStep === "explain-thaw" || freezeFtueStep === "outro") && (
+        {playing && freezeFtueStep === "intro" && (
           <div
             className="ftue-freeze-overlay"
             role="button"
             tabIndex={0}
-            onClick={() => {
-              // "outro"'s tap is a real restart, not just a state-machine
-              // step: on request, the player re-plays level 31 from its
-              // authored start (orb and mint patch both back, 30 shots
-              // again) rather than picking up from the live board the
-              // three demo shots already spent. `restart` itself clears
-              // `freezeFtueStep` back to null (see its own body) — same as
-              // `advanceFreezeFtue` would, just alongside the reset.
-              if (freezeFtueStep === "outro") {
-                if (freezeFtueTapReady) restart();
-                return;
-              }
-              advanceFreezeFtue();
-            }}
-            aria-label={`${
-              freezeFtueStep === "intro" ? s.ftueFreezeIntro
-                : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
-                : s.ftueFreezeOutro
-            }${freezeFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
+            onClick={advanceFreezeFtue}
+            aria-label={`${s.ftueFreezeIntro}${freezeFtueTapReady ? ` ${s.tapToContinue}.` : ""}`}
           >
-            {freezeFtueStep !== "outro" && level.ftueFreezeTargets?.[0] && engine && (() => {
+            {level.ftueFreezeTargets?.[0] && engine && (() => {
               const spot = engine.screenPointForGrid(level.ftueFreezeTargets[0].x, level.ftueFreezeTargets[0].y);
               const sceneWrapEl = document.querySelector<HTMLElement>(".scene-wrap");
               const gameFrameEl = document.querySelector<HTMLElement>(".game-frame");
@@ -3768,11 +3793,7 @@ export default function SandGame() {
               );
             })()}
             <div className="ftue-freeze-caption">
-              <p className="ftue-freeze-caption-text" aria-hidden="true">
-                {freezeFtueStep === "intro" ? s.ftueFreezeIntro
-                  : freezeFtueStep === "explain-thaw" ? s.ftueFreezeExplainThaw
-                  : s.ftueFreezeOutro}
-              </p>
+              <p className="ftue-freeze-caption-text" aria-hidden="true">{s.ftueFreezeIntro}</p>
               {freezeFtueTapReady && (
                 <p className="ftue-freeze-caption-tap" aria-hidden="true">{s.tapToContinue}</p>
               )}

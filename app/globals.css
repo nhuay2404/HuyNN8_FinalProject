@@ -2097,7 +2097,12 @@ button.settings-devtoggle {
   display: flex; flex-direction: column; align-items: center;
   padding: calc(max(var(--hud-inset), env(safe-area-inset-top)) + 54px) 24px calc(var(--hub-nav-height) + 24px);
   overflow: auto;
-  background: var(--hub-navy);
+  /* A light brown of its own now (on request: "nền modes hub... nâu nhạt"),
+     not the shared `--hub-navy` ivory wall the comment above still
+     describes — a scoped override here rather than changing that variable,
+     since it is also `.game-frame.is-hub`'s and Gallery's own background
+     and neither was asked to change. */
+  background: #e8d3ae;
   animation: shop-screen-in .26s cubic-bezier(.2,.9,.24,1) both;
 }
 /* Same chip `.gallery-heading h2`/`.shop-heading h2`/`.skin-heading h2` use —
@@ -2268,7 +2273,19 @@ button.settings-devtoggle {
 .shop-scroll {
   flex: 1; min-height: 0; width: 100%;
   display: flex; flex-direction: column; align-items: center;
-  overflow-y: auto; padding-bottom: calc(var(--hub-nav-height) + 24px);
+  /* `overflow-x: hidden` explicit, not left to default to `visible` — with
+     only `overflow-y` set, the spec computes the other axis to `auto` too
+     (whichever axis is `visible` while its sibling isn't becomes `auto`),
+     so any child even a hair wider than this box (an offer card's own
+     shadow/glow, a badge sitting slightly outside its own frame) turned
+     into a horizontal drag the whole screen shouldn't have (on request:
+     "trong giao diện shop, người chơi có thể kéo left right và tôi không
+     thích điều đó — canh chỉnh sao cho không thể kéo left right được mà
+     chỉ kéo xuống thôi"). `touch-action: pan-y` on top of that so a mobile
+     browser's own touch/rubber-band handling never re-opens the same gap
+     even a pixel of overflow slipped past. */
+  overflow-y: auto; overflow-x: hidden; touch-action: pan-y;
+  padding-bottom: calc(var(--hub-nav-height) + 24px);
 }
 .shop-panel { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 26px; }
 .shop-section-head { margin: 0 0 12px; }

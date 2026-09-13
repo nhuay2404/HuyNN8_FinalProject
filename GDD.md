@@ -650,6 +650,13 @@ columns: repeat(3, 1fr)`.
 Không có control nào ở đây nối payment processor thật — mọi nút giá (trừ Boosters) chỉ hiện toast
 "chưa hoạt động" (`notifyIapComingSoon`), y như thiết kế cũ.
 
+**Khoá kéo ngang (2026-09-13).** `.shop-scroll` chỉ đặt `overflow-y: auto`, để `overflow-x` rơi về mặc
+định `visible` — theo spec CSS, một trục `visible` cạnh trục kia không `visible` tự tính lại thành
+`auto`, nên bất kỳ phần tử con nào lỡ rộng hơn khung dù chỉ vài px (glow/shadow của một offer card,
+badge tràn nhẹ ra ngoài khung của nó) cũng biến thành kéo ngang được — trên request "trong giao diện
+shop, người chơi có thể kéo left right và tôi không thích điều đó… chỉ kéo xuống thôi". Sửa bằng khai
+báo thẳng `overflow-x: hidden` + `touch-action: pan-y` trên `.shop-scroll`.
+
 ---
 
 ## 11. Cosmetic / Skin súng
@@ -810,6 +817,42 @@ intensity(index, total) = 0.3 + (index / (total-1)) × 0.7      // 30%..100%
 Đúng mọi danh sách vì cả 4 (`COIN_PACKS`, `HEART_PACKS`, `visibleOffers`, `BUNDLES`) đều đã sắp theo giá
 tăng dần — không cần parse `"$X.XX"` ngược lại thành số.
 
+### 12.7. Cụm cát cô lập nhỏ (1-4 hạt) tự glow màu của nó, có breath effect (2026-09-13)
+
+Trên request: "Đối với những hạt cát có cụm ít, từ 1-4 grain và không có phần cát cùng màu kế bên HOẶC
+tất cả cát xung quanh nó đều là khác màu, hãy cho 1 màu glow xung quanh nó theo màu của nó, glow hiện
+có breath effect" — một cụm cát nhỏ, cô lập khỏi mọi hạt cùng màu, tự phát sáng viền quanh nó bằng
+đúng màu của nó, độ sáng nhấp nháy đều như đang "thở" — đọc như một gợi ý thị giác "mục tiêu dễ, cô
+đơn" giữa một board đông đúc, không phải một cơ chế gameplay mới (không đổi luật `resolveShot`/settle
+nào cả, thuần render).
+
+**Phát hiện cụm — flood fill sống mỗi frame, không dùng `bodyId`:** `redrawSand()`
+(`SandCannonEngine.ts`) chạy một lượt flood fill riêng trên `this.cells`, gộp theo màu + kề cạnh 4
+hướng (cùng `NEIGHBOR_OFFSETS` cơ chế bevel Wall/Key/Freeze đã dùng) — cụm nào ≤4 hạt (`CLUSTER_
+GLOW_MAX_SIZE`) được đánh dấu để glow. Cố tình KHÔNG dùng `cell.bodyId` có sẵn (dù đúng theo lý thuyết
+mọi cụm liền màu đã là một body): `bodyId` chỉ đồng bộ lại đúng lúc bước settle `REINDEX` chạy, có thể
+"cũ" trong lúc cát đang thật sự rơi/settle giữa hai lần REINDEX — một flood fill tươi mỗi frame luôn
+đúng, cùng độ phức tạp O(số hạt) redrawSand vốn đã trả cho mọi pass khác trong hàm.
+
+**Vẽ halo — 2 lớp, chỉ vào ô trống thật sự:** với mỗi hạt trong cụm hợp lệ, tô nửa trong suốt màu của
+nó lên halo quanh nó — ring 1 (8 ô sát cạnh, Chebyshev distance 1) đậm hơn ring 2 (1 ô xa thêm), một
+gradient 2 bậc thay cho gaussian blur thật (texture cát dùng `THREE.NearestFilter`, không có blur mượt
+nào để tận dụng). Bỏ qua bất kỳ ô nào đã có chủ — cát (bất kỳ màu/cụm nào), Wall Obstacle, Freeze
+trigger (cả ba vẽ base layer OPAQUE trước đó) — glow chỉ hiện trong khoảng trống thật của khung tranh,
+không bao giờ đè màu lên pixel khác đã có sẵn; padlock/key vẽ sau vẫn tự nhiên thắng nếu trùng ô.
+
+**Breath effect — chu kỳ sine độc lập, luôn chạy:** không mượn `idleHighlightStrength` (cơ chế "shoot
+here" cũ chỉ chạy sau một khoảng idle nhất định, và chỉ cho đúng màu đạn đang cầm) — cụm nhỏ cô lập
+GLOW LIÊN TỤC bất kể người chơi có đang thao tác hay không, bất kể màu gì. `clusterGlowElapsed` tự
+cộng dồn trong `step()` mỗi fixed tick, `breathe = 0.5 + 0.5·sin(elapsed × 0.5Hz × 2π)` — một chu kỳ
+sáng-tối-sáng trọn vẹn mỗi ~2s, biên độ 35%-100% (`CLUSTER_GLOW_FLOOR`/`CEILING`) — glow không bao giờ
+tắt hẳn, chỉ mờ đi rồi sáng lại.
+
+**Test:** `tsc --noEmit` sạch, `npm test` 175/175 (thuần render, không đụng file nào trong `sand-rules.ts`
+nên không test nào cần đổi). Verify sống trên dev server: hook debug tạm đếm được cụm nhỏ hợp lệ + số ô
+halo vẽ ra khớp kỳ vọng trên level 20 (mưa/mây rải rác), giá trị breathing dao động đúng 0.35 → 1.0 →
+0.35 qua nhiều lần lấy mẫu.
+
 ---
 
 ## 13. UI/UX
@@ -875,7 +918,8 @@ lưới Gallery nhiều cột.
 Chỉ Level 1 (`defaultLevel`) bật `ftueGesture` — cố tình chỉ một màu cát để bài học duy nhất là
 "ngắm-và-bắn" không bị pha loãng bởi bất kỳ HUD/luật nào khác (ẩn cả khay booster suốt level đó).
 
-**Tutorial booster — CẢ BA booster giờ dạy theo đúng một cách (2026-09o, trước đó là 2026-09e):**
+**Tutorial booster — CẢ BỐN cơ chế (kể cả Freeze Orb) giờ dạy theo đúng một cách (2026-09-13, trước đó
+là 2026-09o/2026-09e):**
 
 - **Radius Overcharge / Prism Shot (level 3) — người chơi tự bắn thật.** `boosterFtueStep` đi qua
   `intro-radius → shoot-radius → intro-prism → shoot-prism → null`. Bước `intro-*` là overlay tối +
@@ -895,6 +939,28 @@ Chỉ Level 1 (`defaultLevel`) bật `ftueGesture` — cố tình chỉ một m�
   Vì Chain Sort không có ring aim cố định (không có bán kính để vẽ, xem mục 9), spotlight của nó vẫn chỉ
   khoanh đúng NÚT trong tray, không khoanh vùng ảnh hưởng trên board — giống hệt cách Radius/Prism cũng
   chỉ khoanh nút, không khoanh cả ring bán kính.
+- **Freeze Orb (level 31) — giờ cũng người chơi tự bắn thật (2026-09-13), không còn scripted demo 5
+  bước.** Trên request "bây giờ flow hướng dẫn freeze orb sẽ giống như hướng dẫn 3 booster trước đó" —
+  bỏ hẳn bản cũ `intro → demo-freeze → explain-thaw → demo-clear → outro` (hai bước "demo-*" tự bắn hộ
+  bằng `runScriptedShotSequence`, nay đã xoá luôn khỏi `SandCannonEngine.ts`). `freezeFtueStep` giờ chỉ
+  còn `intro → shoot → null`. Khác với ba cơ chế kia (mục tiêu là một NÚT UI, chạm xuyên overlay là đủ),
+  Freeze Orb là một Ô TRÊN BOARD — không có "nút thật" để chạm xuyên tới, nên bước `intro` vẫn là overlay
+  chặn hẳn (`pointer-events: auto`, tap-to-continue) như bản cũ, spotlight khoanh đúng ô trigger. Bước
+  `shoot` mới là phần khác biệt: người chơi tự ngắm/tự bắn, nhưng **một phát KHÔNG trúng đúng ô freeze
+  trigger sẽ không được tính là một phát** — `SandCannonEngine.setFtueFreezeAimActive(true)` chặn
+  `handleImpact` gọi `resolveShot` thật mỗi khi ô hạ cánh không phải ô trigger (không đụng đạn/queue/
+  `shotsUsed`), phát ra sự kiện `FREEZE_FTUE_NUDGE` để React hiện toast `ftueFreezeNudge` nhắc bắn lại
+  đúng ô. Bắn trúng ô trigger mới đi qua `resolveShot` như một phát thật, tự nhiên kích hoạt Freeze —
+  cùng cặp effect arm-detection/settle-detection (giữ `BOOSTER_TRY_SETTLE_HOLD_MS`) rồi trả lại quyền
+  điều khiển, không có bước "outro" nữa.
+- **Khoá joystick trong lúc overlay đang mở (2026-09-13) — sửa lỗ hổng cũ.** Trước đây overlay
+  `is-noninteractive` của cặp Radius/Prism và Chain Sort chỉ tắt `pointer-events` trên CHÍNH overlay để
+  chạm xuyên tới nút thật — nhưng vì `pointer-events: none` xuyên qua MỌI toạ độ, một cú chạm/kéo ngay
+  trên `.aim-zone` (nằm dưới overlay) vẫn vô tình kéo được cannon trong lúc đang ở bước giới thiệu, dù ý
+  đồ là "chỉ được nhấn nút, không được bắn". Sửa bằng `SandCannonEngine.setAimLocked(boolean)` — một cờ
+  riêng `canStartAim()` kiểm tra, độc lập với việc overlay có chặn `pointer-events` hay không — bật đúng
+  lúc `freezeFtueStep === "intro"` hoặc `boosterFtueStep`/`chainSortFtueStep` đang ở bước `intro-*`,
+  nên `.aim-zone` từ chối mọi lần chạm trong khi nút booster/orb thật vẫn nhận chạm bình thường.
 
 **Lớp tối `.ftue-freeze-spotlight` phủ trọn toàn màn hình, kể cả HUD (2026-09n):** cả ba overlay
 tutorial dùng chung công thức này (freeze-orb level 31, cặp booster level 3, Chain Sort level 5) trước
@@ -949,11 +1015,12 @@ cho từng bước. Đây là **luật ổn định sau cùng**, không phải n
 **Kiến trúc chung (`app/game/sound.ts`, `app/game/haptics.ts`):**
 
 - Phần lớn hiệu ứng vẫn tổng hợp bằng oscillator/noise sống (`tone()`/`noiseHit()`), không phải audio
-  file — giữ nguyên lý do gốc (không phụ thuộc binary asset). Ngoại lệ là **6 bản ghi âm thật** trong
+  file — giữ nguyên lý do gốc (không phụ thuộc binary asset). Ngoại lệ là **7 bản ghi âm thật** trong
   `public/sounds/`, mỗi file chỉ vì "một bản ghi thật không synth nào giả được": `sand-pour.mp3` (cát
   đổ), `bullet-on-sand.mp3` (bóng chạm cát), `button-click-menuhub.mp3` (bấm thanh tác vụ dưới đáy),
   `miss-shot.mp3` (bắn miss/không sort được gì), `treasure-chest-open.mp3` (mở progression chest),
-  `bgm-freeze-orb.mp3` (nhạc nền lúc Freeze, loop).
+  `bgm-freeze-orb.mp3` (nhạc nền lúc Freeze, loop), `bgm-hub.mp3` (nhạc nền xuyên suốt game, loop — mục
+  riêng bên dưới).
 - **Web Vibration API không có điều khiển biên độ** — chỉ có thời lượng xung (`navigator.vibrate`
   nhận số ms, không nhận "mạnh nhẹ"). Mọi chỗ "haptic mạnh/nhẹ" trong game đều biểu diễn bằng cách co
   giãn **độ dài xung**, sàn tối thiểu 8ms (`HAPTIC_MIN_PULSE_MS`) để không rơi dưới ngưỡng Android còn
@@ -1002,11 +1069,30 @@ không ai yêu cầu nên giữ nguyên):
 | `sound("impact", scale)` | **50%** | 100% |
 | `haptic("impact", scale)` | 10% | 100% |
 
-**Freeze có nhạc nền riêng, KHÔNG còn nhạc nền chung cho mọi màn:** bản đầu có một drone tổng hợp
+**Freeze có nhạc nền riêng của nó, TÁCH KHỎI nhạc nền chung của game:** bản đầu có một drone tổng hợp
 (2 oscillator + pad note ngẫu nhiên) phát suốt mọi level — bị bỏ hẳn ("nghe rất ù và chói tai").
-`bgm-freeze-orb.mp3` (loop) giờ CHỈ phát khi `state.freezeShotsRemaining > 0`, bật/tắt đúng lúc
+`bgm-freeze-orb.mp3` (loop) CHỈ phát khi `state.freezeShotsRemaining > 0`, bật/tắt đúng lúc
 `SandCannonEngine.syncFreezeVisuals()` phát hiện trạng thái đông/tan băng đổi (cùng thời điểm frame đổi
 màu ripple) — không phát lại mỗi lượt bắn trong khi vẫn đang đông.
+
+**Nhạc nền xuyên suốt game — `bgm-hub.mp3` (2026-09-13, trên request "Thêm BGM, tôi muốn có một bgm
+phải Zen, thư giãn, và dễ chịu"):** một bản ambient/calm loop (Pixabay Content License, "Stress Relief"
+— MarloweMusic), phát liên tục ở MỌI màn hình — mọi level, mọi menu — suốt cả phiên chơi, khác hẳn
+`bgm-freeze-orb.mp3` chỉ phát đúng lúc Freeze đang chạy:
+
+- `startHubAmbience()` (`app/game/sound.ts`) gọi đúng MỘT LẦN lúc `SandGame.tsx` mount (`useEffect`
+  rỗng deps) — không theo `level`/`runId` như engine, vì bài nhạc này không thuộc về một level cụ thể
+  nào. Cùng cơ chế "nhớ ý định, tự phát khi đủ điều kiện" `startFreezeAmbience` đã có: gọi được ngay cả
+  trước khi AudioContext tồn tại/mở khoá (trình duyệt cấm phát âm thanh trước cử chỉ người dùng đầu
+  tiên) — buffer tải sẵn, chỉ chờ cử chỉ đầu tiên là phát ra tiếng thật.
+- **Ducking khi Freeze chạy, không dừng hẳn:** để hai bài nhạc không bao giờ chồng tiếng nhau,
+  `startFreezeAmbience`/`stopFreezeAmbience` gọi `setHubAmbienceDucked(true/false)` — hạ gain
+  `bgm-hub.mp3` về ~0 (fade 1s) đúng lúc Freeze bắt đầu, fade trả lại khi Freeze kết thúc, thay vì dừng
+  hẳn nguồn phát rồi phát lại từ đầu bài.
+- **Sửa luôn một bug có sẵn:** `musicBus` (gain node gốc mọi BGM đều đi qua) bị set cứng `gain.value = 0`
+  từ trước — tàn dư từ lần bỏ drone tổng hợp cũ, chưa ai để ý vì `bgm-freeze-orb.mp3` là BGM thật duy
+  nhất tồn tại nên chưa ai nghe thấy nó lẽ ra phải kêu. Đổi về `1` (passthrough thuần) khi thêm
+  `bgm-hub.mp3` — nhờ vậy cả hai BGM giờ đều thực sự phát ra tiếng.
 
 **Progression chest — tiếng phải khớp khung hình đầu tiên của animation nắp mở, và phải tắt được ngay
 khi thoát:** `treasure-chest-open.mp3` (16s, có đuôi reverb dài) kích hoạt đúng lúc
@@ -1120,9 +1206,23 @@ Tab "Modes" (`HUB_TABS`, trước đây tên "Customize", đã đổi tên từ 
   Shots bị vô hiệu hoá (ghi "ignored"), draft lưu với `mode: "zen"` và chỉ xuất hiện trên danh sách
   Zen trong game, không lẫn vào danh sách chính. Chi tiết đầy đủ:
   [docs/features/zen-mode.md](docs/features/zen-mode.md).
+  - **Ship level Zen vào file riêng, tách khỏi sand-levels.ts (2026-09-13).** Trước đây nút "Ship all
+    levels" của editor gộp CẢ level Zen lẫn level chính vào chung một khối `EDITOR_LEVELS` trong
+    `sand-levels.ts` — dù `collectPlayables` (SandGame.tsx) luôn lọc bỏ draft `mode: "zen"` khỏi danh
+    sách chính nên chúng chỉ nằm đó như dữ liệu chết, sai luật (unlimited shots/booster) nếu lỡ lọt
+    vào. Trên request "level editor cho Zen Mode, nó nên lưu vào 1 file ts riêng và các level trong
+    zen mode sẽ dựa trên file đó": thêm `design/levels/zen-custom-levels.ts` với khối
+    `EDITOR_ZEN_LEVELS` của riêng nó, `zen-levels.ts`'s `BUILT_IN_ZEN_LEVELS` spread khối này vào ngay
+    sau 3 tranh hạt giống. `scripts/level-writer.mjs` có thêm route `POST /ship-zen-levels` (ghi
+    riêng vào file này, không đụng `sand-levels.ts`), nút "Ship all levels to sand-levels.ts" trong
+    editor giờ loại trừ hẳn draft `mode: "zen"` khỏi danh sách nó ship, thay bằng nút riêng "Ship all
+    Zen levels to zen-custom-levels.ts" cho các draft Zen.
 - **Theme Mode — vẫn là placeholder.** Ý tưởng: người chơi chọn một chủ đề (Nhật Bản, Việt Nam, …) để
   sort theo motif đó — cần nội dung tranh/asset thật theo từng chủ đề, chưa phải việc đổi code, nên
   thẻ này vẫn khoá, hiện đúng chữ "Not built yet." như tab Modes vốn có trước đây.
+- **Nền màn Modes đổi màu nâu nhạt (2026-09-13).** Trên request "nền modes hub… tôi muốn nó có nâu
+  nhạt" — `.modes-screen` không còn dùng chung `--hub-navy` (biến ivory dùng chung với Gallery/
+  `.game-frame.is-hub`) nữa, override riêng `background: #e8d3ae` chỉ cho màn này.
 
 Màn danh sách level Zen (không phải màn hai thẻ) có nút **Back** riêng (icon `backIcon.png`), không
 chỉ dựa vào `.hub-nav` như Gallery/Shop/Skin — bấm lùi đúng một cấp, từ danh sách Zen về lại hai thẻ.

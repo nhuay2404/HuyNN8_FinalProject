@@ -3362,22 +3362,20 @@ export const thirtyFirstLevel: SandLevelConfig = {
   // budget: colours come round again until they are gone.
   ammoQueue: ["white", "skyblue", "grass", "mint"],
 
-  // FTUE (level 31 only): first 4 rounds are pinned so the scripted tutorial
-  // can freeze the orb on shot 1, then clear the mint patch across shots 2-3
-  // exactly as freezeDuration ticks out. Stays in force on every replay too.
+  // FTUE (level 31 only): first 4 rounds are pinned so the mint patch the
+  // freeze holds is guaranteed clearable right after the player's own
+  // tutorial shot unfreezes it. Stays in force on every replay too.
   forcedOpeningQueue: ["mint", "mint", "mint", "grass"],
   ftueFreezeDemo: true,
   // Grid coordinates here are the engine's own internal y (`height - 1 -
   // row index` — see `parseSandLevel`'s row-to-y flip), NOT the row index
   // `rows` is written top-first in. Verified against the live board, not
-  // hand-derived from the picture above. Re-derive these (and recheck
+  // hand-derived from the picture above. Re-derive this (and recheck
   // coverage of the mint patch at whatever `sortRadius` is current) if the
-  // picture, sortRadius, or frame size ever change — they're re-fitted to
+  // picture, sortRadius, or frame size ever change — it's re-fitted to
   // this exact board, not a fixed offset from it.
   ftueFreezeTargets: [
-    { x: 39, y: 60 }, // the freeze orb itself
-    { x: 33, y: 48 }, // left side of the mint patch
-    { x: 47, y: 48 }, // right side — clears the rest, ending the freeze
+    { x: 39, y: 60 }, // the freeze orb itself — the only cell the player has to hit
   ],
 
   sortRadius: 11,

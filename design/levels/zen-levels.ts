@@ -1,4 +1,5 @@
 import { BUILT_IN_LEVELS } from "./sand-levels.ts";
+import { EDITOR_ZEN_LEVELS } from "./zen-custom-levels.ts";
 import type { BoosterType, SandLevelConfig } from "../../app/game/sand-types.ts";
 
 // Zen Mode's built-in seed content — see docs/features/zen-mode.md and
@@ -68,9 +69,14 @@ function toZenLevel(level: SandLevelConfig, id: number): SandLevelConfig {
  * simple picture, a lock-and-key level, a wall level — not for difficulty,
  * since Zen Mode has no fail state and "hard" does not mean the same thing
  * here as it does on the main list.
+ *
+ * `EDITOR_ZEN_LEVELS` (zen-custom-levels.ts) is spread in right after —
+ * genuinely hand-authored Zen levels, shipped from `/editor`'s own "Ship all
+ * Zen levels" button, into their own file rather than these three seeds'.
  */
 export const BUILT_IN_ZEN_LEVELS: SandLevelConfig[] = [
   toZenLevel(BUILT_IN_LEVELS[2], ZEN_ID_BASE + 1),
   toZenLevel(BUILT_IN_LEVELS[9], ZEN_ID_BASE + 2),
   toZenLevel(BUILT_IN_LEVELS[20], ZEN_ID_BASE + 3),
+  ...EDITOR_ZEN_LEVELS,
 ];

@@ -779,6 +779,11 @@ export default function LevelEditor() {
    * anyway (both write the same file), but sharing one flag would disable
    * the wrong button's label while the other request is in flight. */
   const [updatingBuiltIn, setUpdatingBuiltIn] = useState(false);
+  /** In-flight state for "Ship all Zen levels to zen-custom-levels.ts" — its
+   * own flag for the same reason `updatingBuiltIn` has one: a different
+   * endpoint, a different file, shouldn't share a busy flag with `shipping`
+   * (the main list's own "Ship all"). */
+  const [shippingZen, setShippingZen] = useState(false);
   const [importing, setImporting] = useState(false);
   /** Whether a near-white pixel imports as empty rather than as sand. */
   const [trimWhite, setTrimWhite] = useState(true);
@@ -2297,9 +2302,45 @@ export default function LevelEditor() {
               // different level instead of this one. Rather than a
               // misleading link, this just points at where the level
               // actually shows up: save here, then find it in-game.
-              <p className="editor-note">
-                🧘 Saved automatically. Play it in-game: Modes → Zen Mode.
-              </p>
+              <>
+                <p className="editor-note">
+                  🧘 Saved automatically. Play it in-game: Modes → Zen Mode.
+                </p>
+                <button
+                  type="button"
+                  className="editor-button is-primary"
+                  disabled={shippingZen}
+                  title={"Writes every Zen-mode level in the list on the left into design/levels/zen-custom-levels.ts — its own file, on request (\"level editor cho Zen Mode, nó nên lưu vào 1 file ts riêng\"), never sand-levels.ts. Replaces that file's own shipped block wholesale with exactly the editor's current Zen list, so a Zen level deleted here disappears from it on the next ship."}
+                  onClick={async () => {
+                    setShippingZen(true);
+                    // Same "skip broken drafts rather than block the rest"
+                    // rule `shipping` (below) uses for the main list, scoped
+                    // to just the Zen ones — this button never touches a
+                    // non-Zen draft.
+                    const shippableZen = drafts.filter((entry) =>
+                      entry.mode === "zen" && !validateDraft(entry).some((issue) => issue.severity === "error"));
+                    try {
+                      const response = await fetch("http://localhost:4787/ship-zen-levels", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ drafts: shippableZen }),
+                      });
+                      const payload = await response.json().catch(() => null);
+                      if (!response.ok) {
+                        throw new Error(payload?.error || "The level writer could not write the file.");
+                      }
+                      const skipped = drafts.filter((entry) => entry.mode === "zen").length - shippableZen.length;
+                      flash(`Shipped ${payload.count} Zen level${payload.count === 1 ? "" : "s"} to zen-custom-levels.ts`
+                        + (skipped ? ` (${skipped} skipped for errors)` : ""));
+                    } catch {
+                      flash("Couldn't reach the level writer — run `npm run level-writer` in a terminal, then try again.");
+                    }
+                    setShippingZen(false);
+                  }}
+                >
+                  {shippingZen ? "Writing…" : "Ship all Zen levels to zen-custom-levels.ts"}
+                </button>
+              </>
             ) : errors.length ? (
               <button type="button" className="editor-button is-primary" disabled>
                 Test in game
@@ -2347,18 +2388,22 @@ export default function LevelEditor() {
               type="button"
               className="editor-button is-primary"
               disabled={shipping}
-              title="Writes every level in the list on the left into sand-levels.ts. A level you brought in with Import built-in updates its own existing const, wherever it lives — everything else (genuinely new levels only) replaces what was there before in the editor-shipped block, so a level you delete here disappears from the file on the next ship."
+              title="Writes every non-Zen level in the list on the left into sand-levels.ts. A level you brought in with Import built-in updates its own existing const, wherever it lives — everything else (genuinely new levels only) replaces what was there before in the editor-shipped block, so a level you delete here disappears from the file on the next ship."
               onClick={async () => {
                 setShipping(true);
-                // Every draft ships — the level writer itself is what keeps
-                // this from piling up duplicates: a draft imported from an
-                // existing level (`importedFromId` set) updates that level's
-                // own const in place, at its own id, rather than being handed
-                // a new one. Only what is left over (genuinely new levels)
-                // replaces the editor-shipped block wholesale. Broken drafts
-                // are left out rather than blocking the rest.
+                // Every non-Zen draft ships — the level writer itself is what
+                // keeps this from piling up duplicates: a draft imported from
+                // an existing level (`importedFromId` set) updates that
+                // level's own const in place, at its own id, rather than
+                // being handed a new one. Only what is left over (genuinely
+                // new levels) replaces the editor-shipped block wholesale.
+                // Broken drafts are left out rather than blocking the rest.
+                // A Zen draft (`mode: "zen"`) never belongs in this file at
+                // all — on request ("level editor cho Zen Mode, nó nên lưu
+                // vào 1 file ts riêng"), it ships separately, via "Ship all
+                // Zen levels to zen-custom-levels.ts" above instead.
                 const shippable = drafts.filter((entry) =>
-                  !validateDraft(entry).some((issue) => issue.severity === "error"));
+                  entry.mode !== "zen" && !validateDraft(entry).some((issue) => issue.severity === "error"));
                 try {
                   const response = await fetch("http://localhost:4787/ship-levels", {
                     method: "POST",
@@ -2369,7 +2414,10 @@ export default function LevelEditor() {
                   if (!response.ok) {
                     throw new Error(payload?.error || "The level writer could not write the file.");
                   }
-                  const skipped = drafts.length - shippable.length;
+                  // Zen drafts are excluded above on purpose, not "skipped
+                  // for errors" — only an actually-invalid non-Zen draft
+                  // counts toward this message.
+                  const skipped = drafts.filter((entry) => entry.mode !== "zen").length - shippable.length;
                   flash(`Shipped ${payload.count} level${payload.count === 1 ? "" : "s"} — `
                     + `${payload.created} new, ${payload.updatedInPlace} updated in place`
                     + (skipped ? ` (${skipped} skipped for errors)` : ""));
@@ -2397,16 +2445,19 @@ export default function LevelEditor() {
             </button>
           </div>
           <p className="editor-note">
-            Saved levels already show up in the game&apos;s level switcher, and stay in this editor,
-            because they live in your browser. Every level has exactly one id: shipping a level you
-            brought in with &quot;Import built-in&quot; updates that same id&apos;s own const, in place,
-            wherever it lives — never a second, unrelated one on top of it. Only what is left over,
-            genuinely new levels, replaces the file&apos;s editor-shipped block wholesale, so that block
-            always has exactly the new levels the editor has, not every level ever shipped. A single
-            level&apos;s own &quot;Update Level N in sand-levels.ts&quot; button does the same update-by-id
-            for just that one, without touching the rest of the list. Both need{" "}
+            Saved levels already show up in the game&apos;s level switcher (or, for a Zen-mode level, in
+            Modes → Zen Mode), and stay in this editor, because they live in your browser. Every level
+            has exactly one id: shipping a level you brought in with &quot;Import built-in&quot; updates
+            that same id&apos;s own const, in place, wherever it lives — never a second, unrelated one on
+            top of it. Only what is left over, genuinely new levels, replaces the file&apos;s
+            editor-shipped block wholesale, so that block always has exactly the new levels the editor
+            has, not every level ever shipped. A single level&apos;s own &quot;Update Level N in
+            sand-levels.ts&quot; button does the same update-by-id for just that one, without touching
+            the rest of the list. A Zen-mode level never ships into sand-levels.ts at all — its own
+            &quot;Ship all Zen levels&quot; button writes to <code>design/levels/zen-custom-levels.ts</code>{" "}
+            instead, its own file, so a Zen level never mixes into the main list. All of this needs{" "}
             <code>npm run level-writer</code> running once in a terminal alongside the dev server; then
-            neither needs copy-paste and both survive clearing your browser or a fresh checkout.
+            nothing needs copy-paste and everything survives clearing your browser or a fresh checkout.
             &quot;Copy TypeScript&quot; exports just this one level&apos;s block, for the manual fallback
             if that terminal isn&apos;t running.
           </p>

@@ -364,22 +364,21 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    */
   forcedOpeningQueue?: readonly SandColor[];
   /**
-   * Plays the one-time "how Freeze works" demo on this level's very first
-   * attempt (per `localStorage`, the same "seen forever" bookkeeping
-   * `tutorial` below uses) — the aim drags to the level's own Freeze
-   * trigger, fires, shows the freeze take hold, fires a couple more
-   * scripted shots to clear it and let the board thaw, then hands off to
-   * the player with the exact same board and remaining shots, no reset.
-   * Requires the level to actually have a Freeze trigger in its picture;
-   * meaningless (and never read) otherwise. See `SandGame.tsx`'s own FTUE
-   * demo effect for the scripted shot sequence this drives.
+   * Plays the one-time "how Freeze works" tutorial on this level's very
+   * first attempt (per `localStorage`, the same "seen forever" bookkeeping
+   * `tutorial` below uses) — a spotlight+caption points at the level's own
+   * Freeze trigger, then the player aims and fires at it themselves (same
+   * "player does it for real" shape as `ftueBoosterDemo`/
+   * `ftueChainSortDemo`; see `SandGame.tsx`'s `freezeFtueStep` for the full
+   * beat-by-beat). Requires the level to actually have a Freeze trigger in
+   * its picture; meaningless (and never read) otherwise.
    */
   ftueFreezeDemo?: boolean;
   /**
-   * The scripted shots `ftueFreezeDemo` fires, in order — frame-grid cells
-   * (same top-first space as `rows`), first the level's own Freeze trigger,
-   * then wherever clears the colour Freeze is holding. Required alongside
-   * `ftueFreezeDemo: true`; unused otherwise.
+   * The freeze trigger's own frame-grid cell (same top-first space as
+   * `rows`) — where `ftueFreezeDemo`'s spotlight points and what the player
+   * has to actually hit. Only `[0]` is read; required alongside
+   * `ftueFreezeDemo: true`, unused otherwise.
    */
   ftueFreezeTargets?: readonly { x: number; y: number }[];
   /**

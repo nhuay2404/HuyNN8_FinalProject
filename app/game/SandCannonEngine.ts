@@ -216,9 +216,6 @@ const CANNON_MIN_ELEVATION = -0.08;
 const CANNON_MAX_ELEVATION = 1.08;
 const GRAVITY = new THREE.Vector3(0, -9.5, 0);
 const AIM_PREDICTION_DURATION = 2.2;
-/** Sentinel `pointerId` for `runScriptedShot` — never issued by a real
- * PointerEvent, so real touches never match it in `onAimPointerMove`/`Up`. */
-const SCRIPTED_AIM_POINTER_ID = -777;
 /** Half of `.aim-crosshair`'s own footprint at its biggest (26px base ×
  * `is-target-valid`'s 1.08 scale ≈ 28px) — the crosshair is centred on its
  * screen position, so clamping that position to this margin from the edge is
@@ -308,6 +305,30 @@ const IDLE_HIGHLIGHT_HZ = 0.37;
  * stays visible as a calm, ever-present glow rather than blinking off. */
 const IDLE_HIGHLIGHT_FLOOR = 0.3;
 const IDLE_HIGHLIGHT_CEILING = 1;
+/** On request ("hạt cát có cụm ít, từ 1-4 grain… không có phần cát cùng màu
+ * kế bên… cho 1 màu glow xung quanh nó theo màu của nó, glow hiện có breath
+ * effect") — a small, colour-isolated cluster of sand glows in its own
+ * colour, in a slow breathing pulse, so it reads as an easy/lonely target
+ * rather than getting lost against a busier board. See `redrawSand`'s own
+ * cluster-glow pass. Same breathing idiom as `IDLE_HIGHLIGHT_HZ` above, its
+ * own independent cycle (always running, not gated on idle time the way the
+ * "shoot here" outline is — every qualifying cluster glows continuously). */
+const CLUSTER_GLOW_MAX_SIZE = 4;
+/** One full dim-bright-dim breath roughly every 2s — a touch faster than the
+ * idle outline's ~2.7s, since this has no separate "shake" beat competing
+ * for attention the way the idle cycle does. */
+const CLUSTER_GLOW_HZ = 0.5;
+const CLUSTER_GLOW_CYCLE_SECONDS = 1 / CLUSTER_GLOW_HZ;
+const CLUSTER_GLOW_FLOOR = 0.35;
+const CLUSTER_GLOW_CEILING = 1;
+/** Peak alpha (0-255) of the halo's inner ring (the 8 cells touching the
+ * cluster) and its outer ring (one cell further out) — a soft two-step
+ * falloff standing in for a real gaussian blur, which a `NearestFilter`
+ * canvas texture (see `sandTexture`'s own setup) could never render smoothly
+ * anyway; a blocky two-ring aura reads as "glow" in this game's own pixel-art
+ * idiom instead. */
+const CLUSTER_GLOW_INNER_ALPHA = 150;
+const CLUSTER_GLOW_OUTER_ALPHA = 60;
 /** Orthogonal only — matches `adjacencyMode: "ORTHOGONAL_4"`, so a border pixel here is a border of the same body the solver reasons about, not a diagonal artifact. */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [1, 0],
@@ -856,7 +877,13 @@ export type SandEngineEvent =
   /** A booster-charged shot just landed (on request: Radius Overcharge's
    * screen shake) — fired once per impact, from `handleImpact`, whichever
    * booster (if any) that specific shot spent. */
-  | { type: "BOOSTER_IMPACT"; booster: BoosterType };
+  | { type: "BOOSTER_IMPACT"; booster: BoosterType }
+  /** Fired instead of a real shot resolution while `setFtueFreezeAimActive`
+   * is on and the player's shot landed somewhere other than the freeze
+   * orb's own trigger cell — see that setter's own doc comment. The shot is
+   * a no-op (ammo, queue and `shotsUsed` all untouched); this is only the
+   * cue for React to nudge the player back toward the orb. */
+  | { type: "FREEZE_FTUE_NUDGE" };
 
 export type SandEngineCallbacks = {
   onState: (state: SandGameState) => void;
@@ -1234,6 +1261,13 @@ export class SandCannonEngine {
   private idleHighlightStrength = 0;
   /** Whatever `currentAmmo` was the instant the hint last turned on — stashed so `redrawSand` does not have to re-derive it. */
   private idleHighlightColor: SandColor | null = null;
+  /** Seconds into the small-cluster glow's own breathing cycle — unlike
+   * `idleHintElapsed`, always advancing (see `CLUSTER_GLOW_HZ`'s own
+   * comment): there is no idle gate on this one. */
+  private clusterGlowElapsed = 0;
+  /** `CLUSTER_GLOW_FLOOR`-`CLUSTER_GLOW_CEILING`, updated once per fixed
+   * step. Read by `redrawSand`'s cluster-glow pass. */
+  private clusterGlowStrength = CLUSTER_GLOW_FLOOR;
   private nextShotAt = 0;
   private aimPointer: number | null = null;
   private readonly aimStart = new THREE.Vector2();
@@ -1339,11 +1373,26 @@ export class SandCannonEngine {
   private showcaseShotGeometry: THREE.SphereGeometry | null = null;
   private showcaseMaterials: Record<CostumeFlavor, THREE.MeshBasicMaterial> | null = null;
 
-  /** True for the whole span of `runScriptedShotSequence` (level 31's freeze
-   * FTUE) — blocks real pointer input from hijacking the aim gesture the
-   * demo is driving, without touching `canInteract()`'s own rules (the
-   * scripted shots still go through them via `canStartAim()`). */
-  private scriptedShotActive = false;
+  /** True while an FTUE spotlight step wants the real booster/orb button
+   * tappable (`pointer-events: none` on its own dimming overlay, so the tap
+   * falls straight through to the real control underneath) but does NOT want
+   * that same fall-through to also reach the aim zone sitting behind it —
+   * on request ("người chơi không thể drag cái cannon mà chỉ có thể nhấn
+   * vào booster thôi"). Checked in `canStartAim()` rather than folded into
+   * `canInteract()`: this only ever blocks the player's OWN pointer gesture,
+   * never anything driven by the engine itself. Set via `setAimLocked` from
+   * React, one per active spotlight step. */
+  private aimLocked = false;
+
+  /** True for the span of the freeze-orb FTUE's own "now shoot it yourself"
+   * beat — the player aims and fires for real (unlike the pointer-blocked
+   * caption beats), but a shot that lands anywhere other than the orb's own
+   * trigger cell must not spend anything real: on request ("những cú shoot
+   * vào chỗ khác sẽ không được tính phát nào khi đang ở trong tutorial"),
+   * checked in `handleImpact` before `resolveShot` is ever called, so a
+   * miss here never touches ammo, the queue or `shotsUsed` — it just emits
+   * `FREEZE_FTUE_NUDGE` and hands aim back immediately. */
+  private ftueFreezeAimActive = false;
 
   /** "New cannon unlocked" celebration — see `playUnlockCelebration`. Built
    * lazily on first use since most sessions never buy a skin, and torn down
@@ -1997,6 +2046,74 @@ export class SandCannonEngine {
       // Row 0 of the canvas is the top of the image; grid y counts up from the
       // floor, so the row a pixel lands on is the mirror of its grid y.
       writePixel(cell.x + offset, height - 1 - cell.y, r, g, b, 255);
+    }
+
+    // Small colour-isolated clusters (1-4 grains, no same-colour grain
+    // touching them) glow in their own colour, breathing — see
+    // `CLUSTER_GLOW_HZ`'s own doc comment. Found with a plain flood fill
+    // over `this.cells` by colour + orthogonal adjacency (`NEIGHBOR_OFFSETS`,
+    // the same 4-neighbour rule the solver's own bodies use) — deliberately
+    // NOT `cell.bodyId`, which only reconciles on the next `REINDEX` settle
+    // step and can be transiently stale while sand is actively falling; a
+    // fresh flood fill is correct every single frame instead, at the same
+    // O(cells) cost `redrawSand` already pays for every other pass here.
+    {
+      const visited = new Set<string>();
+      const glowCells: PixelCell[] = [];
+      for (const cell of this.cells.values()) {
+        const startKey = cellKey(cell.x, cell.y);
+        if (visited.has(startKey)) continue;
+        visited.add(startKey);
+        const cluster: PixelCell[] = [cell];
+        const stack: PixelCell[] = [cell];
+        while (stack.length) {
+          const current = stack.pop()!;
+          for (const [dx, dy] of NEIGHBOR_OFFSETS) {
+            const neighborKey = cellKey(current.x + dx, current.y + dy);
+            if (visited.has(neighborKey)) continue;
+            const neighbor = this.cells.get(neighborKey);
+            if (!neighbor || neighbor.color !== current.color) continue;
+            visited.add(neighborKey);
+            cluster.push(neighbor);
+            stack.push(neighbor);
+          }
+        }
+        if (cluster.length <= CLUSTER_GLOW_MAX_SIZE) glowCells.push(...cluster);
+      }
+      if (glowCells.length) {
+        // The halo: every empty cell within a Chebyshev distance of 2 from any
+        // glowing grain, tagged with the nearest such grain's own colour and
+        // ring (1 = touching, 2 = one further out — `CLUSTER_GLOW_INNER_ALPHA`/
+        // `CLUSTER_GLOW_OUTER_ALPHA`'s own comment). Skips any cell already
+        // spoken for — real sand (any colour/cluster), a Wall Obstacle, or a
+        // Freeze Map trigger (both drawn as opaque base layers above, lines
+        // ~1955-1989) — so the glow only ever appears in genuinely open frame
+        // space around the cluster, never painted translucently over
+        // something else's opaque pixel. A key/lock icon drawn later in this
+        // same function naturally wins any remaining overlap, since those
+        // passes run after this one.
+        const halo = new Map<string, { x: number; y: number; rgb: readonly [number, number, number]; ring: number }>();
+        for (const cell of glowCells) {
+          for (let dy = -2; dy <= 2; dy += 1) {
+            for (let dx = -2; dx <= 2; dx += 1) {
+              const ring = Math.max(Math.abs(dx), Math.abs(dy));
+              if (ring === 0 || ring > 2) continue;
+              const hx = cell.x + dx;
+              const hy = cell.y + dy;
+              const haloKey = cellKey(hx, hy);
+              if (this.cells.has(haloKey) || this.wallSet.has(haloKey) || this.freezeTriggerSet.has(haloKey)) continue;
+              const existing = halo.get(haloKey);
+              if (!existing || existing.ring > ring) halo.set(haloKey, { x: hx, y: hy, rgb: cell.rgb, ring });
+            }
+          }
+        }
+        for (const { x, y, rgb, ring } of halo.values()) {
+          const peakAlpha = ring === 1 ? CLUSTER_GLOW_INNER_ALPHA : CLUSTER_GLOW_OUTER_ALPHA;
+          const alpha = Math.round(peakAlpha * this.clusterGlowStrength);
+          if (alpha <= 0) continue;
+          writePixel(x, height - 1 - y, rgb[0], rgb[1], rgb[2], alpha);
+        }
+      }
     }
 
     for (const cell of this.dying) {
@@ -3318,11 +3435,12 @@ export class SandCannonEngine {
   }
 
   private canStartAim() {
-    return this.canInteract() && this.projectile === null && performance.now() >= this.nextShotAt;
+    return (
+      this.canInteract() && !this.aimLocked && this.projectile === null && performance.now() >= this.nextShotAt
+    );
   }
 
   private onAimPointerDown = (event: PointerEvent) => {
-    if (this.scriptedShotActive) return;
     if (!this.canStartAim()) return;
     this.aimPointer = event.pointerId;
     this.lastInputAt = performance.now();
@@ -3679,10 +3797,8 @@ export class SandCannonEngine {
     );
   }
 
-  /** Iterative yaw/elevation solve shared by `solveAimAtScreenPoint` (a real
-   * drag, aimed via a screen-space ray) and the scripted FTUE shots in
-   * `runScriptedShot` (aimed directly at a known world point) — everything
-   * past "here is the target in world space" is identical between the two. */
+  /** Iterative yaw/elevation solve used by `solveAimAtScreenPoint` — a real
+   * drag, aimed via a screen-space ray. */
   private solveAimAtWorldTarget(target: THREE.Vector3): BallisticSolution | null {
     for (let iteration = 0; iteration < 4; iteration += 1) {
       const start = this.muzzleAnchor.getWorldPosition(new THREE.Vector3());
@@ -3718,8 +3834,8 @@ export class SandCannonEngine {
   }
 
   /** Inverse of `gridAtPoint` — the world point (on the sand plane) a given
-   * frame cell sits at. Used only by the scripted FTUE shots, which aim at a
-   * known cell directly instead of ray-casting from a screen position. */
+   * frame cell sits at. Used by `screenPointForGrid`, which aims at a known
+   * cell directly instead of ray-casting from a screen position. */
   private worldPointForGrid(gx: number, gy: number): THREE.Vector3 {
     const planeWorldZ = this.frameRoot.position.z + this.sandMesh.position.z;
     const localX = (gx - (this.level.frame.width - 1) / 2) * this.cell;
@@ -3738,121 +3854,10 @@ export class SandCannonEngine {
 
   /** Where a frame cell renders on screen right now — for the freeze
    * tutorial's spotlight callout (`SandGame.tsx`'s `freezeFtueStep`), which
-   * has to point a highlight ring at the same cell `runScriptedShot` is
-   * about to fire at, in the same `left`/`top` pixel space the crosshair
-   * itself is positioned in. */
+   * has to point a highlight ring at the orb's own cell, in the same
+   * `left`/`top` pixel space the crosshair itself is positioned in. */
   screenPointForGrid(gx: number, gy: number): { x: number; y: number } {
     return this.screenPointForWorld(this.worldPointForGrid(gx, gy));
-  }
-
-  private waitUntilReadyToAim(): Promise<void> {
-    return new Promise((resolve) => {
-      const check = () => {
-        if (this.disposed || this.canStartAim()) {
-          resolve();
-          return;
-        }
-        requestAnimationFrame(check);
-      };
-      requestAnimationFrame(check);
-    });
-  }
-
-  /**
-   * Level 31's freeze FTUE (`SandLevelConfig.ftueFreezeDemo`): drags the aim
-   * onto `(gx, gy)` and fires — a REAL shot through `fire()`/`resolveShot`,
-   * not a cosmetic showcase round. Resolves `true` once the shot has left
-   * the barrel, `false` if the engine wasn't in a state to aim at all (the
-   * caller should just stop the sequence in that case).
-   *
-   * Blocks real pointer input for the duration via `scriptedShotActive` (set
-   * by the caller, `runScriptedShotSequence`) — see `onAimPointerDown`.
-   */
-  private runScriptedShot(gx: number, gy: number, dragMs = 650): Promise<boolean> {
-    if (!this.canStartAim()) return Promise.resolve(false);
-    const target = this.worldPointForGrid(gx, gy);
-    const startYaw = this.yaw;
-    const startElevation = this.elevation;
-    const solution = this.solveAimAtWorldTarget(target);
-    if (!solution) {
-      this.yaw = startYaw;
-      this.elevation = startElevation;
-      this.applyCannonTransform();
-      return Promise.resolve(false);
-    }
-    const finalYaw = this.yaw;
-    const finalElevation = this.elevation;
-    const finalScreen = this.screenPointForWorld(target);
-    this.yaw = startYaw;
-    this.elevation = startElevation;
-    this.applyCannonTransform();
-
-    const pointerId = SCRIPTED_AIM_POINTER_ID;
-    this.aimPointer = pointerId;
-    this.lastInputAt = performance.now();
-    this.callbacks.onEvent?.({ type: "AIM_TOUCHED" });
-    this.aimZone.classList.add("is-aiming");
-    this.crosshair.classList.add("is-visible", "is-engaged", "is-aiming", "is-target-valid");
-    const centerX = this.host.clientWidth / 2;
-    const centerY = this.host.clientHeight / 2;
-    this.aimZone.style.setProperty("--joystick-x", `${centerX}px`);
-    this.aimZone.style.setProperty("--joystick-y", `${centerY}px`);
-
-    return new Promise((resolve) => {
-      const started = performance.now();
-      const tick = (now: number) => {
-        if (this.disposed || this.aimPointer !== pointerId) {
-          resolve(false);
-          return;
-        }
-        const t = THREE.MathUtils.clamp((now - started) / dragMs, 0, 1);
-        const eased = t * t * (3 - 2 * t);
-        this.yaw = THREE.MathUtils.lerp(startYaw, finalYaw, eased);
-        this.elevation = THREE.MathUtils.lerp(startElevation, finalElevation, eased);
-        this.applyCannonTransform();
-        const screenX = THREE.MathUtils.lerp(centerX, finalScreen.x, eased);
-        const screenY = THREE.MathUtils.lerp(centerY, finalScreen.y, eased);
-        this.crosshair.style.left = `${screenX}px`;
-        this.crosshair.style.top = `${screenY}px`;
-        this.aimZone.style.setProperty("--joystick-dx", `${(screenX - centerX) * 0.5}px`);
-        this.aimZone.style.setProperty("--joystick-dy", `${(screenY - centerY) * 0.5}px`);
-        if (t >= 1) {
-          this.displayedLaunch = solution;
-          window.setTimeout(() => {
-            if (this.disposed || this.aimPointer !== pointerId) {
-              resolve(false);
-              return;
-            }
-            this.clearAimGesture();
-            this.fire(solution);
-            resolve(true);
-          }, 180);
-          return;
-        }
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-  }
-
-  /** Runs level 31's freeze FTUE end to end: an auto-drag-and-fire at each
-   * grid cell in `targets`, in order, each one waiting for the previous shot
-   * to fully land and the board to settle before starting the next drag.
-   * Stops early (returning `false`) if any shot can't be aimed — the caller
-   * should still show "Tap to continue" and hand back control either way. */
-  async runScriptedShotSequence(targets: readonly { x: number; y: number }[]): Promise<boolean> {
-    this.scriptedShotActive = true;
-    try {
-      for (const target of targets) {
-        await this.waitUntilReadyToAim();
-        const fired = await this.runScriptedShot(target.x, target.y);
-        if (!fired) return false;
-      }
-      await this.waitUntilReadyToAim();
-      return true;
-    } finally {
-      this.scriptedShotActive = false;
-    }
   }
 
   /** The frame square a world point falls in, or null if it falls outside. */
@@ -4263,6 +4268,20 @@ export class SandCannonEngine {
     // old unconditional `sound("impact")`) specifically so that call can be
     // conditioned on the outcome — see the comment there.
     const center = cell ? { x: cell.x, y: cell.y } : grid;
+
+    // Freeze-orb FTUE's own "now shoot it yourself" beat: a shot landing
+    // anywhere but the orb's own trigger cell is a gentle no-op, not a real
+    // shot — see `ftueFreezeAimActive`'s own doc comment. Checked ahead of
+    // `resolveShot` specifically so nothing below it (ammo/queue spend,
+    // settle, sparkle, unlock steps) ever runs for a shot this rule discards.
+    if (this.ftueFreezeAimActive && !this.freezeTriggerSet.has(cellKey(center.x, center.y))) {
+      sound("wrongColor");
+      this.callbacks.onEvent?.({ type: "FREEZE_FTUE_NUDGE" });
+      this.setPhase("READY");
+      this.callbacks.onState(this.cloneState());
+      return;
+    }
+
     const resolution = resolveShot(
       this.level,
       this.state,
@@ -4719,6 +4738,9 @@ export class SandCannonEngine {
     // push back is the same for every hit regardless of where it landed.
     this.frameRecoil = Math.max(0, this.frameRecoil - FIXED_STEP * FRAME_RECOIL_DECAY_PER_SECOND);
     const idleShakeZ = this.updateIdleHint(deltaMs);
+    this.clusterGlowElapsed = (this.clusterGlowElapsed + deltaMs / 1000) % CLUSTER_GLOW_CYCLE_SECONDS;
+    const clusterGlowBreathe = 0.5 + 0.5 * Math.sin(this.clusterGlowElapsed * CLUSTER_GLOW_HZ * Math.PI * 2);
+    this.clusterGlowStrength = CLUSTER_GLOW_FLOOR + (CLUSTER_GLOW_CEILING - CLUSTER_GLOW_FLOOR) * clusterGlowBreathe;
     // Radius Overcharge's own shake — see `radiusShakeAmplitude`'s own field
     // comment for why this decays exponentially (a real slow-down) rather
     // than linearly (a shake at constant strength that just switches off).
@@ -4886,6 +4908,23 @@ export class SandCannonEngine {
    * it stops — no ticking, no aiming, and no sight left hanging over a menu
    * that has nothing to aim at.
    */
+  /**
+   * Blocks the player's own aim gesture from starting (`canStartAim`) without
+   * touching anything else `canInteract()` governs — used by an FTUE
+   * spotlight step whose dimming overlay has `pointer-events: none` (so a
+   * tap reaches the real booster/orb button it's pointing at) but that must
+   * NOT let that same fall-through also reach the aim zone sitting behind
+   * it. See `aimLocked`'s own doc comment.
+   */
+  setAimLocked(locked: boolean) {
+    this.aimLocked = locked;
+  }
+
+  /** See `ftueFreezeAimActive`'s own doc comment. */
+  setFtueFreezeAimActive(active: boolean) {
+    this.ftueFreezeAimActive = active;
+  }
+
   setIdle(idle: boolean) {
     this.idle = idle;
     if (!idle) {

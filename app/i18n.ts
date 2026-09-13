@@ -177,16 +177,17 @@ export interface Strings {
    * one-line aria-label a screen reader gets instead. */
   youUnlockedPrefix: string;
   tapToContinue: string;
-  /** Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`), one
-   * string per callout beat — see `SandGame.tsx`'s `freezeFtueStep`. Shown
-   * before the orb is ever shot, spotlighting it. */
+  /** Level 31's freeze-orb tutorial (`SandLevelConfig.ftueFreezeDemo`) — see
+   * `SandGame.tsx`'s `freezeFtueStep`. Shown spotlighting the orb, inviting
+   * the player to aim and fire at it themselves (no scripted stand-in shot —
+   * same "tap it yourself" shape the booster/Chain Sort tutorials use, just
+   * aimed at a spot on the board instead of a UI button). */
   ftueFreezeIntro: string;
-  /** Shown right after the scripted shot freezes the board, before the
-   * scripted shots that clear it. */
-  ftueFreezeExplainThaw: string;
-  /** Shown once the freeze has thawed, right before control hands back to
-   * the player. */
-  ftueFreezeOutro: string;
+  /** A toast shown whenever, during `freezeFtueStep === "shoot"`, a shot
+   * lands anywhere but the orb's own trigger cell — that shot is discarded
+   * for free (see `SandCannonEngine.setFtueFreezeAimActive`'s own doc
+   * comment), this is just the nudge back toward the real target. */
+  ftueFreezeNudge: string;
   /** Level 3's booster tutorial (`SandLevelConfig.ftueBoosterDemo`) — see
    * `SandGame.tsx`'s `boosterFtueStep`. Shown spotlighting the Radius
    * Overcharge button, inviting the player to actually tap and arm it
@@ -487,9 +488,8 @@ const EN: Strings = {
   youUnlocked: (name) => `You unlocked ${name}!`,
   youUnlockedPrefix: "You unlocked",
   tapToContinue: "Tap to continue",
-  ftueFreezeIntro: "This is a Freeze Orb — hit it and it locks the whole pile in place!",
-  ftueFreezeExplainThaw: "To break the freeze, clear every bit of sand in its colour!",
-  ftueFreezeOutro: "That's it — that's how Freeze Orb works!",
+  ftueFreezeIntro: "This is a Freeze Orb — it locks the whole pile in place! Aim for it and fire.",
+  ftueFreezeNudge: "Aim for the Freeze Orb!",
   ftueBoosterRadiusIntro: "This is Radius Overcharge — it doubles your blast radius for one shot. Tap it to arm it!",
   ftueBoosterPrismIntro: "This is Prism Shot — it clears every colour in reach, not just the one you're holding. Tap it to arm it!",
   ftueChainSortIntro: "This is Chain Sort — it clears the whole connected patch of that colour, corners included, no radius limit. Tap it to arm it!",
@@ -686,9 +686,8 @@ const VI: Strings = {
   youUnlocked: (name) => `Bạn đã mở khoá ${name}!`,
   youUnlockedPrefix: "Bạn đã mở khoá",
   tapToContinue: "Chạm để tiếp tục",
-  ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại!",
-  ftueFreezeExplainThaw: "Muốn phá băng? Dọn sạch hết cát cùng màu với nó!",
-  ftueFreezeOutro: "Vậy đó — Freeze Orb hoạt động như thế!",
+  ftueFreezeIntro: "Đây là Freeze Orb — bắn trúng nó sẽ khoá cả đống cát lại! Hãy nhắm và bắn trúng nó.",
+  ftueFreezeNudge: "Hãy bắn trúng Freeze Orb!",
   ftueBoosterRadiusIntro: "Đây là Radius Overcharge — tăng gấp đôi bán kính bắn cho 1 phát! Chạm vào để trang bị!",
   ftueBoosterPrismIntro: "Đây là Prism Shot — dọn sạch mọi màu trong tầm bắn, không chỉ màu đang cầm! Chạm vào để trang bị!",
   ftueChainSortIntro: "Đây là Chain Sort — dọn sạch cả mảng cát cùng màu liền kề, kể cả nằm xéo, không giới hạn bán kính! Chạm vào để trang bị!",

@@ -1,20 +1,26 @@
 // A small standalone Node server that writes level drafts straight into
-// design/levels/sand-levels.ts. Two routes, both enforcing the same rule —
-// every level has exactly one id, and a draft naming an id already in the
-// file updates that level rather than minting a duplicate — at two different
-// scales:
+// design/levels/sand-levels.ts (and, for Zen-mode drafts, its own
+// design/levels/zen-custom-levels.ts — see that file's own header comment
+// for why it's separate). Three routes, the first two enforcing the same
+// rule — every level has exactly one id, and a draft naming an id already in
+// the file updates that level rather than minting a duplicate — at two
+// different scales:
 //
 // - POST /update-level writes ONE draft back to the specific `export const`
 //   it was imported from (matched by id, wherever it sits in the file) —
 //   what "Import built-in" + "Update built-in level" in the editor use to
 //   actually revise a hand-authored level in place, instead of shipping the
-//   edit as an unrelated new one.
+//   edit as an unrelated new one. Main list only — Zen has no hand-authored
+//   levels of its own to revise this way, only ships in bulk.
 // - POST /ship-levels does the same per-draft id check across the editor's
-//   whole level list at once: a draft that names an existing id updates that
-//   level in place (see `shipLevels`'s own comment for exactly where);
-//   everything left over — genuinely new levels only — replaces the
+//   whole (non-Zen) level list at once: a draft that names an existing id
+//   updates that level in place (see `shipLevels`'s own comment for exactly
+//   where); everything left over — genuinely new levels only — replaces the
 //   EDITOR_LEVELS block wholesale, so that block never piles up stale
 //   entries from levels the editor no longer has.
+// - POST /ship-zen-levels is Zen's own, simpler twin of /ship-levels, into
+//   zen-custom-levels.ts's own EDITOR_ZEN_LEVELS block instead — see
+//   `shipZenLevels`'s own comment for how it differs.
 //
 // It cannot live inside the app itself: this project's dev/build target is
 // Cloudflare Workers (see worker/index.ts, wrangler.toml), and the Workers
@@ -32,9 +38,17 @@ import path from "node:path";
 
 const PORT = Number(process.env.LEVEL_WRITER_PORT) || 4787;
 const SAND_LEVELS_PATH = path.join(process.cwd(), "design", "levels", "sand-levels.ts");
+const ZEN_LEVELS_PATH = path.join(process.cwd(), "design", "levels", "zen-custom-levels.ts");
 
 const BEGIN_MARKER = "// ==== Editor-shipped levels ====";
 const END_MARKER = "// ==== End editor-shipped levels ====";
+const ZEN_BEGIN_MARKER = "// ==== Editor-shipped Zen levels ====";
+const ZEN_END_MARKER = "// ==== End editor-shipped Zen levels ====";
+// Duplicated from zen-levels.ts's own constant, same reasoning as this whole
+// script's header comment gives for duplicating `draftToTypeScript`'s
+// formatting — plain Node here, no TypeScript step, so it cannot just import
+// that file's export. Keep the two in sync if it ever changes.
+const ZEN_ID_BASE = 100_000;
 
 /**
  * Scan `source` from `openIndex` (the position of an opening bracket) for the
@@ -406,6 +420,61 @@ async function shipLevels(drafts) {
 }
 
 /**
+ * Zen's own twin of `shipLevels`, writing into zen-custom-levels.ts instead —
+ * see that file's own header comment for why it exists separately. Simpler
+ * than `shipLevels`: zen-custom-levels.ts has no hand-authored levels living
+ * outside its own shipped block the way sand-levels.ts's 50 do, so there is
+ * nothing to upsert-in-place against — every ship just regenerates the whole
+ * block wholesale from the current Zen draft list. A draft's `importedFromId`
+ * still keeps its id stable across re-ships, but only when that id is
+ * already one of THIS block's own (checked against the block's current
+ * `id:` fields) — an id imported from the MAIN list (a Zen draft made by
+ * ticking the "Zen Mode" box on an "Import built-in" copy) does not count,
+ * since that id belongs to a sand-levels.ts level, not a Zen one.
+ */
+async function shipZenLevels(drafts) {
+  const source = await readFile(ZEN_LEVELS_PATH, "utf8");
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+
+  const beginIdx = source.indexOf(ZEN_BEGIN_MARKER);
+  const endIdx = source.indexOf(ZEN_END_MARKER);
+  if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
+    throw new Error("Could not find the editor-shipped Zen levels markers in design/levels/zen-custom-levels.ts.");
+  }
+
+  const existingIds = [...source.slice(beginIdx, endIdx).matchAll(/\bid:\s*(\d+)/g)].map((match) => Number(match[1]));
+  let nextFreshId = existingIds.length ? Math.max(...existingIds) + 1 : ZEN_ID_BASE + 4;
+
+  const names = uniqueExportNames(drafts);
+  const ids = drafts.map((draft) => {
+    const claimed = Number.isInteger(draft.importedFromId) && existingIds.includes(draft.importedFromId)
+      ? draft.importedFromId
+      : null;
+    return claimed ?? nextFreshId++;
+  });
+  const blocks = drafts.map((draft, index) => draftToTypeScript(draft, ids[index], names[index]));
+
+  const body = [
+    "// Regenerated in full every time a Zen level is shipped from `/editor`",
+    "// (the \"Ship all Zen levels to zen-custom-levels.ts\" button, via `npm run",
+    "// level-writer`) — this array always mirrors the editor's current Zen",
+    "// level list exactly, so a Zen level deleted in the editor disappears",
+    "// from here on the next ship rather than lingering.",
+    "// Hand edits inside this block are overwritten on the next ship; edit the",
+    "// level in the editor instead.",
+    ...(blocks.length ? [blocks.join("\n\n"), ""] : []),
+    `export const EDITOR_ZEN_LEVELS: SandLevelConfig[] = [${names.join(", ")}];`,
+  ].join("\n").replace(/\n/g, eol);
+
+  const next = source.slice(0, beginIdx + ZEN_BEGIN_MARKER.length)
+    + eol + eol + body + eol
+    + source.slice(endIdx);
+
+  await writeFile(ZEN_LEVELS_PATH, next, "utf8");
+  return { count: drafts.length, names };
+}
+
+/**
  * Writes one draft back to the *same* `export const` it was imported from
  * (matched by `id`, wherever that const sits in the file — hand-authored or
  * previously shipped), rather than appending it as a new level the way
@@ -452,7 +521,8 @@ const server = createServer((req, res) => {
     res.writeHead(204).end();
     return;
   }
-  if (req.method !== "POST" || (req.url !== "/ship-levels" && req.url !== "/update-level")) {
+  const validRoutes = ["/ship-levels", "/update-level", "/ship-zen-levels"];
+  if (req.method !== "POST" || !validRoutes.includes(req.url)) {
     res.writeHead(404).end();
     return;
   }
@@ -477,7 +547,7 @@ const server = createServer((req, res) => {
         res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "That doesn't look like a list of level drafts." }));
         return;
       }
-      const result = await shipLevels(drafts);
+      const result = req.url === "/ship-zen-levels" ? await shipZenLevels(drafts) : await shipLevels(drafts);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, ...result }));
     } catch (error) {
       res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
@@ -486,5 +556,5 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Level writer listening on http://localhost:${PORT} — writing into ${SAND_LEVELS_PATH}`);
+  console.log(`Level writer listening on http://localhost:${PORT} — writing into ${SAND_LEVELS_PATH} and ${ZEN_LEVELS_PATH}`);
 });
