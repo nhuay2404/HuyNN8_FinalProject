@@ -446,7 +446,7 @@ export type SandLevelConfig = RadiusGameplayPolicy & {
    * as the load-bearing move, not just as help.
    *
    * Nothing reads this yet: this build has no brute-force solvability check
-   * to exempt (see CHANGELOG-prototype.md §16 for the rule this would have
+   * to exempt (see CHANGELOG.md §16 for the rule this would have
    * overridden) — it is a data flag only, ready for a future solver/validator
    * to widen its search with rather than misreport the level as unsolvable.
    */

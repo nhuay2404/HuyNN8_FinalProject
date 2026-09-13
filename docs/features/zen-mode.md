@@ -158,5 +158,5 @@ ngoài "Modes") reset cả `playingZen`/`zenPickerOpen` — xem comment tại ch
 Nút "Test in game" thường điều hướng `/?level=<tên>`, đọc bởi `readBoot` (chỉ tìm trong danh sách
 chính). Một draft Zen sẽ **không** dùng được link đó — thay vào đó editor hiện dòng chữ "Saved
 automatically. Play it in-game: Modes → Zen Mode." Đánh đổi có chủ đích để tránh làm deep-link URL
-phức tạp thêm (nguy cơ hydration mismatch giống bài học ở Daily Login, xem CHANGELOG-prototype.md
+phức tạp thêm (nguy cơ hydration mismatch giống bài học ở Daily Login, xem CHANGELOG.md
 #170) — tác giả lưu draft rồi tự vào Modes → Zen Mode tìm level vừa lưu.

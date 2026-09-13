@@ -317,7 +317,7 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
  * see globals.css — used to cover the base and turret, leaving only the
  * barrel poking out above it), then tuned by eye across several more rounds
  * of feedback — base deliberately settled down into the tray rather than
- * hovering just above it. `CHANGELOG-prototype.md` has the blow-by-blow if
+ * hovering just above it. `CHANGELOG.md` has the blow-by-blow if
  * a future value here looks surprising; the short version is that this
  * number has moved several times in both directions and eyeballing it live
  * against the actual dock is more reliable than reasoning about it in the

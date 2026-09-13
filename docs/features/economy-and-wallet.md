@@ -127,7 +127,7 @@ của họ.
 ### Giao diện: lưới đen, ô vuông to, 5 ô/hàng, tự cuộn (kéo xuống xem thêm)
 
 `SandGame.tsx` render lưới bằng CSS grid **5 cột** (2026-09b — trước đó là 7 cột thẳng hàng thứ, xem
-`CHANGELOG-prototype.md` #172) trong một khối riêng nền tối (`.daily-login-calendar-scroll`) — không
+`CHANGELOG.md` #172) trong một khối riêng nền tối (`.daily-login-calendar-scroll`) — không
 còn nằm trong palette pastel chung của card, cố tình để đọc thành "một tấm lịch" riêng biệt bên trong
 card. Mỗi ô là hình vuông (`aspect-ratio: 1`); khoảng cách `gap` 4px trên nền tối chính là các đường
 kẻ lưới đen giữa ô, không cần border riêng từng ô. **Không còn header thứ** — chỉ số ngày trong tháng

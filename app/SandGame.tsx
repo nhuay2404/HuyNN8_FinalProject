@@ -202,7 +202,7 @@ function numHex(value: number) {
  * Store's own fixed ladder, not something a game can set arbitrarily), each
  * tier keeping the bonus percentage it already had so the "bigger pack =
  * better $/coin deal" curve mobile IAP ladders always use is untouched —
- * only the anchor under it moved. See CHANGELOG-prototype.md.
+ * only the anchor under it moved. See CHANGELOG.md.
  */
 type SpecialOffer = { id: string; name: string; tag: string; coins?: number; hearts?: number; emeralds?: number; bonus?: string; valuePercent: number; price: string };
 /**
@@ -3355,7 +3355,7 @@ export default function SandGame() {
             persistent button), but a hub-only control belongs somewhere that
             reads as hub chrome, not stacked on the exact spot the in-game
             settings gear appears the instant `playing` flips — see
-            CHANGELOG-prototype.md for a report of exactly that read as an
+            CHANGELOG.md for a report of exactly that read as an
             overlap. Conditionally rendered now, not `hidden`, so there is no
             DOM node here at all mid-play for any stray z-index/cascade
             surprise to make visible.

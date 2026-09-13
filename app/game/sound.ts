@@ -9,7 +9,7 @@
 // There is no background music of any kind here (2026-09ae ask: "Xóa BGM
 // luôn" — pulled outright, both the Freeze-phase loop and the always-on hub
 // loop that had replaced the original always-on generative drone; see
-// CHANGELOG-prototype.md).
+// CHANGELOG.md).
 
 const SFX_VOLUME_KEY = "cannon-sort:v1:sfx-volume";
 const DEFAULT_VOLUME = 1;

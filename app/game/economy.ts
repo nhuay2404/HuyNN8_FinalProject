@@ -22,7 +22,7 @@ const PROGRESS_KEY = "sand-cannon:v1:reward-track";
 const HEARTS_KEY = "sand-cannon:v1:hearts";
 
 // ---- balancing constants ---------------------------------------------------
-// See CHANGELOG-prototype.md for the full reasoning behind every number here.
+// See CHANGELOG.md for the full reasoning behind every number here.
 // Nothing below is guessed twice: change one constant and every screen that
 // reads through the functions in this file (HUD, Shop, the result card, the
 // daily-login modal) moves with it.
@@ -135,7 +135,7 @@ export function boosterPrice(type: BoosterType): number {
  * numbers like 17 vs 19.
  *
  * Range: 5 (score 0) to 35 (score 100), average 20 across the score range.
- * See CHANGELOG-prototype.md for the worked-through tiers and the 50-level
+ * See CHANGELOG.md for the worked-through tiers and the 50-level
  * lifetime estimate, and GDD.md §10 for the "5 trận / 1 booster" pacing goal
  * this was rebalanced around.
  */
@@ -191,7 +191,7 @@ export function levelMilestoneBonus(levelId: number): number {
  * in reads as a modest top-up, not a replacement for playing levels. Saturday
  * and Sunday (the weekend) pay NO gold at all: they are the only days
  * `dailyLoginBoosterPerk` hands out a free booster charge instead, and that
- * charge is the entire weekend reward — see CHANGELOG-prototype.md for the
+ * charge is the entire weekend reward — see CHANGELOG.md for the
  * full reasoning and GDD.md §10.6 for the weekday table.
  */
 export const DAILY_LOGIN_REWARDS: readonly number[] = [10, 10, 10, 10, 10, 0, 0];
@@ -475,7 +475,7 @@ export function __resetWalletForTests(overrides?: Partial<Wallet>) {
 
 // ---- first-clear tracking ---------------------------------------------------
 // A level pays its gold reward exactly once, on the first time it is ever
-// won on this browser — see CHANGELOG-prototype.md for why replays pay
+// won on this browser — see CHANGELOG.md for why replays pay
 // nothing: full pay on every replay would make one easy level an infinite
 // tap for gold, and the whole point of scoring the reward off difficulty is
 // that the number means something. Mirrors `TUTORIALS_SEEN_KEY` in
