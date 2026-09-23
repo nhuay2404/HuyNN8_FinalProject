@@ -792,7 +792,12 @@ export default function LevelEditor() {
    * turns it down. */
   const [importMaxColors, setImportMaxColors] = useState(SAND_COLORS.length);
   /** Which built-in level the "Import built-in" row would bring in next. */
-  const [importLevelId, setImportLevelId] = useState<number | null>(BUILT_IN_LEVELS[3]?.id ?? null);
+  const [importLevelId, setImportLevelId] = useState<number | null>(
+    // `no-onboarding-levels` branch: levels 1-3 are no longer in
+    // `BUILT_IN_LEVELS`, so `fourthLevel` (id 4, the first importable level)
+    // is no longer at a fixed array position — look it up by id instead.
+    BUILT_IN_LEVELS.find((level) => level.id === 4)?.id ?? null,
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);

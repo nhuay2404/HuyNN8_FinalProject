@@ -5768,11 +5768,15 @@ export const EDITOR_LEVELS: SandLevelConfig[] = [];
  * in SandGame.tsx — what the Gallery and the level-switcher both list in
  * full. Every level meant for a player to actually reach belongs in this
  * array.
+ *
+ * `no-onboarding-levels` branch: `defaultLevel`/`secondConsequence`/
+ * `thirdLevel` (the hand-tuned FTUE arc, ids 1-3) are deliberately left out
+ * of this roster — players land straight on `fourthLevel`. The three consts
+ * still exist and are still exported (zen-levels.ts's seed content and this
+ * file's own tests still use `thirdLevel` directly), only this array drops
+ * them.
  */
 export const BUILT_IN_LEVELS: SandLevelConfig[] = [
-  defaultLevel,
-  secondConsequence,
-  thirdLevel,
   fourthLevel,
   fifthLevel,
   sixthLevel,

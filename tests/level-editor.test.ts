@@ -463,13 +463,14 @@ test("a name with a quote cannot break out of the generated string", () => {
 // ---- the shipped level stays a valid draft target -------------------------
 
 test("the built-in level list is what the game and editor both start from", () => {
-  // Fifty hand-authored levels (1-3: the tutorial arc; 4-10: beatchart arc 1;
+  // `no-onboarding-levels` branch: the tutorial arc (ids 1-3, `defaultLevel`/
+  // `secondConsequence`/`thirdLevel`) is deliberately left out of the shipped
+  // roster — players land straight on `fourthLevel`. 4-10: beatchart arc 1;
   // 11-20: arc 2, Wall Obstacle; 21-30: arc 3, Lock & Key; 31-40: arc 4,
   // Freeze Map; 41-50: arc 5, every mechanic recombined at higher intensity,
-  // no new mechanic) — everything past that is authored and shipped from the
+  // no new mechanic — everything past that is authored and shipped from the
   // editor now.
   const handAuthored = [
-    defaultLevel, secondConsequence, thirdLevel,
     fourthLevel, fifthLevel, sixthLevel, seventhLevel, eighthLevel, ninthLevel, tenthLevel,
     eleventhLevel, twelfthLevel, thirteenthLevel, fourteenthLevel, fifteenthLevel,
     sixteenthLevel, seventeenthLevel, eighteenthLevel, nineteenthLevel, twentiethLevel,
@@ -481,10 +482,11 @@ test("the built-in level list is what the game and editor both start from", () =
     fortySixthLevel, fortySeventhLevel, fortyEighthLevel, fortyNinthLevel, fiftiethLevel,
   ];
   for (const level of handAuthored) assert.ok(BUILT_IN_LEVELS.includes(level));
-  assert.equal(BUILT_IN_LEVELS.length, 50);
+  assert.ok(![defaultLevel, secondConsequence, thirdLevel].some((level) => BUILT_IN_LEVELS.includes(level)));
+  assert.equal(BUILT_IN_LEVELS.length, 47);
   assert.deepEqual(
     BUILT_IN_LEVELS.map((level) => level.id),
-    Array.from({ length: 50 }, (_, index) => index + 1),
+    Array.from({ length: 47 }, (_, index) => index + 4),
     "ids are what the HUD shows",
   );
 });

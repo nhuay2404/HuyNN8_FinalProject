@@ -1,4 +1,4 @@
-import { BUILT_IN_LEVELS } from "./sand-levels.ts";
+import { BUILT_IN_LEVELS, thirdLevel } from "./sand-levels.ts";
 import { EDITOR_ZEN_LEVELS } from "./zen-custom-levels.ts";
 import type { BoosterType, SandLevelConfig } from "../../app/game/sand-types.ts";
 
@@ -75,8 +75,13 @@ function toZenLevel(level: SandLevelConfig, id: number): SandLevelConfig {
  * Zen levels" button, into their own file rather than these three seeds'.
  */
 export const BUILT_IN_ZEN_LEVELS: SandLevelConfig[] = [
-  toZenLevel(BUILT_IN_LEVELS[2], ZEN_ID_BASE + 1),
-  toZenLevel(BUILT_IN_LEVELS[9], ZEN_ID_BASE + 2),
-  toZenLevel(BUILT_IN_LEVELS[20], ZEN_ID_BASE + 3),
+  // `no-onboarding-levels` branch: `thirdLevel` (id 3) is no longer in
+  // `BUILT_IN_LEVELS`, so it's imported directly here instead of read off a
+  // position in that array. The other two seeds still reference by id
+  // (`.find`) rather than by position, since removing ids 1-3 from the front
+  // of the roster shifted every other level's array index.
+  toZenLevel(thirdLevel, ZEN_ID_BASE + 1),
+  toZenLevel(BUILT_IN_LEVELS.find((level) => level.id === 10)!, ZEN_ID_BASE + 2),
+  toZenLevel(BUILT_IN_LEVELS.find((level) => level.id === 21)!, ZEN_ID_BASE + 3),
   ...EDITOR_ZEN_LEVELS,
 ];
