@@ -146,7 +146,9 @@ const FIXED_STEP = 1 / 60;
  * (`solveAimAtScreenPoint`), so a faster muzzle speed still hits whatever the
  * crosshair is over, just with less hang time getting there. */
 const FIXED_LAUNCH_SPEED = 19;
-const SHOT_COOLDOWN_MS = 400;
+// Was 400 — removed on request ("tôi muốn xóa cái sự delay đó đi"): the next
+// shot is only gated on the previous projectile having landed.
+const SHOT_COOLDOWN_MS = 0;
 /** How far the *visible knob* is allowed to travel from centre before it pins
  * to the edge of the pad. Purely cosmetic — keep `.aim-joystick`'s width/height
  * in `globals.css` at exactly double this, since that ring is the drawn size
@@ -2826,7 +2828,7 @@ export class SandCannonEngine {
   private updateAmmoModel() {
     // The next round is only handed over once the board is at rest and the
     // player may fire again — the same moment §21 unlocks input.
-    if (!this.projectile && this.state.phase === "READY") this.chamberLoaded = true;
+    if (!this.projectile && (this.state.phase === "READY" || this.state.phase === "SETTLING")) this.chamberLoaded = true;
     this.syncAmmoModel();
     this.chamberAge += FIXED_STEP;
 
@@ -3322,10 +3324,17 @@ export class SandCannonEngine {
     this.aimZone.addEventListener("pointercancel", this.onAimPointerCancel);
   }
 
-  /** §21: aim and fire exist in READY and nowhere else — and never while the
-   * skin picker's showcase is running the rig itself. */
+  /** §21: aim and fire exist in READY — and, on request ("tôi muốn canon có
+   * thể bắn khi sand đang settling luôn"), in SETTLING too: the logical board
+   * is already settled the instant a shot resolves, only the pixels are still
+   * catching up, and `handleImpact` fast-forwards them before resolving the
+   * next shot. Never while the skin picker's showcase is running the rig. */
   private canInteract() {
-    return !this.paused && !this.disposed && !this.showcase && this.state.phase === "READY" && !this.state.result;
+    return (
+      !this.paused && !this.disposed && !this.showcase
+      && (this.state.phase === "READY" || this.state.phase === "SETTLING")
+      && !this.state.result
+    );
   }
 
   private canStartAim() {
@@ -4099,7 +4108,9 @@ export class SandCannonEngine {
     // that missed the sand entirely rather than one that sorted it.
     if (hitFrame) sound("bodyCleared");
     this.callbacks.onEvent?.({ type: "MISS", hitFrame });
-    this.setPhase("READY");
+    // A shot fired mid-settle that misses leaves the earlier fall still
+    // playing — stay SETTLING so `advanceBeats` hands READY back when it ends.
+    this.setPhase(this.beats.length ? "SETTLING" : "READY");
     this.callbacks.onState(this.cloneState());
   }
 
@@ -4137,11 +4148,23 @@ export class SandCannonEngine {
     return floor + t * (1 - floor);
   }
 
-  private handleImpact(cell: PixelCell | null, grid: CellCoord, contact: THREE.Vector3) {
+  private handleImpact(hitCell: PixelCell | null, grid: CellCoord, contact: THREE.Vector3) {
     const ammo = this.projectile?.color ?? null;
     const booster = this.projectile?.booster ?? null;
     this.clearProjectile();
     if (!ammo) return;
+    // Fired while the previous shot's sand was still falling: snap the pixels
+    // to the settled board `this.state` already holds, so the disc resolves
+    // against (and the CLEAR beat below looks up) cells where they really are.
+    // The grain that was hit may have moved, so re-read whatever now sits at
+    // the square it was hit in.
+    let cell = hitCell;
+    if (this.beats.length) {
+      this.flushBeats();
+      const at = hitCell ? { x: hitCell.x, y: hitCell.y } : grid;
+      cell = this.cells.get(cellKey(at.x, at.y)) ?? null;
+      if (!cell) grid = at;
+    }
     this.triggerFrameRecoil(contact);
     if (booster) {
       this.callbacks.onEvent?.({ type: "BOOSTER_IMPACT", booster });
@@ -4270,7 +4293,6 @@ export class SandCannonEngine {
           { kind: "HOLD", ms: SETTLE_TAIL_MS },
         );
         this.settleLandings = 0;
-        this.nextShotAt = Math.max(this.nextShotAt, performance.now() + CLEAR_DURATION_MS);
         this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
       } else {
         this.state = resolution.state;
@@ -4326,14 +4348,6 @@ export class SandCannonEngine {
       { kind: "HOLD", ms: SETTLE_TAIL_MS },
     );
     this.settleLandings = 0;
-    // Firing stays locked for the whole clear-flash-and-dissolve-and-fall
-    // sequence, not just the clear beat: landing a shot on a board that is
-    // still pouring sand would aim it at grains that haven't reached their
-    // final cell yet. `setPhase("SETTLING")` below is what actually blocks
-    // `canInteract()`; this floor just keeps the ordinary cooldown from being
-    // shorter than that lock (never longer — SHOT_COOLDOWN_MS still applies
-    // on top if it's already longer, e.g. nothing was cleared).
-    this.nextShotAt = Math.max(this.nextShotAt, performance.now() + CLEAR_DURATION_MS);
     // State applies immediately so the board, ammo count, etc. are correct
     // the instant the outcome is known — but the phase it carries is
     // overridden to SETTLING (unless the shot already ended the level) so
@@ -4402,7 +4416,25 @@ export class SandCannonEngine {
    * The renderer never decides where sand goes — it is told, and only chooses
    * how fast the pixels get there.
    */
-  private applyStep(step: SettleStep) {
+  /**
+   * Applies every queued beat at once — used when a shot lands mid-settle
+   * (see `handleImpact`). Grain passes run silently so a whole cascade
+   * doesn't fire its landing sounds/haptics in one frame; CLEAR cells keep
+   * dissolving on their own in `this.dying`.
+   */
+  private flushBeats() {
+    this.beats.forEach((beat, index) => {
+      if (index === 0 && this.beatStarted) return;
+      if (beat.kind === "SHAKE_AREA" || beat.kind === "HOLD") return;
+      if (beat.kind === "STEP") this.applyStep(beat.step, true);
+      else this.startBeat(beat);
+    });
+    this.beats = [];
+    this.beatStarted = false;
+    this.beatElapsed = 0;
+  }
+
+  private applyStep(step: SettleStep, silent = false) {
     if (step.kind === "REINDEX") {
       // Nothing moves here. The solver re-derives bodies from the settled grid,
       // so this is the one moment those labels become true — the pixels are
@@ -4477,6 +4509,7 @@ export class SandCannonEngine {
       // The very first grain-pass of a settle sequence is when falling
       // actually starts (the CLEAR beat before it is only a dissolve flash),
       // so that's the one moment to start the pour recording.
+      if (silent) return;
       if (this.settleLandings === 0) soundSandPour();
       this.settleLandings += 1;
       if (this.settleLandings % 2 === 1) {

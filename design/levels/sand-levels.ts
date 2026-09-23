@@ -145,7 +145,8 @@ export const secondConsequence: SandLevelConfig = {
   // Bumped a third time to 4.5 ("tăng radius level 2 lên, để tiến nhanh
   // progression của level 2") — faster progression now wins over staying
   // under level 1's disc; three colours still keep it a distinct lesson.
-  sortRadius: 4.5,
+  // Bumped a fourth time to 5.5 ("tôi muốn radius của level 2 to hơn nữa").
+  sortRadius: 5.5,
   // No budget: see this level's own doc comment above.
   shotLimit: Infinity,
   pixelScale: 5,
@@ -197,7 +198,10 @@ export const thirdLevel: SandLevelConfig = {
 
   ammoQueue: ["orange", "yellow", "blue"],
 
-  sortRadius: 2.5,
+  // Bumped from 2.5 on request ("hãy tăng radius level 3 lên"). The shotLimit
+  // note below was measured at 2.5 — a bigger disc only makes it more lenient.
+  // Then 3.5 → 4 ("thử 4. cho level 3 đi").
+  sortRadius: 4,
   // Measured with analyseLevel (app/game/level-analysis.ts): strong play
   // clears in 20, careless play (a random cell of the colour in hand) wins 6
   // of 8 sampled runs at this budget — six shots of slack for a strong line,

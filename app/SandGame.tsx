@@ -352,7 +352,9 @@ const HEART_PACKS: readonly HeartPack[] = [
 ];
 
 /** The phases §21 locks input in. The HUD has to say so, not just stop responding. */
-const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "SETTLING", "MERGING"]);
+// SETTLING is no longer here: the cannon may fire while sand is still falling
+// (see `canInteract` in SandCannonEngine.ts), so the HUD mustn't read as locked.
+const BUSY_PHASES = new Set(["PROJECTILE_FLYING", "HIT_RESOLUTION", "MERGING"]);
 
 /** How many flakes `.freeze-snowfall` renders while the board is frozen. */
 const FREEZE_SNOWFLAKE_COUNT = 26;
@@ -2928,6 +2930,16 @@ export default function SandGame() {
   // Skin screen to finish the unlock themselves (`unlockProgressionSkin`);
   // "No" just continues on, leaving the skin earned-but-not-yet-unlocked.
   const [skinTryPrompt, setSkinTryPrompt] = useState<CostumeId | null>(null);
+  // Wallet / reward-track writes the WIN block below triggers. Those stores
+  // notify `useSyncExternalStore` subscribers synchronously, and doing that
+  // mid-render is React's "Cannot update a component while rendering a
+  // different component" error — so the block only queues them, and this
+  // effect runs them right after the render commits.
+  const deferredStoreWrites = useRef<Array<() => void>>([]);
+  useEffect(() => {
+    const writes = deferredStoreWrites.current.splice(0);
+    for (const write of writes) write();
+  });
   if (state.result !== lastHandledResult) {
     // Zen Mode pays nothing at all — no gold, no reward-track credit
     // (`recordLevelPlayed`), no first-clear bookkeeping (`markLevelCleared`),
@@ -2940,7 +2952,7 @@ export default function SandGame() {
       // The reward track counts every win, replays included — unlike the gold
       // above, which pays first-clears only. See the reward-track section header
       // in `economy.ts` for why the two differ.
-      if (state.result?.kind === "WIN") recordLevelPlayed();
+      if (state.result?.kind === "WIN") deferredStoreWrites.current.push(recordLevelPlayed);
       if (state.result?.kind === "WIN" && markLevelCleared(raw.id)) {
         // The level's own reward (CSV override or the difficulty formula) plus
         // a decade-milestone bonus (`levelMilestoneBonus`, 0 for every level
@@ -2949,8 +2961,10 @@ export default function SandGame() {
         const granted =
           (getLevelRewardOverride(raw.id) ?? levelGoldReward(computeLevelDifficulty(raw).score)) +
           levelMilestoneBonus(raw.id);
-        addGold(granted);
-        suppressGoldSyncRef.current = true;
+        deferredStoreWrites.current.push(() => {
+          addGold(granted);
+          suppressGoldSyncRef.current = true;
+        });
         setPendingHomeReward((sum) => sum + granted);
         setWonGold(granted);
         // A progression skin tied to this level (`hero-cannon`/level 20 today)
@@ -3293,7 +3307,7 @@ export default function SandGame() {
               flight, a match resolving, chips merging) still gets the
               original centred badge below (`.settle-badge` with no
               `is-under-ammo`), unchanged. */}
-          {busy && !winReveal && state.phase === "SETTLING" && (
+          {!winReveal && state.phase === "SETTLING" && (
             <div
               className="settle-badge is-under-ammo"
               role="status"
