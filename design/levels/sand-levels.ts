@@ -142,7 +142,10 @@ export const secondConsequence: SandLevelConfig = {
   // still teaching aim against three colours instead of one, so it should
   // read as a LITTLE less generous than level 1's single-colour freebie, not
   // equally generous.
-  sortRadius: 3.8,
+  // Bumped a third time to 4.5 ("tăng radius level 2 lên, để tiến nhanh
+  // progression của level 2") — faster progression now wins over staying
+  // under level 1's disc; three colours still keep it a distinct lesson.
+  sortRadius: 4.5,
   // No budget: see this level's own doc comment above.
   shotLimit: Infinity,
   pixelScale: 5,

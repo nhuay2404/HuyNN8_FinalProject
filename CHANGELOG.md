@@ -9514,3 +9514,11 @@ Thuần render, không đụng `resolveShot`/settle nào — GDD.md §12.7 xoá 
 tới nó.
 
 **Test:** `tsc --noEmit` sạch, `npm test` 175/175.
+
+## 261. Tăng `sortRadius` Level 2 lên 4.5 (23/09)
+
+Trên request: "Tăng radius của level 2 lên, để tiến nhanh progression của level 2". `sortRadius` của
+Level 2 (`design/levels/sand-levels.ts`) 3.8 → 4.5 — giờ lớn hơn Level 1 (4), ưu tiên tiến độ nhanh
+thay vì giữ Level 2 nhỏ hơn Level 1 như trước. GDD.md cập nhật lại số liệu (§ FTUE và bảng level).
+
+**Test:** chưa chạy được (máy không có `node` trong PATH).
