@@ -1587,6 +1587,30 @@ export default function LevelEditor() {
             >
               Import built-in
             </button>
+            {/* Bulk version of the button above for levels 4-50. Skips any
+                level that already has a draft (matched by `importedFromId`)
+                so pressing it twice doesn't pile up duplicates. */}
+            <button
+              type="button"
+              className="editor-button"
+              onClick={() => {
+                const alreadyImported = new Set(drafts.map((d) => d.importedFromId));
+                const imported = BUILT_IN_LEVELS
+                  .filter((level) => level.id >= 4 && level.id <= 50 && !alreadyImported.has(level.id))
+                  .map((level) => levelToDraft(level));
+                if (imported.length === 0) {
+                  flash("Levels 4-50 are already imported.");
+                  return;
+                }
+                persist([...drafts, ...imported]);
+                setPickedId(imported[0].id);
+                history.current = { past: [], future: [] };
+                lastBrushPoint.current = null;
+                flash(`Imported ${imported.length} built-in level(s)`);
+              }}
+            >
+              Import all 4-50
+            </button>
           </div>
 
           {/* ---- difficulty overview ---- */}

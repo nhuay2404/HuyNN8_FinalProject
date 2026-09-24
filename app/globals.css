@@ -3277,6 +3277,24 @@ body:has(.editor-shell) { overflow: auto; background: #0c0c0e; }
   font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
 }
 
+/* Vertical (single-column) layout: 47+ full-width rows push the canvas far
+   down the page, so both lists become a scrollable grid of compact tiles. */
+@media (max-width: 1080px) {
+  .editor-level-list,
+  .editor-difficulty-list {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 4px; max-height: 220px; overflow-y: auto; padding-right: 2px;
+  }
+  .editor-level-list button { padding: 5px 7px; border-radius: 8px; gap: 0; }
+  .editor-level-list strong { font-size: 12px; }
+  .editor-level-list small { font-size: 9px; }
+  .editor-difficulty-list button { padding: 5px 7px; border-radius: 8px; column-gap: 6px; row-gap: 2px; }
+  .editor-difficulty-name { font-size: 11px; }
+  .editor-difficulty-bar { height: 5px; }
+  .editor-difficulty-score { font-size: 11px; }
+  .editor-difficulty-score small { display: none; }
+}
+
 /* ---- canvas ---- */
 .editor-canvas-panel { display: grid; justify-items: center; }
 .editor-tools { width: 100%; }
