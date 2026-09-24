@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { SAND_COLOR_HEX } from "./game/SandCannonEngine";
 import { analyseLevel, type LevelAnalysis } from "./game/level-analysis";
@@ -713,6 +713,76 @@ function readStoredDrafts(): LevelDraft[] {
   return cachedDrafts;
 }
 
+/**
+ * Every write goes through here so `cachedDrafts` never falls behind storage.
+ * The cache lives as long as the JS module, not the component: without this,
+ * leaving /editor and coming back without a reload remounted the editor on the
+ * list from the first visit, and the next edit saved that stale list over
+ * everything done in between.
+ */
+function writeDrafts(list: LevelDraft[]) {
+  cachedDrafts = list;
+  saveDrafts(list);
+}
+
+/** Editor UI state that should survive a reload: the level being edited and
+ * the tool settings. Stored apart from the drafts themselves. */
+type EditorPrefs = {
+  pickedId?: string | null;
+  tool?: Tool;
+  color?: SandColor;
+  brushSize?: number;
+  keyScale?: number;
+  freezeScale?: number;
+  freezeHidden?: boolean;
+  importLevelId?: number | null;
+  importMaxColors?: number;
+};
+
+const PREFS_KEY = "sand-cannon:v1:level-editor-prefs";
+const SERVER_PREFS: EditorPrefs = {};
+let cachedPrefs: EditorPrefs | null = null;
+
+function readStoredPrefs(): EditorPrefs {
+  if (!cachedPrefs) {
+    try {
+      const parsed: unknown = JSON.parse(window.localStorage.getItem(PREFS_KEY) ?? "{}");
+      cachedPrefs = parsed && typeof parsed === "object" ? parsed as EditorPrefs : {};
+    } catch {
+      cachedPrefs = {};
+    }
+  }
+  return cachedPrefs;
+}
+
+function writePrefs(prefs: EditorPrefs) {
+  cachedPrefs = prefs;
+  try {
+    window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Same as `saveDrafts`: no storage just means nothing is remembered.
+  }
+}
+
+/**
+ * `useState` that starts from a remembered value. Local state stays empty until
+ * the first change, so the server pass and hydration both render `stored ??
+ * fallback` from the same `useSyncExternalStore` snapshot — no setState in an
+ * effect, no hydration mismatch.
+ */
+function useRemembered<T>(stored: T | undefined, fallback: T): [T, Dispatch<SetStateAction<T>>] {
+  const [own, setOwn] = useState<{ value: T } | null>(null);
+  const base = stored === undefined ? fallback : stored;
+  const value = own ? own.value : base;
+  const set = useCallback<Dispatch<SetStateAction<T>>>((action) => {
+    setOwn((prev) => {
+      const current = prev ? prev.value : base;
+      return { value: typeof action === "function" ? (action as (v: T) => T)(current) : action };
+    });
+  }, [base]);
+  return [value, set];
+}
+
 /** Nothing to subscribe to: the snapshot is read once and never changes. */
 const noopSubscribe = () => () => {};
 
@@ -733,9 +803,11 @@ export default function LevelEditor() {
   // null until the first edit, so the stored list is what shows until then.
   const [edited, setEdited] = useState<LevelDraft[] | null>(null);
   const drafts = edited ?? stored;
-  const [pickedId, setPickedId] = useState<string | null>(null);
-  const selectedId = pickedId ?? drafts[0]?.id ?? null;
-  const [tool, setTool] = useState<Tool>("brush");
+  const prefs = useSyncExternalStore(noopSubscribe, readStoredPrefs, () => SERVER_PREFS);
+  const [pickedId, setPickedId] = useRemembered<string | null>(prefs.pickedId, null);
+  // A remembered id whose draft was since deleted falls back to the first one.
+  const selectedId = (pickedId !== null && drafts.some((entry) => entry.id === pickedId) ? pickedId : drafts[0]?.id) ?? null;
+  const [tool, setTool] = useRemembered<Tool>(prefs.tool, "brush");
   /** Whether the brush lays sand down frozen. A modifier, not a tool. */
   const [locking, setLocking] = useState(false);
   /** Whether the brush lays down Wall Obstacle instead of sand — a colourless
@@ -750,9 +822,9 @@ export default function LevelEditor() {
    * be erased and also painted down as something. */
   const [erasing, setErasing] = useState(false);
   /** The key tool's radius, in board pixels. */
-  const [keyScale, setKeyScale] = useState(DEFAULT_KEY_SCALE);
+  const [keyScale, setKeyScale] = useRemembered(prefs.keyScale, DEFAULT_KEY_SCALE);
   /** The Freeze tool's radius, in board pixels. */
-  const [freezeScale, setFreezeScale] = useState(DEFAULT_FREEZE_SCALE);
+  const [freezeScale, setFreezeScale] = useRemembered(prefs.freezeScale, DEFAULT_FREEZE_SCALE);
   // The Freeze tool's own second mode (on request: "freeze bị che sau lớp
   // cát") — while on, a click stamps/clears `draft.hiddenFreezeRows` instead
   // of `draft.rows`, burying the trigger behind whatever sand is already
@@ -760,10 +832,10 @@ export default function LevelEditor() {
   // into `tool`, because it is a modifier on the Freeze tool specifically
   // (same footing as `locking`/`wallMode` are modifiers on the brush) —
   // switching tools away and back keeps whichever mode was last chosen.
-  const [freezeHidden, setFreezeHidden] = useState(false);
+  const [freezeHidden, setFreezeHidden] = useRemembered(prefs.freezeHidden, false);
   /** Width of the square brush nib, in board pixels. */
-  const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
-  const [color, setColor] = useState<SandColor>("blue");
+  const [brushSize, setBrushSize] = useRemembered(prefs.brushSize, DEFAULT_BRUSH_SIZE);
+  const [color, setColor] = useRemembered<SandColor>(prefs.color, "blue");
   /** Which colour the picture is dimming everything else against — set by
    * clicking a colour in the Ammo wheel, so an author can find where it
    * actually is in the picture without having to hunt the canvas by eye.
@@ -790,9 +862,9 @@ export default function LevelEditor() {
   /** How many distinct colours "Import image" is allowed to use — the full
    * palette by default, so this only ever narrows the result until an author
    * turns it down. */
-  const [importMaxColors, setImportMaxColors] = useState(SAND_COLORS.length);
+  const [importMaxColors, setImportMaxColors] = useRemembered(prefs.importMaxColors, SAND_COLORS.length);
   /** Which built-in level the "Import built-in" row would bring in next. */
-  const [importLevelId, setImportLevelId] = useState<number | null>(BUILT_IN_LEVELS[3]?.id ?? null);
+  const [importLevelId, setImportLevelId] = useRemembered<number | null>(prefs.importLevelId, BUILT_IN_LEVELS[3]?.id ?? null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -925,8 +997,15 @@ export default function LevelEditor() {
 
   const persist = useCallback((next: LevelDraft[]) => {
     setEdited(next);
-    saveDrafts(next);
+    writeDrafts(next);
   }, []);
+
+  // Remember the selection and tool settings for the next visit. Skipped on
+  // the server pass's empty list so hydration never overwrites stored prefs.
+  useEffect(() => {
+    if (drafts.length === 0) return;
+    writePrefs({ pickedId: selectedId, tool, color, brushSize, keyScale, freezeScale, freezeHidden, importLevelId, importMaxColors });
+  }, [drafts.length, selectedId, tool, color, brushSize, keyScale, freezeScale, freezeHidden, importLevelId, importMaxColors]);
 
   /**
    * Replace the selected draft.
@@ -946,7 +1025,7 @@ export default function LevelEditor() {
         history.current.future = [];
       }
       const list = current.map((entry) => (entry.id === selectedId ? next : entry));
-      saveDrafts(list);
+      writeDrafts(list);
       return list;
     });
     setAnalysis(null);
@@ -985,7 +1064,7 @@ export default function LevelEditor() {
       const target = current.find((entry) => entry.id === previous.id);
       if (target) history.current.future = [...history.current.future, target];
       const list = current.map((entry) => (entry.id === previous.id ? previous : entry));
-      saveDrafts(list);
+      writeDrafts(list);
       return list;
     });
     setAnalysis(null);
@@ -1000,7 +1079,7 @@ export default function LevelEditor() {
       const target = current.find((entry) => entry.id === nextDraft.id);
       if (target) history.current.past = [...history.current.past, target];
       const list = current.map((entry) => (entry.id === nextDraft.id ? nextDraft : entry));
-      saveDrafts(list);
+      writeDrafts(list);
       return list;
     });
     setAnalysis(null);
