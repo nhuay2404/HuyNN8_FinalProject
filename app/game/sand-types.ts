@@ -502,7 +502,13 @@ export type SandPhase =
   | "WIN"
   | "FAIL";
 
-export type SandResult = null | { kind: "WIN" } | { kind: "FAIL"; reason: "OUT_OF_SHOTS" };
+/** `CONVEYOR_FULL` — the belt under the picture ran out of room for another
+ * pile, or filled up with piles no box on show wants (see sand-conveyor.ts).
+ * Decided by the engine, never by `resolveShot`: the belt moves in real time. */
+export type SandResult =
+  | null
+  | { kind: "WIN" }
+  | { kind: "FAIL"; reason: "OUT_OF_SHOTS" | "CONVEYOR_FULL" };
 
 export type SandGameState = {
   phase: SandPhase;

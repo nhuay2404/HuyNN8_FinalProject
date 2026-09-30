@@ -51,6 +51,17 @@ import type {
   SandLevelConfig,
   SettleStep,
 } from "./sand-types";
+import {
+  addPiles,
+  createConveyorState,
+  expandConveyor,
+  isConveyorDrained,
+  isConveyorFull,
+  isConveyorJammed,
+  stepConveyor,
+  type ConveyorState,
+} from "./sand-conveyor";
+import { CONVEYOR_BAND_HEIGHT, ConveyorView } from "./conveyor-view";
 
 // The presentation half. Everything gameplay here is delegated to sand-rules:
 // this file decides how a resolved shot LOOKS, never what it does.
@@ -326,7 +337,7 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
  * abstract. Paired with `CANNON_MODEL_SCALE` below: raising the rig without
  * shrinking it pushes the muzzle uncomfortably close to the picture.
  */
-const CANNON_ROOT_POSITION = new THREE.Vector3(0, -0.3, 5.25);
+const CANNON_ROOT_POSITION = new THREE.Vector3(0, -0.85, 5.4);
 // Exported for costumes.ts: a costume's muzzle ornament has to line up
 // against the same source of truth the engine fires from, not a copy of it.
 export const MUZZLE_Z = -2.18;
@@ -645,8 +656,12 @@ const FIT_FOV_SIGHT = new THREE.Vector3();
  * the narrowest aspect the resize() logic ever produces (portrait capped at
  * FIT_WIDTH-driven 430px wide against the 680px min-height, i.e. the FOV-37
  * branch), since the camera/lookAt below are fixed and never compensate. */
-const FRAME_CENTER_Y = 2.6;
+const FRAME_CENTER_Y = 3.0;
 const SAND_PLANE_Z = -2.3;
+/** How far under the frame's bottom rail the belt top sits, and how far in
+ * front of the picture plane — see `conveyorOrigin`. */
+const CONVEYOR_GAP = 0.32;
+const CONVEYOR_Z_OFFSET = 0.45;
 /** Where the pixel plane sits inside the recess, as a fraction of one pixel's world size. */
 const PLANE_LOCAL_Z_RATIO = 0.5;
 /** Centre and depth of the frame's rear backing panel, as fractions of one pixel's world
@@ -870,6 +885,16 @@ export type SandEngineCallbacks = {
   /** Fires whenever the armed booster changes — armed, or spent the instant
    * a shot leaves the barrel. `null` means neither is armed. */
   onBoosterChange?: (armed: BoosterType | null) => void;
+  /** The belt's "n/capacity" badge changed, or moved on screen. `anchor` is
+   * in `host` pixels, the same space as `screenPointForGrid`. */
+  onConveyor?: (info: ConveyorInfo) => void;
+};
+
+export type ConveyorInfo = {
+  piles: number;
+  capacity: number;
+  anchor: { x: number; y: number };
+  visible: boolean;
 };
 
 /** One simulated grain — one pixel of the board's canvas, one cell of the grid. */
@@ -1182,6 +1207,16 @@ export class SandCannonEngine {
   private lockRegionsDirty = true;
 
   private state: SandGameState;
+  /** The belt under the picture — see sand-conveyor.ts. Every shot that
+   * clears sand drops a pile onto it; the level is only won once the belt has
+   * poured everything into the boxes. */
+  private conveyor!: ConveyorState;
+  private conveyorView!: ConveyorView;
+  /** A shot that cleared the picture is only a win once the belt has emptied
+   * too — until then the winning state waits here and `this.state` carries no
+   * result, so the win screen does not open over sand still riding the belt. */
+  private pendingWin: SandGameState | null = null;
+  private lastConveyorInfo = "";
   private beats: Beat[] = [];
   private beatElapsed = 0;
   private beatStarted = false;
@@ -1438,6 +1473,7 @@ export class SandCannonEngine {
     this.buildMuzzleSmoke();
     this.buildSandSpray();
     this.buildSparkles();
+    this.buildConveyor();
     this.bindInput();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -1471,6 +1507,95 @@ export class SandCannonEngine {
   private track<T extends THREE.BufferGeometry | THREE.Material>(item: T) {
     this.disposables.push(item);
     return item;
+  }
+
+  // ---- conveyor ------------------------------------------------------------
+
+  /** Top of the belt, just under the frame's bottom rail, a little in front
+   * of the picture so sand knocked out of it has somewhere to land. */
+  private conveyorOrigin() {
+    const frameBottom = FRAME_CENTER_Y - (this.level.frame.height * this.cell) / 2 - this.cell * FRAME_BORDER_CELLS;
+    return new THREE.Vector3(0, frameBottom - CONVEYOR_GAP, SAND_PLANE_Z + CONVEYOR_Z_OFFSET);
+  }
+
+  /**
+   * Boxes are carved out of the picture's own sand, so they are built from
+   * the starting state's bodies — frozen cells included, since they have to
+   * come out eventually too. Colours are ordered the way the level lists its
+   * ammo, so ties in the box order follow the authored wheel.
+   */
+  private buildConveyor() {
+    const counts: Partial<Record<SandColor, number>> = {};
+    for (const body of this.state.bodies) counts[body.color] = (counts[body.color] ?? 0) + body.cells.length;
+    const order = [...new Set([...this.level.ammoQueue, ...(Object.keys(counts) as SandColor[])])];
+    this.conveyor = createConveyorState(counts, order);
+    this.conveyorView = new ConveyorView(
+      this.level.frame.width * this.cell,
+      (color) => sandColorHex(this.level, color),
+    );
+    this.conveyorView.root.position.copy(this.conveyorOrigin());
+    this.conveyorView.root.visible = !this.idle;
+    this.conveyorView.reset(this.conveyor);
+    this.scene.add(this.conveyorView.root);
+  }
+
+  /** Tells React where the "n/capacity" badge goes and what it says — only
+   * when either actually changed, since this runs every tick. */
+  private emitConveyorInfo() {
+    if (!this.callbacks.onConveyor || !this.conveyorView) return;
+    this.conveyorView.root.updateMatrixWorld(true);
+    const anchor = this.screenPointForWorld(this.conveyorView.badgeAnchorWorld());
+    const info: ConveyorInfo = {
+      piles: this.conveyor.piles.length,
+      capacity: this.conveyor.capacity,
+      anchor: { x: Math.round(anchor.x), y: Math.round(anchor.y) },
+      visible: !this.idle && !this.showcase,
+    };
+    const key = JSON.stringify(info);
+    if (key === this.lastConveyorInfo) return;
+    this.lastConveyorInfo = key;
+    this.callbacks.onConveyor(info);
+  }
+
+  /** The badge's "+" — one more pile of room on the belt. Paying for it is
+   * the caller's job; this only refuses once the level is over. */
+  expandConveyor(): boolean {
+    if (this.state.result || this.disposed) return false;
+    this.conveyor = expandConveyor(this.conveyor);
+    this.emitConveyorInfo();
+    return true;
+  }
+
+  /** Runs every fixed tick: moves the belt, pours piles into boxes, and
+   * settles the two outcomes the belt itself decides — a win waiting on the
+   * belt to empty, and a full belt that can never empty. */
+  private updateConveyor(seconds: number) {
+    const { state, events } = stepConveyor(this.conveyor, seconds);
+    this.conveyor = state;
+    this.conveyorView.sync(state, events, seconds);
+    if (events.some((event) => event.kind === "FILL")) soundSandPour();
+    if (events.some((event) => event.kind === "BOX_FULL")) haptic("bodyCleared");
+
+    if (this.pendingWin && isConveyorDrained(this.conveyor)) {
+      const win = this.pendingWin;
+      this.pendingWin = null;
+      this.state = win;
+      this.callbacks.onState(this.cloneState());
+      haptic("win");
+      sound("win");
+      this.playWinReveal();
+    } else if (!this.state.result && !this.pendingWin && isConveyorJammed(this.conveyor)) {
+      this.failOnConveyor();
+    }
+    this.emitConveyorInfo();
+  }
+
+  private failOnConveyor() {
+    this.state = { ...this.state, phase: "FAIL", result: { kind: "FAIL", reason: "CONVEYOR_FULL" } };
+    this.callbacks.onState(this.cloneState());
+    haptic("lose");
+    sound("lose");
+    this.refundBoostersOnFail();
   }
 
   /**
@@ -3340,6 +3465,9 @@ export class SandCannonEngine {
   private canStartAim() {
     return (
       this.canInteract() && !this.aimLocked && this.projectile === null && performance.now() >= this.nextShotAt
+      // No aiming while the belt has no room for another pile, or while a
+      // cleared picture is only waiting on the belt to empty.
+      && !this.pendingWin && !isConveyorFull(this.conveyor)
     );
   }
 
@@ -4348,23 +4476,43 @@ export class SandCannonEngine {
       { kind: "HOLD", ms: SETTLE_TAIL_MS },
     );
     this.settleLandings = 0;
+
+    // Everything this shot cleared lands on the belt as one pile per colour
+    // (one pile, unless a Prism Shot took several colours at once), dropped
+    // under wherever it came out of the picture.
+    const amounts: Partial<Record<SandColor, number>> = {};
+    for (const cell of doomed) amounts[cell.color] = (amounts[cell.color] ?? 0) + 1;
+    const beltX = (center.x + 0.5) / this.level.frame.width;
+    const dropped = addPiles(this.conveyor, amounts, beltX);
+    this.conveyor = dropped.state;
+
     // State applies immediately so the board, ammo count, etc. are correct
     // the instant the outcome is known — but the phase it carries is
     // overridden to SETTLING (unless the shot already ended the level) so
     // `canInteract()` stays closed and the "still moving" indicator
     // (`SandGame.tsx`'s `.settle-badge`, keyed off `busy`) shows until
     // `advanceBeats` clears the queue below.
-    this.state = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" };
+    let next = resolution.state.result ? resolution.state : { ...resolution.state, phase: "SETTLING" as const };
+    if (dropped.overflow) {
+      next = { ...resolution.state, phase: "FAIL", result: { kind: "FAIL", reason: "CONVEYOR_FULL" } };
+    } else if (next.result?.kind === "WIN" && !isConveyorDrained(this.conveyor)) {
+      // The picture is clear but its sand is still riding the belt — the win
+      // lands in `updateConveyor` once the last pile has poured out.
+      this.pendingWin = next;
+      next = { ...next, phase: "SETTLING", result: null };
+    }
+    this.state = next;
     this.syncFreezeTriggers();
     this.syncFreezeVisuals();
     this.callbacks.onState(this.cloneState());
-    if (resolution.state.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
+    this.emitConveyorInfo();
+    if (next.result?.kind === "WIN") { haptic("win"); sound("win"); this.playWinReveal(); }
     // "Dùng booster nhưng thua màn đó thì vẫn được hoàn trả lại booster" —
     // this shot itself matched (it's in the SORTED path), so its own charge
     // stands; this is only for whatever else was spent earlier and never
     // paid off, now that the attempt is over.
-    if (resolution.state.result?.kind === "FAIL") { haptic("lose"); sound("lose"); this.refundBoostersOnFail(); }
-    if (!resolution.state.result) this.showIdleCrosshair();
+    if (next.result?.kind === "FAIL") { haptic("lose"); sound("lose"); this.refundBoostersOnFail(); }
+    if (!next.result) this.showIdleCrosshair();
   }
 
   // ---- settle playback ---------------------------------------------------
@@ -4636,6 +4784,7 @@ export class SandCannonEngine {
     // explicit here too.
     if (this.projectile) this.updateProjectile(this.projectile);
     this.advanceBeats(deltaMs);
+    if (!this.idle) this.updateConveyor(FIXED_STEP);
 
     const liftTarget = this.liftTarget;
     const liftCells = this.liftCells;
@@ -4800,8 +4949,10 @@ export class SandCannonEngine {
     const halfWidth = (this.level.frame.width * this.cell) / 2 + border;
     const halfHeight = (this.level.frame.height * this.cell) / 2 + border;
     const fromWidth = halfWidth / FRAME_FILL_X / aspect;
+    // The belt and its boxes hang under the frame and have to fit too.
+    const bottom = FRAME_CENTER_Y - halfHeight - CONVEYOR_GAP - CONVEYOR_BAND_HEIGHT;
     const fromHeight =
-      Math.max(FRAME_CENTER_Y + halfHeight - sightY, sightY - (FRAME_CENTER_Y - halfHeight)) / FRAME_FILL_Y;
+      Math.max(FRAME_CENTER_Y + halfHeight - sightY, sightY - bottom) / FRAME_FILL_Y;
 
     const fov = 2 * THREE.MathUtils.radToDeg(Math.atan(Math.max(fromWidth, fromHeight) / distance));
     return THREE.MathUtils.clamp(fov, FIT_FOV_MIN, FIT_FOV_MAX);
@@ -4820,6 +4971,7 @@ export class SandCannonEngine {
     this.camera.updateProjectionMatrix();
     if (this.aimPointer !== null) this.updateAimGesture(this.aimCurrent.x, this.aimCurrent.y);
     else this.showIdleCrosshair();
+    this.emitConveyorInfo();
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -4851,6 +5003,9 @@ export class SandCannonEngine {
 
   setIdle(idle: boolean) {
     this.idle = idle;
+    // The hub shows the picture alone; the belt is part of playing it.
+    if (this.conveyorView) this.conveyorView.root.visible = !idle;
+    this.emitConveyorInfo();
     if (!idle) {
       // The idle-hint clock (`updateIdleHint`) has been running the whole
       // time the hub sat idle — nothing before this reset it, `lastInputAt`
@@ -4985,6 +5140,7 @@ export class SandCannonEngine {
     this.aimZone.removeEventListener("pointerup", this.onAimPointerUp);
     this.aimZone.removeEventListener("pointercancel", this.onAimPointerCancel);
     this.sandTexture.dispose();
+    this.conveyorView?.dispose();
     this.clearShowcaseShots();
     for (const item of this.disposables) item.dispose();
     this.crosshair.classList.remove("is-visible", "is-engaged", "is-aiming", "is-target-valid");

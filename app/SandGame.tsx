@@ -7,8 +7,10 @@ import {
   WIN_REVEAL_HOLD_MS,
   MAX_CONTROL_SENSITIVITY,
   MIN_CONTROL_SENSITIVITY,
+  type ConveyorInfo,
   type SandEngineEvent,
 } from "./game/SandCannonEngine";
+import { CONVEYOR_EXPAND_COST } from "./game/sand-conveyor";
 import {
   COSTUMES,
   COSTUME_ORDER,
@@ -34,6 +36,7 @@ import {
   fillRewardTrack,
   resetRewardTrack,
   spendEmeralds,
+  spendGold,
   subscribeRewardTrack,
   buyBoosterCharges,
   claimDailyLogin,
@@ -1611,6 +1614,8 @@ export default function SandGame() {
   // booster is armed. The engine is the source of truth (it is what enforces
   // spec §3's no-cancel, no-swap rule); this only echoes it for the HUD.
   const [armedBooster, setArmedBooster] = useState<BoosterType | null>(null);
+  /** The belt under the picture — its "n/capacity" badge and where it sits. */
+  const [conveyorInfo, setConveyorInfo] = useState<ConveyorInfo | null>(null);
 
   // The real tray button arming is what advances past each "intro-*" step
   // of `boosterFtueStep` — see its own doc comment for why there is nothing
@@ -2450,6 +2455,7 @@ export default function SandGame() {
       onState: setState,
       onEvent,
       onBoosterChange: setArmedBooster,
+      onConveyor: setConveyorInfo,
       onFirstFrame: () => {
         advanceLoading("engine");
         finishLoading();
@@ -3577,6 +3583,35 @@ export default function SandGame() {
               <span className="aim-joystick-knob" />
             </div>
           </div>
+
+          {/* The conveyor's "piles on the belt / room" badge, hung under the
+              belt itself — the engine reports where that is on screen (see
+              `ConveyorInfo`). Above `.aim-zone` so the "+" is tappable. */}
+          {playing && conveyorInfo?.visible && (
+            <div
+              className={`conveyor-badge${conveyorInfo.piles >= conveyorInfo.capacity ? " is-full" : ""}`}
+              style={{ left: conveyorInfo.anchor.x, top: conveyorInfo.anchor.y }}
+            >
+              <span className="conveyor-badge-count">{conveyorInfo.piles}/{conveyorInfo.capacity}</span>
+              <button
+                type="button"
+                className="conveyor-badge-plus"
+                aria-label={s.conveyorExpand(CONVEYOR_EXPAND_COST)}
+                title={s.conveyorExpand(CONVEYOR_EXPAND_COST)}
+                onClick={() => {
+                  if (!engine || state.result) return;
+                  if (!spendGold(CONVEYOR_EXPAND_COST)) {
+                    pushToast(s.toastNotEnoughCoins, "warn");
+                    return;
+                  }
+                  engine.expandConveyor();
+                  pushToast(s.toastConveyorExpanded, "good");
+                }}
+              >
+                +
+              </button>
+            </div>
+          )}
 
           {/* The gesture-taught FTUE (`SandLevelConfig.ftueGesture`) — see the
               field's own doc comment in sand-types.ts for why this exists
@@ -5601,7 +5636,7 @@ export default function SandGame() {
         {state.result?.kind === "FAIL" && (
           <div className="result-screen" role="dialog" aria-modal="true">
             <div className="result-card">
-              <h2>{s.outOfShots}</h2>
+              <h2>{state.result.reason === "CONVEYOR_FULL" ? s.conveyorFull : s.outOfShots}</h2>
               <p>{s.clearedPercent(cleared, state.remainingCells)}</p>
               <div className="result-actions">
                 <button type="button" onClick={() => { if (tryStartAttempt()) restart(); }}>

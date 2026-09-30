@@ -306,6 +306,11 @@ export interface Strings {
   goldEarned: (amount: number) => string;
   continueLabel: string;
   outOfShots: string;
+  /** Result title when the conveyor under the picture jams. */
+  conveyorFull: string;
+  /** "+" on the conveyor badge — buys one more pile of room. */
+  conveyorExpand: (cost: number) => string;
+  toastConveyorExpanded: string;
   clearedPercent: (pct: number, remainingGrains: number) => string;
   playAgain: string;
   home: string;
@@ -555,6 +560,9 @@ const EN: Strings = {
   goldEarned: (amount) => `+${amount} gold earned`,
   continueLabel: "Continue",
   outOfShots: "OUT OF SHOTS",
+  conveyorFull: "CONVEYOR JAMMED",
+  conveyorExpand: (cost) => `Add a belt slot for ${cost} coins`,
+  toastConveyorExpanded: "Belt slot added",
   clearedPercent: (pct, remainingGrains) => `${pct}% cleared — ${remainingGrains} grains still in the frame.`,
   playAgain: "Play again",
   home: "Home",
@@ -754,6 +762,9 @@ const VI: Strings = {
   goldEarned: (amount) => `+${amount} vàng`,
   continueLabel: "Tiếp tục",
   outOfShots: "HẾT ĐẠN",
+  conveyorFull: "KẸT BĂNG CHUYỀN",
+  conveyorExpand: (cost) => `Thêm 1 chỗ trên băng chuyền với ${cost} xu`,
+  toastConveyorExpanded: "Đã thêm 1 chỗ trên băng chuyền",
   clearedPercent: (pct, remainingGrains) => `Đã dọn ${pct}% — còn ${remainingGrains} hạt cát trong khung.`,
   playAgain: "Chơi lại",
   home: "Trang chủ",

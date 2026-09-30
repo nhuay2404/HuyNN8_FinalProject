@@ -921,6 +921,25 @@ button.settings-devtoggle {
   touch-action: none; cursor: grab;
 }
 .aim-zone.is-aiming { cursor: grabbing; }
+/* The conveyor's "n/5 +" badge — positioned by the engine under the belt
+   (see `ConveyorInfo`). Dark pill, green "+" like the rest of the HUD's buy
+   buttons; turns red once the belt has no room left. */
+.conveyor-badge {
+  position: absolute; z-index: 5; transform: translate(-50%, 0);
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 3px 3px 11px; border-radius: 10px;
+  background: #3b3560; color: #f1eefc;
+  font-weight: 900; font-size: 13px; font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 0 rgba(0,0,0,.18);
+  transition: background .2s;
+}
+.conveyor-badge.is-full { background: #b8423a; }
+.conveyor-badge-plus {
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 7px;
+  background: #5cb85c; color: #fff; font-weight: 900; font-size: 16px; line-height: 22px;
+  cursor: pointer;
+}
+.conveyor-badge-plus:active { transform: scale(.94); }
 /* Warm whites rather than pure white: these sit over the sky and the picture,
    and a neutral white ring on a warm scene is the one thing that would read
    as belonging to a different UI. */
