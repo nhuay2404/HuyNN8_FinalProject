@@ -24,9 +24,10 @@ const BELT_DEPTH = 0.5;
 const ROLLER_RADIUS = 0.17;
 const SLAT_GAP = 0.15;
 const GRAIN_SIZE = 0.085;
-/** Where the boxes' own centres hang, below the belt top. */
-export const CONVEYOR_BOX_Y = -1.0;
-const BOX_HEIGHT = 0.6;
+/** Where the boxes' own centres hang, below the belt top — low enough that
+ * the "n/5 +" badge (`badgeAnchorWorld`) fits between belt and boxes. */
+export const CONVEYOR_BOX_Y = -1.12;
+const BOX_HEIGHT = 0.5;
 const BOX_DEPTH = 0.46;
 /** How far below the belt top the whole rig reaches — the fit uses this. */
 export const CONVEYOR_BAND_HEIGHT = -CONVEYOR_BOX_Y + BOX_HEIGHT / 2 + 0.05;
@@ -35,7 +36,11 @@ const POUR_GRAINS = 6;
 const DROP_SECONDS = 0.28;
 const VANISH_SECONDS = 0.45;
 const ENTER_SECONDS = 0.35;
-
+/** How long a shot's loosened grains take to fly from the picture down onto
+ * the belt — the engine flies them, and a fresh pile waits this long. */
+export const SAND_TRAVEL_SECONDS = 0.45;
+/** Brightness multipliers a pile's grains pick from at random. */
+const PILE_SHADES = [0.82, 0.92, 1, 1.08];
 type PileVisual = { group: THREE.Group; grains: THREE.Mesh[]; drop: number; amount: number };
 type BoxVisual = {
   box: ConveyorBox;
@@ -58,11 +63,11 @@ export class ConveyorView {
   private readonly disposables: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
   private readonly grainGeometry: THREE.BoxGeometry;
   private readonly materials = new Map<SandColor, THREE.MeshLambertMaterial>();
+  private readonly shades = new Map<string, THREE.MeshLambertMaterial>();
   private readonly slats: THREE.Mesh[] = [];
   private readonly piles = new Map<number, PileVisual>();
   private readonly boxes = new Map<number, BoxVisual>();
-  private pours: PourGrain[] = [];
-  /** Grains already on their way into a box but not landed — the box's shown
+  private pours: PourGrain[] = [];  /** Grains already on their way into a box but not landed — the box's shown
    * fill waits on them so it rises when the sand arrives, not before. */
   private readonly inFlight = new Map<number, number>();
 
@@ -142,7 +147,7 @@ export class ConveyorView {
 
   /** Bottom-centre of the belt housing, in world space — the "n/5" badge hangs here. */
   badgeAnchorWorld() {
-    return this.root.localToWorld(new THREE.Vector3(0, -0.28, BELT_DEPTH / 2));
+    return this.root.localToWorld(new THREE.Vector3(0, -0.2, BELT_DEPTH / 2));
   }
 
   private buildBoxVisual(box: ConveyorBox, slot: number, slotCount: number, entering: boolean): BoxVisual {
@@ -213,23 +218,51 @@ export class ConveyorView {
     visual.label.texture.needsUpdate = true;
   }
 
+  /** A lighter or darker take on a sand colour, so a pile's grains don't all
+   * read as one flat block. Cached per (colour, shade). */
+  private shadedMaterial(color: SandColor, shade: number) {
+    const key = `${color}:${shade}`;
+    let material = this.shades.get(key);
+    if (!material) {
+      const tint = new THREE.Color(this.colorHex(color)).multiplyScalar(PILE_SHADES[shade]);
+      material = this.track(new THREE.MeshLambertMaterial({ color: tint }));
+      this.shades.set(key, material);
+    }
+    return material;
+  }
+
   private buildPileVisual(amount: number, color: SandColor): PileVisual {
     const group = new THREE.Group();
-    const count = THREE.MathUtils.clamp(Math.round(Math.sqrt(amount) * 0.9), 3, 14);
+    const base = Math.sqrt(amount) * 0.9;
+    const count = THREE.MathUtils.clamp(Math.round(base * (0.8 + Math.random() * 0.4)), 3, 16);
+    // Every pile its own shape: lopsided in width and depth, a peak that
+    // wanders off-centre, and a height that varies from pile to pile.
+    const spreadX = 0.1 + Math.random() * 0.07;
+    const spreadZ = 0.12 + Math.random() * 0.1;
+    const peakX = (Math.random() - 0.5) * 0.06;
+    const height = GRAIN_SIZE * (1.6 + Math.random() * 1.2);
     const grains: THREE.Mesh[] = [];
     for (let i = 0; i < count; i++) {
-      const grain = new THREE.Mesh(this.grainGeometry, this.material(color));
-      // A little mound: widest at the bottom, a couple of grains stacked on top.
-      const ring = i < 6 ? 0 : i < 11 ? 1 : 2;
-      const angle = i * 2.39996;
-      const spread = [0.13, 0.08, 0.02][ring];
-      grain.position.set(Math.cos(angle) * spread, GRAIN_SIZE / 2 + ring * GRAIN_SIZE * 0.85, Math.sin(angle) * spread * 1.4);
-      grain.rotation.y = angle;
+      const shade = Math.floor(Math.random() * PILE_SHADES.length);
+      const grain = new THREE.Mesh(this.grainGeometry, this.shadedMaterial(color, shade));
+      // Uniform over the footprint, then stacked higher the nearer the peak.
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.sqrt(Math.random());
+      const x = Math.cos(angle) * dist * spreadX;
+      const z = Math.sin(angle) * dist * spreadZ;
+      const nearPeak = 1 - Math.min(1, Math.hypot((x - peakX) / spreadX, z / spreadZ));
+      const size = 0.7 + Math.random() * 0.6;
+      grain.scale.setScalar(size);
+      grain.position.set(x + peakX * nearPeak, (GRAIN_SIZE * size) / 2 + nearPeak * height * Math.random(), z);
+      grain.rotation.set(Math.random() * 0.6, Math.random() * Math.PI, Math.random() * 0.6);
       grains.push(grain);
       group.add(grain);
     }
+    group.visible = false;
     this.root.add(group);
-    return { group, grains, drop: 0, amount };
+    // Starts below 0 so the pile waits for the engine's flying grains
+    // (`SAND_TRAVEL_SECONDS`) to reach the belt before it drops in.
+    return { group, grains, drop: -SAND_TRAVEL_SECONDS / DROP_SECONDS, amount };
   }
 
   /** Lay out the boxes for a fresh level, with no animation. */
@@ -303,13 +336,15 @@ export class ConveyorView {
         this.piles.set(pile.id, visual);
       }
       visual.drop = Math.min(1, visual.drop + seconds / DROP_SECONDS);
+      visual.group.visible = visual.drop > 0;
       const edge = Math.min(pile.x, 1 - pile.x) * this.length;
       // Shrinks into the roller at the right end, grows back out of the left.
       const endScale = THREE.MathUtils.clamp(edge / 0.22, 0.05, 1);
       const shrink = THREE.MathUtils.clamp(Math.sqrt(pile.amount / Math.max(1, visual.amount)), 0.45, 1);
       visual.group.scale.setScalar(endScale * shrink);
-      const fall = 1 - visual.drop;
-      visual.group.position.set(this.beltX(pile.x), fall * fall * 0.9, 0);
+      // Short drop: the grains already fell most of the way on their own.
+      const fall = 1 - Math.max(0, visual.drop);
+      visual.group.position.set(this.beltX(pile.x), fall * fall * 0.3, 0);
     }
 
     // Pours in flight.

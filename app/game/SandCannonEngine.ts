@@ -61,7 +61,7 @@ import {
   stepConveyor,
   type ConveyorState,
 } from "./sand-conveyor";
-import { CONVEYOR_BAND_HEIGHT, ConveyorView } from "./conveyor-view";
+import { CONVEYOR_BAND_HEIGHT, ConveyorView, SAND_TRAVEL_SECONDS } from "./conveyor-view";
 
 // The presentation half. Everything gameplay here is delegated to sand-rules:
 // this file decides how a resolved shot LOOKS, never what it does.
@@ -970,6 +970,11 @@ type SandSprayGrain = {
   spin: THREE.Vector3;
   age: number;
   life: number;
+  /** Set when the grain is headed for the belt: it flies an arc from `from`
+   * to `to` over its life instead of free-falling. */
+  from: THREE.Vector3;
+  to: THREE.Vector3 | null;
+  arc: number;
 };
 
 /** One shard of magic light in the sparkle pool — see `spawnSparkles`. Unlit,
@@ -3133,6 +3138,9 @@ export class SandCannonEngine {
         spin: new THREE.Vector3(),
         age: 0,
         life: SAND_SPRAY_LIFE_SECONDS,
+        from: new THREE.Vector3(),
+        to: null,
+        arc: 0,
       });
     }
   }
@@ -3152,7 +3160,15 @@ export class SandCannonEngine {
    * them, and each grain picks its own at random so the burst shows the
    * whole palette rather than being painted in a single colour.
    */
-  private spawnSandSpray(point: THREE.Vector3, colors: number[], count: number, radiusCells: number) {
+  private spawnSandSpray(
+    point: THREE.Vector3,
+    colors: number[],
+    count: number,
+    radiusCells: number,
+    /** Where on the belt this sand is headed — grains arc onto it and land
+     * there rather than falling out of the scene. */
+    target: THREE.Vector3 | null = null,
+  ) {
     if (!this.sandSprayGrains.length || !colors.length) return;
     const radiusWorld = Math.max(0, radiusCells) * this.cell;
     for (const grain of this.sandSprayGrains.slice(0, count)) {
@@ -3180,6 +3196,19 @@ export class SandCannonEngine {
       );
       grain.age = 0;
       grain.life = SAND_SPRAY_LIFE_SECONDS * (0.9 + Math.random() * 0.2);
+      grain.from.copy(grain.mesh.position);
+      if (target) {
+        // Land spread across the pile's footprint, not on one point.
+        grain.to = (grain.to ?? new THREE.Vector3()).set(
+          target.x + (Math.random() - 0.5) * 0.3,
+          target.y + 0.04,
+          target.z + (Math.random() - 0.5) * 0.25,
+        );
+        grain.life = SAND_TRAVEL_SECONDS * (0.8 + Math.random() * 0.25);
+        grain.arc = 0.15 + Math.random() * 0.3;
+      } else {
+        grain.to = null;
+      }
       const scale = this.cell * (SAND_SPRAY_MIN_SCALE + Math.random() * (SAND_SPRAY_MAX_SCALE - SAND_SPRAY_MIN_SCALE));
       grain.mesh.scale.setScalar(scale);
       grain.material.color.setHex(colors[Math.floor(Math.random() * colors.length)]);
@@ -3196,6 +3225,17 @@ export class SandCannonEngine {
       if (!grain.mesh.visible) continue;
       grain.age += deltaSeconds;
       const life = Math.min(1, grain.age / grain.life);
+      if (grain.to) {
+        // Headed for the belt: ease-in fall along a small hop, solid the whole
+        // way, gone the moment it lands (the pile takes over from there).
+        grain.mesh.position.lerpVectors(grain.from, grain.to, life * life);
+        grain.mesh.position.y += Math.sin(life * Math.PI) * grain.arc;
+        grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
+        grain.mesh.rotation.z += grain.spin.z * deltaSeconds;
+        grain.material.opacity = 1;
+        if (life >= 1) grain.mesh.visible = false;
+        continue;
+      }
       grain.velocity.addScaledVector(GRAVITY, SAND_SPRAY_GRAVITY_SCALE * deltaSeconds);
       grain.mesh.position.addScaledVector(grain.velocity, deltaSeconds);
       grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
@@ -4383,7 +4423,10 @@ export class SandCannonEngine {
         .map((rgb) => (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]);
       if (colors.length) {
         const grainCount = THREE.MathUtils.clamp(resolution.removed.length, SAND_SPRAY_MIN_GRAINS, SAND_SPRAY_GRAINS);
-        this.spawnSandSpray(contact, colors, grainCount, radiusUsed);
+        // Same belt spot `addPiles` drops this shot's pile on.
+        const beltX = (center.x + 0.5) / this.level.frame.width;
+        const target = this.conveyorView ? this.conveyorView.worldPointOnBelt(beltX) : null;
+        this.spawnSandSpray(contact, colors, grainCount, radiusUsed, target);
       }
     }
 
