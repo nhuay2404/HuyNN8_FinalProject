@@ -494,10 +494,6 @@ const SAND_SPRAY_UP_SPEED = 0.55;
  * lazy, floaty arc. Bumped again (3.2 -> 5) per feedback asking for a
  * stronger, faster drop overall. */
 const SAND_SPRAY_GRAVITY_SCALE = 5;
-// Chunky on purpose — small values here render as a couple of stray pixels
-// and are effectively invisible against sand of their own colour.
-const SAND_SPRAY_MIN_SCALE = 0.9;
-const SAND_SPRAY_MAX_SCALE = 1.6;
 
 // ---- sparkle bling (rune-cannon flavor: "magic", hero-cannon's own) ------
 // One shared shard pool, two costumes' worth of colours drawn from it: the
@@ -967,7 +963,6 @@ type SandSprayGrain = {
   mesh: THREE.Mesh;
   material: THREE.MeshBasicMaterial;
   velocity: THREE.Vector3;
-  spin: THREE.Vector3;
   age: number;
   life: number;
   /** Set when the grain is headed for the belt: it flies an arc from `from`
@@ -1536,6 +1531,9 @@ export class SandCannonEngine {
     this.conveyor = createConveyorState(counts, order);
     this.conveyorView = new ConveyorView(
       this.level.frame.width * this.cell,
+      this.cell,
+      // A pile must stay in the gap under the frame, never over the picture.
+      CONVEYOR_GAP - 0.06,
       (color) => sandColorHex(this.level, color),
     );
     this.conveyorView.root.position.copy(this.conveyorOrigin());
@@ -3117,7 +3115,9 @@ export class SandCannonEngine {
    * reasoning as `buildMuzzleSmoke`: independent fades read as loose debris
    * rather than one shared puff. */
   private buildSandSpray() {
-    const geometry = this.track(new THREE.BoxGeometry(1, 1, 1));
+    // A flat square, not a cube: a loose grain is one of the picture's own
+    // pixels and has to read as one.
+    const geometry = this.track(new THREE.PlaneGeometry(1, 1));
     for (let index = 0; index < SAND_SPRAY_GRAINS; index += 1) {
       const material = this.track(
         // depthTest off: a grain spawns exactly on the sand plane's own
@@ -3135,7 +3135,6 @@ export class SandCannonEngine {
         mesh,
         material,
         velocity: new THREE.Vector3(),
-        spin: new THREE.Vector3(),
         age: 0,
         life: SAND_SPRAY_LIFE_SECONDS,
         from: new THREE.Vector3(),
@@ -3188,12 +3187,6 @@ export class SandCannonEngine {
         point.y + Math.sin(spawnAngle) * spawnDist,
         point.z,
       );
-      grain.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-      grain.spin.set(
-        (Math.random() - 0.5) * 10,
-        (Math.random() - 0.5) * 10,
-        (Math.random() - 0.5) * 10,
-      );
       grain.age = 0;
       grain.life = SAND_SPRAY_LIFE_SECONDS * (0.9 + Math.random() * 0.2);
       grain.from.copy(grain.mesh.position);
@@ -3202,15 +3195,15 @@ export class SandCannonEngine {
         grain.to = (grain.to ?? new THREE.Vector3()).set(
           target.x + (Math.random() - 0.5) * 0.3,
           target.y + 0.04,
-          target.z + (Math.random() - 0.5) * 0.25,
+          target.z + 0.1,
         );
         grain.life = SAND_TRAVEL_SECONDS * (0.8 + Math.random() * 0.25);
         grain.arc = 0.15 + Math.random() * 0.3;
       } else {
         grain.to = null;
       }
-      const scale = this.cell * (SAND_SPRAY_MIN_SCALE + Math.random() * (SAND_SPRAY_MAX_SCALE - SAND_SPRAY_MIN_SCALE));
-      grain.mesh.scale.setScalar(scale);
+      // Exactly one board pixel, and never tumbling — see `buildSandSpray`.
+      grain.mesh.scale.setScalar(this.cell);
       grain.material.color.setHex(colors[Math.floor(Math.random() * colors.length)]);
       grain.material.opacity = 1;
       grain.mesh.visible = true;
@@ -3230,17 +3223,12 @@ export class SandCannonEngine {
         // way, gone the moment it lands (the pile takes over from there).
         grain.mesh.position.lerpVectors(grain.from, grain.to, life * life);
         grain.mesh.position.y += Math.sin(life * Math.PI) * grain.arc;
-        grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
-        grain.mesh.rotation.z += grain.spin.z * deltaSeconds;
         grain.material.opacity = 1;
         if (life >= 1) grain.mesh.visible = false;
         continue;
       }
       grain.velocity.addScaledVector(GRAVITY, SAND_SPRAY_GRAVITY_SCALE * deltaSeconds);
       grain.mesh.position.addScaledVector(grain.velocity, deltaSeconds);
-      grain.mesh.rotation.x += grain.spin.x * deltaSeconds;
-      grain.mesh.rotation.y += grain.spin.y * deltaSeconds;
-      grain.mesh.rotation.z += grain.spin.z * deltaSeconds;
       // Fully solid for the first stretch of its life — fading from the very
       // instant it spawns read as soft and washed-out rather than a crisp
       // chunk of sand — then fades out over the back half.
